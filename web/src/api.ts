@@ -57,3 +57,10 @@ export const nfqwsBackups = {
   create: () => api<BackupItem>('/api/backups', { method: 'POST' }),
   restore: (id: string) => api<{ message: string }>(`/api/backups/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
 };
+
+export const nfqwsApply = {
+  apply: (content: string, revision: string) => api<{ config: ConfigResponse; message: string }>(
+    '/api/nfqws2/apply',
+    { method: 'POST', body: JSON.stringify({ content, revision }) },
+  ),
+};

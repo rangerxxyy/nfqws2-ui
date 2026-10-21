@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsBackups, nfqwsInstallation, nfqwsLists } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists } from './api';
 
 describe('API client used by the source-based panel', () => {
   afterEach(() => { vi.restoreAllMocks(); });
@@ -62,5 +62,20 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/backups');
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/backups/nfqws2.conf.123.000000001.bak/restore');
+  });
+
+  it('applies a config through the transactional endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      '{"config":{"file":"/opt/etc/nfqws2/nfqws2.conf","content":"NFQWS_ARGS=--filter-tcp=443\\n","revision":"new"},"message":"Started and verified"}',
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await nfqwsApply.apply('NFQWS_ARGS=--filter-tcp=443\n', 'old');
+
+    expect(result.config.revision).toBe('new');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/apply');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ content: 'NFQWS_ARGS=--filter-tcp=443\n', revision: 'old' });
   });
 });

@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
 import { deduplicateListContent } from './list-editor';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
@@ -159,9 +159,10 @@ async function saveConfigAndApply() {
   const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
   setBusy(true);
   try {
-    config = await api<ConfigResponse>('/api/config?file=nfqws2.conf', { method: 'PUT', body: JSON.stringify({ content: editor.value, revision: config.revision }) });
-    toast('Конфигурация сохранена. Перезапускаю nfqws2…');
-    await serviceAction('restart', true);
+    const result = await nfqwsApply.apply(editor.value, config.revision);
+    config = result.config;
+    await fetchStatus();
+    toast('Конфигурация сохранена, повторно прочитана; backend подтвердил перезапуск nfqws2.');
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setBusy(false); }
 }

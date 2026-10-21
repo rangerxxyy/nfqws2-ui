@@ -120,12 +120,18 @@ struct ConfigWrite {
     revision: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfigResponse {
     file: String,
     content: String,
     revision: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfigApplyResponse {
+    config: ConfigResponse,
+    message: String,
 }
 
 #[derive(Deserialize)]
@@ -840,6 +846,127 @@ async fn put_config(
     .into_response()
 }
 
+async fn apply_config_transaction<F, Fut>(
+    state: &AppState,
+    write: ConfigWrite,
+    mut restart: F,
+) -> Result<ConfigApplyResponse, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    if write.content.len() > MAX_CONFIG_BYTES || write.content.as_bytes().contains(&0) {
+        return Err("Конфигурация превышает лимит или содержит запрещённый NUL-байт".into());
+    }
+    let _write_guard = state.config_write_lock.lock().await;
+    let path = config_path_for_state(state)
+        .ok_or_else(|| "Разрешённый конфигурационный файл не найден".to_string())?;
+    let original = tokio::fs::read(&path)
+        .await
+        .map_err(|error| format!("Не удалось прочитать конфигурацию: {error}"))?;
+    if revision(&original) != write.revision {
+        return Err("Файл изменился после загрузки; обновите страницу и проверьте diff".into());
+    }
+    if let Err(write_error) = backup_and_write_named(
+        &state.data_dir,
+        &path,
+        "nfqws2.conf",
+        MAX_CONFIG_BYTES,
+        write.content.as_bytes(),
+    )
+    .await
+    {
+        let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+        return Err(match rollback {
+            Ok(()) => format!(
+                "Не удалось записать новую конфигурацию: {write_error}. Исходная версия восстановлена."
+            ),
+            Err(rollback_error) => format!(
+                "Не удалось записать новую конфигурацию: {write_error}. Откат тоже не подтверждён: {rollback_error}"
+            ),
+        });
+    }
+    let saved = match tokio::fs::read(&path).await {
+        Ok(saved) => saved,
+        Err(error) => {
+            let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+            return Err(match rollback {
+                Ok(()) => format!(
+                    "Конфиг записан, но повторное чтение не удалось: {error}. Исходная версия восстановлена."
+                ),
+                Err(rollback_error) => format!(
+                    "Конфиг записан, повторное чтение не удалось: {error}. Откат тоже не подтверждён: {rollback_error}"
+                ),
+            });
+        }
+    };
+    if saved != write.content.as_bytes() {
+        let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+        return Err(match rollback {
+            Ok(()) => "Повторное чтение конфига не совпало с отправленным содержимым; исходная версия восстановлена.".into(),
+            Err(error) => format!("Повторное чтение конфига не совпало; откат не подтверждён: {error}"),
+        });
+    }
+    match restart().await {
+        Ok(message) => Ok(ConfigApplyResponse {
+            config: ConfigResponse {
+                file: path.display().to_string(),
+                revision: revision(&saved),
+                content: String::from_utf8_lossy(&saved).into_owned(),
+            },
+            message,
+        }),
+        Err(apply_error) => {
+            if let Err(rollback_error) =
+                restore_config_content(&state.data_dir, &path, &original).await
+            {
+                return Err(format!(
+                    "Применение не удалось: {apply_error}. Не удалось восстановить старую конфигурацию: {rollback_error}"
+                ));
+            }
+            match restart().await {
+                Ok(restore_message) => Err(format!(
+                    "Применение не удалось: {apply_error}. Исходный конфиг восстановлен и служба перезапущена: {restore_message}"
+                )),
+                Err(restore_error) => Err(format!(
+                    "Применение не удалось: {apply_error}. Исходный конфиг восстановлен, но повторный запуск службы не подтверждён: {restore_error}"
+                )),
+            }
+        }
+    }
+}
+
+async fn restore_config_content(
+    data_dir: &Path,
+    path: &Path,
+    original: &[u8],
+) -> Result<(), String> {
+    backup_and_write_named(data_dir, path, "nfqws2.conf", MAX_CONFIG_BYTES, original).await?;
+    let restored = tokio::fs::read(path)
+        .await
+        .map_err(|error| format!("не удалось повторно прочитать конфигурацию: {error}"))?;
+    if restored != original {
+        return Err(
+            "повторное чтение не совпало с исходным содержимым; резервная копия сохранена".into(),
+        );
+    }
+    Ok(())
+}
+
+async fn apply_config(
+    State(state): State<Arc<AppState>>,
+    Json(write): Json<ConfigWrite>,
+) -> Response {
+    match apply_config_transaction(&state, write, || async {
+        service_action(ServiceAction::Restart).await
+    })
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
 async fn backup_and_write(
     data_dir: &Path,
     config: &Path,
@@ -1176,6 +1303,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/status", get(get_status))
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
+        .route("/api/nfqws2/apply", post(apply_config))
         .route("/api/nfqws2/lists", get(get_lists))
         .route("/api/nfqws2/lists/{id}", get(get_list).put(put_list))
         .route("/api/backups", get(get_backups).post(create_backup))
@@ -1371,6 +1499,102 @@ mod tests {
             tokio::fs::read_to_string(config).await.unwrap(),
             "NFQWS_ARGS=--hostlist=lists/changed.list\n"
         );
+    }
+
+    #[tokio::test]
+    async fn config_apply_rolls_back_and_restarts_when_new_config_fails() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--unsupported-option\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let restart_counter = restart_count.clone();
+
+        let result = apply_config_transaction(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            move || {
+                let attempt = restart_counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        Err("fake invalid-config restart failure".to_string())
+                    } else {
+                        Ok("old config service healthy".to_string())
+                    }
+                }
+            },
+        )
+        .await;
+
+        let error = result.unwrap_err();
+        assert!(error.contains("Исходный конфиг восстановлен и служба перезапущена"));
+        assert_eq!(restart_count.load(Ordering::SeqCst), 2);
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn config_apply_returns_success_only_after_restart_callback_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--filter-tcp=80,443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+
+        let result = apply_config_transaction(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            || async { Ok("restart confirmed".to_string()) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.config.content, replacement);
+        assert_eq!(result.message, "restart confirmed");
+        assert_eq!(
+            tokio::fs::read(config).await.unwrap(),
+            replacement.as_bytes()
+        );
+    }
+
+    #[tokio::test]
+    async fn config_apply_rejects_stale_revision_without_calling_service() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let called = Arc::new(AtomicBool::new(false));
+        let called_by_restart = called.clone();
+
+        let result = apply_config_transaction(
+            &state,
+            ConfigWrite {
+                content: "NFQWS_ARGS=--filter-tcp=80\n".into(),
+                revision: "stale".into(),
+            },
+            move || {
+                called_by_restart.store(true, Ordering::SeqCst);
+                async { Ok("unexpected restart".to_string()) }
+            },
+        )
+        .await;
+
+        assert!(result.unwrap_err().contains("изменился после загрузки"));
+        assert!(!called.load(Ordering::SeqCst));
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
     }
 
     #[tokio::test]
