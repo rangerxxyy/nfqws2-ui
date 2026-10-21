@@ -4,7 +4,7 @@
 
 ## Установка
 
-Первый релиз будет доступен для 64-битных ARM-устройств Entware. Установщик задаёт пароль панели в интерактивном терминале, скачивает архив релиза, сверяет SHA-256, сохраняет конфигурацию и проверяет HTTP health endpoint.
+Первый релиз предназначен для 64-битных ARM-устройств Entware. Нужны `wget`, `tar` и `sha256sum` (Entware: `coreutils-sha256sum`). Если `sha256sum` отсутствует, установите зависимость отдельно командой `opkg update && opkg install coreutils-sha256sum`. Установщик не меняет состояние пакетов Entware. Он задаёт пароль панели в интерактивном терминале, скачивает архив релиза, сверяет SHA-256, сохраняет конфигурацию и проверяет HTTP health endpoint.
 
 ```sh
 wget -qO- https://github.com/rangerxxyy/nfqws2-ui/releases/latest/download/install.sh | sh

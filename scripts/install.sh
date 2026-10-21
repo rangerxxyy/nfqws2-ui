@@ -62,13 +62,7 @@ case "$VERSION" in ''|*@VERSION@*|*[!A-Za-z0-9._+-]*) fail 'invalid release vers
 [ -x /opt/bin/wget ] || command -v wget >/dev/null 2>&1 || fail 'wget is required'
 command -v tar >/dev/null 2>&1 || fail 'tar is required'
 if ! command -v sha256sum >/dev/null 2>&1; then
-	if command -v opkg >/dev/null 2>&1; then
-		if ! opkg update >/dev/null 2>&1 || ! opkg install coreutils-sha256sum >/dev/null 2>&1; then
-			fail 'install coreutils-sha256sum with opkg first'
-		fi
-	else
-		fail 'sha256sum is required (Entware package: coreutils-sha256sum)'
-	fi
+	fail 'sha256sum is required; install it first with: opkg update && opkg install coreutils-sha256sum'
 fi
 ARCH=$(uname -m)
 case "$ARCH" in aarch64|arm64) ;; *) fail "unsupported architecture: $ARCH (release targets aarch64)" ;; esac

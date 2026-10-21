@@ -16,3 +16,4 @@
 - Добавлена команда «Сохранить и применить» для конфигурации; применяется только при подтверждённом состоянии службы и использует штатный start/restart.
 - Запущен release dry-run: cross-test/build ARM64, проверка static binary, упаковки, версии установщика и SHA-256; ручной workflow не публикует релиз.
 - Далее: завершить dry-run, проверить итоговые assets и CI, затем создать публичный v0.1.0; реальный Keenetic smoke-test остаётся непроверенным.
+- Final review fixes: log endpoint now reads only a bounded tail; installer shows the exact checksum dependency command instead of running `opkg`; installer preflight regression coverage added.

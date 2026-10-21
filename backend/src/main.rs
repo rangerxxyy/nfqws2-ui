@@ -23,7 +23,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use subtle::ConstantTimeEq;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, Semaphore},
@@ -735,6 +735,17 @@ async fn restore_backup(
     .into_response()
 }
 
+async fn read_bounded_tail(path: &Path, max_bytes: usize) -> std::io::Result<Vec<u8>> {
+    let mut file = tokio::fs::File::open(path).await?;
+    let file_len = file.metadata().await?.len();
+    let offset = file_len.saturating_sub(max_bytes as u64);
+    file.seek(std::io::SeekFrom::Start(offset)).await?;
+
+    let mut tail = Vec::with_capacity((file_len - offset) as usize);
+    file.take(max_bytes as u64).read_to_end(&mut tail).await?;
+    Ok(tail)
+}
+
 async fn get_logs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -757,12 +768,11 @@ async fn get_logs(
         })
         .into_response();
     };
-    let bytes = match tokio::fs::read(path).await {
+    let bytes = match read_bounded_tail(Path::new(path), MAX_LOG_BYTES).await {
         Ok(bytes) => bytes,
         Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
     };
-    let tail_bytes = bytes.len().min(MAX_LOG_BYTES);
-    let mut content = String::from_utf8_lossy(&bytes[bytes.len() - tail_bytes..]).into_owned();
+    let mut content = String::from_utf8_lossy(&bytes).into_owned();
     if let Some(lines) = query.tail
         && lines > 0
         && lines < 5000
@@ -946,6 +956,19 @@ mod tests {
     async fn body_json(response: Response) -> serde_json::Value {
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn log_tail_reads_at_most_the_requested_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nfqws2.log");
+        let contents = vec![b'x'; MAX_LOG_BYTES * 4];
+        tokio::fs::write(&path, &contents).await.unwrap();
+
+        let tail = read_bounded_tail(&path, 1024).await.unwrap();
+
+        assert_eq!(tail.len(), 1024);
+        assert_eq!(tail, contents[contents.len() - 1024..]);
     }
 
     #[tokio::test]

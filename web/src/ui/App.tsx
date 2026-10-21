@@ -68,7 +68,7 @@ function App() {
     void fetchStatus();
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') void fetchStatus();
-    }, 8000);
+    }, 5000);
     const visibility = () => { if (document.visibilityState === 'visible') void fetchStatus(); };
     document.addEventListener('visibilitychange', visibility);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility); };

@@ -8,6 +8,7 @@
 - Added a save-and-apply configuration action that uses only a confirmed service state and the supported init start/restart command.
 - Marked conflicting init and live-process status as an error instead of reporting a false stopped state; CPU sampling excludes guest counters and rounds to one decimal place.
 - Bounded config writes and restores to 512 KiB before modifying files, and made temporary replacement files unique.
+- Limited log reads to the final 256 KiB before decoding, so a large router log cannot consume unbounded memory.
 - Added RAM/CPU status, config editing with SHA revision checks and backups, backup restore, bounded logs, and responsive RU/EN/ZH/TR UI with light/dark themes.
-- Added an ARM64 Entware installer with archive checksum/path validation, automatic port selection from 1002, health check, update rollback, plus a panel-only uninstaller.
+- Added an ARM64 Entware installer with archive checksum/path validation, explicit `sha256sum` prerequisite (no implicit Entware package changes), automatic port selection from 1002, health check, update rollback, plus a panel-only uninstaller.
 - Real Keenetic service actions are not yet claimed as tested because SSH authentication to the available router failed.
