@@ -1,7 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import { actionToApplyConfig, formatBytes, isMutatingActionAllowed, normalizeStatus } from './domain';
+import { actionToApplyConfig, configEditorReducer, formatBytes, isMutatingActionAllowed, normalizeStatus } from './domain';
 
 describe('UI domain formatting', () => {
+  it('keeps the configuration read-only until editing is requested and discards drafts on cancel', () => {
+    const loaded = configEditorReducer({ draft: '', editing: false }, { type: 'loaded', content: 'original\n' });
+    expect(loaded).toEqual({ draft: 'original\n', editing: false });
+
+    const editing = configEditorReducer(loaded, { type: 'edit' });
+    expect(editing.editing).toBe(true);
+    const changed = configEditorReducer(editing, { type: 'change', value: 'modified\n' });
+    expect(changed.draft).toBe('modified\n');
+    expect(configEditorReducer(changed, { type: 'cancel', content: 'original\n' })).toEqual({
+      draft: 'original\n', editing: false,
+    });
+  });
+
   it('keeps unknown status unknown instead of painting it green', () => {
     expect(normalizeStatus('unknown')).toBe('unknown');
     expect(normalizeStatus('running')).toBe('running');

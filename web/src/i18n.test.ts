@@ -6,7 +6,7 @@ describe('interface translations', () => {
     const keys: MessageKey[] = [
       'overview', 'config', 'logs', 'backups', 'settings', 'running', 'stopped', 'unknown',
       'start', 'stop', 'restart', 'refresh', 'save', 'confirmStop', 'confirmRestart',
-      'configRestartHint', 'lightTheme', 'darkTheme',
+      'configRestartHint', 'editConfig', 'cancelEdit', 'cancelEditConfirm', 'viewConfig', 'lightTheme', 'darkTheme',
     ];
     for (const locale of ['ru', 'en', 'zh', 'tr'] as const) {
       for (const key of keys) expect(t(locale, key).trim(), `${locale}.${key}`).not.toBe('');

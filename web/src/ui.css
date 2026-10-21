@@ -87,8 +87,10 @@ html[data-theme="light"] .section-title { color: #536b91; }
 .notice button { display: grid; place-items: center; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .app-footer { display: flex; gap: 9px; margin-top: 32px; padding: 15px 2px 0; border-top: 1px solid var(--border); color: var(--faint); font-size: 11px; }
 .editor-card { padding: 22px; }
+.config-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 42px; margin: 12px 0; }
 .muted { color: var(--muted); font-size: 13px; line-height: 1.55; }
 .code-editor, .log-view { width: 100%; min-height: min(62vh, 680px); resize: vertical; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--editor-bg); color: var(--text); font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; }
+.code-preview { width: 100%; min-height: min(62vh, 680px); margin: 0; overflow: auto; padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--editor-bg); color: var(--text); font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4; white-space: pre; }
 .log-view { margin: 14px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .editor-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 14px; color: var(--muted); font-size: 12px; }
 .error-text { color: #ff9ba2 !important; }

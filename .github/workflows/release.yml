@@ -62,9 +62,16 @@ jobs:
           install -m 755 scripts/S99nfqws2-ui "$PACKAGE/scripts/S99nfqws2-ui"
           install -m 644 scripts/symlink.sh "$PACKAGE/scripts/symlink.sh"
           install -m 755 scripts/uninstall.sh "$PACKAGE/uninstall.sh"
-          sed "s/@VERSION@/${VERSION}/g" scripts/install.sh > "$PACKAGE/install.sh"
+          # Replace only the assignment; a global replacement also rewrites the
+          # installer's unresolved-placeholder guard and rejects every version.
+          sed "s/^VERSION='@VERSION@'$/VERSION='${VERSION}'/" scripts/install.sh > "$PACKAGE/install.sh"
           chmod 755 "$PACKAGE/install.sh"
-          test "$(grep -c '@VERSION@' "$PACKAGE/install.sh" || true)" -eq 0
+          grep -Fxq "VERSION='${VERSION}'" "$PACKAGE/install.sh"
+          grep -Fq "case \"\$VERSION\" in ''|*@VERSION@*|*[!A-Za-z0-9._+-]*)" "$PACKAGE/install.sh"
+          # Exercise the exact rendered installer through its preflight path. It
+          # must pass the version guard and stop at the intentionally mocked
+          # missing sha256sum before making any package-manager changes.
+          sh tests/installer-preflight.sh "$PACKAGE/install.sh"
           tar -C "$PACKAGE" -czf "$RUNNER_TEMP/$ASSET" bin public scripts uninstall.sh
           cd "$RUNNER_TEMP"
           sha256sum "$ASSET" > "$ASSET.sha256"
@@ -95,13 +102,14 @@ jobs:
           generate_release_notes: false
           make_latest: true
           body: |
-            Первый публичный выпуск nfqws2-ui для ARM64 Entware.
+            Выпуск nfqws2-ui для ARM64 Entware.
 
             - TypeScript/React-интерфейс и Rust backend.
             - Проверка nfqws2 через штатный init-скрипт и PID/argv; управление start/stop/restart.
             - Конфигурация с резервным копированием, проверкой revision и применением через штатный restart/start.
             - Русский, английский, китайский и турецкий языки; светлая и тёмная темы.
             - Установщик проверяет SHA-256, порт/health-check и возвращает предыдущую версию при неудачном обновлении.
+            - Подстановка версии в установщик проверяется на опубликованном артефакте; исправлена ошибка, из-за которой установщик отклонял собственную версию.
 
             Установка или обновление:
 

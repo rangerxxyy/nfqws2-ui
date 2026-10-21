@@ -1,6 +1,26 @@
 export type ServiceState = 'running' | 'stopped' | 'error' | 'unknown';
 export type ServiceAction = 'start' | 'stop' | 'restart';
 
+export type ConfigEditorState = { draft: string; editing: boolean };
+export type ConfigEditorAction =
+  | { type: 'loaded'; content: string }
+  | { type: 'edit' }
+  | { type: 'change'; value: string }
+  | { type: 'cancel'; content: string }
+  | { type: 'saved'; content: string }
+  | { type: 'reset' };
+
+export function configEditorReducer(state: ConfigEditorState, action: ConfigEditorAction): ConfigEditorState {
+  switch (action.type) {
+    case 'loaded': return { draft: action.content, editing: false };
+    case 'edit': return { ...state, editing: true };
+    case 'change': return state.editing ? { ...state, draft: action.value } : state;
+    case 'cancel': return { draft: action.content, editing: false };
+    case 'saved': return { draft: action.content, editing: false };
+    case 'reset': return { draft: '', editing: false };
+  }
+}
+
 export function normalizeStatus(value: unknown): ServiceState {
   return value === 'running' || value === 'stopped' || value === 'error' ? value : 'unknown';
 }
