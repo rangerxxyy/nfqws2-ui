@@ -1829,11 +1829,11 @@ export default function App() {
                 <div>
                   {"\n                "}
                   <h2 className={"text-base sm:text-lg font-bold text-white"}>
-                    {"Локальные снимки (`/opt/etc/nfqws2/.snapshots/`)"}
+                    {"Резервные копии конфигурации"}
                   </h2>
                   {"\n                "}
                   <p className={"text-xs text-slate-400"}>
-                    {"Автоматические точки отката перед каждым изменением и раз в сутки"}
+                    {"Снимок текущего nfqws2.conf; автоматические снимки и списки пока не поддерживаются"}
                   </p>
                   {"\n              "}
                 </div>

@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
+import { api, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
 import { deduplicateListContent } from './list-editor';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
@@ -183,13 +183,31 @@ async function loadLogs() {
 async function loadBackups() {
 
   try {
-    const response = await api<{ backups: { id: string; createdAt: number; file: string }[] }>('/api/backups');
+    const response = await nfqwsBackups.list();
     setText('#snapshotCountBadge', String(response.backups.length));
     const box = $('#snapshotsListBox'); if (!box) return;
     box.replaceChildren();
     if (!response.backups.length) { box.textContent = 'Резервных копий пока нет'; return; }
-    for (const backup of response.backups) { const row = document.createElement('div'); row.className = 'p-3 rounded-lg bg-slate-900 border border-slate-800 flex justify-between gap-3'; row.textContent = `${backup.file} · ${new Date(backup.createdAt * 1000).toLocaleString()}`; box.append(row); }
+    for (const backup of response.backups) {
+      const row = document.createElement('div'); row.className = 'p-3 rounded-lg bg-slate-900 border border-slate-800 flex justify-between items-center gap-3';
+      const label = document.createElement('span'); label.textContent = `${backup.file} · ${new Date(backup.createdAt * 1000).toLocaleString()}`;
+      const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs'; restore.textContent = 'Восстановить'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.arg = backup.id;
+      row.append(label, restore); box.append(row);
+    }
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить копии', 'error'); }
+}
+async function createNewSnapshot() {
+  setBusy(true);
+  try { const backup = await nfqwsBackups.create(); await loadBackups(); toast(`Снимок конфигурации создан: ${new Date(backup.createdAt * 1000).toLocaleString()}`); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось создать снимок', 'error'); }
+  finally { setBusy(false); }
+}
+async function restoreSnapshot(id: string) {
+  if (!window.confirm('Заменить текущую конфигурацию этим снимком? Перед восстановлением backend сохранит текущую версию. Служба nfqws2 автоматически не перезапускается.')) return;
+  setBusy(true);
+  try { const result = await nfqwsBackups.restore(id); await loadConfig(); await loadBackups(); toast(`${result.message}. Перезапустите nfqws2, чтобы применить.`); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить снимок', 'error'); }
+  finally { setBusy(false); }
 }
 async function loadList(id: NfqwsListId) {
 
@@ -263,7 +281,7 @@ function syncListScroll(editor: HTMLTextAreaElement) {
   const gutter = $('#listLineNumbers');
   if (gutter) gutter.scrollTop = editor.scrollTop;
 }
-export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','createNewSnapshot','restoreSnapshot','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','injectPresetDomains','findTelegramChatId'] as const;
+export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','injectPresetDomains','findTelegramChatId'] as const;
 
 function bindPrototypeActions() {
   const showDiff = () => {
@@ -285,6 +303,8 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => { showRoute(route); if (route === 'snapshots') void loadBackups(); },
+    createNewSnapshot: () => void createNewSnapshot(),
+    restoreSnapshot: (id: string) => void restoreSnapshot(id),
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
     applyConfigAndRestart: () => void saveConfigAndApply(),

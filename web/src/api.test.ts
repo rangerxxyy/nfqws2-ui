@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsInstallation, nfqwsLists } from './api';
+import { api, nfqwsBackups, nfqwsInstallation, nfqwsLists } from './api';
 
 describe('API client used by the source-based panel', () => {
   afterEach(() => { vi.restoreAllMocks(); });
@@ -46,5 +46,21 @@ describe('API client used by the source-based panel', () => {
     expect(init.method).toBe('PUT');
     expect(new Headers(init.headers).has('X-CSRF-Token')).toBe(false);
     expect(JSON.parse(String(init.body))).toEqual({ content: 'example.org\n', revision: 'current' });
+  });
+
+  it('creates and restores snapshots through the backend API', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"id":"nfqws2.conf.123.000000001.bak","createdAt":123,"file":"nfqws2.conf"}', { status: 201 }))
+      .mockResolvedValueOnce(new Response('{"message":"Конфигурация восстановлена"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const backup = await nfqwsBackups.create();
+    const restored = await nfqwsBackups.restore(backup.id);
+
+    expect(backup.file).toBe('nfqws2.conf');
+    expect(restored.message).toContain('восстановлена');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/backups');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/backups/nfqws2.conf.123.000000001.bak/restore');
   });
 });

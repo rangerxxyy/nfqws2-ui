@@ -24,6 +24,7 @@ export type NfqwsInstallation = {
   binaryCandidates: InstallationPath[];
   lists: InstallationPath[];
 };
+export type BackupItem = { id: string; createdAt: number; file: string };
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
@@ -49,4 +50,10 @@ export const nfqwsLists = {
 
 export const nfqwsInstallation = {
   get: () => api<NfqwsInstallation>('/api/nfqws2/installation'),
+};
+
+export const nfqwsBackups = {
+  list: () => api<{ backups: BackupItem[] }>('/api/backups'),
+  create: () => api<BackupItem>('/api/backups', { method: 'POST' }),
+  restore: (id: string) => api<{ message: string }>(`/api/backups/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
 };

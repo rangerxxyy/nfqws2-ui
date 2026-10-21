@@ -1001,6 +1001,78 @@ async fn get_backups(State(state): State<Arc<AppState>>) -> Response {
     Json(BackupsResponse { backups }).into_response()
 }
 
+async fn create_backup(State(state): State<Arc<AppState>>) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Файл конфигурации не найден");
+    };
+    let _write_guard = state.config_write_lock.lock().await;
+    let content = match tokio::fs::read(&config).await {
+        Ok(content) if content.len() <= MAX_CONFIG_BYTES => content,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Конфигурация превышает лимит",
+            );
+        }
+        Err(io_error) => return error(StatusCode::NOT_FOUND, io_error.to_string()),
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let stamp = format!("{}.{:09}", now.as_secs(), now.subsec_nanos());
+    let id = format!("nfqws2.conf.{stamp}.bak");
+    let directory = state.data_dir.join("backups");
+    if let Err(io_error) = tokio::fs::create_dir_all(&directory).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(io_error) =
+            tokio::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).await
+        {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+        }
+    }
+    let backup_path = directory.join(&id);
+    let mut backup = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&backup_path)
+        .await
+    {
+        Ok(file) => file,
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    if let Err(io_error) = backup.write_all(&content).await {
+        let _ = tokio::fs::remove_file(&backup_path).await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    if let Err(io_error) = backup.sync_all().await {
+        let _ = tokio::fs::remove_file(&backup_path).await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(io_error) =
+            tokio::fs::set_permissions(&backup_path, std::fs::Permissions::from_mode(0o600)).await
+        {
+            let _ = tokio::fs::remove_file(&backup_path).await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+        }
+    }
+    (
+        StatusCode::CREATED,
+        Json(BackupItem {
+            id,
+            created_at: now.as_secs(),
+            file: "nfqws2.conf".into(),
+        }),
+    )
+        .into_response()
+}
+
 async fn restore_backup(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -1015,7 +1087,7 @@ async fn restore_backup(
         return error(StatusCode::BAD_REQUEST, "Неверный ID резервной копии");
     }
     let backup = state.data_dir.join("backups").join(id);
-    let Some(config) = config_path("nfqws2.conf") else {
+    let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Файл конфигурации не найден");
     };
     let content = match tokio::fs::read(&backup).await {
@@ -1106,7 +1178,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/nfqws2/lists", get(get_lists))
         .route("/api/nfqws2/lists/{id}", get(get_list).put(put_list))
-        .route("/api/backups", get(get_backups))
+        .route("/api/backups", get(get_backups).post(create_backup))
         .route("/api/backups/{id}/restore", post(restore_backup))
         .route("/api/logs", get(get_logs))
         .with_state(state)
@@ -1339,6 +1411,91 @@ mod tests {
         );
         assert_eq!(report["lists"][0]["usedByActiveConfig"], true);
         assert_eq!(report["lists"][0]["readable"], true);
+    }
+
+    #[tokio::test]
+    async fn create_backup_endpoint_snapshots_the_config_without_rewriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--hostlist=lists/user.list\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/backups")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let backup = body_json(response).await;
+        assert_eq!(backup["file"], "nfqws2.conf");
+        let id = backup["id"].as_str().unwrap();
+        assert!(id.starts_with("nfqws2.conf."));
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
+        assert_eq!(
+            tokio::fs::read(dir.path().join("state/backups").join(id))
+                .await
+                .unwrap(),
+            original
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_backup_restores_selected_config_and_keeps_pre_restore_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--hostlist=lists/original.list\n";
+        let changed = b"NFQWS_ARGS=--hostlist=lists/changed.list\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
+        let created = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/backups")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let backup = body_json(created).await;
+        let id = backup["id"].as_str().unwrap();
+        tokio::fs::write(&config, changed).await.unwrap();
+
+        let restored = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/backups/{id}/restore"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(restored.status(), StatusCode::OK);
+        assert_eq!(tokio::fs::read(&config).await.unwrap(), original);
+        let backups_dir = dir.path().join("state/backups");
+        let mut entries = tokio::fs::read_dir(backups_dir).await.unwrap();
+        let mut saved_changed_version = false;
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            if entry.file_name() != id {
+                saved_changed_version |= tokio::fs::read(entry.path()).await.unwrap() == changed;
+            }
+        }
+        assert!(
+            saved_changed_version,
+            "pre-restore config must be retained as a backup"
+        );
     }
 
     #[tokio::test]
