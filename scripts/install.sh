@@ -16,17 +16,24 @@ STAGE="$ROOT/releases/$VERSION-$(date +%Y%m%d%H%M%S)-$$"
 TMP="/tmp/nfqws2-ui-install-$$"
 PREVIOUS=''
 TTY_OFF=0
+COMMITTED=0
+SWITCHED=0
 
 fail() { echo "nfqws2-ui installer: $*" >&2; exit 1; }
 # cleanup is called by EXIT/HUP/INT/TERM traps.
 # shellcheck disable=SC2317
 cleanup() {
 	if [ "$TTY_OFF" = 1 ]; then stty echo </dev/tty 2>/dev/null || true; printf '\n' >/dev/tty 2>/dev/null || true; fi
+	if [ "$COMMITTED" != 1 ] && [ -d "$STAGE" ]; then
+		CURRENT=$(readlink "$ROOT/current" 2>/dev/null || true)
+		[ "$CURRENT" = "$STAGE" ] || rm -rf "$STAGE"
+	fi
 	rm -rf "$TMP"
 }
 # rollback is called only after the install transaction has switched versions.
 # shellcheck disable=SC2317
 rollback() {
+	[ "$SWITCHED" = 1 ] || return 0
 	if [ -n "$PREVIOUS" ]; then
 		ln -s "$PREVIOUS" "$ROOT/current.rollback.$$"
 		mv -f "$ROOT/current.rollback.$$" "$ROOT/current"
@@ -37,9 +44,18 @@ rollback() {
 		rm -f /opt/etc/init.d/S99nfqws2-ui
 	fi
 	[ ! -d "$STAGE" ] || rm -rf "$STAGE"
+	SWITCHED=0
+}
+
+# abort is invoked indirectly by the HUP/INT/TERM traps.
+# shellcheck disable=SC2317
+abort() {
+	if [ "$SWITCHED" = 1 ]; then rollback || true; fi
+	cleanup
+	exit 1
 }
 trap cleanup EXIT
-trap 'cleanup; exit 1' HUP INT TERM
+trap abort HUP INT TERM
 
 case "$VERSION" in ''|*@VERSION@*|*[!A-Za-z0-9._+-]*) fail 'invalid release version embedded in install.sh' ;; esac
 [ "$(id -u)" = 0 ] || fail 'run as root'
@@ -111,6 +127,7 @@ chmod 755 /opt/etc/init.d/S99nfqws2-ui
 if [ -L "$ROOT/current" ]; then PREVIOUS=$(readlink "$ROOT/current"); fi
 ln -s "$STAGE" "$ROOT/current.new.$$"
 mv -f "$ROOT/current.new.$$" "$ROOT/current"
+SWITCHED=1
 if ! /opt/etc/init.d/S99nfqws2-ui restart; then rollback; fail 'service failed to start; previous version restored'; fi
 
 PORT=1002
@@ -124,8 +141,9 @@ while [ "$tries" -lt 15 ]; do
 				[ -d "$old_release" ] || continue
 				[ "$old_release" = "$STAGE" ] && continue
 				[ -n "$PREVIOUS" ] && [ "$old_release" = "$PREVIOUS" ] && continue
-				rm -rf "$old_release"
+				rm -rf "$old_release" 2>/dev/null || true
 			done
+			COMMITTED=1
 			echo "nfqws2-ui $VERSION installed: http://<router-lan-ip>:$PORT/"
 			exit 0
 		fi

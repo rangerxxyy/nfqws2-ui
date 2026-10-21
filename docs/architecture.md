@@ -9,7 +9,7 @@
 
 ## Границы безопасности
 
-1. Bind только на LAN/`0.0.0.0` по явной настройке; порт начинается с 1002 и выбирает следующий свободный в заданном ограниченном диапазоне.
+1. Bind на `0.0.0.0`; порт начинается с 1002 и выбирает следующий свободный до 1100. Ограничение доступа до LAN выполняется сетевой политикой/firewall роутера.
 2. Административные API требуют аутентифицированную сессию; cookie HttpOnly/SameSite, CSRF token для мутаций.
 3. Сервисные действия — enum, выполняются напрямую через `Command` с фиксированным init path и аргументом; shell не вызывается.
 4. Конфигурационные пути выбираются из allowlist; не принимать клиентский абсолютный путь. Запись атомарная, backup/snapshot обязателен до записи.
@@ -22,7 +22,7 @@
 - `POST /api/login`, `POST /api/logout`, `GET /api/session`.
 - `GET /api/status` — нормализованный status + причина + system metrics.
 - `POST /api/service` — `{ action: start|stop|restart }`.
-- `GET/PUT /api/config` — allowlisted config; PUT возвращает snapshot id.
+- `GET/PUT /api/config` — allowlisted config; PUT требует актуальный SHA-256 revision и возвращает новую revision.
 - `GET /api/backups`, `POST /api/backups/:id/restore`.
 - `GET /api/logs?source=...&tail=...` — только известный источник и ограниченный хвост.
 

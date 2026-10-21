@@ -5,6 +5,8 @@
 - Rebuilt the panel from a clean repository with React/TypeScript UI and a Rust local API.
 - Added authenticated sessions with Argon2 password hashes, CSRF protection, rate limiting, security headers, and conservative service status.
 - Added nfqws2 start/stop/restart via the detected init script; status requires init confirmation and a matching PID/cmdline.
+- Added a save-and-apply configuration action that uses only a confirmed service state and the supported init start/restart command.
+- Marked conflicting init and live-process status as an error instead of reporting a false stopped state; CPU sampling excludes guest counters and rounds to one decimal place.
 - Added RAM/CPU status, config editing with SHA revision checks and backups, backup restore, bounded logs, and responsive RU/EN/ZH/TR UI with light/dark themes.
 - Added an ARM64 Entware installer with archive checksum/path validation, automatic port selection from 1002, health check, update rollback, plus a panel-only uninstaller.
 - Real Keenetic service actions are not yet claimed as tested because SSH authentication to the available router failed.

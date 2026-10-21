@@ -7,7 +7,11 @@
 - SSH к роутеру не прошёл publickey/password аутентификацию; безопасные проверки на устройстве пока недоступны, никаких изменений на роутере не сделано.
 - Реализованы TypeScript/React UI, Rust API, auth+CSRF, статус и метрики, allowlisted config/backups, логи, port selection/persistence, обновляемый install/uninstall и Entware init integration.
 - Первый установочный пакет ограничен ARM64 Entware; под `zemidala/nfqws2-ui` у текущего аккаунта только чтение, создан будет независимый новый репозиторий пользователя.
-- Локальная проверка пройдена: Rust 8 тестов, Clippy, TypeScript 3 теста и prod build, HTTP smoke; `dash -n` прошёл.
+- Локальная проверка пройдена: Rust 13 тестов, Clippy, TypeScript 5 тестов и prod build, HTTP smoke; `dash -n` прошёл.
 - Cross-target `cargo check` сначала нашёл Unix-only async compile issue; исправлено, повторный `aarch64-unknown-linux-musl` check прошёл.
 - Реальный роутер пока не тестировался: SSH key auth отказал; не запускались/не останавливались nfqws2 и не изменялись роутерные файлы.
-- Далее: добавить CI/release workflow, прогнать все gates на новом GitHub repo, собрать ARM64 артефакт, проверить install asset и публиковать только если проверки зелёные.
+- GitHub CI прошёл: Rust tests/Clippy/cargo-audit, TypeScript tests/build/pnpm audit, dash syntax и ShellCheck.
+- Добавлены регрессионные проверки расхождения init/PID и точности CPU; CPU-метрика исключает guest-счётчики Linux.
+- Добавлена команда «Сохранить и применить» для конфигурации; применяется только при подтверждённом состоянии службы и использует штатный start/restart.
+- Запущен release dry-run: cross-test/build ARM64, проверка static binary, упаковки, версии установщика и SHA-256; ручной workflow не публикует релиз.
+- Далее: завершить dry-run, проверить итоговые assets и CI, затем создать публичный v0.1.0; реальный Keenetic smoke-test остаётся непроверенным.

@@ -409,29 +409,39 @@ fn parse_meminfo_kb_key(text: &str, key: &str) -> Option<u64> {
     })
 }
 
-async fn cpu_sample(state: &AppState) -> Option<f64> {
-    let text = tokio::fs::read_to_string("/proc/stat").await.ok()?;
-    let first = text.lines().next()?;
-    let values: Vec<u64> = first
+fn parse_cpu_counters(text: &str) -> Option<(u64, u64)> {
+    let cpu_line = text.lines().find(|line| line.starts_with("cpu "))?;
+    let values: Vec<u64> = cpu_line
         .split_whitespace()
         .skip(1)
+        .take(8)
         .filter_map(|part| part.parse().ok())
         .collect();
     if values.len() < 4 {
         return None;
     }
-    let total: u64 = values.iter().copied().sum();
+    let total = values
+        .iter()
+        .fold(0u64, |total, value| total.saturating_add(*value));
     let idle = values[3].saturating_add(*values.get(4).unwrap_or(&0));
+    Some((total, idle))
+}
+
+fn cpu_percent_between(previous: (u64, u64), current: (u64, u64)) -> Option<f64> {
+    let delta_total = current.0.checked_sub(previous.0)?;
+    let delta_idle = current.1.checked_sub(previous.1)?;
+    (delta_total > 0).then(|| {
+        let percent = 100.0 * (delta_total.saturating_sub(delta_idle) as f64 / delta_total as f64);
+        ((percent * 10.0).round() / 10.0).clamp(0.0, 100.0)
+    })
+}
+
+async fn cpu_sample(state: &AppState) -> Option<f64> {
+    let text = tokio::fs::read_to_string("/proc/stat").await.ok()?;
+    let current = parse_cpu_counters(&text)?;
     let mut previous = state.cpu_previous.lock().await;
-    let result = previous.and_then(|(prev_total, prev_idle)| {
-        let delta_total = total.checked_sub(prev_total)?;
-        let delta_idle = idle.checked_sub(prev_idle)?;
-        (delta_total > 0).then(|| {
-            (100.0 * (delta_total.saturating_sub(delta_idle) as f64 / delta_total as f64))
-                .clamp(0.0, 100.0)
-        })
-    });
-    *previous = Some((total, idle));
+    let result = previous.and_then(|old| cpu_percent_between(old, current));
+    *previous = Some(current);
     result
 }
 
@@ -1067,5 +1077,20 @@ mod tests {
             tokio::fs::read_to_string(backup_path).await.unwrap(),
             "original config\n"
         );
+    }
+
+    #[test]
+    fn cpu_parser_excludes_guest_time_and_percent_uses_counter_deltas() {
+        let before = parse_cpu_counters("cpu 100 10 20 800 30 5 5 10 40 2\n").unwrap();
+        let after = parse_cpu_counters("cpu 150 10 25 840 35 5 5 10 100 8\n").unwrap();
+        assert_eq!(before, (980, 830));
+        assert_eq!(after, (1080, 875));
+        assert_eq!(cpu_percent_between(before, after), Some(55.0));
+    }
+
+    #[test]
+    fn cpu_parser_returns_no_value_for_malformed_or_reset_counters() {
+        assert_eq!(parse_cpu_counters("cpu bad data"), None);
+        assert_eq!(cpu_percent_between((100, 80), (90, 70)), None);
     }
 }
