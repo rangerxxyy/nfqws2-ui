@@ -20,6 +20,13 @@ describe('HTML-based panel shell without authentication', () => {
     expect(template).not.toContain('7194028410:AAH8x9kLmP2qW_nfqws2_router_bot');
   });
 
+  it('keeps list deduplication as a real local draft action', () => {
+    expect(panelSource).toMatch(/deduplicateCurrentList:\s*\(\)\s*=>/);
+    const disabledList = panelSource.match(/export const DISABLED_PANEL_ACTIONS = \[([\s\S]*?)\] as const/);
+    expect(disabledList?.[1]).not.toContain('deduplicateCurrentList');
+    expect(panelSource).toContain('deduplicateListContent');
+  });
+
   it('keeps all styling and interactions local for the router CSP', () => {
     expect(template).not.toMatch(/\son(?:click|input|change|scroll|submit)=/i);
     expect(template).not.toContain('cdn.tailwindcss.com');

@@ -2,6 +2,7 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
+import { deduplicateListContent } from './list-editor';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 let status: StatusResponse | null = null;
@@ -262,7 +263,7 @@ function syncListScroll(editor: HTMLTextAreaElement) {
   const gutter = $('#listLineNumbers');
   if (gutter) gutter.scrollTop = editor.scrollTop;
 }
-export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','createNewSnapshot','restoreSnapshot','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','injectPresetDomains','deduplicateCurrentList','findTelegramChatId'] as const;
+export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','createNewSnapshot','restoreSnapshot','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','injectPresetDomains','findTelegramChatId'] as const;
 
 function bindPrototypeActions() {
   const showDiff = () => {
@@ -304,6 +305,16 @@ function bindPrototypeActions() {
     syncCustomHostInput: () => undefined,
     selectListFile: (name: NfqwsListId) => void loadList(name),
     saveActiveListFile: () => void saveActiveList(),
+    deduplicateCurrentList: () => {
+      if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
+      const editor = $('#listEditorTextarea');
+      if (!(editor instanceof HTMLTextAreaElement)) return;
+      const result = deduplicateListContent(editor.value, activeList.id);
+      if (!result.removed) return toast('Дубликаты не найдены.');
+      editor.value = result.content;
+      syncListLineNumbers(editor);
+      toast(`Удалено дубликатов: ${result.removed}. Черновик изменён; нажмите «Сохранить» для записи.`);
+    },
     clearLogsBox: () => { const host = $('#liveLogContainer'); if (host) host.textContent = ''; },
     emitTestLogEvent: () => toast('Тестовая генерация журналов отключена.'),
     showToast: (message: string) => toast(String(message)),
