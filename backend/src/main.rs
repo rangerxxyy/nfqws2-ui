@@ -415,8 +415,9 @@ fn parse_cpu_counters(text: &str) -> Option<(u64, u64)> {
         .split_whitespace()
         .skip(1)
         .take(8)
-        .filter_map(|part| part.parse().ok())
-        .collect();
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
     if values.len() < 4 {
         return None;
     }
@@ -565,9 +566,15 @@ async fn backup_and_write(
     config: &Path,
     new_content: &[u8],
 ) -> Result<(), String> {
+    if new_content.len() > MAX_CONFIG_BYTES {
+        return Err("Новая конфигурация превышает лимит 512 КБ".into());
+    }
     let old = tokio::fs::read(config)
         .await
         .map_err(|error| error.to_string())?;
+    if old.len() > MAX_CONFIG_BYTES {
+        return Err("Текущая конфигурация превышает лимит 512 КБ; изменение отменено".into());
+    }
     let backup_dir = data_dir.join("backups");
     tokio::fs::create_dir_all(&backup_dir)
         .await
@@ -609,7 +616,7 @@ async fn backup_and_write(
     let meta = tokio::fs::metadata(config)
         .await
         .map_err(|error| error.to_string())?;
-    let tmp = config.with_extension(format!("conf.{}.tmp", std::process::id()));
+    let tmp = config.with_extension(format!("conf.{stamp}.tmp"));
     let mut tmp_file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1091,6 +1098,21 @@ mod tests {
     #[test]
     fn cpu_parser_returns_no_value_for_malformed_or_reset_counters() {
         assert_eq!(parse_cpu_counters("cpu bad data"), None);
+        assert_eq!(parse_cpu_counters("cpu 100 10 bad 800 30 5 5 10"), None);
         assert_eq!(cpu_percent_between((100, 80), (90, 70)), None);
+    }
+
+    #[tokio::test]
+    async fn config_write_refuses_oversized_input_without_touching_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        tokio::fs::write(&config, b"original\n").await.unwrap();
+        let oversized = vec![b'x'; MAX_CONFIG_BYTES + 1];
+
+        let result = backup_and_write(dir.path(), &config, &oversized).await;
+
+        assert!(result.is_err());
+        assert_eq!(tokio::fs::read(&config).await.unwrap(), b"original\n");
+        assert!(!dir.path().join("backups").exists());
     }
 }
