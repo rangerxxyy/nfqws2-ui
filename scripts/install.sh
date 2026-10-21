@@ -18,10 +18,14 @@ PREVIOUS=''
 TTY_OFF=0
 
 fail() { echo "nfqws2-ui installer: $*" >&2; exit 1; }
+# cleanup is called by EXIT/HUP/INT/TERM traps.
+# shellcheck disable=SC2317
 cleanup() {
 	if [ "$TTY_OFF" = 1 ]; then stty echo </dev/tty 2>/dev/null || true; printf '\n' >/dev/tty 2>/dev/null || true; fi
 	rm -rf "$TMP"
 }
+# rollback is called only after the install transaction has switched versions.
+# shellcheck disable=SC2317
 rollback() {
 	if [ -n "$PREVIOUS" ]; then
 		ln -s "$PREVIOUS" "$ROOT/current.rollback.$$"
@@ -43,7 +47,9 @@ case "$VERSION" in ''|*@VERSION@*|*[!A-Za-z0-9._+-]*) fail 'invalid release vers
 command -v tar >/dev/null 2>&1 || fail 'tar is required'
 if ! command -v sha256sum >/dev/null 2>&1; then
 	if command -v opkg >/dev/null 2>&1; then
-		opkg update >/dev/null 2>&1 && opkg install coreutils-sha256sum >/dev/null 2>&1 || fail 'install coreutils-sha256sum with opkg first'
+		if ! opkg update >/dev/null 2>&1 || ! opkg install coreutils-sha256sum >/dev/null 2>&1; then
+			fail 'install coreutils-sha256sum with opkg first'
+		fi
 	else
 		fail 'sha256sum is required (Entware package: coreutils-sha256sum)'
 	fi
