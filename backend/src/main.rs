@@ -1070,11 +1070,30 @@ async fn backup_and_write_named(
         .map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = meta.permissions().mode();
-        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let temporary_meta = tokio::fs::metadata(&tmp)
             .await
             .map_err(|error| error.to_string())?;
+        if temporary_meta.uid() != meta.uid() || temporary_meta.gid() != meta.gid() {
+            let path = std::ffi::CString::new(tmp.as_os_str().as_bytes())
+                .map_err(|_| "Путь временного файла содержит NUL-байт".to_string())?;
+            // The configured file's owner is preserved across atomic replacement.
+            if unsafe { libc::chown(path.as_ptr(), meta.uid(), meta.gid()) } != 0 {
+                let error = std::io::Error::last_os_error();
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(format!(
+                    "Не удалось сохранить владельца/группу конфигурации: {error}"
+                ));
+            }
+        }
+        let mode = meta.permissions().mode();
+        if let Err(error) =
+            tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).await
+        {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(error.to_string());
+        }
     }
     drop(tmp_file);
     if let Err(error) = tokio::fs::rename(&tmp, source).await {
@@ -1964,6 +1983,37 @@ mod tests {
         assert_eq!(
             tokio::fs::read_to_string(backup_path).await.unwrap(),
             "original config\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_config_write_preserves_unix_owner_group_and_mode() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        tokio::fs::write(&config, b"original\n").await.unwrap();
+        tokio::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o640))
+            .await
+            .unwrap();
+        let path = std::ffi::CString::new(config.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::chown(path.as_ptr(), 65534, 65534) }, 0);
+        let before = tokio::fs::metadata(&config).await.unwrap();
+
+        backup_and_write(dir.path(), &config, b"replacement\n")
+            .await
+            .unwrap();
+        let after = tokio::fs::metadata(&config).await.unwrap();
+
+        assert_eq!(after.uid(), before.uid());
+        assert_eq!(after.gid(), before.gid());
+        assert_eq!(
+            after.permissions().mode() & 0o7777,
+            before.permissions().mode() & 0o7777
         );
     }
 
