@@ -1,0 +1,10 @@
+# Changelog
+
+## [0.1.0] — first public build
+
+- Rebuilt the panel from a clean repository with React/TypeScript UI and a Rust local API.
+- Added authenticated sessions with Argon2 password hashes, CSRF protection, rate limiting, security headers, and conservative service status.
+- Added nfqws2 start/stop/restart via the detected init script; status requires init confirmation and a matching PID/cmdline.
+- Added RAM/CPU status, config editing with SHA revision checks and backups, backup restore, bounded logs, and responsive RU/EN/ZH/TR UI with light/dark themes.
+- Added an ARM64 Entware installer with archive checksum/path validation, automatic port selection from 1002, health check, update rollback, plus a panel-only uninstaller.
+- Real Keenetic service actions are not yet claimed as tested because SSH authentication to the available router failed.

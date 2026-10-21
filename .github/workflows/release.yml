@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: pnpm/setup@v3
+        with:
+          version: 11.25.0
+          runtime: node@22
+          working-directory: web
+          install: false
+      - uses: taiki-e/install-action@cross
+      - uses: taiki-e/install-action@cargo-audit
+      - name: Verify source and build web UI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dash shellcheck
+          for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui; do dash -n "$file"; done
+          shellcheck -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui
+          cargo fmt --manifest-path backend/Cargo.toml --all -- --check
+          cargo test --manifest-path backend/Cargo.toml --locked
+          cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings
+          cargo audit --file backend/Cargo.lock
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web test
+          pnpm --dir web build
+          pnpm --dir web audit --prod
+      - name: Cross-build router binary
+        run: |
+          cross test --manifest-path backend/Cargo.toml --target aarch64-unknown-linux-musl --locked
+          cross build --manifest-path backend/Cargo.toml --release --target aarch64-unknown-linux-musl --locked
+      - name: Package release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          [[ "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]
+          PACKAGE="$RUNNER_TEMP/nfqws2-ui-package"
+          ASSET="nfqws2-ui-v${VERSION}-aarch64-unknown-linux-musl.tar.gz"
+          mkdir -p "$PACKAGE/bin" "$PACKAGE/public" "$PACKAGE/scripts"
+          install -m 755 "backend/target/aarch64-unknown-linux-musl/release/nfqws2-ui" "$PACKAGE/bin/nfqws2-ui"
+          cp -R web/dist/. "$PACKAGE/public/"
+          install -m 755 scripts/S99nfqws2-ui "$PACKAGE/scripts/S99nfqws2-ui"
+          install -m 755 scripts/uninstall.sh "$PACKAGE/uninstall.sh"
+          sed "s/@VERSION@/${VERSION}/g" scripts/install.sh > "$PACKAGE/install.sh"
+          chmod 755 "$PACKAGE/install.sh"
+          test "$(grep -c '@VERSION@' "$PACKAGE/install.sh" || true)" -eq 0
+          tar -C "$PACKAGE" -czf "$RUNNER_TEMP/$ASSET" bin public scripts uninstall.sh
+          cd "$RUNNER_TEMP"
+          sha256sum "$ASSET" > "$ASSET.sha256"
+          cp "$PACKAGE/install.sh" "$RUNNER_TEMP/install.sh"
+          readelf -h "$PACKAGE/bin/nfqws2-ui" | grep -q 'Machine:.*AArch64'
+          ! readelf -l "$PACKAGE/bin/nfqws2-ui" | grep -q 'INTERP'
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: nfqws2-ui ${{ github.ref_name }}
+          generate_release_notes: true
+          make_latest: true
+          files: |
+            ${{ runner.temp }}/install.sh
+            ${{ runner.temp }}/nfqws2-ui-v*-aarch64-unknown-linux-musl.tar.gz
+            ${{ runner.temp }}/nfqws2-ui-v*-aarch64-unknown-linux-musl.tar.gz.sha256

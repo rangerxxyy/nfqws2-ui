@@ -1,0 +1,32 @@
+[package]
+name = "nfqws2-ui"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "nfqws2_ui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nfqws2-ui"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["json"] }
+argon2 = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "fs", "process", "time"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.9"
+password-hash = { version = "0.5", features = ["getrandom"] }
+subtle = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
