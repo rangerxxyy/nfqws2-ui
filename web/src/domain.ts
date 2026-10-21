@@ -45,3 +45,8 @@ export function actionToApplyConfig(state: ServiceState): ServiceAction | null {
 export function percent(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 }
+
+export function usagePercent(used: number | null, total: number | null): number | null {
+  if (used === null || total === null || !Number.isFinite(used) || !Number.isFinite(total) || used < 0 || total <= 0) return null;
+  return Math.min(100, Math.round(used / total * 100));
+}

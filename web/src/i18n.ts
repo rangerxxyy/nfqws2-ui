@@ -3,6 +3,8 @@ import type { Locale } from './api';
 const messages = {
   ru: {
     overview: 'Обзор', config: 'Конфигурация', backups: 'Резервные копии', logs: 'Журналы', settings: 'Настройки',
+    navControls: 'Управление и правила', navDiagnostics: 'Диагностика и автоматизация', navSystem: 'Система',
+    configFileInfo: 'ФАЙЛ КОНФИГУРАЦИИ', configFileLabel: 'Файл', lineCount: 'строк', safeSaveTitle: 'БЕЗОПАСНОЕ СОХРАНЕНИЕ',
     status: 'Состояние nfqws2', running: 'Работает', stopped: 'Остановлен', error: 'Ошибка службы', unknown: 'Статус неизвестен',
     refresh: 'Обновить статус', start: 'Запустить', stop: 'Остановить', restart: 'Перезапустить', ram: 'Память', cpu: 'Процессор',
     save: 'Сохранить конфигурацию', saveApply: 'Сохранить и применить', signIn: 'Войти', password: 'Пароль администратора', logout: 'Выйти', unavailable: 'Backend недоступен',
@@ -21,6 +23,8 @@ const messages = {
   },
   en: {
     overview: 'Overview', config: 'Configuration', backups: 'Backups', logs: 'Logs', settings: 'Settings',
+    navControls: 'CONTROL AND RULES', navDiagnostics: 'DIAGNOSTICS AND AUTOMATION', navSystem: 'SYSTEM',
+    configFileInfo: 'FILE DETAILS', configFileLabel: 'File', lineCount: 'lines', safeSaveTitle: 'SAFE CONFIGURATION SAVE',
     status: 'nfqws2 status', running: 'Running', stopped: 'Stopped', error: 'Service error', unknown: 'Status unknown',
     refresh: 'Refresh status', start: 'Start', stop: 'Stop', restart: 'Restart', ram: 'Memory', cpu: 'CPU',
     save: 'Save configuration', saveApply: 'Save and apply', signIn: 'Sign in', password: 'Administrator password', logout: 'Sign out', unavailable: 'Backend unavailable',
@@ -39,6 +43,8 @@ const messages = {
   },
   zh: {
     overview: '概览', config: '配置', backups: '备份', logs: '日志', settings: '设置',
+    navControls: '管理与规则', navDiagnostics: '诊断与自动化', navSystem: '系统',
+    configFileInfo: '文件信息', configFileLabel: '文件', lineCount: '行', safeSaveTitle: '安全保存配置',
     status: 'nfqws2 状态', running: '运行中', stopped: '已停止', error: '服务错误', unknown: '状态未知',
     refresh: '刷新状态', start: '启动', stop: '停止', restart: '重启', ram: '内存', cpu: '处理器',
     save: '保存配置', saveApply: '保存并应用', signIn: '登录', password: '管理员密码', logout: '退出', unavailable: '后端不可用',
@@ -57,6 +63,8 @@ const messages = {
   },
   tr: {
     overview: 'Genel bakış', config: 'Yapılandırma', backups: 'Yedekler', logs: 'Günlükler', settings: 'Ayarlar',
+    navControls: 'YÖNETİM VE KURALLAR', navDiagnostics: 'TANI VE OTOMASYON', navSystem: 'SİSTEM',
+    configFileInfo: 'DOSYA BİLGİSİ', configFileLabel: 'Dosya', lineCount: 'satır', safeSaveTitle: 'GÜVENLİ YAPILANDIRMA KAYDI',
     status: 'nfqws2 durumu', running: 'Çalışıyor', stopped: 'Durduruldu', error: 'Hizmet hatası', unknown: 'Durum bilinmiyor',
     refresh: 'Durumu yenile', start: 'Başlat', stop: 'Durdur', restart: 'Yeniden başlat', ram: 'Bellek', cpu: 'CPU',
     save: 'Yapılandırmayı kaydet', saveApply: 'Kaydet ve uygula', signIn: 'Giriş yap', password: 'Yönetici parolası', logout: 'Çıkış yap', unavailable: 'Arka uç kullanılamıyor',

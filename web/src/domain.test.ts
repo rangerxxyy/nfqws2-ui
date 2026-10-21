@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionToApplyConfig, configEditorReducer, formatBytes, isMutatingActionAllowed, normalizeStatus } from './domain';
+import { actionToApplyConfig, configEditorReducer, formatBytes, isMutatingActionAllowed, normalizeStatus, usagePercent } from './domain';
 
 describe('UI domain formatting', () => {
   it('keeps the configuration read-only until editing is requested and discards drafts on cancel', () => {
@@ -24,6 +24,13 @@ describe('UI domain formatting', () => {
   it('formats bytes without confusing total with available memory', () => {
     expect(formatBytes(512 * 1024 * 1024)).toBe('512 МБ');
     expect(formatBytes(null)).toBe('—');
+  });
+
+  it('calculates header memory usage only from valid used and total values', () => {
+    expect(usagePercent(256, 512)).toBe(50);
+    expect(usagePercent(600, 512)).toBe(100);
+    expect(usagePercent(null, 512)).toBeNull();
+    expect(usagePercent(1, 0)).toBeNull();
   });
 
   it('allows only the service action enum', () => {
