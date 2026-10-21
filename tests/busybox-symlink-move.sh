@@ -2,7 +2,8 @@
 set -eu
 
 BUSYBOX=$(command -v busybox) || { echo 'busybox is required for this regression test' >&2; exit 1; }
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/../scripts" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")/../scripts" && pwd)
+# shellcheck source=../scripts/symlink.sh
 . "$SCRIPT_DIR/symlink.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
