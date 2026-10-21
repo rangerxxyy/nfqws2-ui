@@ -1,28 +1,74 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import App from './App';
 
-const template = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
 
-describe('reference-based panel shell', () => {
-  it('uses the supplied panel structure and includes a dedicated authorization menu', () => {
+describe('TSX panel without authentication', () => {
+  it('keeps the interface in TSX and removes the HTML entry file', () => {
+    expect(existsSync(new URL('../index.html', import.meta.url))).toBe(false);
     expect(template).toContain('id="tabContent-conf"');
-    expect(template).toContain('id="navBtn-auth"');
-    expect(template).toContain('Авторизация');
-    expect(template).toContain('id="tabContent-auth"');
+    expect(template).toContain('id="tabContent-lists"');
   });
 
-  it('does not ship the old blocking login shell or example credentials', () => {
-    expect(template).not.toContain('login-shell');
-    expect(template).not.toContain('id="root"');
+  it('keeps the supplied panel structure and has no authorization screen', () => {
+    expect(template).toContain('id="tabContent-conf"');
+    expect(template).toContain('id="tabContent-lists"');
+    expect(template).not.toContain('authForm');
+    expect(template).not.toContain('navBtn-auth');
+  });
+
+  it('does not ship login controls or example credentials', () => {
+    expect(template).not.toContain('authPassword');
     expect(template).not.toContain('7194028410:AAH8x9kLmP2qW_nfqws2_router_bot');
+  });
+
+  it('keeps list deduplication as a real local draft action', () => {
+    expect(panelSource).toMatch(/deduplicateCurrentList:\s*\(\)\s*=>/);
+    const disabledList = panelSource.match(/export const DISABLED_PANEL_ACTIONS = \[([\s\S]*?)\] as const/);
+    expect(disabledList?.[1]).not.toContain('deduplicateCurrentList');
+    expect(panelSource).toContain('deduplicateListContent');
+  });
+
+  it('does not label example profiles as active and renders config-derived sections', () => {
+    expect(template).not.toContain('TCP Circular (Стратегии 1–6)');
+    expect(template).not.toContain('5 файлов OK');
+    expect(template).toContain('id="nfqwsConfigSections"');
+    expect(panelSource).toContain('summarizeNfqwsConfig');
+    expect(panelSource).toContain('renderConfigSections(config.content)');
+  });
+
+  it('loads the selected mode from the backend config and limits choices to declared mode variables', () => {
+    expect(panelSource).toContain('availableNfqwsModes(content)');
+    expect(panelSource).toContain('select.value = [...select.options].some((option) => option.value === selectedMode) ? selectedMode :');
+  });
+
+  it('does not show invented router metrics, monitoring, provider, or update progress', () => {
+    expect(template).toMatch(/id="ramProgressBar"[^>]*style="width:0%"/);
+    expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);
+    expect(template).toContain('Данные мониторинга не подключены');
+    expect(template).toContain('Провайдер не определён');
+    expect(template).toContain('Нет данных сообщества из backend.');
+    expect(template).toContain('Нет контрольных сайтов из backend.');
+    expect(template).toContain('0%');
+    expect(template).not.toContain('Ростелеком (AS12389)');
+    expect(template).not.toContain('Рейтинг успешности: 96%');
+    expect(template).not.toContain('Активен (каждые 15 мин)');
+    expect(template).not.toContain('45%');
+    expect(template).not.toContain('21 ms • OK');
+    expect(template).not.toContain('482910492');
+    expect(template).not.toContain('42 префикса');
+    expect(template).not.toContain('nfqws2 запущен');
   });
 
   it('keeps all styling and interactions local for the router CSP', () => {
     expect(template).not.toMatch(/\son(?:click|input|change|scroll|submit)=/i);
     expect(template).not.toContain('cdn.tailwindcss.com');
     expect(template).not.toContain('fonts.googleapis.com');
-    expect(template).toContain('data-action=');
+    expect(template).toMatch(/data-action(?:-(?:click|input|change|scroll|submit))=/);
     expect(panelSource).toContain("import './panel.css'");
     expect(panelSource).toContain("import '@fontsource-variable/inter'");
     expect(panelSource).toContain("import '@fontsource-variable/jetbrains-mono'");

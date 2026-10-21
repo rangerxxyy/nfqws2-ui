@@ -1,54 +1,58 @@
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
     body::Body,
     extract::{Query, State},
-    http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode, header},
+    http::{HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use nfqws2_ui::{
-    ServiceAction, ServiceState, known_config_paths, parse_meminfo_kb, service_action,
-    service_status,
+    ServiceAction, ServiceState, known_config_paths, known_init_scripts, parse_meminfo_kb,
+    service_action, service_status,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
-    io::Read,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
-use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
-use tokio::{
-    net::TcpListener,
-    sync::{Mutex, Semaphore},
-};
+use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 
-const SESSION_COOKIE: &str = "nfqws2ui_session";
-const SESSION_MAX_AGE: Duration = Duration::from_secs(8 * 60 * 60);
 const MAX_CONFIG_BYTES: usize = 512 * 1024;
+const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
+const PANEL_SHELL_HTML: &str = r##"<!doctype html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nfqws2-UI — Панель управления</title>
+  <link rel="stylesheet" href="/nfqws2-ui.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/nfqws2-ui.js"></script>
+</body>
+</html>"##;
+const LIST_IDS: [&str; 5] = [
+    "user.list",
+    "auto.list",
+    "exclude.list",
+    "ipset.list",
+    "ipset_exclude.list",
+];
 
 struct AppState {
-    password_hash: Option<String>,
-    sessions: Arc<Mutex<HashMap<String, Session>>>,
     data_dir: PathBuf,
     port: u16,
     cpu_previous: Arc<Mutex<Option<(u64, u64)>>>,
-    login_failures: Mutex<(u8, Option<Instant>)>,
-    login_gate: Semaphore,
     config_write_lock: Mutex<()>,
-}
-
-struct Session {
-    csrf: String,
-    expires: Instant,
+    config_override: Option<PathBuf>,
 }
 
 #[derive(Serialize)]
@@ -61,6 +65,28 @@ struct StatusResponse {
     service: ServiceInfo,
     system: SystemInfo,
     panel: PanelInfo,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PathInfo {
+    path: String,
+    exists: bool,
+    readable: bool,
+    writable: bool,
+    used_by_active_config: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallationResponse {
+    platform: &'static str,
+    config: Option<PathInfo>,
+    config_candidates: Vec<PathInfo>,
+    init_script: Option<PathInfo>,
+    init_script_candidates: Vec<PathInfo>,
+    binary_candidates: Vec<PathInfo>,
+    lists: Vec<PathInfo>,
 }
 
 #[derive(Serialize)]
@@ -87,18 +113,6 @@ struct PanelInfo {
 }
 
 #[derive(Deserialize)]
-struct Credentials {
-    password: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionResponse {
-    authenticated: bool,
-    csrf_token: Option<String>,
-}
-
-#[derive(Deserialize)]
 struct ServiceRequest {
     action: String,
 }
@@ -119,12 +133,18 @@ struct ConfigWrite {
     revision: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConfigResponse {
     file: String,
     content: String,
     revision: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfigApplyResponse {
+    config: ConfigResponse,
+    message: String,
 }
 
 #[derive(Deserialize)]
@@ -151,6 +171,35 @@ struct BackupsResponse {
     backups: Vec<BackupItem>,
 }
 
+#[derive(Serialize)]
+struct ListsResponse {
+    files: Vec<ListSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListSummary {
+    id: String,
+    path: String,
+    readable: bool,
+    writable: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListResponse {
+    id: String,
+    path: String,
+    content: String,
+    revision: String,
+}
+
+#[derive(Deserialize)]
+struct ListWrite {
+    content: String,
+    revision: String,
+}
+
 fn error(status: StatusCode, message: impl Into<String>) -> Response {
     (
         status,
@@ -161,55 +210,70 @@ fn error(status: StatusCode, message: impl Into<String>) -> Response {
         .into_response()
 }
 
-fn random_token() -> String {
-    use rand::{Rng, distr::Alphanumeric};
-    rand::rng()
-        .sample_iter(&Alphanumeric)
-        .take(48)
-        .map(char::from)
-        .collect()
-}
-
-fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
-    let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
-    cookies
-        .split(';')
-        .filter_map(|part| part.trim().split_once('='))
-        .find_map(|(key, value)| (key == name).then(|| value.to_string()))
-}
-
-async fn authenticated(
-    headers: &HeaderMap,
-    state: &AppState,
-    mutation: bool,
-) -> Result<String, (StatusCode, String)> {
-    let Some(token) = cookie_value(headers, SESSION_COOKIE) else {
-        return Err((StatusCode::UNAUTHORIZED, "Требуется вход в панель".into()));
-    };
-    let mut sessions = state.sessions.lock().await;
-    sessions.retain(|_, session| session.expires > Instant::now());
-    let Some(session) = sessions.get(&token) else {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "Сессия истекла; войдите снова".into(),
-        ));
-    };
-    if mutation {
-        let Some(csrf) = headers
-            .get("x-csrf-token")
-            .and_then(|value| value.to_str().ok())
-        else {
-            return Err((StatusCode::FORBIDDEN, "Отсутствует CSRF-токен".into()));
-        };
-        if csrf.as_bytes().ct_eq(session.csrf.as_bytes()).unwrap_u8() != 1 {
-            return Err((StatusCode::FORBIDDEN, "Неверный CSRF-токен".into()));
-        }
-    }
-    Ok(token)
-}
-
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok":true,"service":"nfqws2-ui"}))
+}
+
+fn inspect_path(path: &Path, used_by_active_config: bool) -> PathInfo {
+    let exists = path.is_file();
+    PathInfo {
+        path: path.display().to_string(),
+        exists,
+        readable: exists && std::fs::File::open(path).is_ok(),
+        writable: exists && std::fs::OpenOptions::new().append(true).open(path).is_ok(),
+        used_by_active_config,
+    }
+}
+
+async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
+    let config = config_path_for_state(&state);
+    let config_candidates = known_config_paths()
+        .iter()
+        .map(|candidate| {
+            let active = config
+                .as_ref()
+                .is_some_and(|path| candidate.canonicalize().ok() == path.canonicalize().ok());
+            inspect_path(candidate, active)
+        })
+        .collect();
+    let init_candidates = known_init_scripts();
+    let init_script = init_candidates.iter().find(|path| path.is_file()).cloned();
+    let init_script_candidates = init_candidates
+        .iter()
+        .map(|candidate| inspect_path(candidate, false))
+        .collect();
+    let binary_candidates: Vec<PathBuf> = [
+        PathBuf::from("/opt/usr/bin/nfqws2"),
+        PathBuf::from("/usr/bin/nfqws2"),
+    ]
+    .into_iter()
+    .collect();
+    let binary_candidates = binary_candidates
+        .iter()
+        .map(|candidate| inspect_path(candidate, false))
+        .collect();
+    let lists = config
+        .as_ref()
+        .into_iter()
+        .flat_map(|config| LIST_IDS.iter().filter_map(|id| list_file_path(config, id)))
+        .map(|path| inspect_path(&path, true))
+        .collect();
+    let platform = config
+        .as_ref()
+        .map(|path| path.to_string_lossy())
+        .filter(|path| path.starts_with("/opt/etc/"))
+        .map(|_| "entware")
+        .unwrap_or("unknown");
+    Json(InstallationResponse {
+        platform,
+        config: config.as_deref().map(|path| inspect_path(path, true)),
+        config_candidates,
+        init_script: init_script.as_deref().map(|path| inspect_path(path, false)),
+        init_script_candidates,
+        binary_candidates,
+        lists,
+    })
+    .into_response()
 }
 
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
@@ -234,128 +298,7 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
     response
 }
 
-async fn get_session(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Json<SessionResponse> {
-    if let Some(token) = cookie_value(&headers, SESSION_COOKIE) {
-        let mut sessions = state.sessions.lock().await;
-        sessions.retain(|_, session| session.expires > Instant::now());
-        if let Some(session) = sessions.get(&token) {
-            return Json(SessionResponse {
-                authenticated: true,
-                csrf_token: Some(session.csrf.clone()),
-            });
-        }
-    }
-    Json(SessionResponse {
-        authenticated: false,
-        csrf_token: None,
-    })
-}
-
-async fn login(
-    State(state): State<Arc<AppState>>,
-    Json(credentials): Json<Credentials>,
-) -> Response {
-    let _login_guard = match state.login_gate.try_acquire() {
-        Ok(guard) => guard,
-        Err(_) => {
-            return error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Проверка другого входа ещё выполняется",
-            );
-        }
-    };
-    if credentials.password.len() < 8 || credentials.password.len() > 1024 {
-        return error(StatusCode::UNAUTHORIZED, "Неверный пароль");
-    }
-    {
-        let failures = state.login_failures.lock().await;
-        if let Some(until) = failures.1.filter(|_| failures.0 >= 5)
-            && until > Instant::now()
-        {
-            return error(
-                StatusCode::TOO_MANY_REQUESTS,
-                "Слишком много неудачных входов; подождите минуту",
-            );
-        }
-    }
-    let Some(stored_hash) = state.password_hash.as_deref() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Пароль администратора не настроен. Запустите мастер установки.",
-        );
-    };
-    if PasswordHash::new(stored_hash).is_err() {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Файл пароля администратора повреждён",
-        );
-    }
-    let owned_hash = stored_hash.to_owned();
-    let password = credentials.password;
-    let password_valid = tokio::task::spawn_blocking(move || {
-        let Ok(parsed) = PasswordHash::new(&owned_hash) else {
-            return false;
-        };
-        Argon2::default()
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok()
-    })
-    .await
-    .unwrap_or(false);
-    if !password_valid {
-        let mut failures = state.login_failures.lock().await;
-        failures.0 = failures.0.saturating_add(1);
-        if failures.0 >= 5 {
-            failures.1 = Some(Instant::now() + Duration::from_secs(60));
-        }
-        return error(StatusCode::UNAUTHORIZED, "Неверный пароль");
-    }
-    *state.login_failures.lock().await = (0, None);
-    let token = random_token();
-    let csrf = random_token();
-    state.sessions.lock().await.insert(
-        token.clone(),
-        Session {
-            csrf: csrf.clone(),
-            expires: Instant::now() + SESSION_MAX_AGE,
-        },
-    );
-    let mut response = Json(SessionResponse {
-        authenticated: true,
-        csrf_token: Some(csrf),
-    })
-    .into_response();
-    let cookie = format!(
-        "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
-        SESSION_MAX_AGE.as_secs()
-    );
-    if let Ok(value) = HeaderValue::from_str(&cookie) {
-        response.headers_mut().insert(header::SET_COOKIE, value);
-    }
-    response
-}
-
-async fn logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let token = match authenticated(&headers, &state, true).await {
-        Ok(token) => token,
-        Err((status, message)) => return error(status, message),
-    };
-    state.sessions.lock().await.remove(&token);
-    let mut response = Json(serde_json::json!({"ok":true})).into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_static("nfqws2ui_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),
-    );
-    response
-}
-
-async fn get_status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Err((status, message)) = authenticated(&headers, &state, false).await {
-        return error(status, message);
-    }
+async fn get_status(State(state): State<Arc<AppState>>) -> Response {
     let (service_state, detail) = service_status().await;
     let meminfo = tokio::fs::read_to_string("/proc/meminfo").await.ok();
     let total_kb = meminfo.as_deref().and_then(parse_meminfo_kb);
@@ -446,14 +389,7 @@ async fn cpu_sample(state: &AppState) -> Option<f64> {
     result
 }
 
-async fn post_service(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(request): Json<ServiceRequest>,
-) -> Response {
-    if let Err((status, message)) = authenticated(&headers, &state, true).await {
-        return error(status, message);
-    }
+async fn post_service(Json(request): Json<ServiceRequest>) -> Response {
     let action = match ServiceAction::try_from(request.action.as_str()) {
         Ok(action) => action,
         Err(()) => {
@@ -476,19 +412,230 @@ fn config_path(name: &str) -> Option<PathBuf> {
     known_config_paths().into_iter().find(|path| path.is_file())
 }
 
+fn config_path_for_state(state: &AppState) -> Option<PathBuf> {
+    state
+        .config_override
+        .as_ref()
+        .filter(|path| path.is_file())
+        .cloned()
+        .or_else(|| config_path("nfqws2.conf"))
+}
+
+fn list_flag(id: &str) -> Option<&'static str> {
+    match id {
+        "user.list" => Some("--hostlist"),
+        "auto.list" => Some("--hostlist-auto"),
+        "exclude.list" => Some("--hostlist-exclude"),
+        "ipset.list" => Some("--ipset"),
+        "ipset_exclude.list" => Some("--ipset-exclude"),
+        _ => None,
+    }
+}
+
+fn strip_shell_comment(line: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        if let Some(open) = quote {
+            if character == open {
+                quote = None;
+            }
+        } else if character == '\'' || character == '"' {
+            quote = Some(character);
+        } else if character == '#' && (index == 0 || line[..index].ends_with(char::is_whitespace)) {
+            return &line[..index];
+        }
+    }
+    line
+}
+
+fn configured_list_reference(config_text: &str, id: &str) -> Option<PathBuf> {
+    let flag = list_flag(id)?;
+    let mut found = None;
+    let mut unresolved = false;
+    for line in config_text.lines() {
+        let line = strip_shell_comment(line);
+        let mut start_at = 0;
+        while let Some(offset) = line[start_at..].find(flag) {
+            let start = start_at + offset;
+            let end = start + flag.len();
+            let before_is_boundary =
+                start == 0 || !line.as_bytes()[start - 1].is_ascii_alphanumeric();
+            let after_is_boundary = line
+                .as_bytes()
+                .get(end)
+                .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-');
+            if !before_is_boundary || !after_is_boundary {
+                start_at = end;
+                continue;
+            }
+            let mut cursor = end;
+            while line
+                .as_bytes()
+                .get(cursor)
+                .is_some_and(u8::is_ascii_whitespace)
+            {
+                cursor += 1;
+            }
+            if line.as_bytes().get(cursor) == Some(&b'=') {
+                cursor += 1;
+                while line
+                    .as_bytes()
+                    .get(cursor)
+                    .is_some_and(u8::is_ascii_whitespace)
+                {
+                    cursor += 1;
+                }
+            } else if cursor == end {
+                start_at = end;
+                continue;
+            }
+            let bytes = line.as_bytes();
+            let quote = bytes
+                .get(cursor)
+                .copied()
+                .filter(|byte| *byte == b'\'' || *byte == b'"');
+            if quote.is_some() {
+                cursor += 1;
+            }
+            let value_start = cursor;
+            while let Some(byte) = bytes.get(cursor) {
+                if Some(*byte) == quote
+                    || *byte == b'\''
+                    || *byte == b'"'
+                    || byte.is_ascii_whitespace()
+                    || *byte == b'\\'
+                {
+                    break;
+                }
+                cursor += 1;
+            }
+            if cursor > value_start {
+                let value = line[value_start..cursor].trim_start_matches('@');
+                if value.contains('$') || value.starts_with('~') {
+                    unresolved = true;
+                } else {
+                    let path = PathBuf::from(value);
+                    if found.as_ref().is_some_and(|existing| existing != &path) {
+                        return None;
+                    }
+                    found = Some(path);
+                }
+            }
+            start_at = end;
+        }
+    }
+    (!unresolved).then_some(found).flatten()
+}
+
+fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
+    if !LIST_IDS.contains(&id) {
+        return None;
+    }
+    let config = config.canonicalize().ok()?;
+    let root = config.parent()?.canonicalize().ok()?;
+    let config_text = std::fs::read_to_string(&config).ok()?;
+    let reference = configured_list_reference(&config_text, id)?;
+    let candidate = if reference.is_absolute() {
+        reference
+    } else {
+        root.join(reference)
+    };
+    let relative = candidate.strip_prefix(&root).ok()?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    let mut cursor = root.clone();
+    for component in relative.components() {
+        cursor.push(component.as_os_str());
+        if std::fs::symlink_metadata(&cursor)
+            .ok()?
+            .file_type()
+            .is_symlink()
+        {
+            return None;
+        }
+    }
+    let path = cursor.canonicalize().ok()?;
+    (path.starts_with(&root) && path.is_file()).then_some(path)
+}
+
+fn validate_list_content(id: &str, content: &str) -> Result<(), String> {
+    if !LIST_IDS.contains(&id) {
+        return Err("Неизвестный список".into());
+    }
+    let ip_list = id.starts_with("ipset");
+    for (index, line) in content.lines().enumerate() {
+        let value = line.trim();
+        if value.is_empty() || value.starts_with('#') {
+            continue;
+        }
+        let valid = if ip_list {
+            match value.split_once('/') {
+                None => value.parse::<IpAddr>().is_ok(),
+                Some((address, prefix)) => {
+                    let address_type = address.parse::<IpAddr>().ok();
+                    let max = if address.contains(':') { 128 } else { 32 };
+                    address_type.is_some()
+                        && !prefix.is_empty()
+                        && prefix.parse::<u8>().is_ok_and(|bits| bits <= max)
+                }
+            }
+        } else {
+            let domain = value.strip_prefix("*.").unwrap_or(value);
+            let domain = domain.strip_suffix('.').unwrap_or(domain);
+            domain.len() <= 253
+                && !domain.is_empty()
+                && !domain.ends_with('.')
+                && domain.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && label.as_bytes()[0].is_ascii_alphanumeric()
+                        && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                        && label
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                })
+        };
+        if !valid {
+            let kind = if ip_list {
+                "IP-адрес или CIDR"
+            } else {
+                "домен"
+            };
+            return Err(format!("Строка {}: ожидался корректный {kind}", index + 1));
+        }
+    }
+    Ok(())
+}
+
 fn revision(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
 async fn get_config(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Query(query): Query<ConfigQuery>,
 ) -> Response {
-    if let Err((status, message)) = authenticated(&headers, &state, false).await {
-        return error(status, message);
+    if query.file != "nfqws2.conf" {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
     }
-    let Some(path) = config_path(&query.file) else {
+    let Some(path) = config_path_for_state(&state) else {
         return error(
             StatusCode::NOT_FOUND,
             "Разрешённый конфигурационный файл не найден",
@@ -496,7 +643,7 @@ async fn get_config(
     };
     match tokio::fs::read(&path).await {
         Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => Json(ConfigResponse {
-            file: query.file,
+            file: path.display().to_string(),
             content: String::from_utf8_lossy(&bytes).into_owned(),
             revision: revision(&bytes),
         })
@@ -512,15 +659,137 @@ async fn get_config(
     }
 }
 
+async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let files = LIST_IDS
+        .iter()
+        .filter_map(|id| {
+            let path = list_file_path(&config, id)?;
+            Some(ListSummary {
+                id: (*id).to_string(),
+                path: path.display().to_string(),
+                readable: std::fs::File::open(&path).is_ok(),
+                writable: std::fs::OpenOptions::new().append(true).open(&path).is_ok(),
+            })
+        })
+        .collect();
+    Json(ListsResponse { files }).into_response()
+}
+
+async fn get_list(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let Some(path) = list_file_path(&config, &id) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый существующий список не найден",
+        );
+    };
+    match tokio::fs::read(&path).await {
+        Ok(bytes) if bytes.len() <= MAX_LIST_BYTES => Json(ListResponse {
+            id,
+            path: path.display().to_string(),
+            content: String::from_utf8_lossy(&bytes).into_owned(),
+            revision: revision(&bytes),
+        })
+        .into_response(),
+        Ok(_) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Список превышает лимит 512 КБ",
+        ),
+        Err(io_error) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось прочитать список: {io_error}"),
+        ),
+    }
+}
+
+async fn put_list(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(write): Json<ListWrite>,
+) -> Response {
+    if write.content.len() > MAX_LIST_BYTES {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Список превышает лимит 512 КБ",
+        );
+    }
+    if write.content.as_bytes().contains(&0) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Список содержит запрещённый NUL-байт",
+        );
+    }
+    if let Err(message) = validate_list_content(&id, &write.content) {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
+    let _write_guard = state.config_write_lock.lock().await;
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let Some(path) = list_file_path(&config, &id) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый существующий список не найден",
+        );
+    };
+    let original = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    if revision(&original) != write.revision {
+        return error(
+            StatusCode::CONFLICT,
+            "Список изменился после загрузки; обновите страницу и проверьте изменения",
+        );
+    }
+    if let Err(message) = backup_and_write_named(
+        &state.data_dir,
+        &path,
+        &format!("list-{id}"),
+        MAX_LIST_BYTES,
+        write.content.as_bytes(),
+    )
+    .await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    let saved = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(io_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Список записан, но повторное чтение не удалось: {io_error}"),
+            );
+        }
+    };
+    if saved != write.content.as_bytes() {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Повторное чтение не совпало с отправленным содержимым; backup сохранён",
+        );
+    }
+    Json(ListResponse {
+        id,
+        path: path.display().to_string(),
+        content: String::from_utf8_lossy(&saved).into_owned(),
+        revision: revision(&saved),
+    })
+    .into_response()
+}
+
 async fn put_config(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     Query(query): Query<ConfigQuery>,
     Json(write): Json<ConfigWrite>,
 ) -> Response {
-    if let Err((status, message)) = authenticated(&headers, &state, true).await {
-        return error(status, message);
-    }
     if write.content.len() > MAX_CONFIG_BYTES {
         return error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -534,7 +803,13 @@ async fn put_config(
         );
     }
     let _write_guard = state.config_write_lock.lock().await;
-    let Some(path) = config_path(&query.file) else {
+    if query.file != "nfqws2.conf" {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    }
+    let Some(path) = config_path_for_state(&state) else {
         return error(
             StatusCode::NOT_FOUND,
             "Разрешённый конфигурационный файл не найден",
@@ -550,15 +825,159 @@ async fn put_config(
             "Файл изменился после загрузки; обновите страницу и проверьте diff",
         );
     }
-    if let Err(message) = backup_and_write(&state.data_dir, &path, write.content.as_bytes()).await {
+    if let Err(message) = backup_and_write_named(
+        &state.data_dir,
+        &path,
+        "nfqws2.conf",
+        MAX_CONFIG_BYTES,
+        write.content.as_bytes(),
+    )
+    .await
+    {
         return error(StatusCode::INTERNAL_SERVER_ERROR, message);
     }
+    let saved = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(io_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Конфиг записан, но повторное чтение не удалось: {io_error}"),
+            );
+        }
+    };
+    if saved != write.content.as_bytes() {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Повторное чтение конфига не совпало с отправленным содержимым; backup сохранён",
+        );
+    }
     Json(ConfigResponse {
-        file: query.file,
-        content: write.content.clone(),
-        revision: revision(write.content.as_bytes()),
+        file: path.display().to_string(),
+        content: String::from_utf8_lossy(&saved).into_owned(),
+        revision: revision(&saved),
     })
     .into_response()
+}
+
+async fn apply_config_transaction<F, Fut>(
+    state: &AppState,
+    write: ConfigWrite,
+    mut restart: F,
+) -> Result<ConfigApplyResponse, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    if write.content.len() > MAX_CONFIG_BYTES || write.content.as_bytes().contains(&0) {
+        return Err("Конфигурация превышает лимит или содержит запрещённый NUL-байт".into());
+    }
+    let _write_guard = state.config_write_lock.lock().await;
+    let path = config_path_for_state(state)
+        .ok_or_else(|| "Разрешённый конфигурационный файл не найден".to_string())?;
+    let original = tokio::fs::read(&path)
+        .await
+        .map_err(|error| format!("Не удалось прочитать конфигурацию: {error}"))?;
+    if revision(&original) != write.revision {
+        return Err("Файл изменился после загрузки; обновите страницу и проверьте diff".into());
+    }
+    if let Err(write_error) = backup_and_write_named(
+        &state.data_dir,
+        &path,
+        "nfqws2.conf",
+        MAX_CONFIG_BYTES,
+        write.content.as_bytes(),
+    )
+    .await
+    {
+        let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+        return Err(match rollback {
+            Ok(()) => format!(
+                "Не удалось записать новую конфигурацию: {write_error}. Исходная версия восстановлена."
+            ),
+            Err(rollback_error) => format!(
+                "Не удалось записать новую конфигурацию: {write_error}. Откат тоже не подтверждён: {rollback_error}"
+            ),
+        });
+    }
+    let saved = match tokio::fs::read(&path).await {
+        Ok(saved) => saved,
+        Err(error) => {
+            let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+            return Err(match rollback {
+                Ok(()) => format!(
+                    "Конфиг записан, но повторное чтение не удалось: {error}. Исходная версия восстановлена."
+                ),
+                Err(rollback_error) => format!(
+                    "Конфиг записан, повторное чтение не удалось: {error}. Откат тоже не подтверждён: {rollback_error}"
+                ),
+            });
+        }
+    };
+    if saved != write.content.as_bytes() {
+        let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+        return Err(match rollback {
+            Ok(()) => "Повторное чтение конфига не совпало с отправленным содержимым; исходная версия восстановлена.".into(),
+            Err(error) => format!("Повторное чтение конфига не совпало; откат не подтверждён: {error}"),
+        });
+    }
+    match restart().await {
+        Ok(message) => Ok(ConfigApplyResponse {
+            config: ConfigResponse {
+                file: path.display().to_string(),
+                revision: revision(&saved),
+                content: String::from_utf8_lossy(&saved).into_owned(),
+            },
+            message,
+        }),
+        Err(apply_error) => {
+            if let Err(rollback_error) =
+                restore_config_content(&state.data_dir, &path, &original).await
+            {
+                return Err(format!(
+                    "Применение не удалось: {apply_error}. Не удалось восстановить старую конфигурацию: {rollback_error}"
+                ));
+            }
+            match restart().await {
+                Ok(restore_message) => Err(format!(
+                    "Применение не удалось: {apply_error}. Исходный конфиг восстановлен и служба перезапущена: {restore_message}"
+                )),
+                Err(restore_error) => Err(format!(
+                    "Применение не удалось: {apply_error}. Исходный конфиг восстановлен, но повторный запуск службы не подтверждён: {restore_error}"
+                )),
+            }
+        }
+    }
+}
+
+async fn restore_config_content(
+    data_dir: &Path,
+    path: &Path,
+    original: &[u8],
+) -> Result<(), String> {
+    backup_and_write_named(data_dir, path, "nfqws2.conf", MAX_CONFIG_BYTES, original).await?;
+    let restored = tokio::fs::read(path)
+        .await
+        .map_err(|error| format!("не удалось повторно прочитать конфигурацию: {error}"))?;
+    if restored != original {
+        return Err(
+            "повторное чтение не совпало с исходным содержимым; резервная копия сохранена".into(),
+        );
+    }
+    Ok(())
+}
+
+async fn apply_config(
+    State(state): State<Arc<AppState>>,
+    Json(write): Json<ConfigWrite>,
+) -> Response {
+    match apply_config_transaction(&state, write, || async {
+        service_action(ServiceAction::Restart).await
+    })
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
 }
 
 async fn backup_and_write(
@@ -566,14 +985,45 @@ async fn backup_and_write(
     config: &Path,
     new_content: &[u8],
 ) -> Result<(), String> {
-    if new_content.len() > MAX_CONFIG_BYTES {
-        return Err("Новая конфигурация превышает лимит 512 КБ".into());
+    backup_and_write_named(
+        data_dir,
+        config,
+        "nfqws2.conf",
+        MAX_CONFIG_BYTES,
+        new_content,
+    )
+    .await
+}
+
+async fn backup_and_write_named(
+    data_dir: &Path,
+    source: &Path,
+    backup_name: &str,
+    max_bytes: usize,
+    new_content: &[u8],
+) -> Result<(), String> {
+    if new_content.len() > max_bytes {
+        return Err(format!(
+            "Новый файл превышает лимит {} КБ",
+            max_bytes / 1024
+        ));
     }
-    let old = tokio::fs::read(config)
+    let old = tokio::fs::read(source)
         .await
         .map_err(|error| error.to_string())?;
-    if old.len() > MAX_CONFIG_BYTES {
-        return Err("Текущая конфигурация превышает лимит 512 КБ; изменение отменено".into());
+    if old.len() > max_bytes {
+        return Err(format!(
+            "Текущий файл превышает лимит {} КБ; изменение отменено",
+            max_bytes / 1024
+        ));
+    }
+    if backup_name.is_empty()
+        || backup_name.len() > 64
+        || !backup_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err("Недопустимое имя резервной копии".into());
     }
     let backup_dir = data_dir.join("backups");
     tokio::fs::create_dir_all(&backup_dir)
@@ -590,7 +1040,7 @@ async fn backup_and_write(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     let stamp = format!("{}.{:09}", now.as_secs(), now.subsec_nanos());
-    let backup = backup_dir.join(format!("nfqws2.conf.{stamp}.bak"));
+    let backup = backup_dir.join(format!("{backup_name}.{stamp}.bak"));
     let mut backup_file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -613,10 +1063,10 @@ async fn backup_and_write(
             .map_err(|error| error.to_string())?;
     }
     #[cfg(unix)]
-    let meta = tokio::fs::metadata(config)
+    let meta = tokio::fs::metadata(source)
         .await
         .map_err(|error| error.to_string())?;
-    let tmp = config.with_extension(format!("conf.{stamp}.tmp"));
+    let tmp = source.with_extension(format!("tmp.{stamp}"));
     let mut tmp_file = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -633,14 +1083,33 @@ async fn backup_and_write(
         .map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = meta.permissions().mode();
-        tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let temporary_meta = tokio::fs::metadata(&tmp)
             .await
             .map_err(|error| error.to_string())?;
+        if temporary_meta.uid() != meta.uid() || temporary_meta.gid() != meta.gid() {
+            let path = std::ffi::CString::new(tmp.as_os_str().as_bytes())
+                .map_err(|_| "Путь временного файла содержит NUL-байт".to_string())?;
+            // The configured file's owner is preserved across atomic replacement.
+            if unsafe { libc::chown(path.as_ptr(), meta.uid(), meta.gid()) } != 0 {
+                let error = std::io::Error::last_os_error();
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(format!(
+                    "Не удалось сохранить владельца/группу конфигурации: {error}"
+                ));
+            }
+        }
+        let mode = meta.permissions().mode();
+        if let Err(error) =
+            tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).await
+        {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(error.to_string());
+        }
     }
     drop(tmp_file);
-    if let Err(error) = tokio::fs::rename(&tmp, config).await {
+    if let Err(error) = tokio::fs::rename(&tmp, source).await {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(format!(
             "Не удалось атомарно заменить конфиг; backup сохранён: {error}"
@@ -648,7 +1117,7 @@ async fn backup_and_write(
     }
     #[cfg(unix)]
     {
-        let directory = tokio::fs::File::open(config.parent().unwrap_or_else(|| Path::new("/")))
+        let directory = tokio::fs::File::open(source.parent().unwrap_or_else(|| Path::new("/")))
             .await
             .map_err(|error| {
                 format!("Конфиг заменён, но не удалось открыть каталог для sync: {error}")
@@ -661,10 +1130,7 @@ async fn backup_and_write(
     Ok(())
 }
 
-async fn get_backups(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Err((status, message)) = authenticated(&headers, &state, false).await {
-        return error(status, message);
-    }
+async fn get_backups(State(state): State<Arc<AppState>>) -> Response {
     let directory = state.data_dir.join("backups");
     let mut backups = Vec::new();
     let mut entries = match tokio::fs::read_dir(directory).await {
@@ -694,14 +1160,82 @@ async fn get_backups(State(state): State<Arc<AppState>>, headers: HeaderMap) -> 
     Json(BackupsResponse { backups }).into_response()
 }
 
+async fn create_backup(State(state): State<Arc<AppState>>) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Файл конфигурации не найден");
+    };
+    let _write_guard = state.config_write_lock.lock().await;
+    let content = match tokio::fs::read(&config).await {
+        Ok(content) if content.len() <= MAX_CONFIG_BYTES => content,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Конфигурация превышает лимит",
+            );
+        }
+        Err(io_error) => return error(StatusCode::NOT_FOUND, io_error.to_string()),
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let stamp = format!("{}.{:09}", now.as_secs(), now.subsec_nanos());
+    let id = format!("nfqws2.conf.{stamp}.bak");
+    let directory = state.data_dir.join("backups");
+    if let Err(io_error) = tokio::fs::create_dir_all(&directory).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(io_error) =
+            tokio::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).await
+        {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+        }
+    }
+    let backup_path = directory.join(&id);
+    let mut backup = match tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&backup_path)
+        .await
+    {
+        Ok(file) => file,
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    if let Err(io_error) = backup.write_all(&content).await {
+        let _ = tokio::fs::remove_file(&backup_path).await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    if let Err(io_error) = backup.sync_all().await {
+        let _ = tokio::fs::remove_file(&backup_path).await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(io_error) =
+            tokio::fs::set_permissions(&backup_path, std::fs::Permissions::from_mode(0o600)).await
+        {
+            let _ = tokio::fs::remove_file(&backup_path).await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+        }
+    }
+    (
+        StatusCode::CREATED,
+        Json(BackupItem {
+            id,
+            created_at: now.as_secs(),
+            file: "nfqws2.conf".into(),
+        }),
+    )
+        .into_response()
+}
+
 async fn restore_backup(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
-    if let Err((status, message)) = authenticated(&headers, &state, true).await {
-        return error(status, message);
-    }
     if id.len() > 96
         || !id.starts_with("nfqws2.conf.")
         || !id.ends_with(".bak")
@@ -712,7 +1246,7 @@ async fn restore_backup(
         return error(StatusCode::BAD_REQUEST, "Неверный ID резервной копии");
     }
     let backup = state.data_dir.join("backups").join(id);
-    let Some(config) = config_path("nfqws2.conf") else {
+    let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Файл конфигурации не найден");
     };
     let content = match tokio::fs::read(&backup).await {
@@ -746,14 +1280,7 @@ async fn read_bounded_tail(path: &Path, max_bytes: usize) -> std::io::Result<Vec
     Ok(tail)
 }
 
-async fn get_logs(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(query): Query<LogsQuery>,
-) -> Response {
-    if let Err((status, message)) = authenticated(&headers, &state, false).await {
-        return error(status, message);
-    }
+async fn get_logs(Query(query): Query<LogsQuery>) -> Response {
     if query.source != "nfqws2" {
         return error(StatusCode::BAD_REQUEST, "Неизвестный источник журнала");
     }
@@ -803,14 +1330,16 @@ async fn bind_port() -> Result<(TcpListener, u16), String> {
 
 fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
     Router::new()
+        .route("/", get(panel_shell))
         .route("/api/health", get(health))
-        .route("/api/session", get(get_session))
-        .route("/api/login", post(login))
-        .route("/api/logout", post(logout))
+        .route("/api/nfqws2/installation", get(get_installation))
         .route("/api/status", get(get_status))
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
-        .route("/api/backups", get(get_backups))
+        .route("/api/nfqws2/apply", post(apply_config))
+        .route("/api/nfqws2/lists", get(get_lists))
+        .route("/api/nfqws2/lists/{id}", get(get_list).put(put_list))
+        .route("/api/backups", get(get_backups).post(create_backup))
         .route("/api/backups/{id}/restore", post(restore_backup))
         .route("/api/logs", get(get_logs))
         .with_state(state)
@@ -819,15 +1348,12 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .layer(middleware::from_fn(security_headers))
 }
 
+async fn panel_shell() -> Html<&'static str> {
+    Html(PANEL_SHELL_HTML)
+}
+
 #[tokio::main]
 async fn main() {
-    if std::env::args().nth(1).as_deref() == Some("hash-password") {
-        if let Err(error) = hash_password_from_stdin() {
-            eprintln!("nfqws2-ui: {error}");
-            std::process::exit(2);
-        }
-        return;
-    }
     if std::env::args().nth(1).as_deref() == Some("--version") {
         println!("nfqws2-ui {}", env!("CARGO_PKG_VERSION"));
         return;
@@ -835,13 +1361,6 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
-    let password_path = std::env::var_os("NFQWS2_UI_PASSWORD_HASH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/opt/etc/nfqws2-ui/password.hash"));
-    let password_hash = std::fs::read_to_string(password_path)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
     let data_dir = std::env::var_os("NFQWS2_UI_DATA_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/opt/var/lib/nfqws2-ui"));
@@ -869,14 +1388,11 @@ async fn main() {
         std::process::exit(1);
     }
     let state = Arc::new(AppState {
-        password_hash,
-        sessions: Arc::new(Mutex::new(HashMap::new())),
         data_dir,
         port,
         cpu_previous: Arc::new(Mutex::new(None)),
-        login_failures: Mutex::new((0, None)),
-        login_gate: Semaphore::new(1),
         config_write_lock: Mutex::new(()),
+        config_override: None,
     });
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
@@ -912,24 +1428,6 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-fn hash_password_from_stdin() -> Result<(), String> {
-    use password_hash::{SaltString, rand_core::OsRng};
-    let mut password = String::new();
-    std::io::stdin()
-        .read_to_string(&mut password)
-        .map_err(|error| error.to_string())?;
-    let password = password.trim_end_matches(['\r', '\n']);
-    if password.len() < 12 || password.len() > 1024 {
-        return Err("Пароль должен содержать от 12 до 1024 байт".into());
-    }
-    let salt = SaltString::generate(&mut OsRng);
-    let hash = Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|error| error.to_string())?;
-    println!("{hash}");
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -937,19 +1435,22 @@ mod tests {
         body::{Body, to_bytes},
         http::Request,
     };
-    use password_hash::{PasswordHasher, SaltString};
     use tower::ServiceExt;
 
-    fn test_state(password_hash: Option<String>, data_dir: PathBuf) -> Arc<AppState> {
+    fn test_state(data_dir: PathBuf) -> Arc<AppState> {
+        test_state_with_config(data_dir, None)
+    }
+
+    fn test_state_with_config(
+        data_dir: PathBuf,
+        config_override: Option<PathBuf>,
+    ) -> Arc<AppState> {
         Arc::new(AppState {
-            password_hash,
-            sessions: Arc::new(Mutex::new(HashMap::new())),
             data_dir,
             port: 1002,
             cpu_previous: Arc::new(Mutex::new(None)),
-            login_failures: Mutex::new((0, None)),
-            login_gate: Semaphore::new(1),
             config_write_lock: Mutex::new(()),
+            config_override,
         })
     }
 
@@ -972,12 +1473,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unauthenticated_status_is_rejected() {
+    async fn status_is_available_without_a_login() {
         let dir = tempfile::tempdir().unwrap();
-        let app = api_router(
-            test_state(None, dir.path().to_path_buf()),
-            dir.path().join("web"),
-        );
+        let app = api_router(test_state(dir.path().to_path_buf()), dir.path().join("web"));
         let response = app
             .oneshot(
                 Request::builder()
@@ -987,7 +1485,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get("x-frame-options").unwrap(), "DENY");
         assert_eq!(
             response.headers().get("x-content-type-options").unwrap(),
@@ -996,87 +1494,561 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_rejects_parallel_argon_work_on_router() {
+    async fn root_serves_the_typescript_bundle_shell_without_an_html_file() {
         let dir = tempfile::tempdir().unwrap();
-        let state = test_state(None, dir.path().to_path_buf());
-        let permit = state.login_gate.try_acquire().unwrap();
-        let app = api_router(state.clone(), dir.path().join("web"));
+        let web_root = dir.path().join("web");
+        tokio::fs::create_dir_all(&web_root).await.unwrap();
+        tokio::fs::write(
+            web_root.join("nfqws2-ui.js"),
+            "window.__panel_bundle = true;",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(web_root.join("nfqws2-ui.css"), "body { color: white; }")
+            .await
+            .unwrap();
+        let app = api_router(test_state(dir.path().to_path_buf()), web_root);
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("id=\"root\""));
+        assert!(html.contains("/nfqws2-ui.js"));
+        assert!(html.contains("/nfqws2-ui.css"));
+        assert!(!html.contains("tabContent-conf"));
+
+        let bundle = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/nfqws2-ui.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bundle.status(), StatusCode::OK);
+        assert_eq!(
+            String::from_utf8(
+                to_bytes(bundle.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec()
+            )
+            .unwrap(),
+            "window.__panel_bundle = true;"
+        );
+
+        let stylesheet = app
+            .oneshot(
+                Request::builder()
+                    .uri("/nfqws2-ui.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stylesheet.status(), StatusCode::OK);
+        assert_eq!(
+            String::from_utf8(
+                to_bytes(stylesheet.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec()
+            )
+            .unwrap(),
+            "body { color: white; }"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_read_and_write_use_the_selected_installation_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("custom/nfqws2.conf");
+        tokio::fs::create_dir_all(config.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/domains.list\n")
+            .await
+            .unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config?file=nfqws2.conf")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let loaded = body_json(response).await;
+        let revision = loaded["revision"].as_str().unwrap().to_string();
+        assert_eq!(
+            loaded["content"],
+            "NFQWS_ARGS=--hostlist=lists/domains.list\n"
+        );
+
+        let saved = app.oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/config?file=nfqws2.conf")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({ "content": "NFQWS_ARGS=--hostlist=lists/changed.list\n", "revision": revision }).to_string()))
+                .unwrap(),
+        ).await.unwrap();
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(config).await.unwrap(),
+            "NFQWS_ARGS=--hostlist=lists/changed.list\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_apply_rolls_back_and_restarts_when_new_config_fails() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--unsupported-option\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let restart_counter = restart_count.clone();
+
+        let result = apply_config_transaction(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            move || {
+                let attempt = restart_counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        Err("fake invalid-config restart failure".to_string())
+                    } else {
+                        Ok("old config service healthy".to_string())
+                    }
+                }
+            },
+        )
+        .await;
+
+        let error = result.unwrap_err();
+        assert!(error.contains("Исходный конфиг восстановлен и служба перезапущена"));
+        assert_eq!(restart_count.load(Ordering::SeqCst), 2);
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn config_apply_returns_success_only_after_restart_callback_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--filter-tcp=80,443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+
+        let result = apply_config_transaction(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            || async { Ok("restart confirmed".to_string()) },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.config.content, replacement);
+        assert_eq!(result.message, "restart confirmed");
+        assert_eq!(
+            tokio::fs::read(config).await.unwrap(),
+            replacement.as_bytes()
+        );
+    }
+
+    #[tokio::test]
+    async fn config_apply_rejects_stale_revision_without_calling_service() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let called = Arc::new(AtomicBool::new(false));
+        let called_by_restart = called.clone();
+
+        let result = apply_config_transaction(
+            &state,
+            ConfigWrite {
+                content: "NFQWS_ARGS=--filter-tcp=80\n".into(),
+                revision: "stale".into(),
+            },
+            move || {
+                called_by_restart.store(true, Ordering::SeqCst);
+                async { Ok("unexpected restart".to_string()) }
+            },
+        )
+        .await;
+
+        assert!(result.unwrap_err().contains("изменился после загрузки"));
+        assert!(!called.load(Ordering::SeqCst));
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn installation_endpoint_reports_real_paths_and_configured_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("etc/nfqws2");
+        let config = root.join("nfqws2.conf");
+        let list = root.join("custom/domains.list");
+        tokio::fs::create_dir_all(list.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=custom/domains.list\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&list, "example.org\n").await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/installation")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let report = body_json(response).await;
+        assert_eq!(report["platform"], "unknown");
+        assert_eq!(report["config"]["path"], config.display().to_string());
+        assert_eq!(report["config"]["exists"], true);
+        assert_eq!(report["config"]["usedByActiveConfig"], true);
+        assert_eq!(report["lists"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            report["lists"][0]["path"],
+            list.canonicalize().unwrap().display().to_string()
+        );
+        assert_eq!(report["lists"][0]["usedByActiveConfig"], true);
+        assert_eq!(report["lists"][0]["readable"], true);
+    }
+
+    #[tokio::test]
+    async fn create_backup_endpoint_snapshots_the_config_without_rewriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--hostlist=lists/user.list\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
         let response = app
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/api/login")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"password":"a-valid-long-test-password"}"#))
+                    .uri("/api/backups")
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        drop(permit);
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let backup = body_json(response).await;
+        assert_eq!(backup["file"], "nfqws2.conf");
+        let id = backup["id"].as_str().unwrap();
+        assert!(id.starts_with("nfqws2.conf."));
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
+        assert_eq!(
+            tokio::fs::read(dir.path().join("state/backups").join(id))
+                .await
+                .unwrap(),
+            original
+        );
     }
 
     #[tokio::test]
-    async fn authenticated_api_enforces_csrf_and_rejects_arbitrary_service_actions() {
+    async fn restore_backup_restores_selected_config_and_keeps_pre_restore_copy() {
         let dir = tempfile::tempdir().unwrap();
-        let salt = SaltString::from_b64("YS1sb25nLXRlc3Qtc2FsdA").unwrap();
-        let hash = Argon2::default()
-            .hash_password(b"a-strong-unit-test-passphrase", &salt)
-            .unwrap()
-            .to_string();
-        let app = api_router(
-            test_state(Some(hash), dir.path().to_path_buf()),
-            dir.path().join("web"),
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--hostlist=lists/original.list\n";
+        let changed = b"NFQWS_ARGS=--hostlist=lists/changed.list\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
+        let created = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/backups")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let backup = body_json(created).await;
+        let id = backup["id"].as_str().unwrap();
+        tokio::fs::write(&config, changed).await.unwrap();
+
+        let restored = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/backups/{id}/restore"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(restored.status(), StatusCode::OK);
+        assert_eq!(tokio::fs::read(&config).await.unwrap(), original);
+        let backups_dir = dir.path().join("state/backups");
+        let mut entries = tokio::fs::read_dir(backups_dir).await.unwrap();
+        let mut saved_changed_version = false;
+        while let Some(entry) = entries.next_entry().await.unwrap() {
+            if entry.file_name() != id {
+                saved_changed_version |= tokio::fs::read(entry.path()).await.unwrap() == changed;
+            }
+        }
+        assert!(
+            saved_changed_version,
+            "pre-restore config must be retained as a backup"
         );
-        let login = app
+    }
+
+    #[tokio::test]
+    async fn list_update_requires_current_revision_and_returns_reread_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n")
+            .await
+            .unwrap();
+        tokio::fs::write(list_dir.join("user.list"), "example.org\n")
+            .await
+            .unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config));
+        let app = api_router(state, dir.path().join("web"));
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/user.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(loaded.status(), StatusCode::OK);
+        let loaded = body_json(loaded).await;
+        assert_eq!(loaded["content"], "example.org\n");
+        let revision = loaded["revision"].as_str().unwrap();
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"bad domain..\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            tokio::fs::read_to_string(list_dir.join("user.list"))
+                .await
+                .unwrap(),
+            "example.org\n"
+        );
+        let save = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"example.org\nnew.example.org\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(save.status(), StatusCode::OK);
+        let saved = body_json(save).await;
+        assert_eq!(saved["content"], "example.org\nnew.example.org\n");
+        assert_eq!(
+            tokio::fs::read_to_string(list_dir.join("user.list"))
+                .await
+                .unwrap(),
+            "example.org\nnew.example.org\n"
+        );
+        let mut backups = tokio::fs::read_dir(dir.path().join("state/backups"))
+            .await
+            .unwrap();
+        assert!(backups.next_entry().await.unwrap().is_some());
+
+        let conflict = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"stale.example.org\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            tokio::fs::read_to_string(list_dir.join("user.list"))
+                .await
+                .unwrap(),
+            "example.org\nnew.example.org\n"
+        );
+    }
+
+    #[test]
+    fn list_validation_keeps_comments_and_accepts_domain_and_cidr_formats() {
+        assert!(
+            validate_list_content(
+                "user.list",
+                "# keep this note\nexample.org\n*.cdn.example.org\nexample.net.\n"
+            )
+            .is_ok()
+        );
+        assert!(validate_list_content("ipset.list", "192.0.2.1\n2001:db8::/32\n").is_ok());
+        assert!(validate_list_content("user.list", "bad domain.example\n").is_err());
+        assert!(validate_list_content("ipset.list", "192.0.2.0/33\n").is_err());
+        assert!(validate_list_content("ipset.list", "192.0.2.0/\n").is_err());
+        assert!(validate_list_content("../outside", "example.org\n").is_err());
+    }
+
+    #[test]
+    fn list_path_only_resolves_existing_allowlisted_files_referenced_by_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        std::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n").unwrap();
+        std::fs::write(lists.join("user.list"), "example.org\n").unwrap();
+
+        assert_eq!(
+            list_file_path(&config, "user.list"),
+            Some(lists.join("user.list").canonicalize().unwrap())
+        );
+        assert!(list_file_path(&config, "missing.list").is_none());
+        assert!(list_file_path(&config, "../nfqws2.conf").is_none());
+    }
+
+    #[test]
+    fn list_resolver_uses_active_config_reference_not_a_guessed_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let custom = dir.path().join("custom");
+        std::fs::create_dir_all(&custom).unwrap();
+        std::fs::write(
+            &config,
+            "NFQWS_ARGS=\"--hostlist=custom/domains.txt\" # --hostlist=lists/user.list\n",
+        )
+        .unwrap();
+        std::fs::write(custom.join("domains.txt"), "example.org\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("lists")).unwrap();
+        std::fs::write(dir.path().join("lists/user.list"), "stale.example.org\n").unwrap();
+
+        assert_eq!(
+            list_file_path(&config, "user.list"),
+            Some(custom.join("domains.txt").canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn list_reference_parser_handles_known_flags_and_ignores_shell_variables() {
+        let config = "# --hostlist=ignored.list\nNFQWS_ARGS='--hostlist-auto=lists/auto.list --ipset=/opt/etc/nfqws2/lists/addresses.list'\nNFQWS_ARGS_CUSTOM=--hostlist=${USER_LIST}\n";
+        assert_eq!(
+            configured_list_reference(config, "auto.list"),
+            Some(PathBuf::from("lists/auto.list"))
+        );
+        assert_eq!(
+            configured_list_reference(config, "ipset.list"),
+            Some(PathBuf::from("/opt/etc/nfqws2/lists/addresses.list"))
+        );
+        assert_eq!(configured_list_reference(config, "exclude.list"), None);
+        assert_eq!(configured_list_reference(config, "user.list"), None);
+        assert_eq!(configured_list_reference(config, "unknown.list"), None);
+        assert_eq!(
+            configured_list_reference(
+                "NFQWS_ARGS=--hostlist=lists/one.list\nNFQWS_ARGS_QUIC=--hostlist=lists/two.list\n",
+                "user.list"
+            ),
+            None
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_path_rejects_symlink_references_outside_the_config_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        std::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n").unwrap();
+        let outside = dir.path().join("outside.list");
+        std::fs::write(&outside, "secret.example.org\n").unwrap();
+        std::os::unix::fs::symlink(&outside, lists.join("user.list")).unwrap();
+
+        assert!(list_file_path(&config, "user.list").is_none());
+    }
+
+    #[tokio::test]
+    async fn login_endpoints_are_removed_and_service_actions_remain_allowlisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = api_router(test_state(dir.path().to_path_buf()), dir.path().join("web"));
+        let removed_login = app
             .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/api/login")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        r#"{"password":"a-strong-unit-test-passphrase"}"#,
-                    ))
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(login.status(), StatusCode::OK);
-        let cookie = login
-            .headers()
-            .get(header::SET_COOKIE)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .split(';')
-            .next()
-            .unwrap()
-            .to_string();
-        let payload = body_json(login).await;
-        let csrf = payload["csrfToken"].as_str().unwrap();
-        let without_csrf = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/service")
-                    .header(header::COOKIE, &cookie)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(r#"{"action":"start"}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(without_csrf.status(), StatusCode::FORBIDDEN);
+        assert_eq!(removed_login.status(), StatusCode::METHOD_NOT_ALLOWED);
         let invalid_action = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/api/service")
-                    .header(header::COOKIE, &cookie)
-                    .header("x-csrf-token", csrf)
-                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("content-type", "application/json")
                     .body(Body::from(r#"{"action":"restart;reboot"}"#))
                     .unwrap(),
             )
@@ -1106,6 +2078,37 @@ mod tests {
         assert_eq!(
             tokio::fs::read_to_string(backup_path).await.unwrap(),
             "original config\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_config_write_preserves_unix_owner_group_and_mode() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        tokio::fs::write(&config, b"original\n").await.unwrap();
+        tokio::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o640))
+            .await
+            .unwrap();
+        let path = std::ffi::CString::new(config.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::chown(path.as_ptr(), 65534, 65534) }, 0);
+        let before = tokio::fs::metadata(&config).await.unwrap();
+
+        backup_and_write(dir.path(), &config, b"replacement\n")
+            .await
+            .unwrap();
+        let after = tokio::fs::metadata(&config).await.unwrap();
+
+        assert_eq!(after.uid(), before.uid());
+        assert_eq!(after.gid(), before.gid());
+        assert_eq!(
+            after.permissions().mode() & 0o7777,
+            before.permissions().mode() & 0o7777
         );
     }
 

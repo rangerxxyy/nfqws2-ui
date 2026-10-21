@@ -4,24 +4,63 @@ export type StatusResponse = {
   system: { memoryTotalBytes: number | null; memoryUsedBytes: number | null; cpuPercent: number | null };
   panel: { version: string; port: number };
 };
-export type SessionResponse = { authenticated: boolean; csrfToken?: string };
 export type ConfigResponse = { file: string; content: string; revision: string };
+export type NfqwsListId = 'user.list' | 'auto.list' | 'exclude.list' | 'ipset.list' | 'ipset_exclude.list';
+export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
+export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
+export type InstallationPath = {
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  writable: boolean;
+  usedByActiveConfig: boolean;
+};
+export type NfqwsInstallation = {
+  platform: 'entware' | 'unknown';
+  config: InstallationPath | null;
+  configCandidates: InstallationPath[];
+  initScript: InstallationPath | null;
+  initScriptCandidates: InstallationPath[];
+  binaryCandidates: InstallationPath[];
+  lists: InstallationPath[];
+};
+export type BackupItem = { id: string; createdAt: number; file: string };
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
 }
 
-let csrfToken = '';
-export function setCsrfToken(value: string): void { csrfToken = value; }
-
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes((init.method ?? 'GET').toUpperCase()) && csrfToken) {
-    headers.set('X-CSRF-Token', csrfToken);
-  }
   const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
   const payload = await response.json().catch(() => ({})) as { error?: string };
   if (!response.ok) throw new ApiError(response.status, payload.error || `HTTP ${response.status}`);
   return payload as T;
 }
+
+export const nfqwsLists = {
+  index: () => api<{ files: NfqwsListSummary[] }>('/api/nfqws2/lists'),
+  get: (id: NfqwsListId) => api<NfqwsListResponse>(`/api/nfqws2/lists/${encodeURIComponent(id)}`),
+  save: (id: NfqwsListId, content: string, revision: string) => api<NfqwsListResponse>(
+    `/api/nfqws2/lists/${encodeURIComponent(id)}`,
+    { method: 'PUT', body: JSON.stringify({ content, revision }) },
+  ),
+};
+
+export const nfqwsInstallation = {
+  get: () => api<NfqwsInstallation>('/api/nfqws2/installation'),
+};
+
+export const nfqwsBackups = {
+  list: () => api<{ backups: BackupItem[] }>('/api/backups'),
+  create: () => api<BackupItem>('/api/backups', { method: 'POST' }),
+  restore: (id: string) => api<{ message: string }>(`/api/backups/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
+};
+
+export const nfqwsApply = {
+  apply: (content: string, revision: string) => api<{ config: ConfigResponse; message: string }>(
+    '/api/nfqws2/apply',
+    { method: 'POST', body: JSON.stringify({ content, revision }) },
+  ),
+};

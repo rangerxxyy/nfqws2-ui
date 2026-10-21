@@ -1,15 +1,16 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, ApiError, setCsrfToken, type ConfigResponse, type SessionResponse, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
+import { deduplicateListContent } from './list-editor';
+import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 
-type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs' | 'auth';
-let authenticated = false;
-let csrf = '';
+type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
+let activeList: NfqwsListResponse | null = null;
+let activeListId: NfqwsListId = 'user.list';
 let busy = false;
-let currentRoute: Route = 'conf';
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
@@ -20,56 +21,28 @@ function toast(message: string, type: 'success' | 'error' = 'success') {
   item.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-xl text-sm ${type === 'error' ? 'bg-rose-950 border-rose-700 text-rose-200' : 'bg-slate-900 border-slate-700 text-slate-100'}`;
   item.textContent = message; host.append(item); window.setTimeout(() => item.remove(), 4500);
 }
-function revealAuthRequired() { toast('Войдите через раздел «Авторизация», чтобы открыть защищённые данные.', 'error'); }
 function setBusy(value: boolean) {
   busy = value;
-  all<HTMLButtonElement>('button[data-protected]').forEach((button) => { button.disabled = value || !authenticated; });
-  all<HTMLButtonElement>('button[data-action="restartService"], button[data-action="toggleDaemonPower"], button[data-action="applyConfigAndRestart"], button[data-action="copyConfigText"]')
-    .forEach((button) => { button.disabled = value || !authenticated; });
-  all<HTMLSelectElement>('select[data-action="updateConfVariable"]').forEach((select) => { select.disabled = value || !authenticated; });
-}
-function updateAuthView() {
-  $('#authSignedOut')?.classList.toggle('hidden', authenticated);
-  $('#authSignedIn')?.classList.toggle('hidden', !authenticated);
-  setText('#authMenuBadge', authenticated ? 'Вход выполнен' : 'Войти');
-  setText('#statusTextLabel', authenticated ? 'Статус неизвестен' : 'Требуется вход');
-  setText('#headerUiVersion', status?.panel.version ?? '—');
-  if (!authenticated) { setText('#queueBadge', 'Q:—'); setText('#snapshotCountBadge', '—'); }
-  all<HTMLButtonElement>('button[data-protected]').forEach((button) => { button.disabled = !authenticated || busy; });
-  const protectedControls = all<HTMLButtonElement>('button[data-action="restartService"], button[data-action="toggleDaemonPower"], button[data-action="applyConfigAndRestart"], button[data-action="copyConfigText"]');
-  protectedControls.forEach((button) => {
-    button.disabled = !authenticated || busy;
-    button.classList.toggle('opacity-50', !authenticated || busy);
-    button.classList.toggle('cursor-not-allowed', !authenticated || busy);
+  all<HTMLButtonElement>('button[data-action-click]').forEach((button) => {
+    if (value && !button.disabled) { button.disabled = true; button.dataset.busyDisabled = 'true'; }
+    else if (!value && button.dataset.busyDisabled === 'true') { button.disabled = false; delete button.dataset.busyDisabled; }
   });
-  all<HTMLSelectElement>('select[data-action="updateConfVariable"]').forEach((select) => {
-    select.disabled = !authenticated;
-    if (!authenticated) select.value = '';
+  all<HTMLSelectElement>('select[data-action-change]').forEach((select) => {
+    if (value && !select.disabled) { select.disabled = true; select.dataset.busyDisabled = 'true'; }
+    else if (!value && select.dataset.busyDisabled === 'true') { select.disabled = false; delete select.dataset.busyDisabled; }
   });
 }
 function showRoute(route: Route) {
-  currentRoute = route;
   document.querySelectorAll<HTMLElement>('[id^="tabContent-"]').forEach((section) => section.classList.toggle('hidden', section.id !== `tabContent-${route}`));
   all<HTMLButtonElement>('.side-nav-btn').forEach((button) => {
     const active = button.id === `navBtn-${route}`;
     button.classList.toggle('active', active);
     button.classList.toggle('text-slate-400', !active);
   });
-  if (route === 'auth') updateAuthView();
-  if (authenticated && route === 'logs') void loadLogs();
-}
-async function fetchSession() {
-  try {
-    const session = await api<SessionResponse>('/api/session');
-    authenticated = session.authenticated;
-    csrf = session.csrfToken ?? '';
-    setCsrfToken(csrf);
-    updateAuthView();
-    if (authenticated) { await fetchStatus(); await loadConfig(); }
-  } catch (error) { authenticated = false; updateAuthView(); setText('#authError', error instanceof Error ? error.message : 'Не удалось проверить сессию'); }
+  if (route === 'logs') void loadLogs();
+  if (route === 'lists') void loadList(activeListId);
 }
 async function fetchStatus() {
-  if (!authenticated) return;
   try {
     status = await api<StatusResponse>('/api/status');
     const service = status.service.state;
@@ -89,15 +62,9 @@ async function fetchStatus() {
     setText('#headerCoreVersion', status.service.version ?? '—'); setText('#headerUiVersion', status.panel.version);
     const power = $('#togglePowerText'); if (power) power.textContent = running ? 'Остановить' : 'Запустить';
     const powerBtn = $('#togglePowerBtn'); if (powerBtn) { powerBtn.classList.toggle('text-rose-400', running); powerBtn.classList.toggle('text-emerald-400', stopped); }
-    setText('#authStatusText', 'Доступ подтверждён');
     setText('#checkedAt', status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '—');
   } catch (error) {
     status = null;
-    if (error instanceof ApiError && error.status === 401) {
-      authenticated = false; setCsrfToken(''); updateAuthView();
-      setText('#statusTextLabel', 'Требуется вход');
-      return;
-    }
     const label = $('#statusTextLabel'); if (label) { label.textContent = 'Статус неизвестен'; label.className = 'text-xs sm:text-sm font-semibold text-slate-400 tracking-tight'; }
     const dot = $('#statusMainDot'); if (dot) dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400';
     const ring = $('#statusRadarRing'); if (ring) ring.className = 'absolute inline-flex h-full w-full rounded-full bg-slate-400';
@@ -109,9 +76,21 @@ async function fetchStatus() {
 }
 function fmtMb(bytes: number) { return (bytes / 1024 / 1024).toFixed(0); }
 async function loadConfig() {
-  if (!authenticated) return revealAuthRequired();
+
   try {
     config = await api<ConfigResponse>('/api/config?file=nfqws2.conf');
+    const applyButton = $('[data-action-click="applyConfigAndRestart"]');
+    let canWriteConfig = false;
+    try {
+      const installation = await nfqwsInstallation.get();
+      canWriteConfig = installation.config?.writable === true;
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Не удалось проверить права записи в конфиг', 'error');
+    }
+    if (applyButton instanceof HTMLButtonElement) {
+      applyButton.disabled = !canWriteConfig;
+      applyButton.title = canWriteConfig ? '' : 'Backend не подтвердил право записи в обнаруженный конфиг';
+    }
     const editor = $('#nfqwsConfTextarea');
     if (editor instanceof HTMLTextAreaElement) editor.value = config.content;
     setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} строк`);
@@ -119,11 +98,38 @@ async function loadConfig() {
     const moduleRefs = config.content.split(/\r?\n/).filter((line) => /^\s*[^#].*--(?:lua-init|blob)=/.test(line));
     setText('#moduleStatusBadge', `${moduleRefs.length} ссылок в конфигурации`);
     renderConfigModules(config.content);
+    renderConfigSections(config.content);
     updateQuickParameters(config.content);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
     setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:—');
     syncConfigLines();
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
+}
+function renderConfigSections(content: string) {
+  const box = $('#nfqwsConfigSections');
+  if (!box) return;
+  const facts = summarizeNfqwsConfig(content);
+  box.replaceChildren();
+  setText('#profileStatusBadge', `${facts.sections.length} секций параметров`);
+
+  const mode = document.createElement('div');
+  mode.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between gap-2';
+  const modeLabel = document.createElement('span'); modeLabel.className = 'text-slate-300';
+  modeLabel.textContent = `NFQWS_EXTRA_ARGS · выбранное значение: ${facts.selectedMode ?? 'не задано'}`;
+  const modeState = document.createElement('span'); modeState.className = 'px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold'; modeState.textContent = 'В конфигурации';
+  mode.append(modeLabel, modeState); box.append(mode);
+
+  if (!facts.sections.length) {
+    const empty = document.createElement('div'); empty.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 text-slate-400';
+    empty.textContent = 'Не найдены буквальные значения секций NFQWS_*_ARGS; динамические shell-переменные здесь не интерпретируются.'; box.append(empty); return;
+  }
+  for (const section of facts.sections) {
+    const row = document.createElement('div'); row.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between gap-2';
+    const label = document.createElement('span'); label.className = 'text-slate-300'; label.textContent = section.variable;
+    const details = document.createElement('span'); details.className = 'text-right text-slate-400';
+    details.textContent = `${section.strategies} --lua-desync · ${section.profiles} --new · ${section.filters} фильтров`;
+    row.append(label, details); box.append(row);
+  }
 }
 function renderConfigModules(content: string) {
   const host = $('#moduleFilesContainer'); if (!host) return;
@@ -147,15 +153,28 @@ function configAssignmentValue(content: string, key: string): string {
   return raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) ? raw.slice(1, -1) : raw;
 }
 function updateQuickParameters(content: string) {
-  all<HTMLSelectElement>('select[data-action="updateConfVariable"][data-key]').forEach((select) => {
+  const availableModes = new Set(availableNfqwsModes(content));
+  all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-key]').forEach((select) => {
     const key = select.dataset.key;
     if (!key) return;
     const value = configAssignmentValue(content, key);
     select.value = [...select.options].some((option) => option.value === value) ? value : '';
   });
+  all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-args]').forEach((select) => {
+    let key = '';
+    try { key = (JSON.parse(select.dataset.args ?? '[]') as unknown[])[0] as string ?? ''; } catch { return; }
+    if (key !== 'NFQWS_EXTRA_ARGS') return;
+    const selectedMode = configAssignmentValue(content, key);
+    select.value = [...select.options].some((option) => option.value === selectedMode) ? selectedMode : '';
+    for (const option of [...select.options]) {
+      if (!/^\$MODE_(?:LIST|AUTO|ALL)$/.test(option.value)) continue;
+      option.disabled = !availableModes.has(option.value);
+      option.title = option.disabled ? `${option.value.slice(1)} отсутствует или пуст в загруженном конфиге` : '';
+    }
+  });
 }
 function updateConfigVariable(key: string, value: string, quoted: boolean) {
-  if (!authenticated) return revealAuthRequired();
+
   const editor = $('#nfqwsConfTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return;
   const escaped = quoted ? `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : value;
@@ -177,19 +196,20 @@ function syncConfigLines() {
 }
 async function saveConfigAndApply() {
   if (busy) return;
-  if (!authenticated || !config) return revealAuthRequired();
+  if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
   const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
   setBusy(true);
   try {
-    config = await api<ConfigResponse>('/api/config?file=nfqws2.conf', { method: 'PUT', body: JSON.stringify({ content: editor.value, revision: config.revision }) });
-    toast('Конфигурация сохранена. Перезапускаю nfqws2…');
-    await serviceAction('restart', true);
+    const result = await nfqwsApply.apply(editor.value, config.revision);
+    config = result.config;
+    await fetchStatus();
+    toast('Конфигурация сохранена, повторно прочитана; backend подтвердил перезапуск nfqws2.');
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setBusy(false); }
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = false) {
   if (busy) return;
-  if (!authenticated) return revealAuthRequired();
+
   if (!confirmed && action === 'stop' && !window.confirm('Остановить nfqws2?')) return;
   if (!confirmed && action === 'restart' && !window.confirm('Перезапустить nfqws2?')) return;
   setBusy(true);
@@ -198,42 +218,116 @@ async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = f
   finally { setBusy(false); }
 }
 async function loadLogs() {
-  if (!authenticated) return revealAuthRequired();
+
   try { const result = await api<{ content: string }>('/api/logs?source=nfqws2&tail=500'); const host = $('#liveLogContainer'); if (host) host.textContent = result.content; }
   catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить журнал', 'error'); }
 }
 async function loadBackups() {
-  if (!authenticated) return revealAuthRequired();
+
   try {
-    const response = await api<{ backups: { id: string; createdAt: number; file: string }[] }>('/api/backups');
+    const response = await nfqwsBackups.list();
     setText('#snapshotCountBadge', String(response.backups.length));
     const box = $('#snapshotsListBox'); if (!box) return;
     box.replaceChildren();
     if (!response.backups.length) { box.textContent = 'Резервных копий пока нет'; return; }
-    for (const backup of response.backups) { const row = document.createElement('div'); row.className = 'p-3 rounded-lg bg-slate-900 border border-slate-800 flex justify-between gap-3'; row.textContent = `${backup.file} · ${new Date(backup.createdAt * 1000).toLocaleString()}`; box.append(row); }
+    for (const backup of response.backups) {
+      const row = document.createElement('div'); row.className = 'p-3 rounded-lg bg-slate-900 border border-slate-800 flex justify-between items-center gap-3';
+      const label = document.createElement('span'); label.textContent = `${backup.file} · ${new Date(backup.createdAt * 1000).toLocaleString()}`;
+      const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs'; restore.textContent = 'Восстановить'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.arg = backup.id;
+      row.append(label, restore); box.append(row);
+    }
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить копии', 'error'); }
 }
-async function login(event: SubmitEvent) {
-  event.preventDefault(); const input = $('#authPassword'); const err = $('#authError');
-  if (!(input instanceof HTMLInputElement)) return;
-  const button = $('#authSubmit'); if (button instanceof HTMLButtonElement) button.disabled = true;
+async function createNewSnapshot() {
+  setBusy(true);
+  try { const backup = await nfqwsBackups.create(); await loadBackups(); toast(`Снимок конфигурации создан: ${new Date(backup.createdAt * 1000).toLocaleString()}`); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось создать снимок', 'error'); }
+  finally { setBusy(false); }
+}
+async function restoreSnapshot(id: string) {
+  if (!window.confirm('Заменить текущую конфигурацию этим снимком? Перед восстановлением backend сохранит текущую версию. Служба nfqws2 автоматически не перезапускается.')) return;
+  setBusy(true);
+  try { const result = await nfqwsBackups.restore(id); await loadConfig(); await loadBackups(); toast(`${result.message}. Перезапустите nfqws2, чтобы применить.`); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить снимок', 'error'); }
+  finally { setBusy(false); }
+}
+async function loadList(id: NfqwsListId) {
+
   try {
-    const session = await api<SessionResponse>('/api/login', { method: 'POST', body: JSON.stringify({ password: input.value }) });
-    authenticated = true; csrf = session.csrfToken ?? ''; setCsrfToken(csrf); input.value = '';
-    if (err) err.classList.add('hidden'); updateAuthView(); showRoute(currentRoute === 'auth' ? 'conf' : currentRoute);
-    await fetchStatus(); await loadConfig(); toast('Вход выполнен');
-  } catch (error) { if (err) { err.textContent = error instanceof Error ? error.message : 'Войти не удалось'; err.classList.remove('hidden'); } }
-  finally { if (button instanceof HTMLButtonElement) button.disabled = false; }
+    const index = await nfqwsLists.index();
+    const summary = index.files.find((file) => file.id === id);
+    for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
+      const available = index.files.some((file) => file.id === candidate.dataset.arg);
+      candidate.disabled = !available;
+      candidate.classList.toggle('opacity-40', !available);
+      candidate.title = available ? 'Путь найден в активной конфигурации' : 'Файл не найден по буквальной ссылке в активной конфигурации';
+    }
+    if (!summary) {
+      activeList = null;
+      const editor = $('#listEditorTextarea');
+      if (editor instanceof HTMLTextAreaElement) { editor.value = ''; editor.placeholder = 'Файл отсутствует; панель не создаёт списки автоматически.'; }
+      setText('#currentListFilePath', 'Файл не найден');
+      setText('#listFooterCount', 'Список недоступен');
+      return toast(`Путь ${id} не найден в активной конфигурации nfqws2.`, 'error');
+    }
+    const result = await nfqwsLists.get(id);
+    activeList = result;
+    activeListId = id;
+    const editor = $('#listEditorTextarea');
+    if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
+    setText('#currentListFilePath', result.path);
+    setText('#currentListDescription', id.startsWith('ipset') ? 'IP-адреса и CIDR, обнаруженный список nfqws2' : 'Доменный список, обнаруженный рядом с конфигурацией nfqws2');
+    for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
+      const selected = candidate.dataset.arg === id;
+      candidate.classList.toggle('active', selected);
+      candidate.classList.toggle('text-white', selected);
+      candidate.classList.toggle('font-bold', selected);
+      candidate.classList.toggle('border-sky-400', selected);
+      candidate.classList.toggle('bg-slate-800/40', selected);
+      candidate.classList.toggle('text-slate-400', !selected);
+      candidate.classList.toggle('border-transparent', !selected);
+    }
+    syncListLineNumbers(editor instanceof HTMLTextAreaElement ? editor : undefined);
+    const saveButton = $('[data-action="saveActiveListFile"]');
+    if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !summary.writable || busy;
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось прочитать список', 'error');
+  }
 }
-async function logout() {
-  try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch { /* session may have expired */ }
-  authenticated = false; csrf = ''; setCsrfToken(''); status = null; config = null; updateAuthView(); showRoute('auth'); toast('Вы вышли из панели');
+async function saveActiveList() {
+  if (busy) return;
+  if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
+  const editor = $('#listEditorTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return;
+  setBusy(true);
+  try {
+    activeList = await nfqwsLists.save(activeList.id, editor.value, activeList.revision);
+    editor.value = activeList.content;
+    syncListLineNumbers(editor);
+    toast('Список записан, резервная копия создана, повторное чтение подтверждено. Служба не перезапускалась.');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось сохранить список', 'error');
+  } finally { setBusy(false); }
 }
-export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','createNewSnapshot','restoreSnapshot','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','injectPresetDomains','deduplicateCurrentList','saveActiveListFile','findTelegramChatId'] as const;
+function syncListLineNumbers(editor = $('#listEditorTextarea')) {
+  if (!(editor instanceof HTMLTextAreaElement)) return;
+  const gutter = $('#listLineNumbers');
+  if (!gutter) return;
+  const lines = Math.max(1, editor.value.split(/\r?\n/).length);
+  gutter.innerHTML = Array.from({ length: lines }, (_, index) => `${index + 1}`).join('<br>');
+  gutter.scrollTop = editor.scrollTop;
+  const entries = editor.value.split(/\r?\n/).filter((line) => line.trim() && !line.trimStart().startsWith('#')).length;
+  setText('#listFooterCount', `Всего записей: ${entries}`);
+}
+function syncListScroll(editor: HTMLTextAreaElement) {
+  const gutter = $('#listLineNumbers');
+  if (gutter) gutter.scrollTop = editor.scrollTop;
+}
+export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','injectPresetDomains','findTelegramChatId'] as const;
 
 function bindPrototypeActions() {
   const showDiff = () => {
-    if (!authenticated || !config) return revealAuthRequired();
+    if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
     const editor = $('#nfqwsConfTextarea'); const body = $('#diffModalBody'); const modal = $('#diffModalBackdrop');
     if (!(editor instanceof HTMLTextAreaElement) || !body || !modal) return;
     const before = config.content.split(/\r?\n/); const after = editor.value.split(/\r?\n/);
@@ -250,7 +344,9 @@ function bindPrototypeActions() {
     modal.classList.remove('hidden'); modal.classList.add('flex');
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
-    switchMainTab: (route: Route) => { showRoute(route); if (!authenticated && route !== 'auth') revealAuthRequired(); if (authenticated && route === 'snapshots') void loadBackups(); },
+    switchMainTab: (route: Route) => { showRoute(route); if (route === 'snapshots') void loadBackups(); },
+    createNewSnapshot: () => void createNewSnapshot(),
+    restoreSnapshot: (id: string) => void restoreSnapshot(id),
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
     applyConfigAndRestart: () => void saveConfigAndApply(),
@@ -266,10 +362,21 @@ function bindPrototypeActions() {
     closeUpdateModal: () => $('#updateModalBackdrop')?.classList.add('hidden'),
     openUpdateModal: () => toast('Обновление требует API безопасной установки и пока отключено.', 'error'),
     filterDocs: (query: string) => { const box = $('#docItemsContainer'); if (box) box.textContent = query ? 'Справочник флагов не подключён.' : 'Справочник флагов не загружен.'; },
-    syncListLineNumbers: () => { const box = $('#listLineNumbers'); if (box) box.textContent = '—'; },
-    syncListScroll: () => undefined,
+    syncListLineNumbers: (editor?: HTMLTextAreaElement) => syncListLineNumbers(editor),
+    syncListScroll: (editor: HTMLTextAreaElement) => syncListScroll(editor),
     syncCustomHostInput: () => undefined,
-    selectListFile: (name: string) => { setText('#currentListFilePath', `/opt/etc/nfqws2/lists/${name}`); toast('API управления списками пока не включён в backend.', 'error'); },
+    selectListFile: (name: NfqwsListId) => void loadList(name),
+    saveActiveListFile: () => void saveActiveList(),
+    deduplicateCurrentList: () => {
+      if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
+      const editor = $('#listEditorTextarea');
+      if (!(editor instanceof HTMLTextAreaElement)) return;
+      const result = deduplicateListContent(editor.value, activeList.id);
+      if (!result.removed) return toast('Дубликаты не найдены.');
+      editor.value = result.content;
+      syncListLineNumbers(editor);
+      toast(`Удалено дубликатов: ${result.removed}. Черновик изменён; нажмите «Сохранить» для записи.`);
+    },
     clearLogsBox: () => { const host = $('#liveLogContainer'); if (host) host.textContent = ''; },
     emitTestLogEvent: () => toast('Тестовая генерация журналов отключена.'),
     showToast: (message: string) => toast(String(message)),
@@ -284,12 +391,24 @@ function bindPrototypeActions() {
     const action = handlers[actionName];
     if (!action) return;
     const args: unknown[] = [];
-    if (control.dataset.key !== undefined) args.push(control.dataset.key);
-    if (control.dataset.valueSource === 'value') args.push((control as HTMLInputElement | HTMLSelectElement).value);
-    else if (control.dataset.valueSource === 'checked') args.push((control as HTMLInputElement).checked);
-    else if (control.dataset.valueSource === 'self') args.push(control);
-    else if (control.dataset.arg !== undefined) args.push(control.dataset.arg);
-    if (control.dataset.quoted !== undefined) args.push(control.dataset.quoted === 'true');
+    if (control.dataset.args) {
+      try {
+        const descriptors = JSON.parse(control.dataset.args) as (string | { source: 'value' | 'checked' | 'self' })[];
+        for (const descriptor of descriptors) {
+          if (typeof descriptor === 'string') args.push(descriptor);
+          else if (descriptor.source === 'value') args.push((control as HTMLInputElement | HTMLSelectElement).value);
+          else if (descriptor.source === 'checked') args.push((control as HTMLInputElement).checked);
+          else if (descriptor.source === 'self') args.push(control);
+        }
+      } catch { return; }
+    } else {
+      if (control.dataset.key !== undefined) args.push(control.dataset.key);
+      if (control.dataset.valueSource === 'value') args.push((control as HTMLInputElement | HTMLSelectElement).value);
+      else if (control.dataset.valueSource === 'checked') args.push((control as HTMLInputElement).checked);
+      else if (control.dataset.valueSource === 'self') args.push(control);
+      else if (control.dataset.arg !== undefined) args.push(control.dataset.arg);
+      if (control.dataset.quoted !== undefined) args.push(control.dataset.quoted === 'true');
+    }
     void action(...args);
   };
   document.addEventListener('click', (event) => dispatch(event, 'click'));
@@ -302,15 +421,24 @@ function boot() {
   bindPrototypeActions();
   document.documentElement.classList.add('dark');
   showRoute('conf');
-  $('#authForm')?.addEventListener('submit', (event) => void login(event as SubmitEvent));
-  $('#authLogout')?.addEventListener('click', () => void logout());
-  $('#nfqwsConfTextarea')?.addEventListener('input', syncConfigLines);
+  const applyButton = $('[data-action-click="applyConfigAndRestart"]');
+  if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
+  $('#nfqwsConfTextarea')?.addEventListener('input', () => {
+    syncConfigLines();
+    const editor = $('#nfqwsConfTextarea');
+    if (editor instanceof HTMLTextAreaElement) updateQuickParameters(editor.value);
+  });
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigLines);
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
-  void fetchSession();
-  window.setInterval(() => { if (document.visibilityState === 'visible' && authenticated) void fetchStatus(); }, 7000);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && authenticated) void fetchStatus(); });
-  if (!authenticated) updateAuthView();
+  void fetchStatus();
+  void loadConfig();
+  window.setInterval(() => { if (document.visibilityState === 'visible') void fetchStatus(); }, 7000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void fetchStatus(); });
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true }); else boot();
+let booted = false;
+export function bootPanel() {
+  if (booted) return;
+  booted = true;
+  boot();
+}

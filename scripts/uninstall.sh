@@ -18,10 +18,12 @@ if [ -x /opt/etc/init.d/S99nfqws2-ui ]; then
 fi
 rm -f /opt/etc/init.d/S99nfqws2-ui /opt/var/run/nfqws2-ui.port
 rm -rf "$ROOT" /opt/var/run/nfqws2-ui
+rm -f "$ETC/password.hash"
+rmdir "$ETC" 2>/dev/null || true
 if [ "$PURGE" = 1 ]; then
 	rm -rf "$ETC" "$DATA"
-	 echo 'nfqws2-ui removed, including panel password and panel backups.'
+	 echo 'nfqws2-ui removed, including panel backups.'
 else
-	echo 'nfqws2-ui program removed; panel password and backups remain in /opt/etc/nfqws2-ui and /opt/var/lib/nfqws2-ui.'
+	echo 'nfqws2-ui program removed; backups remain in /opt/var/lib/nfqws2-ui.'
 fi
 echo 'nfqws2 and its configuration were not changed.'

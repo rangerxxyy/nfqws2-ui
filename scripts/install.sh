@@ -15,7 +15,6 @@ RUN=/opt/var/run/nfqws2-ui
 STAGE="$ROOT/releases/$VERSION-$(date +%Y%m%d%H%M%S)-$$"
 TMP="/tmp/nfqws2-ui-install-$$"
 PREVIOUS=''
-TTY_OFF=0
 COMMITTED=0
 SWITCHED=0
 
@@ -23,7 +22,6 @@ fail() { echo "nfqws2-ui installer: $*" >&2; exit 1; }
 # cleanup is called by EXIT/HUP/INT/TERM traps.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
-	if [ "$TTY_OFF" = 1 ]; then stty echo </dev/tty 2>/dev/null || true; printf '\n' >/dev/tty 2>/dev/null || true; fi
 	if [ "$COMMITTED" != 1 ] && [ -d "$STAGE" ]; then
 		CURRENT=$(readlink "$ROOT/current" 2>/dev/null || true)
 		[ "$CURRENT" = "$STAGE" ] || rm -rf "$STAGE"
@@ -68,8 +66,8 @@ fi
 ARCH=$(uname -m)
 case "$ARCH" in aarch64|arm64) ;; *) fail "unsupported architecture: $ARCH (release targets aarch64)" ;; esac
 
-mkdir -p "$TMP" "$ROOT/releases" "$ETC" "$DATA" "$RUN" /opt/var/log
-chmod 700 "$ETC" "$DATA" "$RUN"
+mkdir -p "$TMP" "$ROOT/releases" "$DATA" "$RUN" /opt/var/log
+chmod 700 "$DATA" "$RUN"
 WGET=$(command -v wget)
 "$WGET" -q -O "$TMP/$ASSET" "$BASE/$ASSET" || fail 'cannot download release archive'
 "$WGET" -q -O "$TMP/$SHA_ASSET" "$BASE/$SHA_ASSET" || fail 'cannot download SHA256 file'
@@ -95,30 +93,10 @@ tar -xzf "$TMP/$ASSET" -C "$STAGE" || { rm -rf "$STAGE"; fail 'cannot extract re
 # shellcheck disable=SC1091
 . "$STAGE/scripts/symlink.sh"
 
-# Preserve an existing administrator password on updates. First install asks
-# for a password on the controlling terminal; no secret is passed in argv.
-if [ ! -s "$ETC/password.hash" ]; then
-	[ -r /dev/tty ] || fail 'first install needs an interactive terminal to set the panel password'
-	printf 'Create panel password (12+ characters): ' >/dev/tty
-	stty -echo </dev/tty 2>/dev/null || true
-	TTY_OFF=1
-	IFS= read -r PASSWORD </dev/tty || fail 'could not read password'
-	stty echo </dev/tty 2>/dev/null || true
-	TTY_OFF=0
-	printf '\nConfirm password: ' >/dev/tty
-	stty -echo </dev/tty 2>/dev/null || true
-	TTY_OFF=1
-	IFS= read -r PASSWORD2 </dev/tty || fail 'could not read password confirmation'
-	stty echo </dev/tty 2>/dev/null || true
-	TTY_OFF=0
-	printf '\n' >/dev/tty
-	[ "$PASSWORD" = "$PASSWORD2" ] || fail 'passwords do not match'
-	[ "${#PASSWORD}" -ge 12 ] || fail 'password must contain at least 12 characters'
-	printf '%s' "$PASSWORD" | "$STAGE/bin/nfqws2-ui" hash-password > "$TMP/password.hash" || fail 'cannot hash password'
-	unset PASSWORD PASSWORD2
-	cp "$TMP/password.hash" "$ETC/password.hash"
-	chmod 600 "$ETC/password.hash"
-fi
+# Remove the credential file created by older panel versions; authentication
+# is no longer part of this version's UI or API.
+rm -f "$ETC/password.hash"
+rmdir "$ETC" 2>/dev/null || true
 
 mkdir -p /opt/etc/init.d
 cp "$STAGE/scripts/S99nfqws2-ui" /opt/etc/init.d/S99nfqws2-ui
@@ -144,7 +122,25 @@ while [ "$tries" -lt 15 ]; do
 				rm -rf "$old_release" 2>/dev/null || true
 			done
 			COMMITTED=1
-			echo "nfqws2-ui $VERSION installed: http://<router-lan-ip>:$PORT/"
+			echo "Панель nfqws2-ui $VERSION успешно установлена. Откройте её по адресу:"
+			LAN_IPS=''
+			if command -v ip >/dev/null 2>&1; then
+				LAN_IPS=$(ip -o -4 addr show scope global 2>/dev/null | awk '$2 ~ /^br/ { split($4, a, "/"); print a[1] }')
+				if [ -z "$LAN_IPS" ]; then
+					LAN_IPS=$(ip -o -4 addr show scope global 2>/dev/null | awk '{ split($4, a, "/"); print a[1] }')
+				fi
+			fi
+			if [ -z "$LAN_IPS" ] && command -v ifconfig >/dev/null 2>&1; then
+				LAN_IPS=$(ifconfig 2>/dev/null | awk '{ for (i=1; i<=NF; i++) { if ($i == "inet" && $(i+1) != "127.0.0.1") print $(i+1); else if ($i ~ /^addr:/) { ip=substr($i, 6); if (ip != "127.0.0.1") print ip } } }')
+			fi
+			if [ -n "$LAN_IPS" ]; then
+				for LAN_IP in $LAN_IPS; do
+					URL="http://$LAN_IP:$PORT/"
+					printf '\033]8;;%s\033\\%s\033]8;;\033\\\n' "$URL" "$URL"
+				done
+			else
+				echo "Router IP could not be detected automatically. Use its LAN address: http://<router-lan-ip>:$PORT/"
+			fi
 			exit 0
 		fi
 	fi
