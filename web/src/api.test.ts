@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsLists } from './api';
+import { api, nfqwsInstallation, nfqwsLists } from './api';
 
 describe('API client used by the source-based panel', () => {
   afterEach(() => { vi.restoreAllMocks(); });
@@ -17,6 +17,19 @@ describe('API client used by the source-based panel', () => {
   it('surfaces backend errors as typed API errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"Backend недоступен"}', { status: 503 })));
     await expect(api('/api/status')).rejects.toMatchObject({ status: 503, message: 'Backend недоступен' });
+  });
+
+  it('loads installation diagnostics through the typed API layer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      '{"platform":"entware","config":{"path":"/opt/etc/nfqws2/nfqws2.conf","exists":true,"readable":true,"writable":true,"usedByActiveConfig":true},"configCandidates":[],"initScript":null,"initScriptCandidates":[],"binaryCandidates":[],"lists":[]}',
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await nfqwsInstallation.get();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/installation');
+    expect(result.config?.usedByActiveConfig).toBe(true);
+    expect(result.config?.writable).toBe(true);
   });
 
   it('saves a selected list using its server revision without a session token', async () => {

@@ -187,7 +187,7 @@ async function loadList(id: NfqwsListId) {
       const available = index.files.some((file) => file.id === candidate.dataset.arg);
       candidate.disabled = !available;
       candidate.classList.toggle('opacity-40', !available);
-      candidate.title = available ? '' : 'Файл отсутствует в обнаруженной директории списков';
+      candidate.title = available ? 'Путь найден в активной конфигурации' : 'Файл не найден по буквальной ссылке в активной конфигурации';
     }
     if (!summary) {
       activeList = null;
@@ -195,7 +195,7 @@ async function loadList(id: NfqwsListId) {
       if (editor instanceof HTMLTextAreaElement) { editor.value = ''; editor.placeholder = 'Файл отсутствует; панель не создаёт списки автоматически.'; }
       setText('#currentListFilePath', 'Файл не найден');
       setText('#listFooterCount', 'Список недоступен');
-      return toast(`Файл ${id} не найден рядом с обнаруженным конфигом nfqws2.`, 'error');
+      return toast(`Путь ${id} не найден в активной конфигурации nfqws2.`, 'error');
     }
     const result = await nfqwsLists.get(id);
     activeList = result;

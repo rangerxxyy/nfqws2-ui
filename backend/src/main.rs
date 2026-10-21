@@ -8,8 +8,8 @@ use axum::{
     routing::{get, post},
 };
 use nfqws2_ui::{
-    ServiceAction, ServiceState, known_config_paths, parse_meminfo_kb, service_action,
-    service_status,
+    ServiceAction, ServiceState, known_config_paths, known_init_scripts, parse_meminfo_kb,
+    service_action, service_status,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -52,6 +52,28 @@ struct StatusResponse {
     service: ServiceInfo,
     system: SystemInfo,
     panel: PanelInfo,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PathInfo {
+    path: String,
+    exists: bool,
+    readable: bool,
+    writable: bool,
+    used_by_active_config: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InstallationResponse {
+    platform: &'static str,
+    config: Option<PathInfo>,
+    config_candidates: Vec<PathInfo>,
+    init_script: Option<PathInfo>,
+    init_script_candidates: Vec<PathInfo>,
+    binary_candidates: Vec<PathInfo>,
+    lists: Vec<PathInfo>,
 }
 
 #[derive(Serialize)]
@@ -171,6 +193,68 @@ fn error(status: StatusCode, message: impl Into<String>) -> Response {
 
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"ok":true,"service":"nfqws2-ui"}))
+}
+
+fn inspect_path(path: &Path, used_by_active_config: bool) -> PathInfo {
+    let exists = path.is_file();
+    PathInfo {
+        path: path.display().to_string(),
+        exists,
+        readable: exists && std::fs::File::open(path).is_ok(),
+        writable: exists && std::fs::OpenOptions::new().append(true).open(path).is_ok(),
+        used_by_active_config,
+    }
+}
+
+async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
+    let config = config_path_for_state(&state);
+    let config_candidates = known_config_paths()
+        .iter()
+        .map(|candidate| {
+            let active = config
+                .as_ref()
+                .is_some_and(|path| candidate.canonicalize().ok() == path.canonicalize().ok());
+            inspect_path(candidate, active)
+        })
+        .collect();
+    let init_candidates = known_init_scripts();
+    let init_script = init_candidates.iter().find(|path| path.is_file()).cloned();
+    let init_script_candidates = init_candidates
+        .iter()
+        .map(|candidate| inspect_path(candidate, false))
+        .collect();
+    let binary_candidates: Vec<PathBuf> = [
+        PathBuf::from("/opt/usr/bin/nfqws2"),
+        PathBuf::from("/usr/bin/nfqws2"),
+    ]
+    .into_iter()
+    .collect();
+    let binary_candidates = binary_candidates
+        .iter()
+        .map(|candidate| inspect_path(candidate, false))
+        .collect();
+    let lists = config
+        .as_ref()
+        .into_iter()
+        .flat_map(|config| LIST_IDS.iter().filter_map(|id| list_file_path(config, id)))
+        .map(|path| inspect_path(&path, true))
+        .collect();
+    let platform = config
+        .as_ref()
+        .map(|path| path.to_string_lossy())
+        .filter(|path| path.starts_with("/opt/etc/"))
+        .map(|_| "entware")
+        .unwrap_or("unknown");
+    Json(InstallationResponse {
+        platform,
+        config: config.as_deref().map(|path| inspect_path(path, true)),
+        config_candidates,
+        init_script: init_script.as_deref().map(|path| inspect_path(path, false)),
+        init_script_candidates,
+        binary_candidates,
+        lists,
+    })
+    .into_response()
 }
 
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
@@ -318,25 +402,155 @@ fn config_path_for_state(state: &AppState) -> Option<PathBuf> {
         .or_else(|| config_path("nfqws2.conf"))
 }
 
+fn list_flag(id: &str) -> Option<&'static str> {
+    match id {
+        "user.list" => Some("--hostlist"),
+        "auto.list" => Some("--hostlist-auto"),
+        "exclude.list" => Some("--hostlist-exclude"),
+        "ipset.list" => Some("--ipset"),
+        "ipset_exclude.list" => Some("--ipset-exclude"),
+        _ => None,
+    }
+}
+
+fn strip_shell_comment(line: &str) -> &str {
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in line.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        if let Some(open) = quote {
+            if character == open {
+                quote = None;
+            }
+        } else if character == '\'' || character == '"' {
+            quote = Some(character);
+        } else if character == '#' && (index == 0 || line[..index].ends_with(char::is_whitespace)) {
+            return &line[..index];
+        }
+    }
+    line
+}
+
+fn configured_list_reference(config_text: &str, id: &str) -> Option<PathBuf> {
+    let flag = list_flag(id)?;
+    let mut found = None;
+    let mut unresolved = false;
+    for line in config_text.lines() {
+        let line = strip_shell_comment(line);
+        let mut start_at = 0;
+        while let Some(offset) = line[start_at..].find(flag) {
+            let start = start_at + offset;
+            let end = start + flag.len();
+            let before_is_boundary =
+                start == 0 || !line.as_bytes()[start - 1].is_ascii_alphanumeric();
+            let after_is_boundary = line
+                .as_bytes()
+                .get(end)
+                .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-');
+            if !before_is_boundary || !after_is_boundary {
+                start_at = end;
+                continue;
+            }
+            let mut cursor = end;
+            while line
+                .as_bytes()
+                .get(cursor)
+                .is_some_and(u8::is_ascii_whitespace)
+            {
+                cursor += 1;
+            }
+            if line.as_bytes().get(cursor) == Some(&b'=') {
+                cursor += 1;
+                while line
+                    .as_bytes()
+                    .get(cursor)
+                    .is_some_and(u8::is_ascii_whitespace)
+                {
+                    cursor += 1;
+                }
+            } else if cursor == end {
+                start_at = end;
+                continue;
+            }
+            let bytes = line.as_bytes();
+            let quote = bytes
+                .get(cursor)
+                .copied()
+                .filter(|byte| *byte == b'\'' || *byte == b'"');
+            if quote.is_some() {
+                cursor += 1;
+            }
+            let value_start = cursor;
+            while let Some(byte) = bytes.get(cursor) {
+                if Some(*byte) == quote
+                    || *byte == b'\''
+                    || *byte == b'"'
+                    || byte.is_ascii_whitespace()
+                    || *byte == b'\\'
+                {
+                    break;
+                }
+                cursor += 1;
+            }
+            if cursor > value_start {
+                let value = line[value_start..cursor].trim_start_matches('@');
+                if value.contains('$') || value.starts_with('~') {
+                    unresolved = true;
+                } else {
+                    let path = PathBuf::from(value);
+                    if found.as_ref().is_some_and(|existing| existing != &path) {
+                        return None;
+                    }
+                    found = Some(path);
+                }
+            }
+            start_at = end;
+        }
+    }
+    (!unresolved).then_some(found).flatten()
+}
+
 fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
     if !LIST_IDS.contains(&id) {
         return None;
     }
     let config = config.canonicalize().ok()?;
-    let directory = config.parent()?.join("lists").canonicalize().ok()?;
-    if !directory.is_dir() {
-        return None;
-    }
-    let candidate = directory.join(id);
-    if std::fs::symlink_metadata(&candidate)
-        .ok()?
-        .file_type()
-        .is_symlink()
+    let root = config.parent()?.canonicalize().ok()?;
+    let config_text = std::fs::read_to_string(&config).ok()?;
+    let reference = configured_list_reference(&config_text, id)?;
+    let candidate = if reference.is_absolute() {
+        reference
+    } else {
+        root.join(reference)
+    };
+    let relative = candidate.strip_prefix(&root).ok()?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
     {
         return None;
     }
-    let path = candidate.canonicalize().ok()?;
-    (path.parent() == Some(directory.as_path()) && path.is_file()).then_some(path)
+    let mut cursor = root.clone();
+    for component in relative.components() {
+        cursor.push(component.as_os_str());
+        if std::fs::symlink_metadata(&cursor)
+            .ok()?
+            .file_type()
+            .is_symlink()
+        {
+            return None;
+        }
+    }
+    let path = cursor.canonicalize().ok()?;
+    (path.starts_with(&root) && path.is_file()).then_some(path)
 }
 
 fn validate_list_content(id: &str, content: &str) -> Result<(), String> {
@@ -392,8 +606,17 @@ fn revision(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-async fn get_config(Query(query): Query<ConfigQuery>) -> Response {
-    let Some(path) = config_path(&query.file) else {
+async fn get_config(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ConfigQuery>,
+) -> Response {
+    if query.file != "nfqws2.conf" {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    }
+    let Some(path) = config_path_for_state(&state) else {
         return error(
             StatusCode::NOT_FOUND,
             "Разрешённый конфигурационный файл не найден",
@@ -401,7 +624,7 @@ async fn get_config(Query(query): Query<ConfigQuery>) -> Response {
     };
     match tokio::fs::read(&path).await {
         Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => Json(ConfigResponse {
-            file: query.file,
+            file: path.display().to_string(),
             content: String::from_utf8_lossy(&bytes).into_owned(),
             revision: revision(&bytes),
         })
@@ -561,7 +784,13 @@ async fn put_config(
         );
     }
     let _write_guard = state.config_write_lock.lock().await;
-    let Some(path) = config_path(&query.file) else {
+    if query.file != "nfqws2.conf" {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    }
+    let Some(path) = config_path_for_state(&state) else {
         return error(
             StatusCode::NOT_FOUND,
             "Разрешённый конфигурационный файл не найден",
@@ -588,10 +817,25 @@ async fn put_config(
     {
         return error(StatusCode::INTERNAL_SERVER_ERROR, message);
     }
+    let saved = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(io_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Конфиг записан, но повторное чтение не удалось: {io_error}"),
+            );
+        }
+    };
+    if saved != write.content.as_bytes() {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Повторное чтение конфига не совпало с отправленным содержимым; backup сохранён",
+        );
+    }
     Json(ConfigResponse {
-        file: query.file,
-        content: write.content.clone(),
-        revision: revision(write.content.as_bytes()),
+        file: path.display().to_string(),
+        content: String::from_utf8_lossy(&saved).into_owned(),
+        revision: revision(&saved),
     })
     .into_response()
 }
@@ -856,6 +1100,7 @@ async fn bind_port() -> Result<(TcpListener, u16), String> {
 fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
     Router::new()
         .route("/api/health", get(health))
+        .route("/api/nfqws2/installation", get(get_installation))
         .route("/api/status", get(get_status))
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
@@ -1012,6 +1257,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn config_read_and_write_use_the_selected_installation_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("custom/nfqws2.conf");
+        tokio::fs::create_dir_all(config.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/domains.list\n")
+            .await
+            .unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config?file=nfqws2.conf")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let loaded = body_json(response).await;
+        let revision = loaded["revision"].as_str().unwrap().to_string();
+        assert_eq!(
+            loaded["content"],
+            "NFQWS_ARGS=--hostlist=lists/domains.list\n"
+        );
+
+        let saved = app.oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/api/config?file=nfqws2.conf")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({ "content": "NFQWS_ARGS=--hostlist=lists/changed.list\n", "revision": revision }).to_string()))
+                .unwrap(),
+        ).await.unwrap();
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(config).await.unwrap(),
+            "NFQWS_ARGS=--hostlist=lists/changed.list\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn installation_endpoint_reports_real_paths_and_configured_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("etc/nfqws2");
+        let config = root.join("nfqws2.conf");
+        let list = root.join("custom/domains.list");
+        tokio::fs::create_dir_all(list.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=custom/domains.list\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&list, "example.org\n").await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/installation")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let report = body_json(response).await;
+        assert_eq!(report["platform"], "unknown");
+        assert_eq!(report["config"]["path"], config.display().to_string());
+        assert_eq!(report["config"]["exists"], true);
+        assert_eq!(report["config"]["usedByActiveConfig"], true);
+        assert_eq!(report["lists"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            report["lists"][0]["path"],
+            list.canonicalize().unwrap().display().to_string()
+        );
+        assert_eq!(report["lists"][0]["usedByActiveConfig"], true);
+        assert_eq!(report["lists"][0]["readable"], true);
+    }
+
+    #[tokio::test]
     async fn list_update_requires_current_revision_and_returns_reread_file() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
@@ -1127,12 +1457,12 @@ mod tests {
     }
 
     #[test]
-    fn list_path_only_resolves_existing_allowlisted_files_under_config_lists() {
+    fn list_path_only_resolves_existing_allowlisted_files_referenced_by_config() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
         let lists = dir.path().join("lists");
         std::fs::create_dir_all(&lists).unwrap();
-        std::fs::write(&config, "# fixture\n").unwrap();
+        std::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n").unwrap();
         std::fs::write(lists.join("user.list"), "example.org\n").unwrap();
 
         assert_eq!(
@@ -1143,14 +1473,58 @@ mod tests {
         assert!(list_file_path(&config, "../nfqws2.conf").is_none());
     }
 
+    #[test]
+    fn list_resolver_uses_active_config_reference_not_a_guessed_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let custom = dir.path().join("custom");
+        std::fs::create_dir_all(&custom).unwrap();
+        std::fs::write(
+            &config,
+            "NFQWS_ARGS=\"--hostlist=custom/domains.txt\" # --hostlist=lists/user.list\n",
+        )
+        .unwrap();
+        std::fs::write(custom.join("domains.txt"), "example.org\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("lists")).unwrap();
+        std::fs::write(dir.path().join("lists/user.list"), "stale.example.org\n").unwrap();
+
+        assert_eq!(
+            list_file_path(&config, "user.list"),
+            Some(custom.join("domains.txt").canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn list_reference_parser_handles_known_flags_and_ignores_shell_variables() {
+        let config = "# --hostlist=ignored.list\nNFQWS_ARGS='--hostlist-auto=lists/auto.list --ipset=/opt/etc/nfqws2/lists/addresses.list'\nNFQWS_ARGS_CUSTOM=--hostlist=${USER_LIST}\n";
+        assert_eq!(
+            configured_list_reference(config, "auto.list"),
+            Some(PathBuf::from("lists/auto.list"))
+        );
+        assert_eq!(
+            configured_list_reference(config, "ipset.list"),
+            Some(PathBuf::from("/opt/etc/nfqws2/lists/addresses.list"))
+        );
+        assert_eq!(configured_list_reference(config, "exclude.list"), None);
+        assert_eq!(configured_list_reference(config, "user.list"), None);
+        assert_eq!(configured_list_reference(config, "unknown.list"), None);
+        assert_eq!(
+            configured_list_reference(
+                "NFQWS_ARGS=--hostlist=lists/one.list\nNFQWS_ARGS_QUIC=--hostlist=lists/two.list\n",
+                "user.list"
+            ),
+            None
+        );
+    }
+
     #[cfg(unix)]
     #[test]
-    fn list_path_rejects_symlinks_outside_the_lists_directory() {
+    fn list_path_rejects_symlink_references_outside_the_config_directory() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
         let lists = dir.path().join("lists");
         std::fs::create_dir_all(&lists).unwrap();
-        std::fs::write(&config, "# fixture\n").unwrap();
+        std::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n").unwrap();
         let outside = dir.path().join("outside.list");
         std::fs::write(&outside, "secret.example.org\n").unwrap();
         std::os::unix::fs::symlink(&outside, lists.join("user.list")).unwrap();

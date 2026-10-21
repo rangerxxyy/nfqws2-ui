@@ -8,6 +8,22 @@ export type ConfigResponse = { file: string; content: string; revision: string }
 export type NfqwsListId = 'user.list' | 'auto.list' | 'exclude.list' | 'ipset.list' | 'ipset_exclude.list';
 export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
+export type InstallationPath = {
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  writable: boolean;
+  usedByActiveConfig: boolean;
+};
+export type NfqwsInstallation = {
+  platform: 'entware' | 'unknown';
+  config: InstallationPath | null;
+  configCandidates: InstallationPath[];
+  initScript: InstallationPath | null;
+  initScriptCandidates: InstallationPath[];
+  binaryCandidates: InstallationPath[];
+  lists: InstallationPath[];
+};
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
@@ -29,4 +45,8 @@ export const nfqwsLists = {
     `/api/nfqws2/lists/${encodeURIComponent(id)}`,
     { method: 'PUT', body: JSON.stringify({ content, revision }) },
   ),
+};
+
+export const nfqwsInstallation = {
+  get: () => api<NfqwsInstallation>('/api/nfqws2/installation'),
 };

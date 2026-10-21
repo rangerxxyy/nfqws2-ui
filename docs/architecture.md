@@ -19,10 +19,11 @@
 ## Первый API-контракт
 
 - `GET /api/health` — доступность backend.
+- `GET /api/nfqws2/installation` — выбранный конфиг, известные кандидаты init/binary и literal list-path references с существованием и доступом; платформа называется Entware только при подтверждённом `/opt`-пути, остальные варианты помечаются unknown.
 - `GET /api/status` — нормализованный status + причина + system metrics.
 - `POST /api/service` — `{ action: start|stop|restart }`.
-- `GET/PUT /api/config` — allowlisted config; PUT требует актуальный SHA-256 revision и возвращает новую revision.
-- `GET /api/nfqws2/lists`, `GET/PUT /api/nfqws2/lists/:id` — существующие allowlisted файлы; PUT проверяет ревизию, создаёт backup, атомарно записывает и читает обратно.
+- `GET/PUT /api/config` — allowlisted config; PUT требует актуальный SHA-256 revision, создаёт backup, атомарно записывает, перечитывает и возвращает фактический путь и новую revision.
+- `GET /api/nfqws2/lists`, `GET/PUT /api/nfqws2/lists/:id` — существующие allowlisted файлы, найденные по literal ссылкам в активной конфигурации; неоднозначные и неразрешённые переменные пропускаются; PUT проверяет ревизию, создаёт backup, атомарно записывает и читает обратно.
 - `GET /api/backups`, `POST /api/backups/:id/restore`.
 - `GET /api/logs?source=...&tail=...` — только известный источник и ограниченный хвост.
 
