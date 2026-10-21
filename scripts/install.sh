@@ -21,7 +21,7 @@ SWITCHED=0
 
 fail() { echo "nfqws2-ui installer: $*" >&2; exit 1; }
 # cleanup is called by EXIT/HUP/INT/TERM traps.
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 cleanup() {
 	if [ "$TTY_OFF" = 1 ]; then stty echo </dev/tty 2>/dev/null || true; printf '\n' >/dev/tty 2>/dev/null || true; fi
 	if [ "$COMMITTED" != 1 ] && [ -d "$STAGE" ]; then
