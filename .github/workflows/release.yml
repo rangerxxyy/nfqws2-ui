@@ -28,8 +28,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y dash shellcheck
-          for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui; do dash -n "$file"; done
-          shellcheck -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui
+          for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui tests/installer-preflight.sh; do dash -n "$file"; done
+          shellcheck -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui tests/installer-preflight.sh
+          sh tests/installer-preflight.sh
           cargo fmt --manifest-path backend/Cargo.toml --all -- --check
           cargo test --manifest-path backend/Cargo.toml --locked
           cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings
