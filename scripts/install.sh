@@ -91,6 +91,8 @@ tar -xzf "$TMP/$ASSET" -C "$STAGE" || { rm -rf "$STAGE"; fail 'cannot extract re
 [ -x "$STAGE/bin/nfqws2-ui" ] || { rm -rf "$STAGE"; fail 'archive has no executable'; }
 [ -d "$STAGE/public" ] || { rm -rf "$STAGE"; fail 'archive has no web interface'; }
 [ -r "$STAGE/scripts/symlink.sh" ] || { rm -rf "$STAGE"; fail 'archive has no symlink helper'; }
+# The sourced path is resolved only after the verified archive is extracted.
+# shellcheck disable=SC1091
 . "$STAGE/scripts/symlink.sh"
 
 # Preserve an existing administrator password on updates. First install asks
