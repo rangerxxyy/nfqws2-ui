@@ -737,7 +737,7 @@ async fn restore_backup(
 
 async fn read_bounded_tail(path: &Path, max_bytes: usize) -> std::io::Result<Vec<u8>> {
     let mut file = tokio::fs::File::open(path).await?;
-    let file_len = file.metadata().await?.len();
+    let file_len = file.seek(std::io::SeekFrom::End(0)).await?;
     let offset = file_len.saturating_sub(max_bytes as u64);
     file.seek(std::io::SeekFrom::Start(offset)).await?;
 

@@ -18,6 +18,10 @@ cat > "$TMP/bin/tar" <<'EOF'
 #!/bin/sh
 exit 0
 EOF
+cat > "$TMP/bin/date" <<'EOF'
+#!/bin/sh
+echo 20261021164000
+EOF
 cat > "$TMP/bin/opkg" <<'EOF'
 #!/bin/sh
 echo called >> "$OPKG_CALLED"
