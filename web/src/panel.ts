@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
+import { api, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 let status: StatusResponse | null = null;
@@ -77,6 +77,18 @@ async function loadConfig() {
 
   try {
     config = await api<ConfigResponse>('/api/config?file=nfqws2.conf');
+    const applyButton = $('[data-action-click="applyConfigAndRestart"]');
+    let canWriteConfig = false;
+    try {
+      const installation = await nfqwsInstallation.get();
+      canWriteConfig = installation.config?.writable === true;
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Не удалось проверить права записи в конфиг', 'error');
+    }
+    if (applyButton instanceof HTMLButtonElement) {
+      applyButton.disabled = !canWriteConfig;
+      applyButton.title = canWriteConfig ? '' : 'Backend не подтвердил право записи в обнаруженный конфиг';
+    }
     const editor = $('#nfqwsConfTextarea');
     if (editor instanceof HTMLTextAreaElement) editor.value = config.content;
     setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} строк`);
@@ -336,6 +348,8 @@ function boot() {
   bindPrototypeActions();
   document.documentElement.classList.add('dark');
   showRoute('conf');
+  const applyButton = $('[data-action-click="applyConfigAndRestart"]');
+  if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   $('#nfqwsConfTextarea')?.addEventListener('input', syncConfigLines);
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigLines);
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
