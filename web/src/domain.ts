@@ -16,6 +16,12 @@ export function isMutatingActionAllowed(value: string): value is ServiceAction {
   return value === 'start' || value === 'stop' || value === 'restart';
 }
 
+export function actionToApplyConfig(state: ServiceState): ServiceAction | null {
+  if (state === 'running') return 'restart';
+  if (state === 'stopped') return 'start';
+  return null;
+}
+
 export function percent(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 }

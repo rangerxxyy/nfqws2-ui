@@ -97,6 +97,43 @@ pub fn process_matches(pid: u32, cmdline: &[u8], expected_binaries: &[&str]) -> 
         .any(|path| executable == path.as_bytes())
 }
 
+pub fn reconcile_init_state(
+    state: ServiceState,
+    verified_pid: Option<u32>,
+    saw_pid_file: bool,
+) -> (ServiceState, String) {
+    match (state, verified_pid) {
+        (ServiceState::Running, Some(pid)) => (
+            ServiceState::Running,
+            format!("Init-скрипт подтвердил службу; процесс nfqws2 активен (PID {pid})"),
+        ),
+        (ServiceState::Running, None) => (
+            ServiceState::Error,
+            if saw_pid_file {
+                "Init-скрипт сообщает running, но PID не соответствует живому nfqws2".into()
+            } else {
+                "Init-скрипт сообщает running, но PID-файл nfqws2 не найден".into()
+            },
+        ),
+        (ServiceState::Stopped, Some(pid)) => (
+            ServiceState::Error,
+            format!("Init-скрипт сообщает stopped, но процесс nfqws2 активен (PID {pid})"),
+        ),
+        (ServiceState::Stopped, None) => (
+            ServiceState::Stopped,
+            "Штатный init-скрипт сообщает, что служба остановлена".into(),
+        ),
+        (ServiceState::Error, _) => (
+            ServiceState::Error,
+            "Init-скрипт сообщил об ошибке при проверке службы".into(),
+        ),
+        (ServiceState::Unknown, _) => (
+            ServiceState::Unknown,
+            "Не удалось распознать ответ init-скрипта".into(),
+        ),
+    }
+}
+
 pub async fn service_status() -> (ServiceState, String) {
     let Some(init) = known_init_scripts().into_iter().find(|path| path.is_file()) else {
         return (
@@ -130,42 +167,30 @@ pub async fn service_status() -> (ServiceState, String) {
         String::from_utf8_lossy(&output.stderr)
     );
     let state = classify_init_status(output.status.code().unwrap_or(1), &text);
-    match state {
-        ServiceState::Running => {
-            let pid_paths = ["/opt/var/run/nfqws2.pid", "/var/run/nfqws2.pid"];
-            let expected = ["/opt/usr/bin/nfqws2", "/usr/bin/nfqws2"];
-            let mut saw_pid_file = false;
-            for pid_path in pid_paths {
-                let Ok(contents) = tokio::fs::read_to_string(pid_path).await else {
-                    continue;
-                };
-                saw_pid_file = true;
-                let Some(pid) = valid_pid(&contents) else {
-                    continue;
-                };
-                let proc_cmdline = format!("/proc/{pid}/cmdline");
-                if let Ok(cmdline) = tokio::fs::read(proc_cmdline).await
-                    && process_matches(pid, &cmdline, &expected)
-                {
-                    return (
-                        ServiceState::Running,
-                        format!(
-                            "Init-скрипт подтвердил службу; процесс nfqws2 активен (PID {pid})"
-                        ),
-                    );
-                }
-            }
-            let detail = if saw_pid_file {
-                "Init-скрипт сообщает running, но PID не соответствует живому nfqws2".to_string()
-            } else {
-                "Init-скрипт сообщает running, но PID-файл nfqws2 не найден".to_string()
+    if matches!(state, ServiceState::Running | ServiceState::Stopped) {
+        let pid_paths = ["/opt/var/run/nfqws2.pid", "/var/run/nfqws2.pid"];
+        let expected = ["/opt/usr/bin/nfqws2", "/usr/bin/nfqws2"];
+        let mut saw_pid_file = false;
+        let mut verified_pid = None;
+        for pid_path in pid_paths {
+            let Ok(contents) = tokio::fs::read_to_string(pid_path).await else {
+                continue;
             };
-            (ServiceState::Error, detail)
+            saw_pid_file = true;
+            let Some(pid) = valid_pid(&contents) else {
+                continue;
+            };
+            let proc_cmdline = format!("/proc/{pid}/cmdline");
+            if let Ok(cmdline) = tokio::fs::read(proc_cmdline).await
+                && process_matches(pid, &cmdline, &expected)
+            {
+                verified_pid = Some(pid);
+                break;
+            }
         }
-        ServiceState::Stopped => (
-            ServiceState::Stopped,
-            "Штатный init-скрипт сообщает, что служба остановлена".into(),
-        ),
+        return reconcile_init_state(state, verified_pid, saw_pid_file);
+    }
+    match state {
         ServiceState::Error => (ServiceState::Error, text.trim().to_string()),
         ServiceState::Unknown => (
             ServiceState::Unknown,
@@ -175,6 +200,7 @@ pub async fn service_status() -> (ServiceState, String) {
                 text.trim().into()
             },
         ),
+        _ => unreachable!(),
     }
 }
 
@@ -244,5 +270,18 @@ mod tests {
         assert!(process_matches(10, b"/opt/usr/bin/nfqws2\0--debug", &paths));
         assert!(!process_matches(10, b"/tmp/nfqws2-evil\0--debug", &paths));
         assert!(!process_matches(0, b"/opt/usr/bin/nfqws2\0", &paths));
+    }
+
+    #[test]
+    fn live_nfqws2_process_conflicting_with_stopped_init_is_error() {
+        let (state, detail) = reconcile_init_state(ServiceState::Stopped, Some(123), true);
+        assert_eq!(state, ServiceState::Error);
+        assert!(detail.contains("PID 123"));
+    }
+
+    #[test]
+    fn stopped_init_without_verified_process_is_stopped() {
+        let (state, _) = reconcile_init_state(ServiceState::Stopped, None, false);
+        assert_eq!(state, ServiceState::Stopped);
     }
 }

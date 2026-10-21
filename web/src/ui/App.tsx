@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Archive, CircleHelp, FileCog, FileText, Gauge, House, Languages, LoaderCircle, LogOut, Menu, Moon, RefreshCw, Shield, SquareTerminal, Sun, X } from 'lucide-react';
 import { api, ApiError, setCsrfToken, type ConfigResponse, type Locale, type SessionResponse, type StatusResponse } from '../api';
-import { formatBytes, normalizeStatus, percent, type ServiceAction } from '../domain';
+import { actionToApplyConfig, formatBytes, normalizeStatus, percent, type ServiceAction } from '../domain';
 import { t, type MessageKey } from '../i18n';
 
 type Page = 'overview' | 'config' | 'logs' | 'backups' | 'settings';
@@ -119,14 +119,22 @@ function App() {
     finally { setBusy(''); }
   }
 
-  async function saveConfig() {
-    if (!config) return;
+  async function saveConfig(): Promise<boolean> {
+    if (!config) return false;
     setBusy('save'); setConfigError('');
     try {
       const result = await api<ConfigResponse>('/api/config?file=nfqws2.conf', { method: 'PUT', body: JSON.stringify({ content: draft, revision: config.revision }) });
       setConfig(result); setDraft(result.content); setNotice(tr('configSaved'));
-    } catch (error) { setConfigError(error instanceof Error ? error.message : tr('configSaveFailed')); }
+      return true;
+    } catch (error) { setConfigError(error instanceof Error ? error.message : tr('configSaveFailed')); return false; }
     finally { setBusy(''); }
+  }
+
+  async function saveAndApplyConfig() {
+    if (!dirty || !(await saveConfig())) return;
+    const action = actionToApplyConfig(normalizeStatus(status?.service.state));
+    if (!action) { setNotice(tr('applyNeedsKnownStatus')); return; }
+    await serviceAction(action);
   }
 
   async function restoreBackup(id: string) {
@@ -171,7 +179,7 @@ function App() {
         <article className="card"><SectionTitle icon={<FileText />} title={tr('logs')} /><p>{tr('logsDescription')}</p><button className="button subdued" onClick={() => openPage('logs')}>{tr('openLogs')}</button></article>
       </div>
     </>;
-    if (page === 'config') return <section className="card editor-card"><SectionTitle icon={<FileCog />} title={tr('config')} /><p className="muted">/opt/etc/nfqws2/nfqws2.conf · {tr('configHint')} {tr('configRestartHint')}</p>{configError && <p className="error-text">{configError}</p>}<textarea className="code-editor" spellCheck={false} aria-label="nfqws2.conf" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={tr('editorLoading')} disabled={!config} /><div className="editor-footer"><span>{dirty ? tr('editorDirty') : tr('editorClean')}</span><button className="button primary" disabled={!dirty || !!busy} onClick={() => void saveConfig()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : null}{tr('save')}</button></div></section>;
+    if (page === 'config') return <section className="card editor-card"><SectionTitle icon={<FileCog />} title={tr('config')} /><p className="muted">/opt/etc/nfqws2/nfqws2.conf · {tr('configHint')} {tr('configRestartHint')}</p>{configError && <p className="error-text">{configError}</p>}<textarea className="code-editor" spellCheck={false} aria-label="nfqws2.conf" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={tr('editorLoading')} disabled={!config} /><div className="editor-footer"><span>{dirty ? tr('editorDirty') : tr('editorClean')}</span><div className="actions"><button className="button subdued" disabled={!dirty || !!busy} onClick={() => void saveConfig()}>{busy === 'save' ? <LoaderCircle className="spin" size={15} /> : null}{tr('save')}</button><button className="button primary" disabled={!dirty || !!busy} onClick={() => void saveAndApplyConfig()}>{busy === 'save' || busy === 'start' || busy === 'restart' ? <LoaderCircle className="spin" size={15} /> : null}{tr('saveApply')}</button></div></div><p className="muted">{tr('configApplyHint')}</p>{notice && <div className="notice" role="status">{notice}<button aria-label={tr('closeNotice')} onClick={() => setNotice('')}><X size={15} /></button></div>}</section>;
     if (page === 'logs') return <section className="card editor-card"><SectionTitle icon={<SquareTerminal />} title={tr('logs')} /><p className="muted">{tr('logsHint')}</p><button className="button subdued" onClick={() => api<{ content: string }>('/api/logs?source=nfqws2&tail=200').then((result) => setLogs(result.content)).catch((error) => setLogs(String(error)))}><RefreshCw size={15} />{tr('update')}</button><pre className="log-view">{logs ?? tr('loading')}</pre></section>;
     if (page === 'backups') return <section className="card"><SectionTitle icon={<Archive />} title={tr('backups')} /><p className="muted">{tr('backupHint')}</p>{backups.length ? <div className="backup-list">{backups.map((backup) => <div className="backup-row" key={backup.id}><div><strong>{backup.file}</strong><small>{new Date(backup.createdAt * 1000).toLocaleString()}</small></div><button className="button subdued" disabled={!!busy} onClick={() => void restoreBackup(backup.id)}>{tr('restore')}</button></div>)}</div> : <div className="empty-state">{tr('noBackups')}</div>}</section>;
     return <section className="card settings-card"><SectionTitle icon={<Languages />} title={tr('settings')} /><label className="setting-row"><span>{tr('language')}</span><select value={locale} onChange={(event) => changeLocale(event.target.value)}>{Object.entries(localeNames).map(([key, name]) => <option key={key} value={key}>{name}</option>)}</select></label><button className="button subdued" onClick={() => void signOut()}><LogOut size={15} />{tr('logout')}</button><p className="muted">{tr('settingsHint')}</p></section>;

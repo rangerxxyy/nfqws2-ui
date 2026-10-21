@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, isMutatingActionAllowed, normalizeStatus } from './domain';
+import { actionToApplyConfig, formatBytes, isMutatingActionAllowed, normalizeStatus } from './domain';
 
 describe('UI domain formatting', () => {
   it('keeps unknown status unknown instead of painting it green', () => {
@@ -16,5 +16,12 @@ describe('UI domain formatting', () => {
   it('allows only the service action enum', () => {
     expect(isMutatingActionAllowed('restart')).toBe(true);
     expect(isMutatingActionAllowed('reload; reboot')).toBe(false);
+  });
+
+  it('applies a saved config with the safe action for the confirmed service state', () => {
+    expect(actionToApplyConfig('running')).toBe('restart');
+    expect(actionToApplyConfig('stopped')).toBe('start');
+    expect(actionToApplyConfig('unknown')).toBeNull();
+    expect(actionToApplyConfig('error')).toBeNull();
   });
 });
