@@ -39,6 +39,9 @@ jobs:
           pnpm --dir web install --frozen-lockfile
           pnpm --dir web test
           pnpm --dir web build
+          test -f web/dist/nfqws2-ui.js
+          test -f web/dist/nfqws2-ui.css
+          test ! -e web/dist/index.html
           pnpm --dir web audit --prod
       - name: Cross-build router binary
         run: |
@@ -81,7 +84,9 @@ jobs:
           shellcheck -s sh "$PACKAGE/install.sh"
           tar -tzf "$RUNNER_TEMP/$ASSET" > "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'bin/nfqws2-ui' "$RUNNER_TEMP/archive-entries.txt"
-          grep -Fxq 'public/index.html' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'public/nfqws2-ui.js' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'public/nfqws2-ui.css' "$RUNNER_TEMP/archive-entries.txt"
+          ! grep -Fxq 'public/index.html' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'scripts/S99nfqws2-ui' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'scripts/symlink.sh' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'uninstall.sh' "$RUNNER_TEMP/archive-entries.txt"
@@ -104,8 +109,8 @@ jobs:
           body: |
             Выпуск nfqws2-ui для ARM64 Entware.
 
-            - Интерфейс перенесён из предоставленного HTML-макета; frontend-контроллер на TypeScript/Vite, backend на Rust.
-            - Стартовая блокировка авторизацией удалена; вход доступен отдельным пунктом меню.
+            - Интерфейс перенесён из макета в TypeScript/TSX; исходных HTML-файлов нет, Rust отдаёт только загрузочную оболочку.
+            - Авторизация полностью удалена по запросу пользователя.
             - CSS и шрифты включены в пакет локально; внешний CDN и inline-обработчики не требуются.
             - Проверка меню и обработчиков включена в тесты; неподключённые к backend макетные функции сообщают о недоступности, не имитируя результат.
             - Проверка nfqws2 через штатный init-скрипт и PID/argv; управление start/stop/restart.

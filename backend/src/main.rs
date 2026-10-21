@@ -4,7 +4,7 @@ use axum::{
     extract::{Query, State},
     http::{HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use nfqws2_ui::{
@@ -26,6 +26,19 @@ use tower_http::{services::ServeDir, trace::TraceLayer};
 const MAX_CONFIG_BYTES: usize = 512 * 1024;
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
+const PANEL_SHELL_HTML: &str = r##"<!doctype html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nfqws2-UI — Панель управления</title>
+  <link rel="stylesheet" href="/nfqws2-ui.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/nfqws2-ui.js"></script>
+</body>
+</html>"##;
 const LIST_IDS: [&str; 5] = [
     "user.list",
     "auto.list",
@@ -1317,6 +1330,7 @@ async fn bind_port() -> Result<(TcpListener, u16), String> {
 
 fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
     Router::new()
+        .route("/", get(panel_shell))
         .route("/api/health", get(health))
         .route("/api/nfqws2/installation", get(get_installation))
         .route("/api/status", get(get_status))
@@ -1332,6 +1346,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http())
         .layer(middleware::from_fn(security_headers))
+}
+
+async fn panel_shell() -> Html<&'static str> {
+    Html(PANEL_SHELL_HTML)
 }
 
 #[tokio::main]
@@ -1472,6 +1490,83 @@ mod tests {
         assert_eq!(
             response.headers().get("x-content-type-options").unwrap(),
             "nosniff"
+        );
+    }
+
+    #[tokio::test]
+    async fn root_serves_the_typescript_bundle_shell_without_an_html_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let web_root = dir.path().join("web");
+        tokio::fs::create_dir_all(&web_root).await.unwrap();
+        tokio::fs::write(
+            web_root.join("nfqws2-ui.js"),
+            "window.__panel_bundle = true;",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(web_root.join("nfqws2-ui.css"), "body { color: white; }")
+            .await
+            .unwrap();
+        let app = api_router(test_state(dir.path().to_path_buf()), web_root);
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("id=\"root\""));
+        assert!(html.contains("/nfqws2-ui.js"));
+        assert!(html.contains("/nfqws2-ui.css"));
+        assert!(!html.contains("tabContent-conf"));
+
+        let bundle = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/nfqws2-ui.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bundle.status(), StatusCode::OK);
+        assert_eq!(
+            String::from_utf8(
+                to_bytes(bundle.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec()
+            )
+            .unwrap(),
+            "window.__panel_bundle = true;"
+        );
+
+        let stylesheet = app
+            .oneshot(
+                Request::builder()
+                    .uri("/nfqws2-ui.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stylesheet.status(), StatusCode::OK);
+        assert_eq!(
+            String::from_utf8(
+                to_bytes(stylesheet.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .to_vec()
+            )
+            .unwrap(),
+            "body { color: white; }"
         );
     }
 

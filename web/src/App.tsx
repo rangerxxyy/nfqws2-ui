@@ -28,7 +28,7 @@ export default function App() {
             </div>
             {"\n          "}
             <span id={"statusTextLabel"} className={"text-xs sm:text-sm font-semibold text-slate-400 tracking-tight"}>
-              {"Требуется вход"}
+              {"Статус неизвестен"}
             </span>
             <span id={"statusDetail"} className={"sr-only"}></span>
             {"\n        "}
@@ -66,7 +66,7 @@ export default function App() {
                 {"\n              "}
                 <div className={"w-24 sm:w-28 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1"}>
                   {"\n                "}
-                  <div id={"ramProgressBar"} className={"bg-sky-400 h-full rounded-full transition-all duration-500"} style={{ width: "51.7%" }}></div>
+                  <div id={"ramProgressBar"} className={"bg-sky-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}
                 </div>
                 {"\n            "}
@@ -107,7 +107,7 @@ export default function App() {
                 {"\n              "}
                 <div className={"w-14 sm:w-16 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1"}>
                   {"\n                "}
-                  <div id={"cpuProgressBar"} className={"bg-emerald-400 h-full rounded-full transition-all duration-500"} style={{ width: "8%" }}></div>
+                  <div id={"cpuProgressBar"} className={"bg-emerald-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}
                 </div>
                 {"\n            "}
@@ -324,7 +324,7 @@ export default function App() {
                 </div>
                 {"\n              "}
                 <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300"}>
-                  {"Q:301"}
+                  {"Q:—"}
                 </span>
                 {"\n            "}
               </button>
@@ -632,7 +632,7 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={"eth3"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       {"\n                    "}
                       <option value={"eth3"}>
                         {"eth3 (Провайдер)"}
@@ -669,7 +669,7 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={"$MODE_LIST"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["NFQWS_EXTRA_ARGS", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-blue-300 focus:outline-none focus:border-blue-500"}>
+                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["NFQWS_EXTRA_ARGS", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-blue-300 focus:outline-none focus:border-blue-500"}>
                       {"\n                    "}
                       <option value={"$MODE_LIST"}>
                         {"$MODE_LIST (user.list)"}
@@ -702,7 +702,7 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={"300"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["NFQUEUE_NUM", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["NFQUEUE_NUM", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       {"\n                    "}
                       <option value={"300"}>
                         {"300 (Штатная)"}
@@ -735,7 +735,7 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={"nfqws"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["POLICY_NAME", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["POLICY_NAME", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       {"\n                    "}
                       <option value={"nfqws"}>
                         {"nfqws"}
@@ -768,7 +768,7 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={"0"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["IPV6_ENABLED", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["IPV6_ENABLED", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       {"\n                    "}
                       <option value={"0"}>
                         {"0 (Выключен)"}
@@ -797,7 +797,7 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={"0"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["LOG_LEVEL", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["LOG_LEVEL", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       {"\n                    "}
                       <option value={"0"}>
                         {"0 (Выкл)"}
@@ -1087,7 +1087,7 @@ export default function App() {
             {"\n          "}
             <div className={"mt-5 flex flex-col sm:flex-row gap-3"}>
               {"\n            "}
-              <input id={"diagDomainInput"} type={"text"} defaultValue={"youtube.com"} placeholder={"Введите домен (например: youtube.com, gosuslugi.ru, discord.com)..."} className={"flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-blue-500"} />
+              <input id={"diagDomainInput"} type={"text"} placeholder={"Введите домен для проверки"} className={"flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-blue-500"} />
               {"\n            "}
               <button data-action-click={"runSiteDiagnosis"} className={"px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-600/20"}>
                 {"\n              Проверить домен\n            "}
@@ -1139,17 +1139,17 @@ export default function App() {
                 <div className={"flex items-center gap-2.5"}>
                   {"\n                "}
                   <span className={"px-2.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-mono font-bold"}>
-                    {"NFQUEUE #301 • Порты 40000–40999"}
+                    {"Автоподбор стратегий"}
                   </span>
                   {"\n                "}
                   <h2 className={"text-lg font-bold text-white"}>
-                    {"Авто-подбор стратегии без остановки боевого nfqws2"}
+                    {"Авто-подбор стратегии nfqws2"}
                   </h2>
                   {"\n              "}
                 </div>
                 {"\n              "}
                 <p className={"text-xs sm:text-sm text-slate-400 mt-1"}>
-                  {"\n                Запускает тестовую копию `nfqws2` на отдельной очереди `301` (`iptables nfqws_test_pre/post`), проверяет TCP (HTTPS/HTTP) и QUIC (UDP 443)\n              "}
+                    {"\n                Автоподбор и отдельная тестовая очередь не подключены к backend; запуск и проверка трафика недоступны.\n              "}
                 </p>
                 {"\n            "}
               </div>
@@ -1158,7 +1158,7 @@ export default function App() {
                 {"\n              "}
                 <label className={"flex items-center gap-2 text-xs font-medium text-slate-300 bg-[#060a12] px-3.5 py-2 rounded-xl border border-slate-800 cursor-pointer"}>
                   {"\n                "}
-                  <input id={"autoApplyPickToggle"} type={"checkbox"} defaultChecked={true} className={"rounded bg-slate-900 border-slate-700 text-blue-500 focus:ring-0"} />
+                  <input id={"autoApplyPickToggle"} type={"checkbox"} defaultChecked={false} className={"rounded bg-slate-900 border-slate-700 text-blue-500 focus:ring-0"} />
                   {"\n                "}
                   <span>
                     {"Применять самому (с авто-откатом)"}
@@ -1191,28 +1191,8 @@ export default function App() {
                   {"Целевой ресурс"}
                 </label>
                 {"\n              "}
-                <select defaultValue={"rr1---sn-gvnuxaxjvh.googlevideo.com"} data-action-change={"syncCustomHostInput"} data-args={JSON.stringify([{"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  {"\n                "}
-                  <option value={"rr1---sn-gvnuxaxjvh.googlevideo.com"}>
-                    {"YouTube Video CDN (googlevideo.com)"}
-                  </option>
-                  {"\n                "}
-                  <option value={"www.youtube.com"}>
-                    {"YouTube Web (www.youtube.com)"}
-                  </option>
-                  {"\n                "}
-                  <option value={"gateway.discord.gg"}>
-                    {"Discord Gateway (gateway.discord.gg)"}
-                  </option>
-                  {"\n                "}
-                  <option value={"instagram.com"}>
-                    {"Instagram (instagram.com)"}
-                  </option>
-                  {"\n                "}
-                  <option value={"rutracker.org"}>
-                    {"RuTracker (rutracker.org)"}
-                  </option>
-                  {"\n              "}
+                <select defaultValue={""} data-action-change={"syncCustomHostInput"} data-args={JSON.stringify([{"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                  <option value={""} disabled>Хосты не загружены из backend</option>
                 </select>
                 {"\n            "}
               </div>
@@ -1223,7 +1203,7 @@ export default function App() {
                   {"Проверяемый SNI хост"}
                 </label>
                 {"\n              "}
-                <input id={"scanCustomHost"} type={"text"} defaultValue={"rr1---sn-gvnuxaxjvh.googlevideo.com"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
+              <input id={"scanCustomHost"} type={"text"} placeholder={"Хост не задан"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
                 {"\n            "}
               </div>
               {"\n\n            "}
@@ -1233,20 +1213,8 @@ export default function App() {
                   {"Режим тестирования"}
                 </label>
                 {"\n              "}
-                <select defaultValue={"tcp"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  {"\n                "}
-                  <option value={"tcp"}>
-                    {"Быстрый (6 стратегий TCP) — ~35 сек"}
-                  </option>
-                  {"\n                "}
-                  <option value={"full"}>
-                    {"Полный (22 стратегии TCP + QUIC) — ~2 мин"}
-                  </option>
-                  {"\n                "}
-                  <option value={"iphone"}>
-                    {"Профиль iPhone (HostFakeSplit)"}
-                  </option>
-                  {"\n              "}
+                <select defaultValue={""} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                  <option value={""} disabled>Режим не загружен из backend</option>
                 </select>
                 {"\n            "}
               </div>
@@ -1256,11 +1224,11 @@ export default function App() {
                 <div className={"flex items-center justify-between text-xs font-mono"}>
                   {"\n                "}
                   <span className={"text-slate-400"}>
-                    {"Статус очереди 301:"}
+                    {"Статус автоподбора:"}
                   </span>
                   {"\n                "}
                   <span id={"scanProgressLabel"} className={"text-blue-400 font-bold"}>
-                    {"Готов к тесту"}
+                    {"Backend не подключён"}
                   </span>
                   {"\n              "}
                 </div>
@@ -1287,7 +1255,7 @@ export default function App() {
               <div className={"pb-3 border-b border-slate-800 flex items-center justify-between"}>
                 {"\n              "}
                 <span className={"text-sm font-bold text-white font-mono"}>
-                  {"Журнал NFQUEUE #301"}
+                  {"Журнал автоподбора"}
                 </span>
                 {"\n              "}
                 <span className={"text-xs font-mono text-amber-400"}>
@@ -1299,7 +1267,7 @@ export default function App() {
               <div id={"autotuneConsoleBox"} className={"flex-1 overflow-y-auto font-mono text-xs space-y-2 mt-3 pr-1 text-slate-300 leading-relaxed"}>
                 {"\n              "}
                 <div className={"text-slate-500"}>
-                  {"[Система] Тестовая очередь 301 изолирована. Основной трафик роутера продолжает идти через NFQUEUE 300 без обрывов."}
+                  {"Backend пока не предоставляет API тестовой очереди. Результатов проверки нет."}
                 </div>
                 {"\n            "}
               </div>
@@ -1325,17 +1293,17 @@ export default function App() {
                 <div>
                   {"\n                "}
                   <h2 className={"text-base sm:text-lg font-bold text-white"}>
-                    {"Автоматический мониторинг доступности сайтов"}
+                  {"Мониторинг доступности сайтов"}
                   </h2>
                   {"\n                "}
                   <p className={"text-xs text-slate-400 mt-0.5"}>
-                    {"Если сайты перестают открываться N проверок подряд — автоматически запускается подбор новой стратегии"}
+                    {"Проверки доступности и автоматический подбор стратегии пока не подключены к backend."}
                   </p>
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <span className={"px-3 py-1 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-mono font-bold"}>
-                  {"Активен (каждые 15 мин)"}
+                <span className={"px-3 py-1 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-xs font-mono font-bold"}>
+                  {"Данные мониторинга не подключены"}
                 </span>
                 {"\n            "}
               </div>
@@ -1348,20 +1316,8 @@ export default function App() {
                     {"Интервал проверки"}
                   </label>
                   {"\n                "}
-                  <select defaultValue={"15"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"}>
-                    {"\n                  "}
-                    <option value={"5"}>
-                      {"Каждые 5 минут"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"15"}>
-                      {"Каждые 15 минут"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"30"}>
-                      {"Каждые 30 минут"}
-                    </option>
-                    {"\n                "}
+                  <select defaultValue={""} disabled className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"}>
+                    <option value={""}>Настройка не загружена</option>
                   </select>
                   {"\n              "}
                 </div>
@@ -1372,20 +1328,8 @@ export default function App() {
                     {"Порог сбоев подряд"}
                   </label>
                   {"\n                "}
-                  <select defaultValue={"3"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"}>
-                    {"\n                  "}
-                    <option value={"2"}>
-                      {"2 сбоя подряд"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"3"}>
-                      {"3 сбоя подряд"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"4"}>
-                      {"4 сбоя подряд"}
-                    </option>
-                    {"\n                "}
+                  <select defaultValue={""} disabled className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"}>
+                    <option value={""}>Настройка не загружена</option>
                   </select>
                   {"\n              "}
                 </div>
@@ -1396,20 +1340,8 @@ export default function App() {
                     {"Реакция при падении"}
                   </label>
                   {"\n                "}
-                  <select defaultValue={"autopick"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-emerald-300"}>
-                    {"\n                  "}
-                    <option value={"autopick"}>
-                      {"Авто-подбор + Уведомление"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"restart"}>
-                      {"Перезапуск nfqws2"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"notify"}>
-                      {"Только Telegram"}
-                    </option>
-                    {"\n                "}
+                  <select defaultValue={""} disabled className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-emerald-300"}>
+                    <option value={""}>Реакция не настроена</option>
                   </select>
                   {"\n              "}
                 </div>
@@ -1419,92 +1351,8 @@ export default function App() {
               {"\n            "}
               <div className={"space-y-2.5"}>
                 {"\n              "}
-                <div className={"text-xs font-mono text-slate-400"}>
-                  {"Контрольные сайты (`monitor.json`):"}
-                </div>
-                {"\n              "}
-                <div className={"grid grid-cols-1 sm:grid-cols-2 gap-2.5 font-mono text-xs"}>
-                  {"\n                "}
-                  <div className={"p-3 rounded-xl bg-[#060a12] border border-slate-800 flex items-center justify-between"}>
-                    {"\n                  "}
-                    <div>
-                      {"\n                    "}
-                      <div className={"font-bold text-white"}>
-                        {"youtube.com"}
-                      </div>
-                      {"\n                    "}
-                      <div className={"text-[11px] text-slate-400"}>
-                        {"TLS 1.3 + QUIC • Стратегия #2"}
-                      </div>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <span className={"px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold"}>
-                      {"21 ms • OK"}
-                    </span>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <div className={"p-3 rounded-xl bg-[#060a12] border border-slate-800 flex items-center justify-between"}>
-                    {"\n                  "}
-                    <div>
-                      {"\n                    "}
-                      <div className={"font-bold text-white"}>
-                        {"rr1---sn-gvnuxaxjvh.googlevideo.com"}
-                      </div>
-                      {"\n                    "}
-                      <div className={"text-[11px] text-slate-400"}>
-                        {"Video CDN • Стратегия #1"}
-                      </div>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <span className={"px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold"}>
-                      {"18 ms • OK"}
-                    </span>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <div className={"p-3 rounded-xl bg-[#060a12] border border-slate-800 flex items-center justify-between"}>
-                    {"\n                  "}
-                    <div>
-                      {"\n                    "}
-                      <div className={"font-bold text-white"}>
-                        {"gateway.discord.gg"}
-                      </div>
-                      {"\n                    "}
-                      <div className={"text-[11px] text-slate-400"}>
-                        {"WSS + UDP STUN • Стратегия #4"}
-                      </div>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <span className={"px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold"}>
-                      {"42 ms • OK"}
-                    </span>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <div className={"p-3 rounded-xl bg-[#060a12] border border-slate-800 flex items-center justify-between"}>
-                    {"\n                  "}
-                    <div>
-                      {"\n                    "}
-                      <div className={"font-bold text-white"}>
-                        {"instagram.com"}
-                      </div>
-                      {"\n                    "}
-                      <div className={"text-[11px] text-slate-400"}>
-                        {"TLS 1.3 • Стратегия #2"}
-                      </div>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <span className={"px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold"}>
-                      {"37 ms • OK"}
-                    </span>
-                    {"\n                "}
-                  </div>
-                  {"\n              "}
+                <div className={"p-3 rounded-xl bg-[#060a12] border border-slate-800 text-slate-400 font-mono text-xs"}>
+                  {"Нет контрольных сайтов из backend."}
                 </div>
                 {"\n            "}
               </div>
@@ -1554,7 +1402,7 @@ export default function App() {
                       {"Chat ID получателя"}
                     </label>
                     {"\n                  "}
-                    <input id={"tgChatIdInput"} type={"text"} defaultValue={"482910492"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2 font-mono text-white"} />
+                    <input id={"tgChatIdInput"} type={"text"} placeholder={"Chat ID не загружен из backend"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2 font-mono text-white"} />
                     {"\n                "}
                   </div>
                   {"\n                "}
@@ -1570,7 +1418,8 @@ export default function App() {
                     {"Маршрут до api.telegram.org (Прокси / Туннель)"}
                   </label>
                   {"\n                "}
-                  <select defaultValue={"nwg0"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3 py-2 font-mono text-white"}>
+                  <select defaultValue={""} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3 py-2 font-mono text-white"}>
+                    <option value={""} disabled>Маршрут не загружен из backend</option>
                     {"\n                  "}
                     <option value={"direct"}>
                       {"Напрямую (через обход nfqws2)"}
@@ -1619,95 +1468,23 @@ export default function App() {
                 <div>
                   {"\n                "}
                   <h2 className={"text-base sm:text-lg font-bold text-white"}>
-                    {"Проверенные стратегии сообщества по провайдерам"}
+                    {"Примеры стратегий сообщества"}
                   </h2>
                   {"\n                "}
                   <p className={"text-xs text-slate-400"}>
-                    {"Автоматическое определение провайдера через RIPEstat (`stat.ripe.net`)"}
+                    {"Провайдер не определён. Источник и совместимость примеров backend не подтвердил."}
                   </p>
                   {"\n              "}
                 </div>
                 {"\n              "}
                 <span className={"px-3 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 text-xs font-mono font-bold"}>
-                  {"\n                Ваш ISP: Ростелеком (AS12389)\n              "}
+                    {"\n                Провайдер не определён\n              "}
                 </span>
                 {"\n            "}
               </div>
               {"\n\n            "}
-              <div className={"space-y-3"}>
-                {"\n              "}
-                <div className={"p-4 rounded-xl bg-[#060a12] border border-slate-800 hover:border-blue-500/40 transition-all"}>
-                  {"\n                "}
-                  <div className={"flex items-center justify-between"}>
-                    {"\n                  "}
-                    <span className={"font-bold text-sm text-white"}>
-                      {"Ростелеком / Теле2 — Circular v2 (AutoTTL + SNI Overlap)"}
-                    </span>
-                    {"\n                  "}
-                    <button data-action-click={"applyCommunityPreset"} data-args={JSON.stringify(["Ростелеком Circular v2"])} className={"px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"}>
-                      {"Применить"}
-                    </button>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <p className={"text-xs text-slate-400 mt-1"}>
-                    {"Рейтинг успешности: 96% • Работает для YouTube 4K, Discord Voice и Telegram"}
-                  </p>
-                  {"\n                "}
-                  <code className={"block mt-2 text-[11px] font-mono text-blue-300 bg-slate-950 p-2 rounded border border-slate-800"}>
-                    {"--lua-desync=multisplit:pos=1,midsld:seqovl=sniext+3:seqovl_pattern=tls_clienthello:tcp_ts_up:disorder_after"}
-                  </code>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div className={"p-4 rounded-xl bg-[#060a12] border border-slate-800 hover:border-blue-500/40 transition-all"}>
-                  {"\n                "}
-                  <div className={"flex items-center justify-between"}>
-                    {"\n                  "}
-                    <span className={"font-bold text-sm text-white"}>
-                      {"МТС / МГТС — HostFakeSplit + BadSUM + MD5"}
-                    </span>
-                    {"\n                  "}
-                    <button data-action-click={"applyCommunityPreset"} data-args={JSON.stringify(["МТС / МГТС HostFakeSplit"])} className={"px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"}>
-                      {"Применить"}
-                    </button>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <p className={"text-xs text-slate-400 mt-1"}>
-                    {"Рейтинг успешности: 94% • Пробивает жесткую фильтрацию SNI на стационарных сетях"}
-                  </p>
-                  {"\n                "}
-                  <code className={"block mt-2 text-[11px] font-mono text-blue-300 bg-slate-950 p-2 rounded border border-slate-800"}>
-                    {"--lua-desync=hostfakesplit:midhost=host-2:altorder=1:seqovl=sniext+3:badsum:tcp_md5:disorder_after"}
-                  </code>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div className={"p-4 rounded-xl bg-[#060a12] border border-slate-800 hover:border-blue-500/40 transition-all"}>
-                  {"\n                "}
-                  <div className={"flex items-center justify-between"}>
-                    {"\n                  "}
-                    <span className={"font-bold text-sm text-white"}>
-                      {"Билайн / Дом.ру — Double Fake + VK SNI Mod"}
-                    </span>
-                    {"\n                  "}
-                    <button data-action-click={"applyCommunityPreset"} data-args={JSON.stringify(["Билайн / Дом.ру VK SNI"])} className={"px-3 py-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"}>
-                      {"Применить"}
-                    </button>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <p className={"text-xs text-slate-400 mt-1"}>
-                    {"Рейтинг успешности: 92% • Устойчивый обход ТСПУ для региональных узлов"}
-                  </p>
-                  {"\n                "}
-                  <code className={"block mt-2 text-[11px] font-mono text-blue-300 bg-slate-950 p-2 rounded border border-slate-800"}>
-                    {"--lua-desync=fake:blob=tls_clienthello:tls_mod=rnd,dupsid,sni=vk.com:ip_autottl=-2,2-10:badsum:repeats=2"}
-                  </code>
-                  {"\n              "}
-                </div>
-                {"\n            "}
+              <div id={"communityPresetsEmptyState"} className={"p-4 rounded-xl bg-[#060a12] border border-slate-800 text-sm text-slate-400"}>
+                {"Нет данных сообщества из backend."}
               </div>
               {"\n          "}
             </div>
@@ -1735,24 +1512,8 @@ export default function App() {
                     {"Выберите сервис или введите номер ASN"}
                   </label>
                   {"\n                "}
-                  <select id={"asnSelector"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-white"}>
-                    {"\n                  "}
-                    <option value={"AS15169"}>
-                      {"AS15169 — Google / YouTube (42 префикса)"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"AS49544"}>
-                      {"AS49544 — Discord Voice / Media (18 префиксов)"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"AS13335"}>
-                      {"AS13335 — Cloudflare CDN (36 префиксов)"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"AS32934"}>
-                      {"AS32934 — Meta / Instagram (24 префикса)"}
-                    </option>
-                    {"\n                "}
+                  <select id={"asnSelector"} defaultValue={""} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-white"}>
+                    <option value={""} disabled>Список ASN не загружен из backend</option>
                   </select>
                   {"\n              "}
                 </div>
@@ -1764,7 +1525,7 @@ export default function App() {
                 <div id={"asnResultBox"} className={"p-3.5 rounded-xl bg-[#060a12] border border-slate-800 font-mono text-[11px] text-slate-400 space-y-1"}>
                   {"\n                "}
                   <div>
-                    {"Готов к запросу `https://stat.ripe.net/data/announced-prefixes/data.json`"}
+                    {"Получение ASN и префиксов не подключено к backend."}
                   </div>
                   {"\n              "}
                 </div>
@@ -1835,7 +1596,7 @@ export default function App() {
                     {"SSH-хост и папка назначения"}
                   </label>
                   {"\n                "}
-                  <input type={"text"} defaultValue={"root@192.168.1.10:/mnt/nas/backups/keenetic-nfqws2"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2 text-white"} />
+                  <input type={"text"} placeholder={"Адрес NAS не задан"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2 text-white"} />
                   {"\n              "}
                 </div>
                 {"\n              "}
@@ -2028,7 +1789,7 @@ export default function App() {
           <div className={"flex items-center gap-2"}>
             {"\n          "}
             <span id={"updateRepoSlug"} className={"px-3 py-1 rounded-full bg-[#111827] border border-slate-700/80 text-xs font-mono font-bold text-slate-200"}>
-              {"\n            zemidala/nfqws2-ui\n          "}
+              {"\n            rangerxxyy/nfqws2-ui\n          "}
             </span>
             {"\n          "}
             <span className={"px-2.5 py-1 rounded-full bg-[#064e3b] text-[#34d399] text-xs font-bold"}>
@@ -2050,7 +1811,7 @@ export default function App() {
             </span>
             {"\n          "}
             <span id={"updateInstallPercent"}>
-              {"45%"}
+              {"0%"}
             </span>
             {"\n        "}
           </div>

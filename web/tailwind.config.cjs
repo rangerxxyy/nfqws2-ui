@@ -1,6 +1,6 @@
 module.exports = {
   darkMode: 'class',
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  content: ['./src/**/*.{ts,tsx}'],
   safelist: [
     'text-emerald-400', 'text-rose-400', 'text-slate-400',
     'bg-emerald-400', 'bg-rose-400', 'bg-slate-400',

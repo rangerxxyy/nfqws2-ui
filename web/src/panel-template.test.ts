@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -7,7 +7,13 @@ import App from './App';
 const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
 
-describe('HTML-based panel shell without authentication', () => {
+describe('TSX panel without authentication', () => {
+  it('keeps the interface in TSX and removes the HTML entry file', () => {
+    expect(existsSync(new URL('../index.html', import.meta.url))).toBe(false);
+    expect(template).toContain('id="tabContent-conf"');
+    expect(template).toContain('id="tabContent-lists"');
+  });
+
   it('keeps the supplied panel structure and has no authorization screen', () => {
     expect(template).toContain('id="tabContent-conf"');
     expect(template).toContain('id="tabContent-lists"');
@@ -33,6 +39,24 @@ describe('HTML-based panel shell without authentication', () => {
     expect(template).toContain('id="nfqwsConfigSections"');
     expect(panelSource).toContain('summarizeNfqwsConfig');
     expect(panelSource).toContain('renderConfigSections(config.content)');
+  });
+
+  it('does not show invented router metrics, monitoring, provider, or update progress', () => {
+    expect(template).toMatch(/id="ramProgressBar"[^>]*style="width:0%"/);
+    expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);
+    expect(template).toContain('Данные мониторинга не подключены');
+    expect(template).toContain('Провайдер не определён');
+    expect(template).toContain('Нет данных сообщества из backend.');
+    expect(template).toContain('Нет контрольных сайтов из backend.');
+    expect(template).toContain('0%');
+    expect(template).not.toContain('Ростелеком (AS12389)');
+    expect(template).not.toContain('Рейтинг успешности: 96%');
+    expect(template).not.toContain('Активен (каждые 15 мин)');
+    expect(template).not.toContain('45%');
+    expect(template).not.toContain('21 ms • OK');
+    expect(template).not.toContain('482910492');
+    expect(template).not.toContain('42 префикса');
+    expect(template).not.toContain('nfqws2 запущен');
   });
 
   it('keeps all styling and interactions local for the router CSP', () => {
