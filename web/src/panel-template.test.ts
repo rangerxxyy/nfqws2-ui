@@ -41,6 +41,11 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('renderConfigSections(config.content)');
   });
 
+  it('loads the selected mode from the backend config and limits choices to declared mode variables', () => {
+    expect(panelSource).toContain('availableNfqwsModes(content)');
+    expect(panelSource).toContain('select.value = [...select.options].some((option) => option.value === selectedMode) ? selectedMode :');
+  });
+
   it('does not show invented router metrics, monitoring, provider, or update progress', () => {
     expect(template).toMatch(/id="ramProgressBar"[^>]*style="width:0%"/);
     expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);

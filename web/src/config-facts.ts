@@ -6,6 +6,7 @@ const ARGUMENT_VARIABLES = [
   'NFQWS_ARGS_IPSET',
   'NFQWS_ARGS_CUSTOM',
 ] as const;
+const MODE_VARIABLES = ['MODE_LIST', 'MODE_AUTO', 'MODE_ALL'] as const;
 
 export type ConfigSectionFact = {
   variable: (typeof ARGUMENT_VARIABLES)[number];
@@ -34,6 +35,15 @@ function assignmentValue(content: string, key: string): string | null {
     else escaped = false;
   }
   return value.trim();
+}
+
+export function availableNfqwsModes(content: string): string[] {
+  return MODE_VARIABLES
+    .filter((variable) => {
+      const value = assignmentValue(content, variable);
+      return value !== null && value.length > 0;
+    })
+    .map((variable) => `$${variable}`);
 }
 
 export function summarizeNfqwsConfig(content: string): NfqwsConfigFacts {

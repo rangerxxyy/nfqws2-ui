@@ -3,7 +3,7 @@ import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
 import { deduplicateListContent } from './list-editor';
-import { summarizeNfqwsConfig } from './config-facts';
+import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 let status: StatusResponse | null = null;
@@ -153,11 +153,24 @@ function configAssignmentValue(content: string, key: string): string {
   return raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) ? raw.slice(1, -1) : raw;
 }
 function updateQuickParameters(content: string) {
+  const availableModes = new Set(availableNfqwsModes(content));
   all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-key]').forEach((select) => {
     const key = select.dataset.key;
     if (!key) return;
     const value = configAssignmentValue(content, key);
     select.value = [...select.options].some((option) => option.value === value) ? value : '';
+  });
+  all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-args]').forEach((select) => {
+    let key = '';
+    try { key = (JSON.parse(select.dataset.args ?? '[]') as unknown[])[0] as string ?? ''; } catch { return; }
+    if (key !== 'NFQWS_EXTRA_ARGS') return;
+    const selectedMode = configAssignmentValue(content, key);
+    select.value = [...select.options].some((option) => option.value === selectedMode) ? selectedMode : '';
+    for (const option of [...select.options]) {
+      if (!/^\$MODE_(?:LIST|AUTO|ALL)$/.test(option.value)) continue;
+      option.disabled = !availableModes.has(option.value);
+      option.title = option.disabled ? `${option.value.slice(1)} отсутствует или пуст в загруженном конфиге` : '';
+    }
   });
 }
 function updateConfigVariable(key: string, value: string, quoted: boolean) {
@@ -410,7 +423,11 @@ function boot() {
   showRoute('conf');
   const applyButton = $('[data-action-click="applyConfigAndRestart"]');
   if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
-  $('#nfqwsConfTextarea')?.addEventListener('input', syncConfigLines);
+  $('#nfqwsConfTextarea')?.addEventListener('input', () => {
+    syncConfigLines();
+    const editor = $('#nfqwsConfTextarea');
+    if (editor instanceof HTMLTextAreaElement) updateQuickParameters(editor.value);
+  });
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigLines);
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();

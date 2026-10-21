@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { summarizeNfqwsConfig } from './config-facts';
+import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 
 describe('nfqws2 config facts shown in the panel', () => {
+  it('only offers modes whose variables are defined in the backend-loaded config', () => {
+    const config = `# MODE_ALL=--filter-tcp=80
+MODE_LIST="--hostlist=/etc/nfqws2/lists/user.list"
+MODE_AUTO="$MODE_LIST --hostlist-auto=/etc/nfqws2/lists/auto.list"
+NFQWS_EXTRA_ARGS="$MODE_AUTO"
+`;
+
+    expect(availableNfqwsModes(config)).toEqual(['$MODE_LIST', '$MODE_AUTO']);
+  });
+
   it('reads the selected mode and multiline strategy variables without executing shell syntax', () => {
     const facts = summarizeNfqwsConfig(`MODE_LIST="--hostlist=/etc/nfqws2/lists/user.list"
 MODE_AUTO="$MODE_LIST --hostlist-auto=/etc/nfqws2/lists/auto.list"
