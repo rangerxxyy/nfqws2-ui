@@ -825,66 +825,28 @@ export default function App() {
                     <span className={"w-2 h-4 rounded-full bg-emerald-400"}></span>
                     {"\n                  "}
                     <h3 className={"text-sm font-bold text-white"}>
-                      {"Активные модули и профили"}
+                      {"Профили и стратегии из конфигурации"}
                     </h3>
                     {"\n                "}
                   </div>
                   {"\n                "}
-                  <span className={"text-[11px] font-mono text-emerald-400"}>
-                    {"5 файлов OK"}
+                  <span id={"profileStatusBadge"} className={"text-[11px] font-mono text-slate-400"}>
+                    {"Ожидание backend"}
                   </span>
                   {"\n              "}
                 </div>
                 {"\n\n              "}
-                <div className={"space-y-2 text-xs font-mono"}>
-                  {"\n                "}
-                  <div className={"p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between"}>
-                    {"\n                  "}
-                    <span className={"text-slate-300"}>
-                      {"TCP Circular (Стратегии 1–6)"}
-                    </span>
-                    {"\n                  "}
-                    <span className={"px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold"}>
-                      {"Активен"}
-                    </span>
-                    {"\n                "}
+                <div id={"nfqwsConfigSections"} className={"space-y-2 text-xs font-mono"}>
+                  <div className={"p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 text-slate-400"}>
+                    {"Конфигурация ещё не загружена из backend"}
                   </div>
-                  {"\n                "}
-                  <div className={"p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between"}>
-                    {"\n                  "}
-                    <span className={"text-slate-300"}>
-                      {"UDP Discord / WireGuard (1–3)"}
-                    </span>
-                    {"\n                  "}
-                    <span className={"px-2 py-0.5 rounded bg-blue-500/15 text-blue-400 font-bold"}>
-                      {"Активен"}
-                    </span>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <div className={"p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between"}>
-                    {"\n                  "}
-                    <span className={"text-slate-300"}>
-                      {"Custom Профиль For iPhone (1–4)"}
-                    </span>
-                    {"\n                  "}
-                    <span className={"px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 font-bold"}>
-                      {"Активен"}
-                    </span>
-                    {"\n                "}
-                  </div>
-                  {"\n              "}
                 </div>
                 {"\n\n              "}
                 {"\n              "}
                 <div className={"pt-1"}>
                   {"\n                "}
                   <div className={"text-[11px] text-slate-400 mb-2"}>
-                    {"Файлы в "}
-                    <code className={"text-slate-300"}>
-                      {"/opt/etc/nfqws2/"}
-                    </code>
-                    {" (клик — вставить путь):"}
+                    {"Примеры ссылок Lua/blob (пути могут отличаться):"}
                   </div>
                   {"\n                "}
                   <div className={"flex flex-wrap gap-1.5 font-mono text-[11px]"}>

@@ -27,6 +27,14 @@ describe('HTML-based panel shell without authentication', () => {
     expect(panelSource).toContain('deduplicateListContent');
   });
 
+  it('does not label example profiles as active and renders config-derived sections', () => {
+    expect(template).not.toContain('TCP Circular (Стратегии 1–6)');
+    expect(template).not.toContain('5 файлов OK');
+    expect(template).toContain('id="nfqwsConfigSections"');
+    expect(panelSource).toContain('summarizeNfqwsConfig');
+    expect(panelSource).toContain('renderConfigSections(config.content)');
+  });
+
   it('keeps all styling and interactions local for the router CSP', () => {
     expect(template).not.toMatch(/\son(?:click|input|change|scroll|submit)=/i);
     expect(template).not.toContain('cdn.tailwindcss.com');

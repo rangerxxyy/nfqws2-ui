@@ -3,6 +3,7 @@ import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
 import { deduplicateListContent } from './list-editor';
+import { summarizeNfqwsConfig } from './config-facts';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 let status: StatusResponse | null = null;
@@ -97,11 +98,38 @@ async function loadConfig() {
     const moduleRefs = config.content.split(/\r?\n/).filter((line) => /^\s*[^#].*--(?:lua-init|blob)=/.test(line));
     setText('#moduleStatusBadge', `${moduleRefs.length} ссылок в конфигурации`);
     renderConfigModules(config.content);
+    renderConfigSections(config.content);
     updateQuickParameters(config.content);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
     setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:—');
     syncConfigLines();
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
+}
+function renderConfigSections(content: string) {
+  const box = $('#nfqwsConfigSections');
+  if (!box) return;
+  const facts = summarizeNfqwsConfig(content);
+  box.replaceChildren();
+  setText('#profileStatusBadge', `${facts.sections.length} секций параметров`);
+
+  const mode = document.createElement('div');
+  mode.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between gap-2';
+  const modeLabel = document.createElement('span'); modeLabel.className = 'text-slate-300';
+  modeLabel.textContent = `NFQWS_EXTRA_ARGS · выбранное значение: ${facts.selectedMode ?? 'не задано'}`;
+  const modeState = document.createElement('span'); modeState.className = 'px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold'; modeState.textContent = 'В конфигурации';
+  mode.append(modeLabel, modeState); box.append(mode);
+
+  if (!facts.sections.length) {
+    const empty = document.createElement('div'); empty.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 text-slate-400';
+    empty.textContent = 'Не найдены буквальные значения секций NFQWS_*_ARGS; динамические shell-переменные здесь не интерпретируются.'; box.append(empty); return;
+  }
+  for (const section of facts.sections) {
+    const row = document.createElement('div'); row.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between gap-2';
+    const label = document.createElement('span'); label.className = 'text-slate-300'; label.textContent = section.variable;
+    const details = document.createElement('span'); details.className = 'text-right text-slate-400';
+    details.textContent = `${section.strategies} --lua-desync · ${section.profiles} --new · ${section.filters} фильтров`;
+    row.append(label, details); box.append(row);
+  }
 }
 function renderConfigModules(content: string) {
   const host = $('#moduleFilesContainer'); if (!host) return;
