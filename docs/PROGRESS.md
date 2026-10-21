@@ -10,7 +10,10 @@
 - ShellCheck 0.11.0, `dash -n` и installer preflight прошли после исправления комментариев trap suppression. Полный BusyBox symlink regression требует Linux BusyBox и будет проверен GitHub CI.
 - Production preview открыт в браузере; структура меню, отдельный пункт авторизации, конфигурация и локальные CSS/JS assets загружены. На этом ПК нет Linux linker (`cc`) для ARM64 musl, поэтому целевой бинарник и аппаратная совместимость ещё не подтверждены; это проверит release workflow.
 - Release-mode Rust backend локально обслужил production UI: HTTP health/root=200, CSP присутствует, анонимный status=401, тестовый login/CSRF/session проходят. На Windows сервис ожидаемо классифицирован как `unknown`; тестовые API не запускали start/stop и не меняли конфигурацию nfqws2.
-- Новый релиз пока не опубликован; версия v0.1.3 подготовлена только после прохождения оставшихся CI/release gates.
+- GitHub CI для `21fbce7` прошёл полностью: frontend tests/build/audit, Rust fmt/15 tests/clippy/audit и shell syntax/ShellCheck/BusyBox regression.
+- Опубликован `v0.1.3`; release workflow подтвердил `aarch64-unknown-linux-musl` cross-test/build, статический бинарник, установщик, состав архива и SHA-256. Скачанный опубликованный архив повторно сверён локально.
+- По ранее данному разрешению обновлена только nfqws2-ui на Keenetic `192.168.1.1`: установщик сохранил пароль панели, запустил v0.1.3 на порту 1002 и прошёл health-check. Проверены `/api/health`, HTML/JS/CSS, отдельный пункт «Авторизация», отсутствие blocking login shell и анонимный 401 на status API.
+- При обновлении не запускались команды nfqws2 и не читались/изменялись его конфигурация, списки или Lua. Управление start/stop/restart nfqws2 на устройстве не тестировалось.
 
 ## 2026-10-21 — чистый перезапуск
 
