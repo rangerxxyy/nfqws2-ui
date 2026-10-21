@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -45,7 +46,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' backend/Cargo.toml | head -n 1)"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           [[ "$VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]
           PACKAGE="$RUNNER_TEMP/nfqws2-ui-package"
           ASSET="nfqws2-ui-v${VERSION}-aarch64-unknown-linux-musl.tar.gz"
@@ -63,7 +68,24 @@ jobs:
           cp "$PACKAGE/install.sh" "$RUNNER_TEMP/install.sh"
           readelf -h "$PACKAGE/bin/nfqws2-ui" | grep -q 'Machine:.*AArch64'
           ! readelf -l "$PACKAGE/bin/nfqws2-ui" | grep -q 'INTERP'
+          shellcheck -s sh "$PACKAGE/install.sh"
+          tar -tzf "$RUNNER_TEMP/$ASSET" > "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'bin/nfqws2-ui' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'public/index.html' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'scripts/S99nfqws2-ui' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'uninstall.sh' "$RUNNER_TEMP/archive-entries.txt"
+          (cd "$RUNNER_TEMP" && sha256sum -c "$ASSET.sha256")
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: nfqws2-ui-release-dry-run-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/install.sh
+            ${{ runner.temp }}/nfqws2-ui-v*-aarch64-unknown-linux-musl.tar.gz
+            ${{ runner.temp }}/nfqws2-ui-v*-aarch64-unknown-linux-musl.tar.gz.sha256
+          if-no-files-found: error
       - uses: softprops/action-gh-release@v3
+        if: github.event_name == 'push'
         with:
           name: nfqws2-ui ${{ github.ref_name }}
           generate_release_notes: true
