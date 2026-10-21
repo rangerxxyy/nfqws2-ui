@@ -28,8 +28,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y busybox-static dash shellcheck
-          for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui tests/installer-preflight.sh tests/busybox-symlink-move.sh; do dash -n "$file"; done
-          shellcheck -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui tests/installer-preflight.sh tests/busybox-symlink-move.sh
+          for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh; do dash -n "$file"; done
+          shellcheck -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh
           sh tests/installer-preflight.sh
           sh tests/busybox-symlink-move.sh
           cargo fmt --manifest-path backend/Cargo.toml --all -- --check
@@ -60,6 +60,7 @@ jobs:
           install -m 755 "backend/target/aarch64-unknown-linux-musl/release/nfqws2-ui" "$PACKAGE/bin/nfqws2-ui"
           cp -R web/dist/. "$PACKAGE/public/"
           install -m 755 scripts/S99nfqws2-ui "$PACKAGE/scripts/S99nfqws2-ui"
+          install -m 644 scripts/symlink.sh "$PACKAGE/scripts/symlink.sh"
           install -m 755 scripts/uninstall.sh "$PACKAGE/uninstall.sh"
           sed "s/@VERSION@/${VERSION}/g" scripts/install.sh > "$PACKAGE/install.sh"
           chmod 755 "$PACKAGE/install.sh"
@@ -75,6 +76,7 @@ jobs:
           grep -Fxq 'bin/nfqws2-ui' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'public/index.html' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'scripts/S99nfqws2-ui' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'scripts/symlink.sh' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'uninstall.sh' "$RUNNER_TEMP/archive-entries.txt"
           (cd "$RUNNER_TEMP" && sha256sum -c "$ASSET.sha256")
       - uses: actions/upload-artifact@v4

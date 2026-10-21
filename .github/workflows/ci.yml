@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y busybox-static dash shellcheck
-      - run: for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui tests/installer-preflight.sh tests/busybox-symlink-move.sh; do dash -n "$file"; done
-      - run: shellcheck -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui tests/installer-preflight.sh tests/busybox-symlink-move.sh
+      - run: for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh; do dash -n "$file"; done
+      - run: shellcheck -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh
       - run: sh tests/installer-preflight.sh
       - run: sh tests/busybox-symlink-move.sh

@@ -34,9 +34,10 @@ cleanup() {
 # shellcheck disable=SC2317
 rollback() {
 	[ "$SWITCHED" = 1 ] || return 0
+	/opt/etc/init.d/S99nfqws2-ui stop >/dev/null 2>&1 || true
 	if [ -n "$PREVIOUS" ]; then
 		ln -s "$PREVIOUS" "$ROOT/current.rollback.$$"
-		mv -f "$ROOT/current.rollback.$$" "$ROOT/current"
+		replace_symlink "$ROOT/current.rollback.$$" "$ROOT/current" || return 1
 		/opt/etc/init.d/S99nfqws2-ui restart >/dev/null 2>&1 || true
 	else
 		/opt/etc/init.d/S99nfqws2-ui stop >/dev/null 2>&1 || true
@@ -89,6 +90,8 @@ mkdir -p "$STAGE"
 tar -xzf "$TMP/$ASSET" -C "$STAGE" || { rm -rf "$STAGE"; fail 'cannot extract release'; }
 [ -x "$STAGE/bin/nfqws2-ui" ] || { rm -rf "$STAGE"; fail 'archive has no executable'; }
 [ -d "$STAGE/public" ] || { rm -rf "$STAGE"; fail 'archive has no web interface'; }
+[ -r "$STAGE/scripts/symlink.sh" ] || { rm -rf "$STAGE"; fail 'archive has no symlink helper'; }
+. "$STAGE/scripts/symlink.sh"
 
 # Preserve an existing administrator password on updates. First install asks
 # for a password on the controlling terminal; no secret is passed in argv.
@@ -119,10 +122,11 @@ mkdir -p /opt/etc/init.d
 cp "$STAGE/scripts/S99nfqws2-ui" /opt/etc/init.d/S99nfqws2-ui
 chmod 755 /opt/etc/init.d/S99nfqws2-ui
 if [ -L "$ROOT/current" ]; then PREVIOUS=$(readlink "$ROOT/current"); fi
+if ! /opt/etc/init.d/S99nfqws2-ui stop; then fail 'cannot stop the current service; update cancelled'; fi
 ln -s "$STAGE" "$ROOT/current.new.$$"
-mv -f "$ROOT/current.new.$$" "$ROOT/current"
 SWITCHED=1
-if ! /opt/etc/init.d/S99nfqws2-ui restart; then rollback; fail 'service failed to start; previous version restored'; fi
+if ! replace_symlink "$ROOT/current.new.$$" "$ROOT/current"; then rollback; fail 'cannot switch the current release; previous version restored'; fi
+if ! /opt/etc/init.d/S99nfqws2-ui start; then rollback; fail 'service failed to start; previous version restored'; fi
 
 PORT=1002
 tries=0
