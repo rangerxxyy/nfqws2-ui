@@ -22,13 +22,17 @@ cat > "$TMP/bin/date" <<'EOF'
 #!/bin/sh
 echo 20261021164000
 EOF
+cat > "$TMP/bin/rm" <<'EOF'
+#!/bin/sh
+exec /bin/rm "$@"
+EOF
 cat > "$TMP/bin/opkg" <<'EOF'
 #!/bin/sh
 echo called >> "$OPKG_CALLED"
 exit 1
 EOF
 chmod +x "$TMP/bin/"*
-sed 's/@VERSION@/0.1.0/g' "$INSTALLER" > "$TMP/install.sh"
+sed "s/^VERSION='@VERSION@'$/VERSION='0.1.0'/" "$INSTALLER" > "$TMP/install.sh"
 
 if OUTPUT=$(PATH="$TMP/bin" OPKG_CALLED="$TMP/opkg-called" /bin/sh "$TMP/install.sh" 2>&1); then
 	echo 'installer unexpectedly passed its checksum dependency check' >&2
