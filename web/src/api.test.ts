@@ -1,24 +1,37 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, setCsrfToken } from './api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api, nfqwsLists } from './api';
 
 describe('API client used by the source-based panel', () => {
-  beforeEach(() => { setCsrfToken(''); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('sends same-origin credentials and CSRF on mutating calls', async () => {
+  it('sends same-origin requests without session or CSRF requirements', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    setCsrfToken('csrf-test-token');
-
     await api('/api/service', { method: 'POST', body: JSON.stringify({ action: 'restart' }) });
 
     const [, init] = fetchMock.mock.calls[0] as [RequestInfo, RequestInit];
     expect(init.credentials).toBe('same-origin');
-    expect(new Headers(init.headers).get('X-CSRF-Token')).toBe('csrf-test-token');
+    expect(new Headers(init.headers).has('X-CSRF-Token')).toBe(false);
   });
 
   it('surfaces backend errors as typed API errors', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"Требуется вход"}', { status: 401 })));
-    await expect(api('/api/status')).rejects.toMatchObject({ status: 401, message: 'Требуется вход' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"Backend недоступен"}', { status: 503 })));
+    await expect(api('/api/status')).rejects.toMatchObject({ status: 503, message: 'Backend недоступен' });
+  });
+
+  it('saves a selected list using its server revision without a session token', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      '{"id":"user.list","path":"/opt/etc/nfqws2/lists/user.list","content":"example.org\\n","revision":"next"}',
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await nfqwsLists.save('user.list', 'example.org\n', 'current');
+
+    expect(result.revision).toBe('next');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/lists/user.list');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('PUT');
+    expect(new Headers(init.headers).has('X-CSRF-Token')).toBe(false);
+    expect(JSON.parse(String(init.body))).toEqual({ content: 'example.org\n', revision: 'current' });
   });
 });
