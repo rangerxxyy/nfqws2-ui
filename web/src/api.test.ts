@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsInstallation, nfqwsLists, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('requests router-side website diagnostics and returns the real stage results', async () => {
+    const report = { host: 'example.com', addresses: ['1.1.1.1'], steps: [{id:'https',status:'error',detail:'TLS timeout',durationMs:8000,httpCode:null}], summary: 'Не удалось проверить HTTPS', limitations: [] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(report), {status:200}));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsDiagnostics.site('example.com')).toEqual(report);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/site');
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1].body))).toEqual({host:'example.com'});
+  });
+
   it('previews a quick setting through Rust without saving the draft', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"content":"ISP_INTERFACE=eth3\\n","changedVariable":"ISP_INTERFACE"}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

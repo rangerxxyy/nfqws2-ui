@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use nfqws2_ui::config_document::ConfigDocument;
+use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::{
     ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
     network_interface_names, parse_meminfo_kb, process_matches, service_action, service_action_at,
@@ -27,6 +28,7 @@ use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 
 const MAX_CONFIG_BYTES: usize = 512 * 1024;
+static SITE_DIAGNOSTIC_LOCK: Mutex<()> = Mutex::const_new(());
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -165,6 +167,11 @@ struct ConfigPreviewRequest {
     content: String,
     key: String,
     value: String,
+}
+
+#[derive(Deserialize)]
+struct SiteDiagnosticRequest {
+    host: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1527,6 +1534,104 @@ fn validate_list_content(id: &str, content: &str) -> Result<(), String> {
     Ok(())
 }
 
+async fn diagnose_site(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SiteDiagnosticRequest>,
+) -> Response {
+    let host = match site_diagnostics::normalize_host(&request.host) {
+        Ok(host) => host,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let Ok(_guard) = SITE_DIAGNOSTIC_LOCK.try_lock() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Проверка сайта уже выполняется; дождитесь результата",
+        );
+    };
+    let mut report = match tokio::time::timeout(
+        std::time::Duration::from_secs(45),
+        site_diagnostics::diagnose(host),
+    )
+    .await
+    {
+        Ok(report) => report,
+        Err(_) => {
+            return error(
+                StatusCode::GATEWAY_TIMEOUT,
+                "Истекло общее время диагностики сайта",
+            );
+        }
+    };
+    let mut matches = Vec::new();
+    let mut unreadable = Vec::new();
+    if let Some(config) = config_path_for_state(&state) {
+        for id in LIST_IDS {
+            let Some(path) = list_file_path(&config, id) else {
+                continue;
+            };
+            let mut bytes = Vec::new();
+            let read = match tokio::fs::File::open(&path).await {
+                Ok(file) => file
+                    .take((MAX_LIST_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .await
+                    .is_ok(),
+                Err(_) => false,
+            };
+            if !read || bytes.len() > MAX_LIST_BYTES {
+                unreadable.push(id);
+                continue;
+            }
+            for line in String::from_utf8_lossy(&bytes).lines() {
+                if site_diagnostics::list_entry_matches(
+                    &report.host,
+                    &report.addresses,
+                    line,
+                    id.starts_with("ipset"),
+                ) {
+                    matches.push(format!(
+                        "{id}: {}",
+                        line.chars().take(253).collect::<String>()
+                    ));
+                    break;
+                }
+            }
+        }
+        report.steps.push(DiagnosticStep {
+            id: "lists".into(),
+            status: if unreadable.is_empty() {
+                "ok"
+            } else {
+                "warning"
+            },
+            detail: format!(
+                "{}{}",
+                if matches.is_empty() {
+                    "Совпадений в прочитанных списках нет".into()
+                } else {
+                    matches.join("; ")
+                },
+                if unreadable.is_empty() {
+                    String::new()
+                } else {
+                    format!(". Не удалось проверить: {}", unreadable.join(", "))
+                }
+            ),
+            duration_ms: None,
+            http_code: None,
+        });
+    } else {
+        report.steps.push(DiagnosticStep {
+            id: "lists".into(),
+            status: "unavailable",
+            detail: "Конфигурация nfqws2 не обнаружена; списки не проверены".into(),
+            duration_ms: None,
+            http_code: None,
+        });
+    }
+    Json(report).into_response()
+}
+
 async fn preview_config(Json(request): Json<ConfigPreviewRequest>) -> Response {
     if request.content.len() > MAX_CONFIG_BYTES || request.value.len() > 4096 {
         return error(
@@ -2361,6 +2466,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/nfqws2/config/preview", post(preview_config))
+        .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
         .route("/api/nfqws2/apply", post(apply_config))
         .route("/api/nfqws2/lists", get(get_lists))
         .route("/api/nfqws2/lists/{id}", get(get_list).put(put_list))
@@ -3050,6 +3156,33 @@ mod tests {
             saved_changed_version,
             "pre-restore config must be retained as a backup"
         );
+    }
+
+    #[tokio::test]
+    async fn site_diagnosis_rejects_local_or_injected_targets_before_any_network_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = api_router(test_state(dir.path().join("data")), dir.path().join("web"));
+        for host in [
+            "127.0.0.1",
+            "router.local",
+            "x.com;reboot",
+            "http://user:pass@x.com",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/nfqws2/diagnostics/site")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::json!({"host":host}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(body_json(response).await["error"].is_string());
+        }
     }
 
     #[tokio::test]

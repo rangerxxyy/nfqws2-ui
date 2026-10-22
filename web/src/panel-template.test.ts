@@ -10,6 +10,20 @@ const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8'
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel without authentication', () => {
+  it('keeps the requested configuration and list toolbar free of removed labels', () => {
+    expect(template).toContain('Конфигурация');
+    expect(template).not.toContain('Секции:');
+    expect(template).not.toContain('Проверка не выполнялась');
+    expect(template).not.toContain('Сравнить изменения');
+    expect(template).not.toContain('Добавить в черновик');
+    expect(template).not.toContain('id="currentListDescription"');
+    expect(template).toContain('flex-nowrap whitespace-nowrap');
+    expect(template).toContain('data-action-click="runSiteDiagnosis"');
+    expect(template).not.toContain('Ломается профилем #1');
+    const disabledActions = panelSource.match(/export const DISABLED_PANEL_ACTIONS = \[([\s\S]*?)\] as const/);
+    expect(disabledActions?.[1]).not.toContain('runSiteDiagnosis');
+    expect(disabledActions?.[1]).not.toContain('setDiagPreset');
+  });
   it('places service controls beside status and orders updates core left, UI right', () => {
     const statusGroup = template.slice(template.indexOf('id="headerStatusBar"'), template.indexOf('id="headerUpdates"'));
     expect(statusGroup).toContain('id="headerServiceControls"');
@@ -49,10 +63,10 @@ describe('TSX panel without authentication', () => {
   });
 
   it('provides list draft add, line removal, search, import, and export actions without fabricated presets', () => {
-    expect(template).toContain('id="listAddEntriesInput"');
+    expect(template).not.toContain('id="listAddEntriesInput"');
     expect(template).toContain('id="listSearchInput"');
     expect(template).toContain('id="listImportFile"');
-    expect(template).toContain('data-action-click="appendListEntriesToDraft"');
+    expect(template).not.toContain('data-action-click="appendListEntriesToDraft"');
     expect(template).toContain('data-action-click="removeSelectedListLines"');
     expect(template).toContain('data-action-click="findNextListEntry"');
     expect(template).toContain('data-action-click="exportListDraft"');

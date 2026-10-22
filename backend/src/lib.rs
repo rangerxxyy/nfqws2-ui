@@ -1,5 +1,6 @@
 use serde::Serialize;
 pub mod config_document;
+pub mod site_diagnostics;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsInstallation, nfqwsLists, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type PanelRelease, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type PanelRelease, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -14,6 +14,7 @@ let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
 let busy = false;
 let statusPolling = false;
+let diagnosisRunning = false;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
@@ -146,7 +147,8 @@ async function loadConfig() {
     const editor = $('#nfqwsConfTextarea');
     if (editor instanceof HTMLTextAreaElement) editor.value = config.content;
     setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} строк`);
-    setText('#currentConfigPath', config.file);
+    setText('#currentConfigPath', 'Конфигурация');
+    const configTitle = $('#currentConfigPath'); if (configTitle) configTitle.title = config.file;
     setText('#moduleStatusBadge', `${moduleReferences.length} ссылок в конфигурации`);
     renderConfigModules(moduleReferences);
     renderConfigSections(config.content);
@@ -366,7 +368,6 @@ async function loadList(id: NfqwsListId) {
     const editor = $('#listEditorTextarea');
     if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
     setText('#currentListFilePath', result.path);
-    setText('#currentListDescription', `${id.startsWith('ipset') ? 'IP-адреса и CIDR' : 'Доменный список'}. Файл существует; его участие в фильтрации зависит от выбранного режима и профилей nfqws2.`);
     for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
       const selected = isListTabSelected(candidate.id, id);
       candidate.classList.toggle('active', selected);
@@ -413,17 +414,6 @@ function syncListScroll(editor: HTMLTextAreaElement) {
   const gutter = $('#listLineNumbers');
   if (gutter) gutter.scrollTop = editor.scrollTop;
 }
-function appendListEntriesToDraft() {
-  if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
-  const editor = $('#listEditorTextarea'); const input = $('#listAddEntriesInput');
-  if (!(editor instanceof HTMLTextAreaElement) || !(input instanceof HTMLTextAreaElement)) return;
-  const before = editor.value;
-  editor.value = appendListEntries(before, input.value);
-  if (editor.value === before) return toast('Нет строк для добавления.', 'error');
-  input.value = '';
-  syncListLineNumbers(editor);
-  toast('Строки добавлены в черновик. Backend проверит список при сохранении.');
-}
 function removeSelectedListLines() {
   if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
   const editor = $('#listEditorTextarea');
@@ -464,7 +454,43 @@ function exportListDraft() {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
   toast('Текущий черновик экспортирован.');
 }
-export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','setDiagPreset','excludeBrokenDomain','findTelegramChatId'] as const;
+async function runSiteDiagnosis() {
+  if (diagnosisRunning) return;
+  const input = $('#diagDomainInput'); const container = $('#diagResultContainer');
+  const button = $('[data-action-click="runSiteDiagnosis"]');
+  if (!(input instanceof HTMLInputElement) || !container || !(button instanceof HTMLButtonElement)) return;
+  if (!input.value.trim()) return toast('Введите домен для проверки.', 'error');
+  diagnosisRunning = true; input.disabled = true; button.disabled = true;
+  button.textContent = 'Проверяем…'; container.replaceChildren();
+  const loading = document.createElement('p'); loading.className = 'col-span-full text-sm text-blue-300 animate-pulse';
+  loading.textContent = 'Проверяются DNS, соединение и ответы сайта с роутера…'; container.append(loading);
+  try {
+    const report = await nfqwsDiagnostics.site(input.value);
+    container.replaceChildren();
+    const summary = document.createElement('div'); summary.className = 'col-span-full ui-card rounded-2xl p-5';
+    const title = document.createElement('h3'); title.className = 'font-bold text-white'; title.textContent = `${report.host} · ${report.summary}`;
+    const addresses = document.createElement('p'); addresses.className = 'mt-2 text-xs font-mono text-slate-400'; addresses.textContent = report.addresses.join(', ');
+    summary.append(title, addresses); container.append(summary);
+    const labels: Record<string, string> = { dns: 'DNS роутера', doh: 'Сверка DNS через DoH', tcp: 'TCP 443', https: 'HTTPS / TLS', http: 'HTTP 80', route: 'Маршрут ядра', sni: 'Контрольное SNI', quic: 'QUIC / HTTP/3', lists: 'Совпадения в списках' };
+    const statuses = { ok: 'Ответ получен', warning: 'Требует внимания', error: 'Проверка не прошла', unavailable: 'Не проверено' };
+    for (const step of report.steps) {
+      const card = document.createElement('div'); card.className = 'ui-card rounded-2xl p-4 space-y-2';
+      const heading = document.createElement('h3'); heading.className = 'text-sm font-semibold text-white'; heading.textContent = labels[step.id] ?? step.id;
+      const state = document.createElement('p'); state.className = `text-xs font-semibold ${step.status === 'ok' ? 'text-emerald-400' : step.status === 'error' ? 'text-rose-400' : 'text-amber-300'}`;
+      state.textContent = `${statuses[step.status]}${step.durationMs !== null ? ` · ${step.durationMs} мс` : ''}`;
+      const detail = document.createElement('p'); detail.className = 'text-xs text-slate-300 whitespace-pre-wrap break-all'; detail.textContent = step.detail;
+      card.append(heading, state, detail); container.append(card);
+    }
+    for (const note of report.limitations) {
+      const row = document.createElement('p'); row.className = 'col-span-full text-xs text-slate-400'; row.textContent = note; container.append(row);
+    }
+  } catch (error) {
+    container.replaceChildren(); const message = error instanceof Error ? error.message : 'Не удалось выполнить проверку сайта';
+    const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); toast(message, 'error');
+  } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить домен'; }
+}
+
+export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain','findTelegramChatId'] as const;
 
 function renderReleaseNotes(target: HTMLElement, notes: string) {
   const lines = notes.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 8);
@@ -607,6 +633,8 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => { showRoute(route); if (route === 'snapshots') void loadBackups(); },
+    runSiteDiagnosis: () => void runSiteDiagnosis(),
+    setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
     createNewSnapshot: () => void createNewSnapshot(),
     restoreSnapshot: (id: string) => void restoreSnapshot(id),
     restartService: () => void serviceAction('restart'),
@@ -632,7 +660,6 @@ function bindPrototypeActions() {
     syncCustomHostInput: () => undefined,
     selectListFile: (name: NfqwsListId) => void loadList(name),
     saveActiveListFile: () => void saveActiveList(),
-    appendListEntriesToDraft: () => appendListEntriesToDraft(),
     removeSelectedListLines: () => removeSelectedListLines(),
     findNextListEntry: () => findNextListEntry(),
     openListImport: () => $('#listImportFile')?.click(),

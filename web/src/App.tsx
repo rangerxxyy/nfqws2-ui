@@ -14,7 +14,7 @@ export default function App() {
       <div className={"max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-12 items-center gap-3"}>
         {"\n      \n      "}
         {"\n      "}
-        <div id={"headerStatusBar"} className={"lg:col-span-5 flex flex-wrap items-center gap-2.5 justify-start"}>
+        <div id={"headerStatusBar"} className={"lg:col-span-8 min-w-0 flex flex-nowrap whitespace-nowrap items-center gap-2.5 justify-start overflow-x-auto py-1"}>
           {"\n        \n        "}
           {"\n        "}
           <div className={"flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3.5 py-2 rounded-xl shadow-inner"}>
@@ -35,10 +35,10 @@ export default function App() {
           </div>
           {"\n\n        "}
           {"\n        "}
-          <div id={"headerServiceControls"} className={"flex items-center gap-2"}>
-          <button data-action-click={"restartService"} className={"px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs sm:text-sm font-medium flex items-center gap-2 transition-all active:scale-95"}>
+          <div id={"headerServiceControls"} className={"shrink-0 flex items-center gap-2"}>
+          <button data-action-click={"restartService"} className={"px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-100 border border-slate-700 text-[11px] font-medium flex items-center gap-2 transition-all active:scale-95"}>
             {"\n          "}
-            <svg id={"restartIcon"} className={"w-4 h-4 text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+            <svg id={"restartIcon"} className={"w-3.5 h-3.5 text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
               <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"}></path>
               {"\n          "}
@@ -51,9 +51,9 @@ export default function App() {
           </button>
           {"\n\n        "}
           {"\n        "}
-          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} className={"px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all active:scale-95"}>
+          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} className={"px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[11px] font-semibold flex items-center gap-2 transition-all active:scale-95"}>
             {"\n          "}
-            <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+            <svg className={"w-3.5 h-3.5"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
               <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
               {"\n          "}
@@ -150,7 +150,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div className={"lg:col-span-2 flex items-center justify-center order-first lg:order-none"}>
+        <div className={"lg:col-span-1 flex items-center justify-center whitespace-nowrap order-first lg:order-none"}>
           {"\n        "}
           <span className={"text-lg sm:text-xl font-bold tracking-tight text-white select-none"}>
             {"\n          nfqws2"}
@@ -163,7 +163,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div id={"headerUpdates"} className={"lg:col-span-5 flex flex-wrap items-center justify-end gap-2"}>
+        <div id={"headerUpdates"} className={"lg:col-span-3 flex flex-nowrap items-center justify-end gap-2"}>
           {"\n        \n        "}
           {"\n        "}
           <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
@@ -495,24 +495,18 @@ export default function App() {
                   <span className={"w-2.5 h-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_#60a5fa]"}></span>
                   {"\n                "}
                   <span id={"currentConfigPath"} className={"font-mono text-sm sm:text-base font-bold text-white tracking-tight"}>
-                    {"Путь будет обнаружен backend"}
+                    {"Конфигурация"}
                   </span>
                   {"\n                "}
                   <span id={"confLinesBadge"} className={"text-xs font-mono px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700"}>
-                    {"192 строки"}
+                    {"— строк"}
                   </span>
                   {"\n                "}
-                  <span id={"linterStatusBadge"} className={"text-xs font-mono px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/25"}>
-                    {"\n                  Проверка не выполнялась\n                "}
-                  </span>
                   {"\n              "}
                 </div>
                 {"\n\n              "}
                 <div className={"flex flex-wrap items-center gap-2"}>
                   {"\n                "}
-                  <button data-action-click={"toggleDiffModal"} className={"px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
-                    {"\n                  Сравнить изменения\n                "}
-                  </button>
                   {"\n                "}
                   <button data-action-click={"copyConfigText"} className={"px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
                     {"\n                  Копировать\n                "}
@@ -529,45 +523,7 @@ export default function App() {
               {"\n            "}
               <div className={"bg-[#070b14] px-4 py-2 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono"}>
                 {"\n              "}
-                <div className={"flex flex-wrap items-center gap-1.5"}>
-                  {"\n                "}
-                  <span className={"text-slate-500 mr-1"}>
-                    {"Секции:"}
-                  </span>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["ISP_INTERFACE"])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800"}>
-                    {"ISP / BASE"}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["NFQWS_ARGS="])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-blue-300 border border-slate-800"}>
-                    {"TCP (1–6)"}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["NFQWS_ARGS_QUIC"])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-amber-300 border border-slate-800"}>
-                    {"QUIC"}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["NFQWS_ARGS_UDP"])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-indigo-300 border border-slate-800"}>
-                    {"UDP DISCORD"}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["MODE_LIST="])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-800"}>
-                    {"MODE / IPSET"}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["NFQWS_ARGS_CUSTOM"])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-purple-300 border border-slate-800"}>
-                    {"iPhone (1–4)"}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["# NETWORK"])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800"}>
-                    {"NETWORK"}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"scrollToConfMarker"} data-args={JSON.stringify(["# DOCUMENTAION"])} className={"px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800"}>
-                    {"DOCS"}
-                  </button>
-                  {"\n              "}
-                </div>
+
                 {"\n\n              "}
                 <label className={"flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none"}>
                   {"\n                "}
@@ -955,12 +911,9 @@ export default function App() {
               <div className={"flex flex-wrap items-center gap-3"}>
                 {"\n              "}
                 <span id={"currentListFilePath"} className={"font-mono text-xs px-3 py-1 rounded-lg bg-slate-950 text-sky-400 border border-slate-800"}>
-                  {"Путь будет обнаружен backend"}
+                  {"Список не выбран"}
                 </span>
                 {"\n              "}
-                <span id={"currentListDescription"} className={"text-xs text-slate-400"}>
-                  {"Основной пользовательский список доменов для обхода DPI"}
-                </span>
                 {"\n            "}
               </div>
               {"\n\n            "}
@@ -978,9 +931,7 @@ export default function App() {
               {"\n          "}
             </div>
             {"\n\n          "}
-            <div className={"p-4 bg-[#090f1b] border-b border-slate-800 grid grid-cols-1 xl:grid-cols-[minmax(240px,1fr)_auto_minmax(220px,1fr)_auto] gap-2 items-center"}>
-              <textarea id={"listAddEntriesInput"} rows={2} placeholder={"Добавить строки (по одной на строку)"} className={"w-full resize-y rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500"}></textarea>
-              <button data-action-click={"appendListEntriesToDraft"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Добавить в черновик"}</button>
+            <div className={"p-4 bg-[#090f1b] border-b border-slate-800 grid grid-cols-1 xl:grid-cols-[minmax(220px,1fr)_auto] gap-2 items-center"}>
               <div className={"flex gap-2"}>
                 <input id={"listSearchInput"} type={"search"} placeholder={"Найти в списке"} className={"min-w-0 flex-1 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500"} />
                 <button data-action-click={"findNextListEntry"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Найти далее"}</button>
@@ -1006,7 +957,7 @@ export default function App() {
             <div className={"px-5 py-2.5 bg-[#080d18] border-t border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400"}>
               {"\n            "}
               <span id={"listFooterCount"}>
-                {"Всего записей: 20"}
+                {"Всего записей: —"}
               </span>
               {"\n            "}
               <span>
@@ -1037,13 +988,13 @@ export default function App() {
                   </span>
                   {"\n                "}
                   <h2 className={"text-lg font-bold text-white"}>
-                    {"«Сайт не открывается?» — полная проверка маршрута и профилей"}
+                    {"Проверка доступности сайта"}
                   </h2>
                   {"\n              "}
                 </div>
                 {"\n              "}
                 <p className={"text-xs sm:text-sm text-slate-400 mt-1"}>
-                  {"\n                Определяет, какой профиль обрабатывает домен по HTTPS, QUIC и HTTP, не уходит ли он в Podkop/VPN, и не ломает ли стратегия незаблокированный сайт\n              "}
+                  {"\n                Проверяет DNS, TCP, HTTPS, HTTP, SNI, QUIC и совпадения в списках. Результаты получаются с роутера.\n              "}
                 </p>
                 {"\n            "}
               </div>
@@ -1068,15 +1019,15 @@ export default function App() {
               </span>
               {"\n            "}
               <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["youtube.com"])} className={"px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800"}>
-                {"youtube.com (Через обход)"}
+                {"youtube.com"}
               </button>
               {"\n            "}
-              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["bank-client.ru"])} className={"px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"}>
-                {"bank-client.ru (Ломается профилем #1)"}
+              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["example.com"])} className={"px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"}>
+                {"example.com"}
               </button>
               {"\n            "}
               <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["openai.com"])} className={"px-2.5 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30"}>
-                {"openai.com (Уходит в Podkop/VPN)"}
+                {"openai.com"}
               </button>
               {"\n          "}
             </div>
@@ -1810,9 +1761,6 @@ export default function App() {
             {"Сравнение с сохранённым `nfqws.conf`"}
           </h3>
           {"\n        "}
-          <button data-action-click={"toggleDiffModal"} className={"text-slate-400 hover:text-white"}>
-            {"✕"}
-          </button>
           {"\n      "}
         </div>
         {"\n      "}

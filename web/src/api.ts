@@ -5,6 +5,8 @@ export type StatusResponse = {
   panel: { version: string; port: number };
 };
 export type ConfigResponse = { file: string; content: string; revision: string };
+export type SiteDiagnosticStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
+export type SiteDiagnosticReport = { host: string; addresses: string[]; steps: SiteDiagnosticStep[]; summary: string; limitations: string[] };
 export type NfqwsListId = 'user.list' | 'auto.list' | 'exclude.list' | 'ipset.list' | 'ipset_exclude.list';
 export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
@@ -90,6 +92,12 @@ export const nfqwsConfig = {
     '/api/nfqws2/config/preview',
     { method: 'POST', body: JSON.stringify({ content, key, value }) },
   ),
+};
+
+export const nfqwsDiagnostics = {
+  site: (host: string) => api<SiteDiagnosticReport>('/api/nfqws2/diagnostics/site', {
+    method: 'POST', body: JSON.stringify({ host }),
+  }),
 };
 
 export const nfqwsUpdates = {
