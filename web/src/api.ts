@@ -7,6 +7,8 @@ export type StatusResponse = {
 export type ConfigResponse = { file: string; content: string; revision: string };
 export type SiteDiagnosticStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type SiteDiagnosticReport = { host: string; addresses: string[]; steps: SiteDiagnosticStep[]; summary: string; limitations: string[] };
+export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
+export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = 'user.list' | 'auto.list' | 'exclude.list' | 'ipset.list' | 'ipset_exclude.list';
 export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
@@ -72,6 +74,10 @@ export const nfqwsLists = {
 
 export const nfqwsInstallation = {
   get: () => api<NfqwsInstallation>('/api/nfqws2/installation'),
+};
+
+export const nfqwsRuntime = {
+  get: () => api<NfqwsRuntime>('/api/nfqws2/runtime'),
 };
 
 export const nfqwsBackups = {

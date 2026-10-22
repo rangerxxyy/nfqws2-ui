@@ -11,13 +11,13 @@ export default function App() {
 {"\n  "}
     <header className={"bg-[#090e1a]/95 backdrop-blur-md border-b border-slate-800/90 shrink-0 z-40 px-4 lg:px-6 py-2.5"}>
       {"\n    "}
-      <div className={"max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-12 items-center gap-3"}>
+      <div className={"max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-[repeat(3,minmax(0,1fr))] 2xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3"}>
         {"\n      \n      "}
         {"\n      "}
-        <div id={"headerStatusBar"} className={"lg:col-span-8 min-w-0 flex flex-nowrap whitespace-nowrap items-center gap-2.5 justify-start overflow-x-auto py-1"}>
+        <div id={"headerStatusBar"} className={"min-w-0 flex flex-nowrap whitespace-nowrap items-center gap-2 justify-start overflow-x-auto py-1 lg:col-span-3 2xl:col-span-1"}>
           {"\n        \n        "}
           {"\n        "}
-          <div className={"flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3.5 py-2 rounded-xl shadow-inner"}>
+          <div className={"flex items-center gap-2 bg-[#060a12] border border-slate-800/90 px-2.5 py-1.5 rounded-lg shadow-inner"}>
             {"\n          "}
             <div id={"statusIndicator"} className={"relative flex items-center justify-center w-3 h-3"}>
               {"\n            "}
@@ -27,7 +27,7 @@ export default function App() {
               {"\n          "}
             </div>
             {"\n          "}
-            <span id={"statusTextLabel"} className={"text-xs sm:text-sm font-semibold text-slate-400 tracking-tight"}>
+            <span id={"statusTextLabel"} className={"text-[11px] sm:text-xs font-semibold text-slate-400 tracking-tight"}>
               {"Статус неизвестен"}
             </span>
             <span id={"statusDetail"} className={"sr-only"}></span>
@@ -35,31 +35,28 @@ export default function App() {
           </div>
           {"\n\n        "}
           {"\n        "}
-          <div id={"headerServiceControls"} className={"shrink-0 flex items-center gap-2"}>
-          <button data-action-click={"restartService"} className={"px-2.5 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-100 border border-slate-700 text-[11px] font-medium flex items-center gap-2 transition-all active:scale-95"}>
+          <div id={"headerServiceControls"} className={"shrink-0 flex items-center gap-1"}>
+          <button data-action-click={"restartService"} title={"Перезапустить nfqws2"} aria-label={"Перезапустить nfqws2"} className={"h-8 w-8 rounded-lg bg-slate-800/90 hover:bg-slate-700 hover:-translate-y-0.5 text-slate-100 border border-slate-700 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
             {"\n          "}
-            <svg id={"restartIcon"} className={"w-3.5 h-3.5 text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+            <svg id={"restartIcon"} aria-hidden={"true"} className={"w-4 h-4 text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
               <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"}></path>
               {"\n          "}
             </svg>
             {"\n          "}
-            <span>
-              {"Перезапустить"}
-            </span>
             {"\n        "}
           </button>
           {"\n\n        "}
           {"\n        "}
-          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} className={"px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-[11px] font-semibold flex items-center gap-2 transition-all active:scale-95"}>
+          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} title={"Остановить nfqws2"} aria-label={"Остановить nfqws2"} className={"h-8 w-8 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 hover:-translate-y-0.5 text-rose-400 border border-rose-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"}>
             {"\n          "}
-            <svg className={"w-3.5 h-3.5"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+            <svg aria-hidden={"true"} className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
               <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
               {"\n          "}
             </svg>
             {"\n          "}
-            <span id={"togglePowerText"}>
+            <span id={"togglePowerText"} className={"sr-only"}>
               {"Остановить"}
             </span>
             {"\n        "}
@@ -68,11 +65,11 @@ export default function App() {
           <div className={"flex items-center gap-2.5"}>
             {"\n          \n          "}
             {"\n          "}
-            <div className={"bg-[#060a12] border border-slate-800/90 px-3 py-1.5 rounded-xl flex items-center gap-2.5"}>
+            <div className={"bg-[#060a12] border border-slate-800/90 px-2.5 py-1 rounded-lg flex items-center gap-2"}>
               {"\n            "}
-              <div className={"p-1.5 rounded-lg bg-sky-500/10 text-sky-400 border border-sky-500/20"} title={"Оперативная память роутера"}>
+              <div className={"p-1 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/20"} title={"Оперативная память роутера"}>
                 {"\n              "}
-                <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+                <svg className={"w-3.5 h-3.5"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                   {"\n                "}
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"1.9"} d={"M3 7h18v7H3V7zm3 7v3m4-3v3m4-3v3m4-3v3M7 10h2m4 0h2"}></path>
                   {"\n              "}
@@ -94,7 +91,7 @@ export default function App() {
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <div className={"w-24 sm:w-28 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1"}>
+                <div className={"w-20 sm:w-24 bg-slate-800/90 h-1 rounded-full overflow-hidden mt-1"}>
                   {"\n                "}
                   <div id={"ramProgressBar"} className={"bg-sky-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}
@@ -105,11 +102,11 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"bg-[#060a12] border border-slate-800/90 px-3 py-1.5 rounded-xl flex items-center gap-2.5"}>
+            <div className={"bg-[#060a12] border border-slate-800/90 px-2.5 py-1 rounded-lg flex items-center gap-2"}>
               {"\n            "}
-              <div className={"p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"} title={"Загрузка процессора"}>
+              <div className={"p-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"} title={"Загрузка процессора"}>
                 {"\n              "}
-                <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+                <svg className={"w-3.5 h-3.5"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                   {"\n                "}
                   <rect x={"6"} y={"6"} width={"12"} height={"12"} rx={"2"} strokeWidth={"1.9"}></rect>
                   {"\n                "}
@@ -135,7 +132,7 @@ export default function App() {
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <div className={"w-14 sm:w-16 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1"}>
+                <div className={"w-12 sm:w-14 bg-slate-800/90 h-1 rounded-full overflow-hidden mt-1"}>
                   {"\n                "}
                   <div id={"cpuProgressBar"} className={"bg-emerald-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}
@@ -150,9 +147,9 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div className={"lg:col-span-1 flex items-center justify-center whitespace-nowrap order-first lg:order-none"}>
+        <div className={"flex items-center justify-center whitespace-nowrap order-first lg:order-none lg:col-start-2 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
           {"\n        "}
-          <span className={"text-lg sm:text-xl font-bold tracking-tight text-white select-none"}>
+          <span className={"text-xl lg:text-2xl font-bold tracking-tight text-white select-none transition-transform duration-300 hover:scale-[1.03]"}>
             {"\n          nfqws2"}
             <span className={"text-blue-400 drop-shadow-[0_0_8px_rgba(96,165,250,0.35)]"}>
               {"-UI"}
@@ -163,7 +160,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div id={"headerUpdates"} className={"lg:col-span-3 flex flex-nowrap items-center justify-end gap-2"}>
+        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-end gap-2 lg:col-start-3 lg:row-start-2 lg:pr-8 xl:pr-12 2xl:col-start-auto 2xl:row-start-auto"}>
           {"\n        \n        "}
           {"\n        "}
           <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
@@ -782,6 +779,15 @@ export default function App() {
                 <div id={"nfqwsConfigSections"} className={"space-y-2 text-xs font-mono"}>
                   <div className={"p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 text-slate-400"}>
                     {"Конфигурация ещё не загружена из backend"}
+                  </div>
+                </div>
+                {"\n\n              "}
+                <div className={"pt-2 border-t border-slate-800"}>
+                  <div className={"text-[11px] text-slate-400 mb-2"}>
+                    {"Профили фактически работающего процесса:"}
+                  </div>
+                  <div id={"nfqwsRuntimeProfiles"} className={"space-y-2 text-xs font-mono"}>
+                    <div className={"text-slate-500"}>{"Ожидание снимка argv от Rust backend"}</div>
                   </div>
                 </div>
                 {"\n\n              "}

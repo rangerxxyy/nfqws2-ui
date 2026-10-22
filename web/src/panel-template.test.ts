@@ -28,13 +28,33 @@ describe('TSX panel without authentication', () => {
     const statusGroup = template.slice(template.indexOf('id="headerStatusBar"'), template.indexOf('id="headerUpdates"'));
     expect(statusGroup).toContain('id="headerServiceControls"');
     expect(statusGroup).toContain('data-action-click="restartService"');
+    expect(statusGroup).toContain('aria-label="Перезапустить nfqws2"');
     expect(statusGroup).toContain('id="togglePowerBtn"');
+    expect(statusGroup).toContain('aria-label="Остановить nfqws2"');
+    expect(statusGroup).toContain('id="togglePowerText" class="sr-only"');
+    expect(statusGroup).toContain('h-8 w-8');
+    expect(statusGroup).not.toContain('Перезапустить</span>');
     const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
     expect(updates).not.toContain('restartService');
     expect(updates.indexOf('id="updateNfqws2Button"')).toBeLessThan(updates.indexOf('id="updateUiButton"'));
     expect(updates).toMatch(/id="updateNfqws2Button"[^>]*data-args="\[&quot;core&quot;\]"/);
     expect(updates).toMatch(/id="updateUiButton"[^>]*data-args="\[&quot;ui&quot;\]"/);
     expect(updates).toContain('>UI</span>');
+  });
+
+  it('centers the panel brand and insets the update controls from the screen edge', () => {
+    expect(template).toContain('lg:grid-cols-[repeat(3,minmax(0,1fr))]');
+    expect(template).toContain('2xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]');
+    expect(template).toContain('lg:col-span-3 2xl:col-span-1');
+    expect(template).toContain('text-xl lg:text-2xl');
+    expect(template).toContain('lg:pr-8 xl:pr-12');
+  });
+
+  it('renders returned HTTP codes and animates diagnostic cards respectfully', () => {
+    expect(panelSource).toContain('step.httpCode !== null');
+    expect(panelSource).toContain('diag-result-card');
+    expect(panelStyles).toContain('@media (prefers-reduced-motion: reduce)');
+    expect(panelStyles).toContain('.diag-result-card');
   });
 
   it('keeps the interface in TSX and removes the HTML entry file', () => {
@@ -113,6 +133,14 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('id="nfqwsConfigSections"');
     expect(panelSource).toContain('summarizeNfqwsConfig');
     expect(panelSource).toContain('renderConfigSections(config.content)');
+  });
+
+  it('shows profiles from the running nfqws2 process separately from config-derived sections', () => {
+    expect(template).toContain('id="nfqwsRuntimeProfiles"');
+    expect(template).toContain('Профили фактически работающего процесса:');
+    expect(panelSource).toContain('nfqwsRuntime.get()');
+    expect(panelSource).toContain('Снято с /proc/');
+    expect(backendSource).toContain('.route("/api/nfqws2/runtime", get(get_runtime))');
   });
 
   it('uses backend-discovered network interfaces instead of guessed router names', () => {

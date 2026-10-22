@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type PanelRelease, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -47,6 +47,7 @@ function setRestartInProgress(value: boolean) {
   const indicator = $('#statusIndicator');
   indicator?.classList.toggle('status-restarting', value);
   indicator?.setAttribute('aria-busy', String(value));
+  $('#headerStatusBar')?.classList.toggle('status-restarting', value);
   const label = $('#statusTextLabel');
   if (value && label) {
     label.textContent = 'Перезапуск nfqws2…';
@@ -75,8 +76,8 @@ async function fetchStatus() {
     const tone = running ? 'emerald' : stopped || service === 'error' ? 'rose' : 'slate';
     if (!restartInProgress) {
       const text = $('#statusTextLabel'); if (text) { text.textContent = label; text.className = `text-xs sm:text-sm font-semibold text-${tone}-400 tracking-tight`; }
-      const dot = $('#statusMainDot'); if (dot) dot.className = `status-dot-active relative inline-flex rounded-full h-2.5 w-2.5 bg-${tone}-400`;
-      const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
+      const dot = $('#statusMainDot'); if (dot) dot.className = `${running ? 'status-dot-active' : ''} relative inline-flex rounded-full h-2.5 w-2.5 bg-${tone}-400`;
+      const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${running ? 'emerald' : stopped ? 'rose' : 'slate'}-400`;
     }
     const monitorBadge = $('#sideMonitorBadge'); if (monitorBadge) monitorBadge.className = `w-2 h-2 rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
     const used = status.system.memoryUsedBytes, total = status.system.memoryTotalBytes;
@@ -91,8 +92,20 @@ async function fetchStatus() {
     setWidth('#cpuProgressBar', cpu);
     applyMetricTone('#cpuMetricText', '#cpuProgressBar', cpu);
     setText('#headerCoreVersion', status.service.version ?? '—'); setText('#headerUiVersion', status.panel.version);
-    const power = $('#togglePowerText'); if (power) power.textContent = running ? 'Остановить' : 'Запустить';
-    const powerBtn = $('#togglePowerBtn'); if (powerBtn) { powerBtn.classList.toggle('text-rose-400', running); powerBtn.classList.toggle('text-emerald-400', stopped); }
+    const powerLabel = running ? 'Остановить nfqws2' : 'Запустить nfqws2';
+    const power = $('#togglePowerText'); if (power) power.textContent = powerLabel;
+    const powerBtn = $('#togglePowerBtn'); if (powerBtn) {
+      powerBtn.title = powerLabel;
+      powerBtn.setAttribute('aria-label', powerLabel);
+      powerBtn.classList.toggle('text-rose-400', running);
+      powerBtn.classList.toggle('text-emerald-400', stopped);
+      powerBtn.classList.toggle('bg-rose-500/10', running);
+      powerBtn.classList.toggle('hover:bg-rose-500/20', running);
+      powerBtn.classList.toggle('border-rose-500/30', running);
+      powerBtn.classList.toggle('bg-emerald-500/10', stopped);
+      powerBtn.classList.toggle('hover:bg-emerald-500/20', stopped);
+      powerBtn.classList.toggle('border-emerald-500/30', stopped);
+    }
     setText('#checkedAt', status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '—');
   } catch (error) {
     status = null;
@@ -152,18 +165,74 @@ async function loadConfig() {
     setText('#moduleStatusBadge', `${moduleReferences.length} ссылок в конфигурации`);
     renderConfigModules(moduleReferences);
     renderConfigSections(config.content);
+    await loadRuntimeProfiles();
     updateQuickParameters(config.content, networkInterfaces);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
     setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:—');
     syncConfigLines();
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
 }
+async function loadRuntimeProfiles() {
+  const host = $('#nfqwsRuntimeProfiles');
+  if (!host) return;
+  host.replaceChildren();
+  try {
+    const runtime = await nfqwsRuntime.get();
+    renderRuntimeProfiles(host, runtime);
+  } catch (error) {
+    const message = document.createElement('div');
+    message.className = 'text-rose-300';
+    message.textContent = error instanceof Error ? `Снимок процесса недоступен: ${error.message}` : 'Снимок процесса недоступен';
+    host.append(message);
+  }
+}
+function renderRuntimeProfiles(host: HTMLElement, runtime: NfqwsRuntime) {
+  host.replaceChildren();
+  if (!runtime.running) {
+    const stopped = document.createElement('div');
+    stopped.className = 'text-amber-300';
+    stopped.textContent = 'Процесс nfqws2 не обнаружен; фактические профили недоступны.';
+    host.append(stopped);
+  } else if (!runtime.profiles.length) {
+    const empty = document.createElement('div');
+    empty.className = 'text-amber-300';
+    empty.textContent = `Процесс PID ${runtime.pid} найден, но профильные фильтры в его argv не обнаружены.`;
+    host.append(empty);
+  } else {
+    for (const profile of runtime.profiles) {
+      const row = document.createElement('div');
+      row.className = 'rounded-xl bg-[#070b14] border border-slate-800/90 p-2.5 space-y-1';
+      const title = document.createElement('div');
+      title.className = 'text-slate-200 font-semibold';
+      title.textContent = `#${profile.index}${profile.name ? ` · ${profile.name}` : ''}`;
+      const details = document.createElement('div');
+      details.className = 'text-slate-400 whitespace-pre-wrap break-all';
+      details.textContent = [
+        profile.filters.length ? `Фильтры: ${profile.filters.join(', ')}` : '',
+        profile.strategies.length ? `Lua: ${profile.strategies.join(', ')}` : '',
+        profile.payloads.length ? `Payload: ${profile.payloads.join(', ')}` : '',
+      ].filter(Boolean).join('\n');
+      row.append(title, details);
+      host.append(row);
+    }
+    const source = document.createElement('div');
+    source.className = 'text-slate-500';
+    source.textContent = `Снято с /proc/${runtime.pid}/cmdline · это подтверждает аргументы процесса, не успешную обработку трафика.`;
+    host.append(source);
+  }
+  for (const note of runtime.limitations) {
+    const limitation = document.createElement('div');
+    limitation.className = 'text-slate-500';
+    limitation.textContent = note;
+    host.append(limitation);
+  }
+}
 function renderConfigSections(content: string) {
   const box = $('#nfqwsConfigSections');
   if (!box) return;
   const facts = summarizeNfqwsConfig(content);
   box.replaceChildren();
-  setText('#profileStatusBadge', `${facts.sections.length} секций параметров`);
+  setText('#profileStatusBadge', `${facts.sections.length} секций в конфигурации`);
 
   const mode = document.createElement('div');
   mode.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between gap-2';
@@ -287,8 +356,9 @@ async function saveConfigAndApply() {
     config = result.config;
     setRestartInProgress(false);
     await fetchStatus();
+    await loadRuntimeProfiles();
     toast('Конфигурация сохранена, повторно прочитана; backend подтвердил перезапуск nfqws2.');
-  } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
+  } catch (error) { setRestartInProgress(false); await fetchStatus(); await loadRuntimeProfiles(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setRestartInProgress(false); setBusy(false); }
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = false) {
@@ -304,6 +374,7 @@ async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = f
     if (action === 'restart') setRestartInProgress(false);
     setBusy(false);
     await fetchStatus();
+    await loadRuntimeProfiles();
   }
 }
 async function loadLogs() {
@@ -471,13 +542,14 @@ async function runSiteDiagnosis() {
     const title = document.createElement('h3'); title.className = 'font-bold text-white'; title.textContent = `${report.host} · ${report.summary}`;
     const addresses = document.createElement('p'); addresses.className = 'mt-2 text-xs font-mono text-slate-400'; addresses.textContent = report.addresses.join(', ');
     summary.append(title, addresses); container.append(summary);
-    const labels: Record<string, string> = { dns: 'DNS роутера', doh: 'Сверка DNS через DoH', tcp: 'TCP 443', https: 'HTTPS / TLS', http: 'HTTP 80', route: 'Маршрут ядра', sni: 'Контрольное SNI', quic: 'QUIC / HTTP/3', lists: 'Совпадения в списках' };
+    const labels: Record<string, string> = { dns: 'DNS роутера', doh: 'Сверка DNS через DoH', tcp: 'TCP 443', https: 'HTTPS / TLS', http: 'HTTP 80', route: 'Маршрут ядра', sni: 'Контрольное SNI', quic: 'HTTP/3 (QUIC)', lists: 'Совпадения в списках' };
     const statuses = { ok: 'Ответ получен', warning: 'Требует внимания', error: 'Проверка не прошла', unavailable: 'Не проверено' };
-    for (const step of report.steps) {
-      const card = document.createElement('div'); card.className = 'ui-card rounded-2xl p-4 space-y-2';
+    for (const [index, step] of report.steps.entries()) {
+      const card = document.createElement('div'); card.className = 'diag-result-card ui-card rounded-2xl p-4 space-y-2';
+      card.style.animationDelay = `${index * 55}ms`;
       const heading = document.createElement('h3'); heading.className = 'text-sm font-semibold text-white'; heading.textContent = labels[step.id] ?? step.id;
       const state = document.createElement('p'); state.className = `text-xs font-semibold ${step.status === 'ok' ? 'text-emerald-400' : step.status === 'error' ? 'text-rose-400' : 'text-amber-300'}`;
-      state.textContent = `${statuses[step.status]}${step.durationMs !== null ? ` · ${step.durationMs} мс` : ''}`;
+      state.textContent = `${statuses[step.status]}${step.httpCode !== null ? ` · HTTP ${step.httpCode}` : ''}${step.durationMs !== null ? ` · ${step.durationMs} мс` : ''}`;
       const detail = document.createElement('p'); detail.className = 'text-xs text-slate-300 whitespace-pre-wrap break-all'; detail.textContent = step.detail;
       card.append(heading, state, detail); container.append(card);
     }

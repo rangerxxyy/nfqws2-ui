@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
   it('requests router-side website diagnostics and returns the real stage results', async () => {
@@ -50,6 +50,14 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/installation');
     expect(result.config?.usedByActiveConfig).toBe(true);
     expect(result.config?.writable).toBe(true);
+  });
+
+  it('loads the actual nfqws2 process profile inventory from Rust', async () => {
+    const runtime = { running: true, pid: 81, source: 'proc-cmdline', profiles: [{index:1,name:null,filters:['--filter-tcp=443'],strategies:['fake'],payloads:['tls_client_hello']}], limitations: [] } as const;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(runtime), {status:200}));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsRuntime.get()).toEqual(runtime);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/runtime');
   });
 
   it('saves a selected list using its server revision without a session token', async () => {

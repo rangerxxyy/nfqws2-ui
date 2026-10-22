@@ -236,8 +236,9 @@ fn parse_curl(id: &str, exit_code: i32, stdout: &[u8]) -> DiagnosticStep {
         .filter(|value| value.is_finite() && *value >= 0.0 && *value <= 60.0);
     let received = code.is_some() && (exit_code == 0 || exit_code == 63);
     let detail = if received {
+        let protocol = if id == "quic" { "HTTP/3: " } else { "" };
         format!(
-            "Получен HTTP {}{}",
+            "{protocol}получен HTTP {}{}",
             code.unwrap_or_default(),
             if exit_code == 63 {
                 "; загрузка ограничена по размеру"
@@ -255,6 +256,8 @@ fn parse_curl(id: &str, exit_code: i32, stdout: &[u8]) -> DiagnosticStep {
             52 => "Сервер закрыл соединение без ответа",
             56 => "Соединение сброшено",
             2 => "curl не поддерживает необходимые параметры",
+            95 if id == "quic" => "Ошибка уровня HTTP/3; успешный QUIC-запрос не подтверждён",
+            96 if id == "quic" => "Не удалось установить QUIC-соединение для HTTP/3",
             _ => "Запрос не завершён; причина блокировки не установлена",
         }
         .to_string()
@@ -403,23 +406,44 @@ async fn route_step(ip: IpAddr) -> DiagnosticStep {
 }
 
 async fn quic_step(host: &str, ip: IpAddr) -> DiagnosticStep {
-    let supported = capture(
+    let capability = capture(
         curl_program(),
-        &["--disable".into(), "--version".into()],
+        &[
+            "--disable".into(),
+            "--http3-only".into(),
+            "--version".into(),
+        ],
         2,
         16384,
     )
-    .await
-    .is_ok_and(|(code, bytes)| code == 0 && String::from_utf8_lossy(&bytes).contains("HTTP3"));
-    if supported {
-        probe("quic", host, ip, 443, true).await
-    } else {
-        DiagnosticStep::new(
+    .await;
+    match capability {
+        Ok((0, bytes)) if has_http3_feature(&bytes) => probe("quic", host, ip, 443, true).await,
+        Ok((0, _)) => DiagnosticStep::new(
             "quic",
             "unavailable",
-            "Установленный curl не поддерживает HTTP/3; QUIC не проверен",
-        )
+            "curl не собран с функцией HTTP/3; QUIC не проверен",
+        ),
+        Ok(_) => DiagnosticStep::new(
+            "quic",
+            "unavailable",
+            "curl не поддерживает параметр --http3-only; QUIC не проверен",
+        ),
+        Err(message) => DiagnosticStep::new(
+            "quic",
+            "unavailable",
+            format!("Не удалось определить поддержку HTTP/3: {message}"),
+        ),
     }
+}
+
+fn has_http3_feature(version_output: &[u8]) -> bool {
+    String::from_utf8_lossy(version_output)
+        .lines()
+        .filter_map(|line| line.trim().split_once(':'))
+        .filter(|(label, _)| label.eq_ignore_ascii_case("Features"))
+        .flat_map(|(_, features)| features.split_whitespace())
+        .any(|feature| feature.eq_ignore_ascii_case("HTTP3"))
 }
 
 async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
@@ -432,7 +456,7 @@ async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
     }
     let mut result = probe("sni", "example.com", ip, 443, false).await;
     result.detail = format!(
-        "Контрольное SNI example.com на адресе {ip}: {}. Ошибка сертификата для чужого имени ожидаема; это не доказательство блокировки.",
+        "Контрольное SNI example.com закреплено на {ip}: {}. Проверка сертификата включена; результат этой отдельной пробы сам по себе не доказывает блокировку.",
         result.detail
     );
     if result.status == "error" {
@@ -647,5 +671,34 @@ mod tests {
                 .detail
                 .contains("время")
         );
+    }
+
+    #[test]
+    fn quic_probe_reports_http3_response_and_specific_quic_failures() {
+        let response = parse_curl("quic", 0, b"\nNFQWS2_DIAG|200|0.01|0.05|0.1|15");
+        assert_eq!(response.status, "ok");
+        assert!(response.detail.contains("HTTP/3"));
+        assert!(response.detail.contains("200"));
+
+        let layer_error = parse_curl("quic", 95, b"\nNFQWS2_DIAG|000|0|0|0.2|0");
+        assert!(layer_error.detail.contains("HTTP/3"));
+        assert_eq!(layer_error.status, "error");
+
+        let handshake_error = parse_curl("quic", 96, b"\nNFQWS2_DIAG|000|0|0|0.2|0");
+        assert!(handshake_error.detail.contains("QUIC"));
+        assert_eq!(handshake_error.status, "error");
+    }
+
+    #[test]
+    fn http3_capability_uses_the_features_token_not_a_substring() {
+        assert!(has_http3_feature(
+            b"curl 8.8.0\nFeatures: AsynchDNS HTTP3 IPv6\n"
+        ));
+        assert!(!has_http3_feature(
+            b"curl 8.8.0\nFeatures: AsynchDNS HTTP2 IPv6\n"
+        ));
+        assert!(!has_http3_feature(
+            b"curl 8.8.0\nProtocols: HTTP3\nFeatures: AsynchDNS HTTP2\n"
+        ));
     }
 }

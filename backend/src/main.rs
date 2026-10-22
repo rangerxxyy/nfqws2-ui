@@ -107,6 +107,26 @@ struct InstallationResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct RuntimeResponse {
+    running: bool,
+    pid: Option<u32>,
+    source: &'static str,
+    profiles: Vec<RuntimeProfile>,
+    limitations: Vec<String>,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeProfile {
+    index: usize,
+    name: Option<String>,
+    filters: Vec<String>,
+    strategies: Vec<String>,
+    payloads: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ModuleReference {
     kind: &'static str,
     argument: String,
@@ -1408,6 +1428,10 @@ fn list_reference_from_argv(args: &[String], id: &str) -> Option<PathBuf> {
 }
 
 fn active_process_arguments() -> Option<Vec<String>> {
+    active_process_snapshot().map(|(_, args)| args)
+}
+
+fn active_process_snapshot() -> Option<(u32, Vec<String>)> {
     let paths = discover_system_paths()?;
     let entries = std::fs::read_dir("/proc").ok()?;
     let expected = paths.binary.to_string_lossy().into_owned();
@@ -1436,10 +1460,97 @@ fn active_process_arguments() -> Option<Vec<String>> {
             .map(|arg| String::from_utf8_lossy(arg).into_owned())
             .collect::<Vec<_>>();
         if !args.is_empty() {
-            matches.push(args);
+            matches.push((pid, args));
         }
     }
     (matches.len() == 1).then(|| matches.remove(0))
+}
+
+fn runtime_profiles(args: &[String]) -> Vec<RuntimeProfile> {
+    let mut groups: Vec<Vec<&str>> = vec![Vec::new()];
+    for arg in args.iter().skip(1).take(16_384) {
+        if arg == "--new" || arg.starts_with("--new=") {
+            if groups.len() >= 512 {
+                break;
+            }
+            groups.push(Vec::new());
+        } else {
+            groups.last_mut().expect("initial group exists").push(arg);
+        }
+    }
+    groups
+        .into_iter()
+        .filter(|group| {
+            group.iter().any(|arg| {
+                arg.starts_with("--filter-")
+                    || arg.starts_with("--lua-desync=")
+                    || arg.starts_with("--payload=")
+            })
+        })
+        .enumerate()
+        .map(|(index, group)| {
+            let mut profile = RuntimeProfile {
+                index: index + 1,
+                name: None,
+                filters: Vec::new(),
+                strategies: Vec::new(),
+                payloads: Vec::new(),
+            };
+            for arg in group {
+                if let Some(name) = arg.strip_prefix("--name=") {
+                    if name.len() <= 64
+                        && !name.is_empty()
+                        && name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+                    {
+                        profile.name = Some(name.to_owned());
+                    }
+                } else if arg.starts_with("--filter-") {
+                    if profile.filters.len() < 32 && arg.len() <= 256 {
+                        profile.filters.push(arg.to_owned());
+                    }
+                } else if let Some(strategy) = arg.strip_prefix("--lua-desync=") {
+                    let name = strategy.split([':', '=']).next().unwrap_or_default();
+                    if name.len() <= 64
+                        && name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+                        && !name.is_empty()
+                        && !profile.strategies.iter().any(|existing| existing == name)
+                        && profile.strategies.len() < 64
+                    {
+                        profile.strategies.push(name.to_owned());
+                    }
+                } else if let Some(payload) = arg.strip_prefix("--payload=")
+                    && profile.payloads.len() < 32
+                    && payload.len() <= 128
+                {
+                    profile.payloads.push(payload.to_owned());
+                }
+            }
+            profile
+        })
+        .collect()
+}
+
+async fn get_runtime() -> Response {
+    match active_process_snapshot() {
+        Some((pid, args)) => Json(RuntimeResponse {
+            running: true,
+            pid: Some(pid),
+            source: "proc-cmdline",
+            profiles: runtime_profiles(&args),
+            limitations: vec!["Профили сняты с argv работающего процесса; это не доказывает успешную обработку трафика.".into()],
+        }).into_response(),
+        None => Json(RuntimeResponse {
+            running: false,
+            pid: None,
+            source: "proc-cmdline",
+            profiles: Vec::new(),
+            limitations: vec!["Не найден единственный однозначно идентифицированный процесс nfqws2.".into()],
+        }).into_response(),
+    }
 }
 
 fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
@@ -2463,6 +2574,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/health", get(health))
         .route("/api/nfqws2/installation", get(get_installation))
         .route("/api/status", get(get_status))
+        .route("/api/nfqws2/runtime", get(get_runtime))
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/nfqws2/config/preview", post(preview_config))
@@ -2598,6 +2710,53 @@ mod tests {
     async fn body_json(response: Response) -> serde_json::Value {
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[test]
+    fn runtime_inventory_uses_only_active_argv_and_splits_at_new_profiles() {
+        let args = [
+            "/opt/usr/bin/nfqws2",
+            "--user=nobody",
+            "--qnum=300",
+            "--filter-tcp=443,80",
+            "--payload=tls_client_hello",
+            "--lua-desync=fake:blob=secret-ish-name",
+            "--lua-desync=multisplit:pos=midsld",
+            "--new",
+            "--name=QUIC",
+            "--filter-udp=443",
+            "--payload=quic_initial",
+            "--lua-desync=fake:blob=quic_initial",
+        ]
+        .map(str::to_owned);
+        let profiles = runtime_profiles(&args);
+        assert_eq!(profiles.len(), 2);
+        assert_eq!(profiles[0].index, 1);
+        assert_eq!(profiles[0].name, None);
+        assert_eq!(profiles[0].filters, ["--filter-tcp=443,80"]);
+        assert_eq!(profiles[0].strategies, ["fake", "multisplit"]);
+        assert_eq!(profiles[0].payloads, ["tls_client_hello"]);
+        assert_eq!(profiles[1].name.as_deref(), Some("QUIC"));
+        assert_eq!(profiles[1].filters, ["--filter-udp=443"]);
+        assert_eq!(profiles[1].strategies, ["fake"]);
+        assert_eq!(profiles[1].payloads, ["quic_initial"]);
+        let json = serde_json::to_string(&profiles).unwrap();
+        assert!(!json.contains("secret-ish-name"));
+    }
+
+    #[test]
+    fn runtime_inventory_ignores_empty_groups_and_non_profile_arguments() {
+        let args = [
+            "/opt/usr/bin/nfqws2",
+            "--user=nobody",
+            "--new",
+            "--new",
+            "--filter-tcp=443",
+        ]
+        .map(str::to_owned);
+        let profiles = runtime_profiles(&args);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].filters, ["--filter-tcp=443"]);
     }
 
     #[tokio::test]
@@ -2829,6 +2988,34 @@ mod tests {
             .unwrap(),
             "body { color: white; }"
         );
+    }
+
+    #[tokio::test]
+    async fn runtime_endpoint_reports_process_snapshot_without_returning_raw_argv() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = api_router(
+            test_state(dir.path().to_path_buf()),
+            dir.path().to_path_buf(),
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/runtime")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert!(
+            body.get("running")
+                .and_then(serde_json::Value::as_bool)
+                .is_some()
+        );
+        assert_eq!(body["source"], "proc-cmdline");
+        assert!(body["profiles"].is_array());
+        assert!(body.get("arguments").is_none());
     }
 
     #[tokio::test]
