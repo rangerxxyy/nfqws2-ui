@@ -1,5 +1,10 @@
 # nfqws2-ui backend gap analysis
 
+> Historical source-review snapshot. For the inspected v0.1.8 implementation,
+> current API wiring, release evidence and remaining requirements, see
+> [COMPLETION_AUDIT.md](COMPLETION_AUDIT.md). In particular, the UI/core update
+> row below predates the implemented release pickers and updater helpers.
+
 Audit snapshot: 2026-10-21. The current repository tree and frontend action wiring were inspected. Upstream source review below is pinned to the commits listed and is not a live-device check. No router connection was available in this session.
 
 Upstream references:
