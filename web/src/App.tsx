@@ -309,7 +309,7 @@ export default function App() {
               </button>
               {"\n\n            "}
               {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["autotune"])} id={"navBtn-autotune"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["autotune"])} id={"navBtn-autotune"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 {"\n              "}
                 <div className={"flex items-center gap-3"}>
                   {"\n                "}
@@ -330,7 +330,7 @@ export default function App() {
               </button>
               {"\n\n            "}
               {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["monitor"])} id={"navBtn-monitor"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["monitor"])} id={"navBtn-monitor"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 {"\n              "}
                 <div className={"flex items-center gap-3"}>
                   {"\n                "}
@@ -349,7 +349,7 @@ export default function App() {
               </button>
               {"\n\n            "}
               {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["community"])} id={"navBtn-community"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["community"])} id={"navBtn-community"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 {"\n              "}
                 <div className={"flex items-center gap-3"}>
                   {"\n                "}

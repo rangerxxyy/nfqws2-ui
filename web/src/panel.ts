@@ -7,6 +7,7 @@ import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
+export const UNAVAILABLE_PANEL_ROUTES = ['autotune', 'monitor', 'community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let discoveredNetworkInterfaces: string[] = [];
@@ -39,6 +40,26 @@ function toast(message: string, type: 'success' | 'error' = 'success') {
   item.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-xl text-sm ${type === 'error' ? 'bg-rose-950 border-rose-700 text-rose-200' : 'bg-slate-900 border-slate-700 text-slate-100'}`;
   item.textContent = message; host.append(item); window.setTimeout(() => item.remove(), 4500);
 }
+function showDiagnosisProgress(host: HTMLElement, domain: string) {
+  const item = document.createElement('div');
+  item.className = 'pointer-events-auto max-w-sm rounded-xl border border-blue-500/40 bg-slate-900 px-4 py-3 text-sm text-slate-100 shadow-2xl';
+  item.setAttribute('role', 'status');
+  item.setAttribute('aria-live', 'polite');
+  const heading = document.createElement('p');
+  heading.className = 'flex items-center gap-2 font-semibold text-blue-200';
+  const spinner = document.createElement('span');
+  spinner.className = 'diagnosis-spinner inline-block h-3.5 w-3.5 shrink-0 rounded-full border-2 border-blue-300/30 border-t-blue-300';
+  spinner.setAttribute('aria-hidden', 'true');
+  const title = document.createElement('span');
+  title.textContent = `Проверка домена ${domain}`;
+  heading.append(spinner, title);
+  const details = document.createElement('p');
+  details.className = 'mt-1 text-xs leading-5 text-slate-400';
+  details.textContent = 'На роутере проверяются DNS и сверка DoH, TCP/HTTPS, HTTP, маршрут, контрольное SNI и поддержка QUIC.';
+  item.append(heading, details);
+  host.append(item);
+  return () => item.remove();
+}
 function setBusy(value: boolean) {
   busy = value;
   all<HTMLButtonElement>('button[data-action-click]').forEach((button) => {
@@ -63,6 +84,7 @@ function setRestartInProgress(value: boolean) {
   }
 }
 function showRoute(route: Route) {
+  if ((UNAVAILABLE_PANEL_ROUTES as readonly string[]).includes(route)) return;
   document.querySelectorAll<HTMLElement>('[id^="tabContent-"]').forEach((section) => section.classList.toggle('hidden', section.id !== `tabContent-${route}`));
   all<HTMLButtonElement>('.side-nav-btn').forEach((button) => {
     const active = button.id === `navBtn-${route}`;
@@ -572,6 +594,8 @@ async function runSiteDiagnosis() {
   if (!input.value.trim()) return toast('Введите домен для проверки.', 'error');
   diagnosisRunning = true; input.disabled = true; button.disabled = true;
   button.textContent = 'Проверяем…'; container.replaceChildren();
+  const toastHost = $('#toastWrapper');
+  const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
   const loading = document.createElement('p'); loading.className = 'col-span-full text-sm text-blue-300 animate-pulse';
   loading.textContent = 'Проверяются DNS, соединение и ответы сайта с роутера…'; container.append(loading);
   try {
@@ -595,9 +619,11 @@ async function runSiteDiagnosis() {
     for (const note of report.limitations) {
       const row = document.createElement('p'); row.className = 'col-span-full text-xs text-slate-400'; row.textContent = note; container.append(row);
     }
+    closeProgress();
+    toast(`Проверка ${report.host} завершена: ${report.summary}`);
   } catch (error) {
     container.replaceChildren(); const message = error instanceof Error ? error.message : 'Не удалось выполнить проверку сайта';
-    const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); toast(message, 'error');
+    const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); closeProgress(); toast(message, 'error');
   } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить домен'; }
 }
 

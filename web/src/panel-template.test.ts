@@ -58,6 +58,21 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.diag-result-card');
   });
 
+  it('shows an honest compact bottom status while a domain diagnosis is running', () => {
+    expect(panelSource).toContain('Проверка домена');
+    expect(panelSource).toContain('На роутере проверяются DNS');
+    expect(panelSource).toContain("setAttribute('role', 'status')");
+    expect(panelSource).toContain('showDiagnosisProgress');
+  });
+
+  it('hides unfinished sections and prevents opening them through tab actions', () => {
+    for (const route of ['autotune', 'monitor', 'community']) {
+      expect(template).toMatch(new RegExp(`id="navBtn-${route}" class="[^"]*hidden`));
+      expect(template).toMatch(new RegExp(`id="tabContent-${route}" class="hidden`));
+    }
+    expect(panelSource).toContain('UNAVAILABLE_PANEL_ROUTES');
+  });
+
   it('keeps the interface in TSX and removes the HTML entry file', () => {
     expect(existsSync(new URL('../index.html', import.meta.url))).toBe(false);
     expect(template).toContain('id="tabContent-conf"');
