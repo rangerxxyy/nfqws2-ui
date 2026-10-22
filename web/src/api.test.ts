@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
   afterEach(() => { vi.restoreAllMocks(); });
@@ -77,5 +77,48 @@ describe('API client used by the source-based panel', () => {
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({ content: 'NFQWS_ARGS=--filter-tcp=443\n', revision: 'old' });
+  });
+
+  it('lists real eligible releases and starts a selected-version update through Rust', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"releases":[{"tag":"v0.1.7","publishedAt":"2026-10-22T00:00:00Z","notes":"notes"}]}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"id":"abc123","state":"downloading"}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const releases = await nfqwsUpdates.releases();
+    const operation = await nfqwsUpdates.install('v0.1.7');
+
+    expect(releases.releases[0]?.tag).toBe('v0.1.7');
+    expect(operation.state).toBe('downloading');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/updates/releases');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/updates/install');
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ tag: 'v0.1.7' });
+  });
+
+  it('polls update status by operation id', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":"abc123","state":"success","message":"Установлено"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const operation = await nfqwsUpdates.status('abc123');
+
+    expect(operation.state).toBe('success');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/updates/operations/abc123');
+  });
+
+  it('loads nfqws2 core releases and requests a core package update through Rust', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"releases":[{"tag":"v1.3.2","publishedAt":"2026-10-21T11:04:30Z","notes":"Core release"}],"installedTag":"v1.3.1"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"id":"abc123","state":"downloading"}', { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const catalog = await nfqwsUpdates.coreReleases();
+    const operation = await nfqwsUpdates.installCore('v1.3.2');
+
+    expect(catalog.installedTag).toBe('v1.3.1');
+    expect(catalog.releases[0]?.tag).toBe('v1.3.2');
+    expect(operation.state).toBe('downloading');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/updates/releases');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/nfqws2/updates/install');
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ tag: 'v1.3.2' });
   });
 });

@@ -1733,20 +1733,17 @@ export default function App() {
         {"\n\n      "}
         <div className={"px-6 pb-3 flex flex-wrap items-center justify-between gap-2"}>
           {"\n        "}
+          <span id={"updatePickerHint"} className={"text-sm text-slate-400"}>
+            {"Выберите версию панели"}
+          </span>
+          {"\n        "}
           <div className={"flex items-center gap-2"}>
-            {"\n          "}
-            <span className={"text-sm text-slate-400 mr-1"}>
-              {"Выберите версию"}
-            </span>
-            {"\n          "}
-            <button id={"modalSwitchUiBtn"} data-action-click={"switchUpdateTarget"} data-args={JSON.stringify(["ui"])} className={"px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/40 transition-all"}>
-              {"\n            nfqws2-UI\n          "}
+            <button id={"updateTargetUi"} data-action-click={"switchUpdateTarget"} data-args={JSON.stringify(["ui"])} className={"rounded-lg border border-blue-500/40 px-2.5 py-1 text-xs font-semibold text-blue-300 transition-all"}>
+              {"nfqws2-UI"}
             </button>
-            {"\n          "}
-            <button id={"modalSwitchCoreBtn"} data-action-click={"switchUpdateTarget"} data-args={JSON.stringify(["core"])} className={"px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 transition-all"}>
-              {"\n            nfqws2 (Ядро)\n          "}
+            <button id={"updateTargetCore"} data-action-click={"switchUpdateTarget"} data-args={JSON.stringify(["core"])} className={"rounded-lg border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-400 transition-all"}>
+              {"nfqws2 (ядро)"}
             </button>
-            {"\n        "}
           </div>
           {"\n\n        "}
           <div className={"flex items-center gap-2"}>

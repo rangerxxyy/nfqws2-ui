@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendListEntries, deduplicateListContent, findNextListMatch, listIdFromTabElementId, removeListLines } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 
 describe('list editor helpers', () => {
   it('resolves each list tab from its element id so availability checks match backend ids', () => {
@@ -9,6 +9,12 @@ describe('list editor helpers', () => {
     expect(listIdFromTabElementId('listTab-ipset.list')).toBe('ipset.list');
     expect(listIdFromTabElementId('listTab-ipset_exclude.list')).toBe('ipset_exclude.list');
     expect(listIdFromTabElementId('listTab-../../nfqws2.conf')).toBeNull();
+  });
+
+  it('selects the active list tab by its DOM id', () => {
+    expect(isListTabSelected('listTab-user.list', 'user.list')).toBe(true);
+    expect(isListTabSelected('listTab-auto.list', 'user.list')).toBe(false);
+    expect(isListTabSelected('listTab-unknown.list', 'user.list')).toBe(false);
   });
 
   it('removes case-insensitive domain duplicates while preserving comments, order, whitespace, and CRLF', () => {

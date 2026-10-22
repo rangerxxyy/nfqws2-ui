@@ -28,10 +28,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y busybox-static dash shellcheck
-          for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh; do dash -n "$file"; done
-          shellcheck -x -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh
+          for file in scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh scripts/update-release.sh scripts/update-core-release.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh tests/update-helper-preflight.sh; do dash -n "$file"; done
+          shellcheck -x -s sh scripts/install.sh scripts/uninstall.sh scripts/S99nfqws2-ui scripts/symlink.sh scripts/update-release.sh scripts/update-core-release.sh tests/installer-preflight.sh tests/busybox-symlink-move.sh tests/update-helper-preflight.sh
           sh tests/installer-preflight.sh
           sh tests/busybox-symlink-move.sh
+          sh tests/update-helper-preflight.sh
           cargo fmt --manifest-path backend/Cargo.toml --all -- --check
           cargo test --manifest-path backend/Cargo.toml --locked
           cargo clippy --manifest-path backend/Cargo.toml --all-targets --locked -- -D warnings
@@ -65,6 +66,8 @@ jobs:
           cp -R web/dist/. "$PACKAGE/public/"
           install -m 755 scripts/S99nfqws2-ui "$PACKAGE/scripts/S99nfqws2-ui"
           install -m 644 scripts/symlink.sh "$PACKAGE/scripts/symlink.sh"
+          install -m 755 scripts/update-release.sh "$PACKAGE/scripts/update-release.sh"
+          install -m 755 scripts/update-core-release.sh "$PACKAGE/scripts/update-core-release.sh"
           install -m 755 scripts/uninstall.sh "$PACKAGE/uninstall.sh"
           # Replace only the assignment; a global replacement also rewrites the
           # installer's unresolved-placeholder guard and rejects every version.
@@ -90,6 +93,8 @@ jobs:
           ! grep -Fxq 'public/index.html' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'scripts/S99nfqws2-ui' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'scripts/symlink.sh' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'scripts/update-release.sh' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'scripts/update-core-release.sh' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'uninstall.sh' "$RUNNER_TEMP/archive-entries.txt"
           (cd "$RUNNER_TEMP" && sha256sum -c "$ASSET.sha256")
       - uses: actions/upload-artifact@v4
@@ -113,7 +118,8 @@ jobs:
             - Интерфейс перенесён из макета в TypeScript/TSX; исходных HTML-файлов нет, Rust отдаёт только загрузочную оболочку.
             - Авторизация полностью удалена по запросу пользователя.
             - CSS и шрифты включены в пакет локально; внешний CDN и inline-обработчики не требуются.
-            - Проверка меню и обработчиков включена в тесты; неподключённые к backend макетные функции сообщают о недоступности, не имитируя результат.
+            - Отдельные меню выбора версий панели и ядра используют реальные GitHub Releases.
+            - Обновление панели проверяет SHA-256 и откатывается при неудачном health-check; обновление ядра проверяет GitHub asset digest, устанавливает пакет через Entware opkg и пытается вернуть предыдущий пакет при ошибке.
             - Проверка nfqws2 через штатный init-скрипт и PID/argv; управление start/stop/restart.
             - Конфигурация с резервным копированием, проверкой revision и применением через штатный restart/start.
             - Установщик проверяет SHA-256, порт/health-check и возвращает предыдущую версию при неудачном обновлении.
@@ -124,7 +130,7 @@ jobs:
             wget -qO- https://github.com/rangerxxyy/nfqws2-ui/releases/latest/download/install.sh | sh
             ```
 
-            Релизный workflow проверяет тесты, аудит зависимостей, ARM64 static build, установщик и пакет до публикации. Управление nfqws2 на роутере не проверяется релизным smoke-тестом; перед доступом к панели ограничьте соединения локальной сетью.
+            Релизный workflow проверяет тесты, аудит зависимостей, ARM64 static build, установщик, оба updater-скрипта и пакет до публикации. Обновление ядра пока поддерживается на Entware aarch64-3.10. Управление и обновление на целевом роутере не проверены релизным smoke-тестом; ограничьте панель локальной сетью.
           files: |
             ${{ runner.temp }}/install.sh
             ${{ runner.temp }}/nfqws2-ui-v*-aarch64-unknown-linux-musl.tar.gz

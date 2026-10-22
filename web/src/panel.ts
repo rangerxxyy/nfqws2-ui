@@ -1,8 +1,8 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type StatusResponse } from './api';
-import { appendListEntries, deduplicateListContent, findNextListMatch, listIdFromTabElementId, removeListLines } from './list-editor';
+import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type PanelRelease, type StatusResponse } from './api';
+import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 
@@ -14,6 +14,11 @@ let activeListId: NfqwsListId = 'user.list';
 let busy = false;
 let statusPolling = false;
 let restartInProgress = false;
+let availableReleases: PanelRelease[] = [];
+let selectedReleaseTag: string | null = null;
+let updatePolling = false;
+let updateTarget: 'ui' | 'core' = 'ui';
+let installedCoreTag: string | null = null;
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
@@ -353,7 +358,7 @@ async function loadList(id: NfqwsListId) {
     setText('#currentListFilePath', result.path);
     setText('#currentListDescription', id.startsWith('ipset') ? 'IP-адреса и CIDR, обнаруженный список nfqws2' : 'Доменный список, обнаруженный рядом с конфигурацией nfqws2');
     for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
-      const selected = candidate.dataset.arg === id;
+      const selected = isListTabSelected(candidate.id, id);
       candidate.classList.toggle('active', selected);
       candidate.classList.toggle('text-white', selected);
       candidate.classList.toggle('font-bold', selected);
@@ -449,7 +454,128 @@ function exportListDraft() {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
   toast('Текущий черновик экспортирован.');
 }
-export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','findTelegramChatId'] as const;
+export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','setDiagPreset','excludeBrokenDomain','findTelegramChatId'] as const;
+
+function renderReleaseNotes(target: HTMLElement, notes: string) {
+  const lines = notes.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 8);
+  if (!lines.length) return;
+  const list = document.createElement('ul');
+  list.className = 'mt-2 list-disc pl-4 text-xs leading-5 text-slate-300';
+  for (const line of lines) {
+    const item = document.createElement('li');
+    item.textContent = line.replace(/^[-*# ]+/, '').slice(0, 240);
+    list.append(item);
+  }
+  target.append(list);
+}
+
+function renderReleases() {
+  const list = $('#updateVersionsList');
+  const install = $('#confirmUpdateInstallBtn');
+  if (!list) return;
+  list.replaceChildren();
+  if (!availableReleases.length) {
+    const empty = document.createElement('p');
+    empty.className = 'py-8 text-center text-sm text-slate-400';
+    empty.textContent = updateTarget === 'core' ? 'Для этой архитектуры нет релизов nfqws2 с проверяемым SHA-256.' : 'Стабильные версии панели с ARM64-пакетом не найдены.';
+    list.append(empty);
+  }
+  for (const release of availableReleases) {
+    const selected = selectedReleaseTag === release.tag;
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.dataset.actionClick = 'selectVersionItem';
+    card.dataset.args = JSON.stringify([release.tag]);
+    card.setAttribute('aria-pressed', String(selected));
+    card.className = `relative block w-full rounded-xl border p-3 pr-10 text-left transition-colors ${selected ? 'border-blue-400 bg-blue-500/20' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`;
+    const title = document.createElement('span');
+    title.className = 'block text-sm font-bold text-slate-100';
+    title.textContent = release.tag;
+    card.append(title);
+    if (updateTarget === 'core' && release.tag === installedCoreTag) {
+      const installed = document.createElement('span');
+      installed.className = 'ml-2 rounded bg-emerald-900/70 px-2 py-0.5 text-[10px] font-semibold text-emerald-300';
+      installed.textContent = 'Установлена';
+      title.append(installed);
+    }
+    const date = document.createElement('span');
+    date.className = 'mt-1 block text-xs text-slate-400';
+    date.textContent = release.publishedAt ? new Date(release.publishedAt).toLocaleDateString() : 'Дата публикации не указана';
+    card.append(date);
+    const radio = document.createElement('span');
+    radio.setAttribute('aria-hidden', 'true');
+    radio.className = `absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 ${selected ? 'border-blue-300 bg-blue-500' : 'border-slate-500'}`;
+    card.append(radio);
+    renderReleaseNotes(card, release.notes);
+    list.append(card);
+  }
+  if (install instanceof HTMLButtonElement) install.disabled = !selectedReleaseTag || updatePolling || (updateTarget === 'core' && selectedReleaseTag === installedCoreTag);
+  setText('#updateModalTitle', updateTarget === 'core' ? 'Обновление nfqws2' : 'Обновление nfqws2-UI');
+  setText('#updatePickerHint', updateTarget === 'core' ? 'Выберите версию ядра nfqws2' : 'Выберите версию панели');
+  setText('#updateRepoSlug', updateTarget === 'core' ? 'nfqws/nfqws2-keenetic' : 'rangerxxyy/nfqws2-ui');
+  const uiTab = $('#updateTargetUi'); const coreTab = $('#updateTargetCore');
+  uiTab?.classList.toggle('bg-blue-500/20', updateTarget === 'ui');
+  uiTab?.classList.toggle('text-blue-300', updateTarget === 'ui');
+  coreTab?.classList.toggle('bg-blue-500/20', updateTarget === 'core');
+  coreTab?.classList.toggle('text-blue-300', updateTarget === 'core');
+}
+
+async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
+  updateTarget = target;
+  const modal = $('#updateModalBackdrop');
+  if (!modal) return;
+  modal.classList.remove('hidden'); modal.classList.add('flex');
+  const list = $('#updateVersionsList');
+  if (list) list.textContent = 'Загружаю версии из GitHub Releases…';
+  try {
+    if (target === 'core') {
+      const result = await nfqwsUpdates.coreReleases();
+      availableReleases = result.releases;
+      installedCoreTag = result.installedTag;
+    } else {
+      const result = await nfqwsUpdates.releases();
+      availableReleases = result.releases;
+      installedCoreTag = null;
+    }
+    selectedReleaseTag = availableReleases[0]?.tag ?? null;
+    renderReleases();
+  } catch (error) {
+    if (list) list.textContent = error instanceof Error ? error.message : 'Не удалось загрузить версии.';
+    toast('Не удалось получить список версий из GitHub Releases.', 'error');
+  }
+}
+
+async function installSelectedRelease() {
+  if (!selectedReleaseTag || updatePolling) return;
+  const tag = selectedReleaseTag;
+  updatePolling = true;
+  renderReleases();
+  const progress = $('#updateInstallProgressBox');
+  progress?.classList.remove('hidden');
+  const core = updateTarget === 'core';
+  const labels: Record<string, string> = { downloading: 'Скачивание выбранной версии…', verifying: 'Проверка SHA-256…', installing: core ? 'Установка через opkg…' : 'Установка панели…', health_check: core ? 'Перезапуск и проверка nfqws2…' : 'Проверка запуска и откат при ошибке…' };
+  toast(`Начато обновление ${core ? 'ядра nfqws2' : 'панели'} до ${tag}.`);
+  try {
+    const operation = core ? await nfqwsUpdates.installCore(tag) : await nfqwsUpdates.install(tag);
+    let current = operation;
+    for (let attempt = 0; attempt < 180 && !['success', 'rolled_back', 'failed'].includes(current.state); attempt += 1) {
+      setText('#updateInstallStepText', labels[current.state] ?? 'Обновление…');
+      setText('#updateInstallPercent', '');
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      try { current = await nfqwsUpdates.status(operation.id); }
+      catch { await new Promise((resolve) => window.setTimeout(resolve, 1000)); }
+    }
+    if (current.state === 'success') toast(`${core ? 'Ядро nfqws2' : 'Панель'} обновлено до ${tag}.`);
+    else if (current.state === 'rolled_back') toast(current.message || 'Обновление не прошло проверку; восстановлена предыдущая версия.', 'error');
+    else if (current.state === 'failed') toast(current.message || 'Не удалось установить обновление.', 'error');
+    else toast('Статус обновления пока не получен. Проверьте панель через несколько секунд.', 'error');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось запустить обновление.', 'error');
+  } finally {
+    updatePolling = false;
+    renderReleases();
+  }
+}
 
 function bindPrototypeActions() {
   const showDiff = () => {
@@ -485,8 +611,11 @@ function bindPrototypeActions() {
     scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); editor.scrollTop = editor.value.slice(0, offset).split('\n').length * 23; },
     toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) { modal.classList.add('hidden'); modal.classList.remove('flex'); } else showDiff(); },
     resetDefaultConf: () => void loadConfig(),
-    closeUpdateModal: () => $('#updateModalBackdrop')?.classList.add('hidden'),
-    openUpdateModal: () => toast('Обновление требует API безопасной установки и пока отключено.', 'error'),
+    closeUpdateModal: () => { const modal = $('#updateModalBackdrop'); modal?.classList.add('hidden'); modal?.classList.remove('flex'); },
+    openUpdateModal: (target: 'ui' | 'core') => void openUpdatePicker(target),
+    selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { selectedReleaseTag = tag; renderReleases(); } },
+    installSelectedRelease: () => void installSelectedRelease(),
+    switchUpdateTarget: (target: 'ui' | 'core') => { if (!updatePolling) void openUpdatePicker(target); },
     filterDocs: (query: string) => { const box = $('#docItemsContainer'); if (box) box.textContent = query ? 'Справочник флагов не подключён.' : 'Справочник флагов не загружен.'; },
     syncListLineNumbers: (editor?: HTMLTextAreaElement) => syncListLineNumbers(editor),
     syncListScroll: (editor: HTMLTextAreaElement) => syncListScroll(editor),

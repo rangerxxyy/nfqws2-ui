@@ -7,6 +7,10 @@ export function listIdFromTabElementId(tabId: string): NfqwsListId | null {
   return LIST_IDS.find((candidate) => candidate === id) ?? null;
 }
 
+export function isListTabSelected(tabElementId: string, activeId: NfqwsListId): boolean {
+  return listIdFromTabElementId(tabElementId) === activeId;
+}
+
 export function appendListEntries(content: string, entries: string): string {
   const values = entries.split(/\r\n|\n/).map((entry) => entry.trim()).filter(Boolean);
   if (!values.length) return content;

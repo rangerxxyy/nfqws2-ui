@@ -25,7 +25,9 @@ export type NfqwsModuleReference = {
   resolution: 'absolute' | 'dynamic' | 'relative_unknown';
 };
 export type NfqwsInstallation = {
-  platform: 'entware' | 'unknown';
+  platform: 'entware' | 'openwrt' | 'unknown';
+  installationRoot?: string | null;
+  detectedBinary?: InstallationPath | null;
   networkInterfaces: string[];
   config: InstallationPath | null;
   configCandidates: InstallationPath[];
@@ -36,6 +38,13 @@ export type NfqwsInstallation = {
   moduleReferences?: NfqwsModuleReference[];
 };
 export type BackupItem = { id: string; createdAt: number; file: string };
+export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
+export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null };
+export type UpdateOperation = {
+  id: string;
+  state: 'downloading' | 'verifying' | 'installing' | 'health_check' | 'success' | 'rolled_back' | 'failed';
+  message?: string;
+};
 
 export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
@@ -74,4 +83,16 @@ export const nfqwsApply = {
     '/api/nfqws2/apply',
     { method: 'POST', body: JSON.stringify({ content, revision }) },
   ),
+};
+
+export const nfqwsUpdates = {
+  releases: () => api<{ releases: PanelRelease[] }>('/api/updates/releases'),
+  install: (tag: string) => api<UpdateOperation>('/api/updates/install', {
+    method: 'POST', body: JSON.stringify({ tag }),
+  }),
+  status: (id: string) => api<UpdateOperation>(`/api/updates/operations/${encodeURIComponent(id)}`),
+  coreReleases: () => api<NfqwsCoreReleases>('/api/nfqws2/updates/releases'),
+  installCore: (tag: string) => api<UpdateOperation>('/api/nfqws2/updates/install', {
+    method: 'POST', body: JSON.stringify({ tag }),
+  }),
 };

@@ -69,6 +69,17 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('@keyframes status-spin');
   });
 
+  it('keeps separate version pickers for the panel and the nfqws2 core', () => {
+    expect(template).toContain('data-action-click="openUpdateModal" data-args="[&quot;core&quot;]"');
+    expect(template).toContain('data-action-click="openUpdateModal" data-args="[&quot;ui&quot;]"');
+    expect(template).toContain('data-action-click="switchUpdateTarget"');
+    expect(template).toContain('id="updateTargetCore"');
+    expect(panelSource).toContain("nfqwsUpdates.coreReleases()");
+    expect(panelSource).toContain("nfqwsUpdates.installCore(tag)");
+    expect(panelSource).toContain("textContent = line.replace");
+    expect(panelSource).not.toMatch(/installSelectedRelease.*toast\('Эта функция пока не подключена/);
+  });
+
   it('does not label example profiles as active and renders config-derived sections', () => {
     expect(template).not.toContain('TCP Circular (Стратегии 1–6)');
     expect(template).not.toContain('5 файлов OK');

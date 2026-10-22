@@ -8,14 +8,16 @@ use axum::{
     routing::{get, post},
 };
 use nfqws2_ui::{
-    ServiceAction, ServiceState, known_config_paths, known_init_scripts, network_interface_names,
-    parse_meminfo_kb, service_action, service_status,
+    ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
+    network_interface_names, parse_meminfo_kb, process_matches, service_action, service_action_at,
+    service_status,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -26,6 +28,12 @@ use tower_http::{services::ServeDir, trace::TraceLayer};
 const MAX_CONFIG_BYTES: usize = 512 * 1024;
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
+const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
+const GITHUB_RELEASES_API: &str =
+    "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=100";
+const NFQWS2_RELEASES_API: &str =
+    "https://api.github.com/repos/nfqws/nfqws2-keenetic/releases?per_page=100";
+static UPDATE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 const PANEL_SHELL_HTML: &str = r##"<!doctype html>
 <html lang="ru" class="dark">
 <head>
@@ -53,6 +61,7 @@ struct AppState {
     cpu_previous: Arc<Mutex<Option<(u64, u64)>>>,
     config_write_lock: Mutex<()>,
     config_override: Option<PathBuf>,
+    update_lock: Mutex<()>,
 }
 
 #[derive(Serialize)]
@@ -81,6 +90,8 @@ struct PathInfo {
 #[serde(rename_all = "camelCase")]
 struct InstallationResponse {
     platform: &'static str,
+    installation_root: Option<String>,
+    detected_binary: Option<PathInfo>,
     network_interfaces: Vec<String>,
     config: Option<PathInfo>,
     config_candidates: Vec<PathInfo>,
@@ -172,6 +183,59 @@ struct LogsResponse {
     content: String,
 }
 
+#[derive(Deserialize)]
+struct UpdateInstallRequest {
+    tag: String,
+}
+
+#[derive(Deserialize)]
+struct CoreUpdateInstallRequest {
+    tag: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateOperation {
+    id: String,
+    state: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct GithubReleaseRecord {
+    tag_name: String,
+    published_at: Option<String>,
+    body: Option<String>,
+    draft: bool,
+    prerelease: bool,
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubReleaseAsset {
+    name: String,
+    #[serde(default)]
+    digest: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PanelRelease {
+    tag: String,
+    published_at: Option<String>,
+    notes: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CoreRelease {
+    tag: String,
+    published_at: Option<String>,
+    notes: String,
+    asset: String,
+    sha256: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BackupItem {
@@ -236,6 +300,504 @@ fn inspect_path(path: &Path, used_by_active_config: bool) -> PathInfo {
         readable: exists && std::fs::File::open(path).is_ok(),
         writable: exists && std::fs::OpenOptions::new().append(true).open(path).is_ok(),
         used_by_active_config,
+    }
+}
+
+fn valid_release_tag(tag: &str) -> bool {
+    let Some(version) = tag.strip_prefix('v') else {
+        return false;
+    };
+    let parts = version.split('.').collect::<Vec<_>>();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.bytes().all(|byte| byte.is_ascii_digit())
+                && (part == &"0" || !part.starts_with('0'))
+        })
+}
+
+fn eligible_panel_releases(json: &str) -> Result<Vec<PanelRelease>, String> {
+    if json.len() > MAX_RELEASE_RESPONSE_BYTES {
+        return Err("Ответ GitHub Releases превышает лимит 1 МБ".into());
+    }
+    let records: Vec<GithubReleaseRecord> = serde_json::from_str(json)
+        .map_err(|error| format!("Некорректный ответ GitHub Releases: {error}"))?;
+    Ok(records
+        .into_iter()
+        .filter_map(|release| {
+            if release.draft || release.prerelease || !valid_release_tag(&release.tag_name) {
+                return None;
+            }
+            let asset = format!(
+                "nfqws2-ui-{}-aarch64-unknown-linux-musl.tar.gz",
+                release.tag_name
+            );
+            let checksum = format!("{asset}.sha256");
+            if !release.assets.iter().any(|item| item.name == asset)
+                || !release.assets.iter().any(|item| item.name == checksum)
+            {
+                return None;
+            }
+            let notes = release
+                .body
+                .unwrap_or_default()
+                .chars()
+                .take(24 * 1024)
+                .collect();
+            Some(PanelRelease {
+                tag: release.tag_name,
+                published_at: release.published_at,
+                notes,
+            })
+        })
+        .take(100)
+        .collect())
+}
+
+fn eligible_core_releases(json: &str, architecture: &str) -> Result<Vec<CoreRelease>, String> {
+    if json.len() > MAX_RELEASE_RESPONSE_BYTES {
+        return Err("Ответ GitHub Releases превысил лимит".into());
+    }
+    if architecture != "aarch64-3.10" {
+        return Err(
+            "Выбор версий nfqws2 пока поддерживается только на Entware aarch64-3.10".into(),
+        );
+    }
+    let records: Vec<GithubReleaseRecord> = serde_json::from_str(json)
+        .map_err(|error| format!("Некорректный список релизов nfqws2: {error}"))?;
+    let mut releases = Vec::new();
+    for record in records {
+        if record.draft || record.prerelease || !valid_release_tag(&record.tag_name) {
+            continue;
+        }
+        let version = record.tag_name.trim_start_matches('v');
+        let arch_asset = format!("nfqws2-keenetic_{version}_{architecture}.ipk");
+        let Some(sha256) = record
+            .assets
+            .iter()
+            .find(|asset| asset.name == arch_asset)
+            .and_then(|asset| asset.digest.as_deref())
+            .and_then(valid_github_sha256)
+        else {
+            continue;
+        };
+        releases.push(CoreRelease {
+            tag: record.tag_name,
+            published_at: record.published_at,
+            notes: record
+                .body
+                .unwrap_or_default()
+                .chars()
+                .take(24_000)
+                .collect(),
+            asset: arch_asset,
+            sha256,
+        });
+    }
+    Ok(releases)
+}
+
+fn valid_github_sha256(digest: &str) -> Option<String> {
+    let value = digest.strip_prefix("sha256:")?;
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| value.to_ascii_lowercase())
+}
+
+fn installed_core_tag_from_output(output: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(output)
+        .lines()
+        .find_map(|line| line.strip_prefix("Version:").map(str::trim))
+        .map(|version| version.split('-').next().unwrap_or(version))
+        .filter(|version| valid_release_tag(&format!("v{version}")))
+        .map(|version| format!("v{version}"))
+}
+
+async fn fetch_github_url(url: &'static str) -> Result<String, String> {
+    let mut child = tokio::process::Command::new("/opt/bin/wget")
+        .args(["-q", "-T", "10", "-O", "-", url])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .or_else(|_| {
+            tokio::process::Command::new("wget")
+                .args(["-q", "-T", "10", "-O", "-", url])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+        })
+        .map_err(|error| format!("Не удалось запустить wget: {error}"))?;
+    let mut bytes = Vec::new();
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("Не удалось прочитать ответ GitHub")?;
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        stdout
+            .take((MAX_RELEASE_RESPONSE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes),
+    )
+    .await;
+    if read.is_err() || bytes.len() > MAX_RELEASE_RESPONSE_BYTES {
+        let _ = child.kill().await;
+        return Err("Ответ GitHub Releases превысил лимит или время ожидания".into());
+    }
+    read.unwrap()
+        .map_err(|error| format!("Ошибка чтения GitHub Releases: {error}"))?;
+    let status = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
+        .await
+        .map_err(|_| "GitHub Releases не завершил запрос вовремя".to_string())?
+        .map_err(|error| format!("Ошибка wget: {error}"))?;
+    if !status.success() {
+        return Err("GitHub Releases недоступен".into());
+    }
+    String::from_utf8(bytes).map_err(|_| "Ответ GitHub Releases не UTF-8".into())
+}
+
+fn entware_architecture() -> Option<String> {
+    let output = std::process::Command::new("/opt/bin/opkg")
+        .arg("print-architecture")
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next()? == "arch")
+                .then(|| fields.next().map(str::to_string))
+                .flatten()
+        })
+        .find(|arch| matches!(arch.as_str(), "aarch64-3.10" | "mips-3.4" | "mipsel-3.4"))
+}
+
+async fn get_core_releases() -> Response {
+    let Some(architecture) = entware_architecture() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Не удалось определить поддерживаемую архитектуру Entware nfqws2",
+        );
+    };
+    match fetch_github_url(NFQWS2_RELEASES_API).await {
+        Ok(json) => match eligible_core_releases(&json, &architecture) {
+            Ok(releases) => {
+                let installed_tag = std::process::Command::new("/opt/bin/opkg")
+                    .args(["status", "nfqws2-keenetic"])
+                    .output()
+                    .ok()
+                    .and_then(|output| installed_core_tag_from_output(&output.stdout));
+                Json(serde_json::json!({ "releases": releases, "installedTag": installed_tag }))
+                    .into_response()
+            }
+            Err(message) => error(StatusCode::BAD_GATEWAY, message),
+        },
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn post_core_update_install(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CoreUpdateInstallRequest>,
+) -> Response {
+    if !valid_release_tag(&request.tag) {
+        return error(StatusCode::BAD_REQUEST, "Недопустимый тег релиза nfqws2");
+    }
+    let _guard = state.update_lock.lock().await;
+    let Some(architecture) = entware_architecture() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Обновление ядра доступно только в поддерживаемой Entware",
+        );
+    };
+    let json = match fetch_github_url(NFQWS2_RELEASES_API).await {
+        Ok(json) => json,
+        Err(message) => return error(StatusCode::BAD_GATEWAY, message),
+    };
+    let releases = match eligible_core_releases(&json, &architecture) {
+        Ok(releases) => releases,
+        Err(message) => return error(StatusCode::BAD_GATEWAY, message),
+    };
+    let Some(selected) = releases.iter().find(|release| release.tag == request.tag) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Релиз nfqws2 без SHA-256 пакета для этой архитектуры",
+        );
+    };
+    let current_version = match std::process::Command::new("/opt/bin/opkg")
+        .args(["status", "nfqws2-keenetic"])
+        .output()
+    {
+        Ok(output) => installed_core_tag_from_output(&output.stdout),
+        Err(_) => None,
+    };
+    let Some(current_version) = current_version else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Не удалось определить установленную версию пакета nfqws2-keenetic",
+        );
+    };
+    let Some(previous) = releases
+        .iter()
+        .find(|release| release.tag == current_version)
+    else {
+        return error(
+            StatusCode::CONFLICT,
+            "Текущая версия nfqws2 отсутствует в GitHub Releases; безопасный откат недоступен",
+        );
+    };
+    if previous.tag == selected.tag {
+        return error(
+            StatusCode::CONFLICT,
+            "Выбрана уже установленная версия nfqws2",
+        );
+    }
+    let helper = Path::new("/opt/share/nfqws2-ui/current/scripts/update-core-release.sh");
+    if !helper.is_file() {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Updater nfqws2 отсутствует; установи актуальную версию панели вручную",
+        );
+    }
+    let operation_dir = state.data_dir.join("update-operations");
+    if let Err(io_error) = tokio::fs::create_dir_all(&operation_dir).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    let active = operation_dir.join("active");
+    if let Ok(active_id) = tokio::fs::read_to_string(&active).await
+        && let Ok(content) =
+            tokio::fs::read_to_string(update_operation_path(&state, active_id.trim())).await
+        && let Some(operation) = parse_update_operation(active_id.trim(), &content)
+        && !matches!(
+            operation.state.as_str(),
+            "success" | "rolled_back" | "failed"
+        )
+    {
+        return error(StatusCode::CONFLICT, "Другое обновление уже выполняется");
+    }
+    let id = new_update_id();
+    let response = UpdateOperation {
+        id: id.clone(),
+        state: "downloading".into(),
+        message: format!("Подготовка обновления nfqws2 до {}", selected.tag),
+    };
+    if let Err(io_error) = tokio::fs::write(
+        update_operation_path(&state, &id),
+        format!("downloading\n{}", response.message),
+    )
+    .await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    if let Err(io_error) = tokio::fs::write(&active, &id).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    let child = tokio::process::Command::new("/bin/sh")
+        .arg(helper)
+        .arg(&selected.tag)
+        .arg(&selected.asset)
+        .arg(&selected.sha256)
+        .arg(&previous.tag)
+        .arg(&previous.asset)
+        .arg(&previous.sha256)
+        .arg(&id)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(false)
+        .spawn();
+    if let Err(io_error) = child {
+        let _ = tokio::fs::remove_file(active).await;
+        let _ = tokio::fs::remove_file(update_operation_path(&state, &id)).await;
+        return error(
+            StatusCode::BAD_GATEWAY,
+            format!("Не удалось запустить updater nfqws2: {io_error}"),
+        );
+    }
+    (StatusCode::ACCEPTED, Json(response)).into_response()
+}
+
+fn release_is_eligible(releases: &[PanelRelease], tag: &str) -> bool {
+    releases.iter().any(|release| release.tag == tag)
+}
+
+async fn fetch_github_releases() -> Result<Vec<PanelRelease>, String> {
+    let mut child = tokio::process::Command::new("wget")
+        .args(["-q", "-T", "10", "-O", "-", GITHUB_RELEASES_API])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("Не удалось запустить wget для GitHub Releases: {error}"))?;
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill().await;
+        return Err("Не удалось прочитать ответ GitHub Releases".into());
+    };
+    let mut bytes = Vec::new();
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        stdout
+            .take((MAX_RELEASE_RESPONSE_BYTES + 1) as u64)
+            .read_to_end(&mut bytes),
+    )
+    .await;
+    if read.is_err() || bytes.len() > MAX_RELEASE_RESPONSE_BYTES {
+        let _ = child.kill().await;
+        return Err("Ответ GitHub Releases превысил лимит или время ожидания".into());
+    }
+    read.unwrap()
+        .map_err(|error| format!("Ошибка чтения GitHub Releases: {error}"))?;
+    let status = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
+        .await
+        .map_err(|_| "GitHub Releases не завершил запрос вовремя".to_string())?
+        .map_err(|error| format!("Ошибка wget: {error}"))?;
+    if !status.success() {
+        return Err("GitHub Releases недоступен; проверь подключение роутера к GitHub".into());
+    }
+    let json =
+        std::str::from_utf8(&bytes).map_err(|_| "Ответ GitHub Releases не UTF-8".to_string())?;
+    eligible_panel_releases(json)
+}
+
+fn update_operation_path(state: &AppState, id: &str) -> PathBuf {
+    state
+        .data_dir
+        .join("update-operations")
+        .join(format!("{id}.state"))
+}
+
+fn parse_update_operation(id: &str, content: &str) -> Option<UpdateOperation> {
+    let (state, message) = content.split_once('\n')?;
+    let state = match state.trim() {
+        "downloading" | "verifying" | "installing" | "health_check" | "success" | "rolled_back"
+        | "failed" => state.trim(),
+        _ => return None,
+    };
+    Some(UpdateOperation {
+        id: id.into(),
+        state: state.into(),
+        message: message.trim().into(),
+    })
+}
+
+fn new_update_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let sequence = UPDATE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{nanos:016x}{sequence:016x}")
+}
+
+async fn get_github_releases() -> Response {
+    match fetch_github_releases().await {
+        Ok(releases) => Json(serde_json::json!({ "releases": releases })).into_response(),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn post_update_install(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<UpdateInstallRequest>,
+) -> Response {
+    if !valid_release_tag(&request.tag) {
+        return error(StatusCode::BAD_REQUEST, "Недопустимый тег релиза");
+    }
+    let _guard = state.update_lock.lock().await;
+    let releases = match fetch_github_releases().await {
+        Ok(releases) => releases,
+        Err(message) => return error(StatusCode::BAD_GATEWAY, message),
+    };
+    if !release_is_eligible(&releases, &request.tag) {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Релиз отсутствует или не содержит ARM64-пакет с SHA-256",
+        );
+    }
+    let helper = Path::new("/opt/share/nfqws2-ui/current/scripts/update-release.sh");
+    if !helper.is_file() {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Updater отсутствует; установи актуальную версию панели вручную",
+        );
+    }
+    let operation_dir = state.data_dir.join("update-operations");
+    if let Err(io_error) = tokio::fs::create_dir_all(&operation_dir).await {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось создать каталог статуса обновления: {io_error}"),
+        );
+    }
+    let active = operation_dir.join("active");
+    if let Ok(active_id) = tokio::fs::read_to_string(&active).await
+        && let Ok(content) =
+            tokio::fs::read_to_string(update_operation_path(&state, active_id.trim())).await
+        && let Some(operation) = parse_update_operation(active_id.trim(), &content)
+        && !matches!(
+            operation.state.as_str(),
+            "success" | "rolled_back" | "failed"
+        )
+    {
+        return error(
+            StatusCode::CONFLICT,
+            "Установка другой версии уже выполняется",
+        );
+    }
+    let id = new_update_id();
+    let initial = format!("downloading\nПодготовка к загрузке {}", request.tag);
+    if let Err(io_error) = tokio::fs::write(update_operation_path(&state, &id), initial).await {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось сохранить статус обновления: {io_error}"),
+        );
+    }
+    if let Err(io_error) = tokio::fs::write(&active, &id).await {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось зарегистрировать обновление: {io_error}"),
+        );
+    }
+    let child = tokio::process::Command::new("/bin/sh")
+        .arg(helper)
+        .arg(&request.tag)
+        .arg(&id)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(false)
+        .spawn();
+    if let Err(io_error) = child {
+        let _ = tokio::fs::remove_file(active).await;
+        let _ = tokio::fs::remove_file(update_operation_path(&state, &id)).await;
+        return error(
+            StatusCode::BAD_GATEWAY,
+            format!("Не удалось запустить безопасный updater: {io_error}"),
+        );
+    }
+    let response = UpdateOperation {
+        id,
+        state: "downloading".into(),
+        message: "Загрузка выбранного релиза началась".into(),
+    };
+    (StatusCode::ACCEPTED, Json(response)).into_response()
+}
+
+async fn get_update_operation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return error(StatusCode::NOT_FOUND, "Операция обновления не найдена");
+    }
+    match tokio::fs::read_to_string(update_operation_path(&state, &id)).await {
+        Ok(content) => parse_update_operation(&id, &content)
+            .map(|operation| Json(operation).into_response())
+            .unwrap_or_else(|| {
+                error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Повреждён статус обновления",
+                )
+            }),
+        Err(_) => error(StatusCode::NOT_FOUND, "Операция обновления не найдена"),
     }
 }
 
@@ -350,6 +912,7 @@ fn module_references(config_text: &str) -> Vec<ModuleReference> {
 }
 
 async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
+    let discovered = discover_system_paths();
     let config = config_path_for_state(&state);
     let module_references = config
         .as_deref()
@@ -366,7 +929,10 @@ async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
         })
         .collect();
     let init_candidates = known_init_scripts();
-    let init_script = init_candidates.iter().find(|path| path.is_file()).cloned();
+    let init_script = discovered
+        .as_ref()
+        .map(|paths| paths.init_script.clone())
+        .or_else(|| init_candidates.iter().find(|path| path.is_file()).cloned());
     let init_script_candidates = init_candidates
         .iter()
         .map(|candidate| inspect_path(candidate, false))
@@ -387,14 +953,21 @@ async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
         .flat_map(|config| LIST_IDS.iter().filter_map(|id| list_file_path(config, id)))
         .map(|path| inspect_path(&path, true))
         .collect();
-    let platform = config
-        .as_ref()
-        .map(|path| path.to_string_lossy())
-        .filter(|path| path.starts_with("/opt/etc/"))
-        .map(|_| "entware")
-        .unwrap_or("unknown");
+    let platform = discovered.as_ref().map_or("unknown", |paths| {
+        if paths.root == Path::new("/opt") {
+            "entware"
+        } else {
+            "openwrt"
+        }
+    });
     Json(InstallationResponse {
         platform,
+        installation_root: discovered
+            .as_ref()
+            .map(|paths| paths.root.display().to_string()),
+        detected_binary: discovered
+            .as_ref()
+            .map(|paths| inspect_path(&paths.binary, false)),
         network_interfaces: network_interface_names(Path::new("/sys/class/net")),
         config: config.as_deref().map(|path| inspect_path(path, true)),
         config_candidates,
@@ -431,6 +1004,14 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
 
 async fn get_status(State(state): State<Arc<AppState>>) -> Response {
     let (service_state, detail) = service_status().await;
+    let core_version = match tokio::process::Command::new("/opt/bin/opkg")
+        .args(["status", "nfqws2-keenetic"])
+        .output()
+        .await
+    {
+        Ok(output) => installed_core_tag_from_output(&output.stdout),
+        Err(_) => None,
+    };
     let meminfo = tokio::fs::read_to_string("/proc/meminfo").await.ok();
     let (memory_used_bytes, memory_total_bytes) = meminfo
         .as_deref()
@@ -447,7 +1028,7 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
             state: service_state,
             detail,
             checked_at,
-            version: None,
+            version: core_version,
         },
         system: SystemInfo {
             memory_total_bytes,
@@ -539,7 +1120,12 @@ async fn post_service(Json(request): Json<ServiceRequest>) -> Response {
             );
         }
     };
-    match service_action(action).await {
+    let result = if let Some(paths) = discover_system_paths() {
+        service_action_at(action, &paths).await
+    } else {
+        Err("Не удалось однозначно обнаружить установленный nfqws2".to_string())
+    };
+    match result {
         Ok(message) => Json(MessageResponse { message }).into_response(),
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
@@ -549,7 +1135,7 @@ fn config_path(name: &str) -> Option<PathBuf> {
     if name != "nfqws2.conf" {
         return None;
     }
-    known_config_paths().into_iter().find(|path| path.is_file())
+    discover_system_paths().map(|paths| paths.config)
 }
 
 fn config_path_for_state(state: &AppState) -> Option<PathBuf> {
@@ -676,6 +1262,73 @@ fn configured_list_reference(config_text: &str, id: &str) -> Option<PathBuf> {
     (!unresolved).then_some(found).flatten()
 }
 
+fn list_reference_from_argv(args: &[String], id: &str) -> Option<PathBuf> {
+    let flag = list_flag(id)?;
+    let mut found = None;
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        let value = if let Some(value) = arg
+            .strip_prefix(flag)
+            .and_then(|value| value.strip_prefix('='))
+        {
+            Some(value)
+        } else if arg == flag {
+            args.get(index + 1).map(String::as_str)
+        } else {
+            None
+        };
+        if let Some(value) = value {
+            let value = value.trim_start_matches('@');
+            if value.is_empty() || value.contains(['$', '`']) || value.starts_with('~') {
+                return None;
+            }
+            let path = PathBuf::from(value);
+            if found.as_ref().is_some_and(|existing| existing != &path) {
+                return None;
+            }
+            found = Some(path);
+        }
+        index += 1;
+    }
+    found
+}
+
+fn active_process_arguments() -> Option<Vec<String>> {
+    let paths = discover_system_paths()?;
+    let entries = std::fs::read_dir("/proc").ok()?;
+    let expected = paths.binary.to_string_lossy().into_owned();
+    let mut matches = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name
+            .to_string_lossy()
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+        {
+            continue;
+        }
+        let Ok(pid) = name.to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        if !process_matches(pid, &bytes, &[expected.as_str()]) {
+            continue;
+        }
+        let args = bytes
+            .split(|byte| *byte == 0)
+            .filter(|arg| !arg.is_empty())
+            .map(|arg| String::from_utf8_lossy(arg).into_owned())
+            .collect::<Vec<_>>();
+        if !args.is_empty() {
+            matches.push(args);
+        }
+    }
+    (matches.len() == 1).then(|| matches.remove(0))
+}
+
 fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
     if !LIST_IDS.contains(&id) {
         return None;
@@ -683,7 +1336,10 @@ fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
     let config = config.canonicalize().ok()?;
     let root = config.parent()?.canonicalize().ok()?;
     let config_text = std::fs::read_to_string(&config).ok()?;
-    let reference = configured_list_reference(&config_text, id)?;
+    let reference = active_process_arguments()
+        .as_deref()
+        .and_then(|args| list_reference_from_argv(args, id))
+        .or_else(|| configured_list_reference(&config_text, id))?;
     let candidate = if reference.is_absolute() {
         reference
     } else {
@@ -1420,22 +2076,95 @@ async fn read_bounded_tail(path: &Path, max_bytes: usize) -> std::io::Result<Vec
     Ok(tail)
 }
 
-async fn get_logs(Query(query): Query<LogsQuery>) -> Response {
+fn configured_log_path(config_text: &str, config_file: &Path) -> Option<PathBuf> {
+    let mut found: Option<String> = None;
+    for line in config_text.lines() {
+        let line = strip_shell_comment(line).trim();
+        let Some((name, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        if name.trim() != "LOG_DEBUG_PATH" {
+            continue;
+        }
+        let mut value = raw_value.trim();
+        if value.len() >= 2 {
+            let bytes = value.as_bytes();
+            if (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
+                || (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+            {
+                value = &value[1..value.len() - 1];
+            }
+        }
+        let value = value.trim().strip_prefix('@').unwrap_or(value.trim());
+        if value.is_empty()
+            || value
+                .chars()
+                .any(|character| matches!(character, '$' | '`' | ';' | '\0' | '\n' | '\r'))
+        {
+            return None;
+        }
+        if found.as_deref().is_some_and(|previous| previous != value) {
+            return None;
+        }
+        found = Some(value.to_string());
+    }
+    let value = found?;
+    let path = PathBuf::from(value);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        config_file.parent()?.join(path)
+    })
+}
+
+async fn get_logs(State(state): State<Arc<AppState>>, Query(query): Query<LogsQuery>) -> Response {
     if query.source != "nfqws2" {
         return error(StatusCode::BAD_REQUEST, "Неизвестный источник журнала");
     }
-    let paths = [
-        "/opt/var/log/nfqws2.log",
-        "/opt/var/log/nfqws.log",
-        "/var/log/nfqws2.log",
-    ];
-    let Some(path) = paths.iter().find(|path| Path::new(path).is_file()) else {
+    let config = config_path_for_state(&state);
+    let config_text = config
+        .as_deref()
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    let discovered = discover_system_paths();
+    let log_dir = discovered
+        .as_ref()
+        .map(|paths| paths.log_dir.clone())
+        .or_else(|| {
+            config
+                .as_deref()?
+                .ancestors()
+                .nth(3)
+                .map(|root| root.join("var/log"))
+        });
+    let Some(log_dir) = log_dir else {
+        return Json(LogsResponse {
+            content: "Каталог журналов nfqws2 не обнаружен".into(),
+        })
+        .into_response();
+    };
+    let mut candidates = Vec::new();
+    if let (Some(text), Some(config_path)) = (config_text.as_deref(), config.as_deref())
+        && let Some(path) = configured_log_path(text, config_path)
+    {
+        candidates.push(path);
+    }
+    candidates
+        .extend(["nfqws2.log", "nfqws.log", "nfqws2-debug.log"].map(|name| log_dir.join(name)));
+    let canonical_log_dir = log_dir.canonicalize().ok();
+    let Some(path) = candidates.into_iter().find(|candidate| {
+        candidate.is_file()
+            && candidate.canonicalize().ok().is_some_and(|canonical| {
+                canonical_log_dir
+                    .as_ref()
+                    .is_some_and(|root| canonical.starts_with(root))
+            })
+    }) else {
         return Json(LogsResponse {
             content: "Журнал nfqws2 не найден".into(),
         })
         .into_response();
     };
-    let bytes = match read_bounded_tail(Path::new(path), MAX_LOG_BYTES).await {
+    let bytes = match read_bounded_tail(&path, MAX_LOG_BYTES).await {
         Ok(bytes) => bytes,
         Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
     };
@@ -1482,6 +2211,14 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/backups", get(get_backups).post(create_backup))
         .route("/api/backups/{id}/restore", post(restore_backup))
         .route("/api/logs", get(get_logs))
+        .route("/api/updates/releases", get(get_github_releases))
+        .route("/api/updates/install", post(post_update_install))
+        .route("/api/nfqws2/updates/releases", get(get_core_releases))
+        .route(
+            "/api/nfqws2/updates/install",
+            post(post_core_update_install),
+        )
+        .route("/api/updates/operations/{id}", get(get_update_operation))
         .with_state(state)
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http())
@@ -1533,6 +2270,7 @@ async fn main() {
         cpu_previous: Arc::new(Mutex::new(None)),
         config_write_lock: Mutex::new(()),
         config_override: None,
+        update_lock: Mutex::new(()),
     });
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
@@ -1591,6 +2329,7 @@ mod tests {
             cpu_previous: Arc::new(Mutex::new(None)),
             config_write_lock: Mutex::new(()),
             config_override,
+            update_lock: Mutex::new(()),
         })
     }
 
@@ -1610,6 +2349,126 @@ mod tests {
 
         assert_eq!(tail.len(), 1024);
         assert_eq!(tail, contents[contents.len() - 1024..]);
+    }
+
+    #[test]
+    fn log_path_uses_literal_debug_path_from_active_config() {
+        let config = Path::new("/opt/etc/nfqws2/nfqws2.conf");
+        assert_eq!(
+            configured_log_path(
+                "LOG_DEBUG_PATH=\"@/opt/var/log/nfqws2-debug.log\"\n",
+                config,
+            ),
+            Some(PathBuf::from("/opt/var/log/nfqws2-debug.log"))
+        );
+    }
+
+    #[test]
+    fn log_path_does_not_evaluate_dynamic_shell_values() {
+        assert_eq!(
+            configured_log_path(
+                "LOG_DEBUG_PATH=\"$DATA_DIR/nfqws2.log\"\n",
+                Path::new("/opt/etc/nfqws2/nfqws2.conf"),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn process_argument_list_parser_accepts_equals_and_separate_values() {
+        assert_eq!(
+            list_reference_from_argv(
+                &[
+                    "nfqws2".into(),
+                    "--hostlist".into(),
+                    "lists/user.list".into()
+                ],
+                "user.list"
+            ),
+            Some(PathBuf::from("lists/user.list"))
+        );
+        assert_eq!(
+            list_reference_from_argv(
+                &["nfqws2".into(), "--hostlist-auto=lists/auto.list".into()],
+                "auto.list"
+            ),
+            Some(PathBuf::from("lists/auto.list"))
+        );
+    }
+
+    #[test]
+    fn process_argument_list_parser_rejects_conflicting_or_dynamic_paths() {
+        assert_eq!(
+            list_reference_from_argv(
+                &[
+                    "nfqws2".into(),
+                    "--hostlist=a.list".into(),
+                    "--hostlist=b.list".into()
+                ],
+                "user.list"
+            ),
+            None
+        );
+        assert_eq!(
+            list_reference_from_argv(&["nfqws2".into(), "--hostlist=$LIST".into()], "user.list"),
+            None
+        );
+    }
+
+    #[test]
+    fn release_catalog_keeps_only_stable_releases_with_package_and_checksum() {
+        let data = serde_json::json!([
+            {"tag_name":"v1.2.3","published_at":"2026-10-22T00:00:00Z","body":"<script>alert(1)</script>","draft":false,"prerelease":false,"assets":[{"name":"nfqws2-ui-v1.2.3-aarch64-unknown-linux-musl.tar.gz"},{"name":"nfqws2-ui-v1.2.3-aarch64-unknown-linux-musl.tar.gz.sha256"}]},
+            {"tag_name":"v1.2.4-rc1","draft":false,"prerelease":true,"assets":[{"name":"nfqws2-ui-v1.2.4-rc1-aarch64-unknown-linux-musl.tar.gz"},{"name":"nfqws2-ui-v1.2.4-rc1-aarch64-unknown-linux-musl.tar.gz.sha256"}]},
+            {"tag_name":"v1.2.2","draft":false,"prerelease":false,"assets":[{"name":"nfqws2-ui-v1.2.2-aarch64-unknown-linux-musl.tar.gz"}]}
+        ]);
+
+        let releases = eligible_panel_releases(&data.to_string()).unwrap();
+
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].tag, "v1.2.3");
+        assert_eq!(releases[0].notes, "<script>alert(1)</script>");
+    }
+
+    #[test]
+    fn release_catalog_rejects_invalid_or_oversized_metadata() {
+        assert!(eligible_panel_releases("not json").is_err());
+        assert!(eligible_panel_releases(&" ".repeat(MAX_RELEASE_RESPONSE_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn core_release_catalog_requires_stable_aarch64_package_and_github_digest() {
+        let digest = "a".repeat(64);
+        let data = serde_json::json!([
+            {"tag_name":"v1.3.2","published_at":"2026-10-21T11:04:30Z","body":"nfqws2 release","draft":false,"prerelease":false,"assets":[
+                {"name":"nfqws2-keenetic_1.3.2_aarch64-3.10.ipk","digest":format!("sha256:{digest}")},
+                {"name":"nfqws2-keenetic_1.3.2_all_entware.ipk","digest":format!("sha256:{digest}")}
+            ]},
+            {"tag_name":"v1.3.3-rc1","draft":false,"prerelease":true,"assets":[]},
+            {"tag_name":"v1.3.1","draft":false,"prerelease":false,"assets":[{"name":"nfqws2-keenetic_1.3.1_aarch64-3.10.ipk"}]}
+        ]);
+        let releases = eligible_core_releases(&data.to_string(), "aarch64-3.10").unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].tag, "v1.3.2");
+        assert_eq!(releases[0].asset, "nfqws2-keenetic_1.3.2_aarch64-3.10.ipk");
+        assert_eq!(releases[0].sha256, digest);
+        assert!(eligible_core_releases(&data.to_string(), "mips-3.4").is_err());
+    }
+
+    #[test]
+    fn installed_core_version_comes_from_opkg_metadata_only() {
+        assert_eq!(
+            installed_core_tag_from_output(b"Package: nfqws2-keenetic\nVersion: 1.3.2-1\n"),
+            Some("v1.3.2".into())
+        );
+        assert_eq!(
+            installed_core_tag_from_output(b"Package: nfqws2-keenetic\nStatus: not-installed\n"),
+            None
+        );
+        assert_eq!(
+            installed_core_tag_from_output(b"Version: 1.3.2; touch /tmp/nope\n"),
+            None
+        );
     }
 
     #[tokio::test]
@@ -2229,6 +3088,28 @@ mod tests {
         assert_eq!(
             list_file_path(&config, "user.list"),
             Some(custom.join("domains.txt").canonicalize().unwrap())
+        );
+    }
+
+    #[test]
+    fn standard_nfqws2_mode_list_reference_resolves_user_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        std::fs::create_dir_all(&list_dir).unwrap();
+        let user_list = list_dir.join("user.list");
+        std::fs::write(
+            &config,
+            "MODE_LIST=\"--hostlist=lists/user.list\"\nMODE_ALL=\"--hostlist-exclude=lists/exclude.list\"\nMODE_AUTO=\"$MODE_LIST --hostlist-auto=lists/auto.list $MODE_ALL\"\nNFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n",
+        )
+        .unwrap();
+        std::fs::write(&user_list, "example.org\n").unwrap();
+        std::fs::write(list_dir.join("exclude.list"), "excluded.example.org\n").unwrap();
+        std::fs::write(list_dir.join("auto.list"), "automatic.example.org\n").unwrap();
+
+        assert_eq!(
+            list_file_path(&config, "user.list"),
+            Some(user_list.canonicalize().unwrap())
         );
     }
 

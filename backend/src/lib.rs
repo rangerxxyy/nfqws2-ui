@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -87,6 +87,65 @@ pub fn known_config_paths() -> [PathBuf; 2] {
     ]
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Nfqws2Paths {
+    pub root: PathBuf,
+    pub binary: PathBuf,
+    pub config: PathBuf,
+    pub lists_dir: PathBuf,
+    pub lua_dir: PathBuf,
+    pub blobs_dir: PathBuf,
+    pub init_script: PathBuf,
+    pub pid_file: PathBuf,
+    pub log_dir: PathBuf,
+}
+
+impl Nfqws2Paths {
+    /// Discover a single installation from actual package files. Callers provide
+    /// the supported roots (`/opt` and `/`) so tests can use isolated fixtures.
+    /// Multiple matching roots are deliberately treated as ambiguous.
+    pub fn discover(roots: &[PathBuf]) -> Option<Self> {
+        let mut matches = roots.iter().filter_map(|root| {
+            let binary = root.join("usr/bin/nfqws2");
+            let config = root.join("etc/nfqws2/nfqws2.conf");
+            (binary.is_file() && config.is_file()).then(|| (root.clone(), binary, config))
+        });
+        let (root, binary, config) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+
+        let entware_init = root.join("etc/init.d/S51nfqws2");
+        let openwrt_init = root.join("etc/init.d/nfqws2-keenetic");
+        let present_init = [entware_init.clone(), openwrt_init.clone()]
+            .into_iter()
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        let init_script = match present_init.as_slice() {
+            [path] => path.clone(),
+            [] if root == Path::new("/opt") => entware_init,
+            [] => openwrt_init,
+            _ => return None,
+        };
+
+        Some(Self {
+            lists_dir: root.join("etc/nfqws2/lists"),
+            lua_dir: root.join("etc/nfqws2/lua"),
+            blobs_dir: config.parent()?.join("blobs"),
+            pid_file: root.join("var/run/nfqws2.pid"),
+            log_dir: root.join("var/log"),
+            root,
+            binary,
+            config,
+            init_script,
+        })
+    }
+}
+
+pub fn discover_system_paths() -> Option<Nfqws2Paths> {
+    Nfqws2Paths::discover(&[PathBuf::from("/opt"), PathBuf::from("/")])
+}
+
 pub fn network_interface_names(sys_class_net: &std::path::Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(sys_class_net) else {
         return Vec::new();
@@ -148,15 +207,27 @@ pub fn reconcile_init_state(
 }
 
 pub async fn service_status() -> (ServiceState, String) {
-    let Some(init) = known_init_scripts().into_iter().find(|path| path.is_file()) else {
+    let Some(paths) = discover_system_paths() else {
         return (
             ServiceState::Unknown,
-            "Штатный init-скрипт nfqws2 не найден".into(),
+            "Не удалось однозначно обнаружить установленный nfqws2 (бинарник и конфигурацию)"
+                .into(),
         );
     };
+    service_status_at(&paths).await
+}
+
+pub async fn service_status_at(paths: &Nfqws2Paths) -> (ServiceState, String) {
+    let init = &paths.init_script;
+    if !init.is_file() {
+        return (
+            ServiceState::Unknown,
+            format!("Штатный init-скрипт nfqws2 не найден: {}", init.display()),
+        );
+    }
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(4),
-        tokio::process::Command::new(&init).arg("status").output(),
+        tokio::process::Command::new(init).arg("status").output(),
     )
     .await;
     let output = match output {
@@ -181,24 +252,17 @@ pub async fn service_status() -> (ServiceState, String) {
     );
     let state = classify_init_status(output.status.code().unwrap_or(1), &text);
     if matches!(state, ServiceState::Running | ServiceState::Stopped) {
-        let pid_paths = ["/opt/var/run/nfqws2.pid", "/var/run/nfqws2.pid"];
-        let expected = ["/opt/usr/bin/nfqws2", "/usr/bin/nfqws2"];
-        let mut saw_pid_file = false;
+        let mut saw_pid_file = paths.pid_file.is_file();
         let mut verified_pid = None;
-        for pid_path in pid_paths {
-            let Ok(contents) = tokio::fs::read_to_string(pid_path).await else {
-                continue;
-            };
+        if let Ok(contents) = tokio::fs::read_to_string(&paths.pid_file).await {
             saw_pid_file = true;
-            let Some(pid) = valid_pid(&contents) else {
-                continue;
-            };
-            let proc_cmdline = format!("/proc/{pid}/cmdline");
-            if let Ok(cmdline) = tokio::fs::read(proc_cmdline).await
-                && process_matches(pid, &cmdline, &expected)
-            {
-                verified_pid = Some(pid);
-                break;
+            if let Some(pid) = valid_pid(&contents) {
+                let proc_cmdline = format!("/proc/{pid}/cmdline");
+                if let Ok(cmdline) = tokio::fs::read(proc_cmdline).await
+                    && process_matches(pid, &cmdline, &[paths.binary.to_string_lossy().as_ref()])
+                {
+                    verified_pid = Some(pid);
+                }
             }
         }
         return reconcile_init_state(state, verified_pid, saw_pid_file);
@@ -218,12 +282,25 @@ pub async fn service_status() -> (ServiceState, String) {
 }
 
 pub async fn service_action(action: ServiceAction) -> Result<String, String> {
-    let Some(init) = known_init_scripts().into_iter().find(|path| path.is_file()) else {
-        return Err("Штатный init-скрипт nfqws2 не найден".into());
-    };
+    let paths = discover_system_paths()
+        .ok_or_else(|| "Не удалось однозначно обнаружить установленный nfqws2".to_string())?;
+    service_action_at(action, &paths).await
+}
+
+pub async fn service_action_at(
+    action: ServiceAction,
+    paths: &Nfqws2Paths,
+) -> Result<String, String> {
+    let init = &paths.init_script;
+    if !init.is_file() {
+        return Err(format!(
+            "Штатный init-скрипт nfqws2 не найден: {}",
+            init.display()
+        ));
+    }
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(25),
-        tokio::process::Command::new(&init)
+        tokio::process::Command::new(init)
             .arg(action.as_arg())
             .output(),
     )
@@ -246,7 +323,7 @@ pub async fn service_action(action: ServiceAction) -> Result<String, String> {
             output.trim().to_string()
         });
     }
-    let (state, detail) = service_status().await;
+    let (state, detail) = service_status_at(paths).await;
     let expected = match action {
         ServiceAction::Start | ServiceAction::Restart => ServiceState::Running,
         ServiceAction::Stop => ServiceState::Stopped,
@@ -307,5 +384,73 @@ mod tests {
     fn stopped_init_without_verified_process_is_stopped() {
         let (state, _) = reconcile_init_state(ServiceState::Stopped, None, false);
         assert_eq!(state, ServiceState::Stopped);
+    }
+
+    #[test]
+    fn discovers_entware_paths_from_installed_binary_and_config() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path = root.path();
+        std::fs::create_dir_all(root_path.join("usr/bin")).unwrap();
+        std::fs::create_dir_all(root_path.join("etc/nfqws2")).unwrap();
+        std::fs::create_dir_all(root_path.join("etc/init.d")).unwrap();
+        std::fs::write(root_path.join("usr/bin/nfqws2"), "binary").unwrap();
+        std::fs::write(root_path.join("etc/nfqws2/nfqws2.conf"), "MODE_LIST=''").unwrap();
+        std::fs::write(root_path.join("etc/init.d/S51nfqws2"), "#!/bin/sh").unwrap();
+
+        let paths = Nfqws2Paths::discover(&[root_path.to_path_buf()]).unwrap();
+        assert_eq!(paths.root, root_path);
+        assert_eq!(paths.binary, root_path.join("usr/bin/nfqws2"));
+        assert_eq!(paths.config, root_path.join("etc/nfqws2/nfqws2.conf"));
+        assert_eq!(paths.lists_dir, root_path.join("etc/nfqws2/lists"));
+        assert_eq!(paths.init_script, root_path.join("etc/init.d/S51nfqws2"));
+    }
+
+    #[test]
+    fn rejects_ambiguous_multiple_nfqws2_installations() {
+        let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+        for root in &roots {
+            std::fs::create_dir_all(root.path().join("usr/bin")).unwrap();
+            std::fs::create_dir_all(root.path().join("etc/nfqws2")).unwrap();
+            std::fs::write(root.path().join("usr/bin/nfqws2"), "binary").unwrap();
+            std::fs::write(root.path().join("etc/nfqws2/nfqws2.conf"), "").unwrap();
+        }
+
+        assert!(
+            Nfqws2Paths::discover(
+                &roots
+                    .iter()
+                    .map(|root| root.path().to_path_buf())
+                    .collect::<Vec<_>>()
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn does_not_infer_installation_from_config_without_binary() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("etc/nfqws2")).unwrap();
+        std::fs::write(root.path().join("etc/nfqws2/nfqws2.conf"), "").unwrap();
+
+        assert!(Nfqws2Paths::discover(&[root.path().to_path_buf()]).is_none());
+    }
+
+    #[test]
+    fn openwrt_paths_use_root_without_entware_prefix() {
+        let root = tempfile::tempdir().unwrap();
+        let root_path: &Path = root.path();
+        std::fs::create_dir_all(root_path.join("usr/bin")).unwrap();
+        std::fs::create_dir_all(root_path.join("etc/nfqws2")).unwrap();
+        std::fs::create_dir_all(root_path.join("etc/init.d")).unwrap();
+        std::fs::write(root_path.join("usr/bin/nfqws2"), "binary").unwrap();
+        std::fs::write(root_path.join("etc/nfqws2/nfqws2.conf"), "").unwrap();
+        std::fs::write(root_path.join("etc/init.d/nfqws2-keenetic"), "#!/bin/sh").unwrap();
+
+        let paths = Nfqws2Paths::discover(&[root_path.to_path_buf()]).unwrap();
+        assert_eq!(paths.root, root_path);
+        assert_eq!(
+            paths.init_script,
+            root_path.join("etc/init.d/nfqws2-keenetic")
+        );
     }
 }
