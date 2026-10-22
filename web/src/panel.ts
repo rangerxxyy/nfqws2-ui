@@ -2,8 +2,9 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type StatusResponse } from './api';
-import { appendListEntries, deduplicateListContent, findNextListMatch, removeListLines } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
+import { resourceUsagePercent, usageTone } from './metrics';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 let status: StatusResponse | null = null;
@@ -11,6 +12,7 @@ let config: ConfigResponse | null = null;
 let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
 let busy = false;
+let statusPolling = false;
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
@@ -43,6 +45,8 @@ function showRoute(route: Route) {
   if (route === 'lists') void loadList(activeListId);
 }
 async function fetchStatus() {
+  if (statusPolling) return;
+  statusPolling = true;
   try {
     status = await api<StatusResponse>('/api/status');
     const service = status.service.state;
@@ -55,10 +59,16 @@ async function fetchStatus() {
     const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
     const monitorBadge = $('#sideMonitorBadge'); if (monitorBadge) monitorBadge.className = `w-2 h-2 rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
     const used = status.system.memoryUsedBytes, total = status.system.memoryTotalBytes;
-    setText('#ramMetricText', used !== null && total !== null ? `${fmtMb(used)} / ${fmtMb(total)} MB` : '—');
-    setWidth('#ramProgressBar', used !== null && total ? used * 100 / total : null);
+    const ramPercent = resourceUsagePercent(used, total);
+    setText('#ramMetricText', used !== null && total !== null ? `${fmtMb(used)} / ${fmtMb(total)} МБ` : '—');
+    const ramText = $('#ramMetricText');
+    if (ramText) ramText.title = ramPercent === null ? 'Загрузка памяти неизвестна' : `Использовано ${Math.round(ramPercent)}% физической памяти`;
+    setWidth('#ramProgressBar', ramPercent);
+    applyMetricTone('#ramMetricText', '#ramProgressBar', ramPercent);
     const cpu = status.system.cpuPercent;
-    setText('#cpuMetricText', cpu === null ? '—' : `${Math.round(cpu)}%`); setWidth('#cpuProgressBar', cpu);
+    setText('#cpuMetricText', cpu === null ? '—' : `${Math.round(cpu)}%`);
+    setWidth('#cpuProgressBar', cpu);
+    applyMetricTone('#cpuMetricText', '#cpuProgressBar', cpu);
     setText('#headerCoreVersion', status.service.version ?? '—'); setText('#headerUiVersion', status.panel.version);
     const power = $('#togglePowerText'); if (power) power.textContent = running ? 'Остановить' : 'Запустить';
     const powerBtn = $('#togglePowerBtn'); if (powerBtn) { powerBtn.classList.toggle('text-rose-400', running); powerBtn.classList.toggle('text-emerald-400', stopped); }
@@ -68,13 +78,28 @@ async function fetchStatus() {
     const label = $('#statusTextLabel'); if (label) { label.textContent = 'Статус неизвестен'; label.className = 'text-xs sm:text-sm font-semibold text-slate-400 tracking-tight'; }
     const dot = $('#statusMainDot'); if (dot) dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400';
     const ring = $('#statusRadarRing'); if (ring) ring.className = 'absolute inline-flex h-full w-full rounded-full bg-slate-400';
-    setText('#ramMetricText', '—'); setWidth('#ramProgressBar', null);
-    setText('#cpuMetricText', '—'); setWidth('#cpuProgressBar', null);
+    setText('#ramMetricText', '—'); setWidth('#ramProgressBar', null); applyMetricTone('#ramMetricText', '#ramProgressBar', null);
+    setText('#cpuMetricText', '—'); setWidth('#cpuProgressBar', null); applyMetricTone('#cpuMetricText', '#cpuProgressBar', null);
     setText('#headerCoreVersion', '—'); setText('#headerUiVersion', '—');
     const detail = $('#statusDetail'); if (detail) detail.textContent = error instanceof Error ? error.message : 'Ошибка проверки статуса';
-  }
+  } finally { statusPolling = false; }
 }
 function fmtMb(bytes: number) { return (bytes / 1024 / 1024).toFixed(0); }
+function applyMetricTone(textSelector: string, barSelector: string, percent: number | null) {
+  const tone = usageTone(percent);
+  const textClass = tone === 'critical' ? 'text-rose-400' : tone === 'warning' ? 'text-amber-400' : 'text-slate-400';
+  const barClass = tone === 'critical' ? 'bg-rose-400' : tone === 'warning' ? 'bg-amber-400' : 'bg-slate-400';
+  const metric = $(textSelector);
+  if (metric) {
+    metric.classList.remove('text-slate-100', 'text-slate-400', 'text-emerald-400', 'text-amber-400', 'text-rose-400');
+    metric.classList.add(textClass);
+  }
+  const bar = $(barSelector);
+  if (bar) {
+    bar.classList.remove('bg-sky-400', 'bg-emerald-400', 'bg-slate-400', 'bg-amber-400', 'bg-rose-400');
+    bar.classList.add(barClass);
+  }
+}
 async function loadConfig() {
 
   try {
@@ -82,10 +107,12 @@ async function loadConfig() {
     const applyButton = $('[data-action-click="applyConfigAndRestart"]');
     let canWriteConfig = false;
     let moduleReferences: NfqwsModuleReference[] = [];
+    let networkInterfaces: string[] = [];
     try {
       const installation = await nfqwsInstallation.get();
       canWriteConfig = installation.config?.writable === true;
       moduleReferences = installation.moduleReferences ?? [];
+      networkInterfaces = installation.networkInterfaces ?? [];
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Не удалось проверить права записи в конфиг', 'error');
     }
@@ -100,7 +127,7 @@ async function loadConfig() {
     setText('#moduleStatusBadge', `${moduleReferences.length} ссылок в конфигурации`);
     renderConfigModules(moduleReferences);
     renderConfigSections(config.content);
-    updateQuickParameters(config.content);
+    updateQuickParameters(config.content, networkInterfaces);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
     setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:—');
     syncConfigLines();
@@ -162,8 +189,21 @@ function configAssignmentValue(content: string, key: string): string {
   const raw = line.slice(line.indexOf('=') + 1).trim();
   return raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) ? raw.slice(1, -1) : raw;
 }
-function updateQuickParameters(content: string) {
+function updateQuickParameters(content: string, networkInterfaces: string[] = []) {
   const availableModes = new Set(availableNfqwsModes(content));
+  const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
+  if (interfaceSelect instanceof HTMLSelectElement) {
+    const configured = configAssignmentValue(content, 'ISP_INTERFACE');
+    interfaceSelect.replaceChildren(new Option('Выберите обнаруженный интерфейс', '', !configured, false));
+    for (const name of [...new Set(networkInterfaces)].sort()) interfaceSelect.add(new Option(name, name));
+    if (configured && !networkInterfaces.includes(configured)) {
+      interfaceSelect.add(new Option(`${configured} (настроен, но не обнаружен)`, configured, true, true));
+    } else {
+      interfaceSelect.value = configured;
+    }
+    interfaceSelect.disabled = networkInterfaces.length === 0;
+    interfaceSelect.title = networkInterfaces.length ? 'Варианты получены из /sys/class/net на устройстве' : 'Backend не обнаружил сетевые интерфейсы; измените ISP_INTERFACE в raw-конфиге после проверки устройства';
+  }
   all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-key]').forEach((select) => {
     const key = select.dataset.key;
     if (!key) return;
@@ -266,8 +306,10 @@ async function loadList(id: NfqwsListId) {
   try {
     const index = await nfqwsLists.index();
     const summary = index.files.find((file) => file.id === id);
+    const availableListIds = new Set(index.files.map((file) => file.id));
     for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
-      const available = index.files.some((file) => file.id === candidate.dataset.arg);
+      const tabId = listIdFromTabElementId(candidate.id);
+      const available = tabId !== null && availableListIds.has(tabId);
       candidate.disabled = !available;
       candidate.classList.toggle('opacity-40', !available);
       candidate.title = available ? 'Путь найден в активной конфигурации' : 'Файл не найден по буквальной ссылке в активной конфигурации';
@@ -499,7 +541,7 @@ function boot() {
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();
   void loadConfig();
-  window.setInterval(() => { if (document.visibilityState === 'visible') void fetchStatus(); }, 7000);
+  window.setInterval(() => { if (document.visibilityState === 'visible') void fetchStatus(); }, 3000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void fetchStatus(); });
 }
 

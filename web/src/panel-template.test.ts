@@ -6,6 +6,7 @@ import App from './App';
 
 const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
+const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel without authentication', () => {
   it('keeps the interface in TSX and removes the HTML entry file', () => {
@@ -45,12 +46,36 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('nfqwsLists.save(activeList.id, editor.value, activeList.revision)');
   });
 
+  it('matches each list tab by its real element id when enabling files from the API index', () => {
+    expect(panelSource).toContain('listIdFromTabElementId(candidate.id)');
+    expect(panelSource).toContain('availableListIds.has(tabId)');
+    expect(panelSource).not.toContain('index.files.some((file) => file.id === candidate.dataset.arg)');
+  });
+
+  it('refreshes real CPU and memory metrics every three seconds with usage thresholds', () => {
+    expect(panelSource).toContain('window.setInterval(() => { if (document.visibilityState === \'visible\') void fetchStatus(); }, 3000)');
+    expect(panelSource).toContain('resourceUsagePercent(used, total)');
+    expect(panelSource).toContain("import { resourceUsagePercent, usageTone } from './metrics'");
+    expect(template).toContain('id="ramMetricText"');
+    expect(template).toContain('id="cpuMetricText"');
+  });
+
   it('does not label example profiles as active and renders config-derived sections', () => {
     expect(template).not.toContain('TCP Circular (Стратегии 1–6)');
     expect(template).not.toContain('5 файлов OK');
     expect(template).toContain('id="nfqwsConfigSections"');
     expect(panelSource).toContain('summarizeNfqwsConfig');
     expect(panelSource).toContain('renderConfigSections(config.content)');
+  });
+
+  it('uses backend-discovered network interfaces instead of guessed router names', () => {
+    expect(template).not.toContain('eth3 (Провайдер)');
+    expect(template).not.toContain('ppp0 (PPPoE)');
+    expect(template).not.toContain('eth2.2 (VLAN)');
+    expect(template).not.toContain('nwg0 (WireGuard)');
+    expect(template).toContain('data-key="ISP_INTERFACE"');
+    expect(panelSource).toContain('installation.networkInterfaces');
+    expect(backendSource).toContain('network_interface_names(Path::new("/sys/class/net"))');
   });
 
   it('shows Lua/blob files from the backend instead of guessed example paths', () => {

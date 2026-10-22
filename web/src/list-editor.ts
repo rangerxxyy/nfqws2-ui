@@ -1,5 +1,12 @@
 import type { NfqwsListId } from './api';
 
+const LIST_IDS: readonly NfqwsListId[] = ['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list'];
+
+export function listIdFromTabElementId(tabId: string): NfqwsListId | null {
+  const id = tabId.startsWith('listTab-') ? tabId.slice('listTab-'.length) : '';
+  return LIST_IDS.find((candidate) => candidate === id) ?? null;
+}
+
 export function appendListEntries(content: string, entries: string): string {
   const values = entries.split(/\r\n|\n/).map((entry) => entry.trim()).filter(Boolean);
   if (!values.length) return content;

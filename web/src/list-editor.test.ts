@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { appendListEntries, deduplicateListContent, findNextListMatch, removeListLines } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, listIdFromTabElementId, removeListLines } from './list-editor';
 
 describe('list editor helpers', () => {
+  it('resolves each list tab from its element id so availability checks match backend ids', () => {
+    expect(listIdFromTabElementId('listTab-user.list')).toBe('user.list');
+    expect(listIdFromTabElementId('listTab-auto.list')).toBe('auto.list');
+    expect(listIdFromTabElementId('listTab-exclude.list')).toBe('exclude.list');
+    expect(listIdFromTabElementId('listTab-ipset.list')).toBe('ipset.list');
+    expect(listIdFromTabElementId('listTab-ipset_exclude.list')).toBe('ipset_exclude.list');
+    expect(listIdFromTabElementId('listTab-../../nfqws2.conf')).toBeNull();
+  });
+
   it('removes case-insensitive domain duplicates while preserving comments, order, whitespace, and CRLF', () => {
     const source = '# hand-written list\r\n  Example.org  \r\n\r\nexample.org.\r\n*.CDN.example.org\r\n*.cdn.example.org\r\n# tail\r\n';
     const result = deduplicateListContent(source, 'user.list');

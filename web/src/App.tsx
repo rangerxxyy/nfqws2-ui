@@ -632,24 +632,8 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      {"\n                    "}
-                      <option value={"eth3"}>
-                        {"eth3 (Провайдер)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"ppp0"}>
-                        {"ppp0 (PPPoE)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"eth2.2"}>
-                        {"eth2.2 (VLAN)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"nwg0"}>
-                        {"nwg0 (WireGuard)"}
-                      </option>
-                      {"\n                  "}
+                    <select defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                      <option value={""}>{"Backend ещё не обнаружил сетевые интерфейсы"}</option>
                     </select>
                     {"\n                "}
                   </div>

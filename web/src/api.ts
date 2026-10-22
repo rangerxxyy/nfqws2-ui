@@ -26,6 +26,7 @@ export type NfqwsModuleReference = {
 };
 export type NfqwsInstallation = {
   platform: 'entware' | 'unknown';
+  networkInterfaces: string[];
   config: InstallationPath | null;
   configCandidates: InstallationPath[];
   initScript: InstallationPath | null;

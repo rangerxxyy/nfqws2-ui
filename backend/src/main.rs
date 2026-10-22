@@ -8,8 +8,8 @@ use axum::{
     routing::{get, post},
 };
 use nfqws2_ui::{
-    ServiceAction, ServiceState, known_config_paths, known_init_scripts, parse_meminfo_kb,
-    service_action, service_status,
+    ServiceAction, ServiceState, known_config_paths, known_init_scripts, network_interface_names,
+    parse_meminfo_kb, service_action, service_status,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -81,6 +81,7 @@ struct PathInfo {
 #[serde(rename_all = "camelCase")]
 struct InstallationResponse {
     platform: &'static str,
+    network_interfaces: Vec<String>,
     config: Option<PathInfo>,
     config_candidates: Vec<PathInfo>,
     init_script: Option<PathInfo>,
@@ -394,6 +395,7 @@ async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
         .unwrap_or("unknown");
     Json(InstallationResponse {
         platform,
+        network_interfaces: network_interface_names(Path::new("/sys/class/net")),
         config: config.as_deref().map(|path| inspect_path(path, true)),
         config_candidates,
         init_script: init_script.as_deref().map(|path| inspect_path(path, false)),
@@ -430,19 +432,10 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
 async fn get_status(State(state): State<Arc<AppState>>) -> Response {
     let (service_state, detail) = service_status().await;
     let meminfo = tokio::fs::read_to_string("/proc/meminfo").await.ok();
-    let total_kb = meminfo.as_deref().and_then(parse_meminfo_kb);
-    let available_kb = meminfo
+    let (memory_used_bytes, memory_total_bytes) = meminfo
         .as_deref()
-        .and_then(|text| parse_meminfo_kb_key(text, "MemAvailable"))
-        .or_else(|| {
-            meminfo
-                .as_deref()
-                .and_then(|text| parse_meminfo_kb_key(text, "MemFree"))
-        });
-    let memory_total_bytes = total_kb.map(|kb| kb.saturating_mul(1024));
-    let memory_used_bytes = total_kb
-        .zip(available_kb)
-        .map(|(total, free)| total.saturating_sub(free).saturating_mul(1024));
+        .and_then(memory_usage_bytes)
+        .map_or((None, None), |(used, total)| (Some(used), Some(total)));
     let cpu_percent = cpu_sample(&state).await;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -479,6 +472,24 @@ fn parse_meminfo_kb_key(text: &str, key: &str) -> Option<u64> {
         let value = parts.next()?.parse::<u64>().ok()?;
         (parts.next() == Some("kB")).then_some(value)
     })
+}
+
+fn memory_usage_bytes(meminfo: &str) -> Option<(u64, u64)> {
+    let total_kb = parse_meminfo_kb(meminfo)?;
+    let available_kb = parse_meminfo_kb_key(meminfo, "MemAvailable").or_else(|| {
+        let free = parse_meminfo_kb_key(meminfo, "MemFree")?;
+        let buffers = parse_meminfo_kb_key(meminfo, "Buffers").unwrap_or(0);
+        let cached = parse_meminfo_kb_key(meminfo, "Cached").unwrap_or(0);
+        let shared = parse_meminfo_kb_key(meminfo, "Shmem").unwrap_or(0);
+        Some(
+            free.saturating_add(buffers)
+                .saturating_add(cached)
+                .saturating_sub(shared),
+        )
+    })?;
+    let total_bytes = total_kb.saturating_mul(1024);
+    let used_bytes = total_kb.saturating_sub(available_kb).saturating_mul(1024);
+    Some((used_bytes, total_bytes))
 }
 
 fn parse_cpu_counters(text: &str) -> Option<(u64, u64)> {
@@ -1881,6 +1892,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let report = body_json(response).await;
         assert_eq!(report["platform"], "unknown");
+        assert!(report["networkInterfaces"].is_array());
         assert_eq!(report["config"]["path"], config.display().to_string());
         assert_eq!(report["config"]["exists"], true);
         assert_eq!(report["config"]["usedByActiveConfig"], true);
@@ -2124,6 +2136,48 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn list_index_returns_every_existing_file_referenced_by_active_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(
+            &config,
+            "NFQWS_ARGS=--hostlist=lists/user.list --hostlist-auto=lists/auto.list --hostlist-exclude=lists/exclude.list --ipset=lists/ipset.list --ipset-exclude=lists/ipset_exclude.list\n",
+        )
+        .await
+        .unwrap();
+        for id in LIST_IDS {
+            tokio::fs::write(list_dir.join(id), "sample\n")
+                .await
+                .unwrap();
+        }
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let report = body_json(response).await;
+        let ids = report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| file["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, LIST_IDS);
+    }
+
     #[test]
     fn list_validation_keeps_comments_and_accepts_domain_and_cidr_formats() {
         assert!(
@@ -2315,6 +2369,26 @@ mod tests {
         assert_eq!(parse_cpu_counters("cpu bad data"), None);
         assert_eq!(parse_cpu_counters("cpu 100 10 bad 800 30 5 5 10"), None);
         assert_eq!(cpu_percent_between((100, 80), (90, 70)), None);
+    }
+
+    #[test]
+    fn memory_metrics_prefer_kernel_memavailable_for_used_memory() {
+        let (used, total) = memory_usage_bytes(
+            "MemTotal: 1000 kB\nMemFree: 100 kB\nMemAvailable: 700 kB\nBuffers: 40 kB\nCached: 120 kB\n",
+        )
+        .unwrap();
+        assert_eq!(total, 1000 * 1024);
+        assert_eq!(used, 300 * 1024);
+    }
+
+    #[test]
+    fn memory_metrics_estimate_reclaimable_cache_on_older_kernels() {
+        let (used, total) = memory_usage_bytes(
+            "MemTotal: 1000 kB\nMemFree: 100 kB\nBuffers: 50 kB\nCached: 200 kB\nShmem: 20 kB\n",
+        )
+        .unwrap();
+        assert_eq!(total, 1000 * 1024);
+        assert_eq!(used, 670 * 1024);
     }
 
     #[tokio::test]

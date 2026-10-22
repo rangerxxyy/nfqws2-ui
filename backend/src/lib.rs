@@ -87,6 +87,19 @@ pub fn known_config_paths() -> [PathBuf; 2] {
     ]
 }
 
+pub fn network_interface_names(sys_class_net: &std::path::Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(sys_class_net) else {
+        return Vec::new();
+    };
+    let mut names = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.metadata().is_ok_and(|metadata| metadata.is_dir()))
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
 pub fn process_matches(pid: u32, cmdline: &[u8], expected_binaries: &[&str]) -> bool {
     if pid == 0 || cmdline.is_empty() {
         return false;
@@ -270,6 +283,17 @@ mod tests {
         assert!(process_matches(10, b"/opt/usr/bin/nfqws2\0--debug", &paths));
         assert!(!process_matches(10, b"/tmp/nfqws2-evil\0--debug", &paths));
         assert!(!process_matches(0, b"/opt/usr/bin/nfqws2\0", &paths));
+    }
+
+    #[test]
+    fn network_interface_discovery_lists_only_real_sysfs_names_in_stable_order() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("wan0")).unwrap();
+        std::fs::create_dir(root.path().join("br-lan")).unwrap();
+        std::fs::write(root.path().join("not-a-directory"), "ignored").unwrap();
+
+        assert_eq!(network_interface_names(root.path()), ["br-lan", "wan0"]);
+        assert!(network_interface_names(&root.path().join("missing")).is_empty());
     }
 
     #[test]
