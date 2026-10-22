@@ -198,6 +198,51 @@ pub fn firewall_trace_safe(init_script: &str, input_output_rules: &str) -> bool 
     !init.trim().is_empty() && !touches_router_hooks && !input_output_rules.trim().is_empty()
 }
 
+pub fn policy_route_mark(firewall_snapshot: &str) -> Option<String> {
+    for line in firewall_snapshot.lines() {
+        let tokens = line.split_whitespace().collect::<Vec<_>>();
+        if tokens.first() != Some(&"-A") || tokens.get(1) != Some(&"nfqws_post") {
+            continue;
+        }
+        let Some(module) = tokens.windows(2).position(|pair| pair == ["-m", "mark"]) else {
+            continue;
+        };
+        let Some(mark_flag) = tokens.iter().position(|token| *token == "--mark") else {
+            continue;
+        };
+        let negated = mark_flag > module + 2 && tokens[mark_flag - 1] == "!";
+        if !negated || !tokens.windows(2).any(|pair| pair == ["-j", "RETURN"]) {
+            continue;
+        }
+        let Some(value) = tokens.get(mark_flag + 1) else {
+            continue;
+        };
+        if valid_policy_mark(value) {
+            return Some((*value).to_owned());
+        }
+    }
+    None
+}
+
+fn valid_policy_mark(value: &str) -> bool {
+    let Some((mark, mask)) = value.split_once('/') else {
+        return false;
+    };
+    let is_hex = |value: &str| {
+        value
+            .strip_prefix("0x")
+            .or_else(|| value.strip_prefix("0X"))
+            .is_some_and(|digits| {
+                !digits.is_empty()
+                    && digits.len() <= 8
+                    && digits.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+    };
+    is_hex(mark)
+        && is_hex(mask)
+        && ["0xfffffff", "0x0fffffff"].contains(&mask.to_ascii_lowercase().as_str())
+}
+
 async fn command(program: &str, args: &[&str]) -> Result<(i32, Vec<u8>), String> {
     let mut child = Command::new(program)
         .args(args)
@@ -297,7 +342,7 @@ fn fw_args(
             "--dport".into(),
             port.to_string(),
             "--sport".into(),
-            "40000:40099".into(),
+            "40000:40999".into(),
         ]);
     } else {
         args.extend([
@@ -306,10 +351,17 @@ fn fw_args(
             "--sport".into(),
             port.to_string(),
             "--dport".into(),
-            "40000:40099".into(),
+            "40000:40999".into(),
         ]);
     }
     if let Some(queue_num) = queue {
+        args.extend([
+            "-m".into(),
+            "mark".into(),
+            "!".into(),
+            "--mark".into(),
+            "0x40000000/0x40000000".into(),
+        ]);
         args.extend([
             "-j".into(),
             "NFQUEUE".into(),
@@ -367,6 +419,50 @@ fn trace_chain_name(token: &str, direction: &str) -> String {
     format!("N2U{}{}", if direction == "out" { 'O' } else { 'I' }, token)
 }
 
+fn trace_hook(direction: &str) -> &'static str {
+    if direction == "out" {
+        "POSTROUTING"
+    } else {
+        "PREROUTING"
+    }
+}
+
+fn policy_mark_rule(chain: &str, mark: &str) -> Option<Vec<String>> {
+    if !valid_policy_mark(mark) || !chain.starts_with("N2UM") {
+        return None;
+    }
+    Some(vec![
+        "-w".into(),
+        "-t".into(),
+        "mangle".into(),
+        "-A".into(),
+        chain.into(),
+        "-p".into(),
+        "tcp".into(),
+        "--sport".into(),
+        "40000:40999".into(),
+        "-j".into(),
+        "MARK".into(),
+        "--set-xmark".into(),
+        mark.into(),
+    ])
+}
+
+fn chain_jump(action: &str, hook: &str, chain: &str) -> Vec<String> {
+    let mut args = vec![
+        "-w".into(),
+        "-t".into(),
+        "mangle".into(),
+        action.into(),
+        hook.into(),
+    ];
+    if action == "-I" {
+        args.push("1".into());
+    }
+    args.extend(["-j".into(), chain.into()]);
+    args
+}
+
 fn hook_jump(
     action: &str,
     hook: &str,
@@ -393,7 +489,7 @@ fn hook_jump(
             "--dport".into(),
             port.to_string(),
             "--sport".into(),
-            "40000:40099".into(),
+            "40000:40999".into(),
         ]);
     } else {
         args.extend([
@@ -402,7 +498,7 @@ fn hook_jump(
             "--sport".into(),
             port.to_string(),
             "--dport".into(),
-            "40000:40099".into(),
+            "40000:40999".into(),
         ]);
     }
     args.extend(["-j".into(), chain.into()]);
@@ -419,6 +515,7 @@ async fn install_rules(
     port: u16,
     queue: Option<u16>,
     token: &str,
+    policy_mark: Option<&str>,
 ) -> Result<Vec<Vec<String>>, String> {
     let output_chain = trace_chain_name(token, "out");
     let input_chain = trace_chain_name(token, "in");
@@ -469,10 +566,8 @@ async fn install_rules(
             }
         }
     }
-    for (hook, direction, chain) in [
-        ("OUTPUT", "out", output_chain.as_str()),
-        ("INPUT", "in", input_chain.as_str()),
-    ] {
+    for (direction, chain) in [("out", output_chain.as_str()), ("in", input_chain.as_str())] {
+        let hook = trace_hook(direction);
         let insert = hook_jump("-I", hook, address, direction, port, chain);
         if let Err(error) = iptables_owned(&insert).await {
             return match remove_rules(&cleanup).await {
@@ -483,6 +578,58 @@ async fn install_rules(
             };
         }
         cleanup.push(hook_jump("-D", hook, address, direction, port, chain));
+    }
+    if let Some(mark) = policy_mark {
+        let chain = format!("N2UM{token}");
+        let create = vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-N".into(),
+            chain.clone(),
+        ];
+        if let Err(error) = iptables_owned(&create).await {
+            return match remove_rules(&cleanup).await {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(format!(
+                    "{error}; очистка частично созданных цепочек не подтверждена: {cleanup_error}"
+                )),
+            };
+        }
+        cleanup.push(vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-X".into(),
+            chain.clone(),
+        ]);
+        if let Some(rule) = policy_mark_rule(&chain, mark) {
+            if let Err(error) = iptables_owned(&rule).await {
+                return match remove_rules(&cleanup).await {
+                    Ok(()) => Err(error),
+                    Err(cleanup_error) => Err(format!(
+                        "{error}; очистка частично созданных цепочек не подтверждена: {cleanup_error}"
+                    )),
+                };
+            }
+            cleanup.push(vec![
+                "-w".into(),
+                "-t".into(),
+                "mangle".into(),
+                "-F".into(),
+                chain.clone(),
+            ]);
+        }
+        let insert = chain_jump("-I", "OUTPUT", &chain);
+        if let Err(error) = iptables_owned(&insert).await {
+            return match remove_rules(&cleanup).await {
+                Ok(()) => Err(error),
+                Err(cleanup_error) => Err(format!(
+                    "{error}; очистка частично подключённых цепочек не подтверждена: {cleanup_error}"
+                )),
+            };
+        }
+        cleanup.push(chain_jump("-D", "OUTPUT", &chain));
     }
     Ok(cleanup)
 }
@@ -529,13 +676,13 @@ async fn probe(
                 "--max-redirs",
                 "0",
                 "--local-port",
-                "40000-40099",
+                "40000-40999",
                 "--resolve",
                 &address,
                 "--output",
                 if cfg!(windows) { "NUL" } else { "/dev/null" },
                 "--write-out",
-                "\nNFQWS_TRACE|%{http_code}|%{time_total}",
+                "\nNFQWS_TRACE|%{http_code}|%{time_total}|%{errormsg}|%{time_connect}|%{time_appconnect}|%{time_starttransfer}",
                 &url,
             ])
             .stdin(Stdio::null())
@@ -572,12 +719,72 @@ async fn probe(
         .and_then(|v| v.parse::<f64>().ok())
         .filter(|v| v.is_finite() && *v >= 0.0)
         .map(|v| (v * 1000.0).round() as u64);
+    let metric = |index: usize| {
+        fields
+            .get(index)
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or_default()
+    };
     let reason = if let Some(code) = code {
         format!("Получен HTTP {code}; сервер ответил")
     } else {
-        format!("Запрос не получил HTTP-ответ (curl exit {})", output.0)
+        trace_failure_reason(
+            proto,
+            fields.get(2).copied().unwrap_or_default(),
+            metric(4),
+            metric(5),
+            metric(6),
+            output.0,
+        )
     };
     Ok((code, ms, reason))
+}
+
+fn trace_failure_reason(
+    proto: &str,
+    curl_error: &str,
+    time_connect: f64,
+    time_appconnect: f64,
+    time_starttransfer: f64,
+    exit_code: i32,
+) -> String {
+    let stage = if time_connect == 0.0 {
+        "TCP-подключения"
+    } else if proto == "https" && time_appconnect == 0.0 {
+        "TLS"
+    } else if time_starttransfer == 0.0 {
+        "HTTP-ответа"
+    } else {
+        "передачи данных"
+    };
+    let error = if curl_error.trim().is_empty() {
+        format!("curl завершился с кодом {exit_code}")
+    } else {
+        curl_error.trim().to_owned()
+    };
+    let label = if error.to_ascii_lowercase().contains("timed out")
+        || error.to_ascii_lowercase().contains("timeout")
+    {
+        "Тайм-аут"
+    } else {
+        "Ошибка"
+    };
+    format!("{label} на этапе {stage}: {error}")
+}
+
+fn trace_summary(without_nfqws2: Option<bool>, with_nfqws2: Option<bool>) -> &'static str {
+    match (without_nfqws2, with_nfqws2) {
+        (Some(true), Some(true)) => "Сайт ответил в обоих режимах",
+        (Some(false), Some(true)) => "Сайт ответил только через nfqws2",
+        (Some(true), Some(false)) => {
+            "Базовый запрос прошёл, а с nfqws2 нет; проверьте журнал профиля"
+        }
+        (Some(false), Some(false)) => {
+            "HTTP-ответ не получен ни в одном режиме; причина не установлена"
+        }
+        _ => "Результат неопределён: один из этапов завершился технической ошибкой",
+    }
 }
 
 async fn stop_child(child: &mut Child) {
@@ -642,19 +849,13 @@ pub async fn run(
         return report;
     }
     let iptables_program = program_path("iptables");
-    let safe_rules = command(&iptables_program, &["-w", "-t", "mangle", "-S", "INPUT"]).await;
-    let safe_output = command(&iptables_program, &["-w", "-t", "mangle", "-S", "OUTPUT"]).await;
-    let input_output_snapshot = match (safe_rules, safe_output) {
-        (Ok((0, input)), Ok((0, output))) => format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&input),
-            String::from_utf8_lossy(&output)
-        ),
-        _ => String::new(),
-    };
-    if input_output_snapshot.is_empty()
-        || !firewall_trace_safe(&init_script, &input_output_snapshot)
-    {
+    let firewall_snapshot = command(&iptables_program, &["-w", "-t", "mangle", "-S"])
+        .await
+        .ok()
+        .filter(|(status, _)| *status == 0)
+        .map(|(_, output)| String::from_utf8_lossy(&output).into_owned())
+        .unwrap_or_default();
+    if firewall_snapshot.is_empty() || !firewall_trace_safe(&init_script, &firewall_snapshot) {
         report.without_nfqws2 = TracePhase::unavailable(
             "Не удалось подтвердить безопасное владение тестовыми правилами; firewall не изменялся",
         );
@@ -667,37 +868,42 @@ pub async fn run(
         report.summary = "Трассировка остановлена до изменения firewall".into();
         return report;
     }
-    let (base_code, base_ms, base_reason) = match install_rules(address, port, None, &token).await {
-        Ok(rules) => {
-            if cancel.load(Ordering::Acquire) {
+    let policy_mark = policy_route_mark(&firewall_snapshot);
+    let (base_code, base_ms, base_reason) =
+        match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
+            Ok(rules) => {
+                if cancel.load(Ordering::Acquire) {
+                    let cleanup = remove_rules(&rules).await;
+                    report.without_nfqws2 = TracePhase::unavailable(match cleanup {
+                        Ok(()) => "Остановлено до запроса; временные правила удалены".into(),
+                        Err(error) => {
+                            format!("Остановлено; очистка правил не подтверждена: {error}")
+                        }
+                    });
+                    report.summary = "Трассировка остановлена".into();
+                    return report;
+                }
+                let result = probe(&host, address, proto).await;
                 let cleanup = remove_rules(&rules).await;
-                report.without_nfqws2 = TracePhase::unavailable(match cleanup {
-                    Ok(()) => "Остановлено до запроса; временные правила удалены".into(),
-                    Err(error) => format!("Остановлено; очистка правил не подтверждена: {error}"),
-                });
-                report.summary = "Трассировка остановлена".into();
+                match (result, cleanup) {
+                    (Ok(value), Ok(())) => value,
+                    (Err(e), Ok(())) => (None, None, e),
+                    (_, Err(e)) => (
+                        None,
+                        None,
+                        format!("Не удалось очистить временные правила: {e}"),
+                    ),
+                }
+            }
+            Err(error) => {
+                report.without_nfqws2 = TracePhase::unavailable(format!(
+                    "Не удалось изолировать базовый запрос: {error}"
+                ));
+                report.with_nfqws2 = TracePhase::unavailable("Тестовая очередь не запускалась");
+                report.summary = "Проверка не завершена".into();
                 return report;
             }
-            let result = probe(&host, address, proto).await;
-            let cleanup = remove_rules(&rules).await;
-            match (result, cleanup) {
-                (Ok(value), Ok(())) => value,
-                (Err(e), Ok(())) => (None, None, e),
-                (_, Err(e)) => (
-                    None,
-                    None,
-                    format!("Не удалось очистить временные правила: {e}"),
-                ),
-            }
-        }
-        Err(error) => {
-            report.without_nfqws2 =
-                TracePhase::unavailable(format!("Не удалось изолировать базовый запрос: {error}"));
-            report.with_nfqws2 = TracePhase::unavailable("Тестовая очередь не запускалась");
-            report.summary = "Проверка не завершена".into();
-            return report;
-        }
-    };
+        };
     report.without_nfqws2 = phase_from_http(base_code, base_ms, base_reason);
     if report
         .without_nfqws2
@@ -800,7 +1006,9 @@ pub async fn run(
             }
         }
     }
-    let rules = match install_rules(address, port, Some(queue), &token).await {
+    let rules = match install_rules(address, port, Some(queue), &token, policy_mark.as_deref())
+        .await
+    {
         Ok(rules) => rules,
         Err(error) => {
             report.with_nfqws2 =
@@ -899,14 +1107,7 @@ pub async fn run(
         report.summary = "Трассировка остановлена; временный процесс и правила очищены".into();
         return report;
     }
-    report.summary = match (report.without_nfqws2.ok, report.with_nfqws2.ok) {
-        (Some(true), Some(true)) => "Сайт ответил в обоих режимах".into(),
-        (Some(false), Some(true)) => "Сайт ответил только через nfqws2".into(),
-        (Some(true), Some(false)) => {
-            "Базовый запрос прошёл, а с nfqws2 нет; проверьте журнал профиля".into()
-        }
-        _ => "Результат неопределён: один из этапов завершился технической ошибкой".into(),
-    };
+    report.summary = trace_summary(report.without_nfqws2.ok, report.with_nfqws2.ok).into();
     report
 }
 
@@ -1005,6 +1206,34 @@ mod tests {
     }
 
     #[test]
+    fn timeout_reason_identifies_whether_tcp_tls_or_http_reached_timeout() {
+        assert_eq!(
+            trace_failure_reason("https", "Connection timed out", 0.0, 0.0, 0.0, 28),
+            "Тайм-аут на этапе TCP-подключения: Connection timed out"
+        );
+        assert_eq!(
+            trace_failure_reason("https", "Operation timed out", 0.2, 0.0, 0.0, 28),
+            "Тайм-аут на этапе TLS: Operation timed out"
+        );
+        assert_eq!(
+            trace_failure_reason("https", "Operation timed out", 0.2, 0.4, 0.0, 28),
+            "Тайм-аут на этапе HTTP-ответа: Operation timed out"
+        );
+    }
+
+    #[test]
+    fn two_missing_http_responses_are_not_reported_as_an_internal_error() {
+        assert_eq!(
+            trace_summary(Some(false), Some(false)),
+            "HTTP-ответ не получен ни в одном режиме; причина не установлена"
+        );
+        assert_eq!(
+            trace_summary(Some(true), Some(true)),
+            "Сайт ответил в обоих режимах"
+        );
+    }
+
+    #[test]
     fn trace_log_is_bounded_and_keeps_text_as_text() {
         let input = format!(
             "<script>alert(1)</script>\n{}",
@@ -1044,7 +1273,7 @@ mod tests {
         assert!(
             baseline
                 .windows(2)
-                .any(|pair| pair == ["--sport", "40000:40099"])
+                .any(|pair| pair == ["--sport", "40000:40999"])
         );
         assert!(baseline.ends_with(&["-j".into(), "ACCEPT".into()]));
 
@@ -1055,6 +1284,11 @@ mod tests {
                 .any(|pair| pair == ["-s", "93.184.216.34"])
         );
         assert!(queued.windows(2).any(|pair| pair == ["--sport", "80"]));
+        assert!(
+            queued
+                .windows(2)
+                .any(|pair| pair == ["--mark", "0x40000000/0x40000000"])
+        );
         assert!(queued.ends_with(&["--queue-num".into(), "303".into(), "--queue-bypass".into()]));
     }
 
@@ -1064,12 +1298,44 @@ mod tests {
         let chain = trace_chain_name("abcd1234ef", "out");
         assert_eq!(chain, "N2UOabcd1234ef");
         assert!(chain.len() <= 28);
-        let insert = hook_jump("-I", "OUTPUT", target, "out", 443, &chain);
-        let delete = hook_jump("-D", "OUTPUT", target, "out", 443, &chain);
+        let insert = hook_jump("-I", "POSTROUTING", target, "out", 443, &chain);
+        let delete = hook_jump("-D", "POSTROUTING", target, "out", 443, &chain);
         assert!(insert.windows(2).any(|pair| pair == ["-j", chain.as_str()]));
         assert!(delete.windows(2).any(|pair| pair == ["-j", chain.as_str()]));
-        assert!(insert.contains(&"40000:40099".into()));
+        assert!(insert.contains(&"40000:40999".into()));
         assert!(insert.contains(&target.to_string()));
+        assert!(
+            hook_jump("-I", "PREROUTING", target, "in", 443, &chain)
+                .windows(2)
+                .any(|pair| pair == ["-j", chain.as_str()])
+        );
+    }
+
+    #[test]
+    fn detects_only_policy_mark_rules_and_reapplies_the_mark_before_route_lookup() {
+        let rules = "-N nfqws_post\n-A nfqws_post -m mark ! --mark 0x123/0x0fffffff -j RETURN";
+        assert_eq!(
+            policy_route_mark(rules).as_deref(),
+            Some("0x123/0x0fffffff")
+        );
+        assert_eq!(
+            policy_route_mark("-A nfqws_post -m mark --mark 0x123/0x0fffffff -j RETURN"),
+            None
+        );
+        assert_eq!(
+            policy_route_mark("-A nfqws_post -m mark ! --mark injected;id -j RETURN"),
+            None
+        );
+        let rule = policy_mark_rule("N2UMabc123", "0x123/0x0fffffff").unwrap();
+        assert!(
+            rule.windows(2)
+                .any(|pair| pair == ["--sport", "40000:40999"])
+        );
+        assert!(
+            rule.windows(2)
+                .any(|pair| pair == ["--set-xmark", "0x123/0x0fffffff"])
+        );
+        assert!(rule.ends_with(&["--set-xmark".into(), "0x123/0x0fffffff".into()]));
     }
 
     #[test]
@@ -1082,12 +1348,10 @@ mod tests {
         assert!(
             rules[1]
                 .windows(2)
-                .any(|pair| pair == ["--sport", "40000:40099"])
+                .any(|pair| pair == ["--sport", "40000:40999"])
         );
-        assert!(firewall_trace_safe(
-            "# init script does not manage INPUT/OUTPUT",
-            "-A OUTPUT -j NFQUEUE --queue-num 300"
-        ));
+        assert_eq!(trace_hook("out"), "POSTROUTING");
+        assert_eq!(trace_hook("in"), "PREROUTING");
     }
 
     #[test]

@@ -7,6 +7,7 @@ import App from './App';
 const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
 const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8');
+const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8');
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel without authentication', () => {
@@ -90,6 +91,16 @@ describe('TSX panel without authentication', () => {
     expect(existsSync(new URL('../index.html', import.meta.url))).toBe(false);
     expect(template).toContain('id="tabContent-conf"');
     expect(template).toContain('id="tabContent-lists"');
+  });
+
+  it('allows the page and trace log to scroll inside the viewport shell', () => {
+    expect(entrySource).toContain("mount.className = 'flex flex-col h-full min-h-0'");
+    expect(template).toContain('flex-1 min-h-0 flex overflow-hidden');
+    expect(template).toContain('<main class="flex-1 min-h-0 overflow-y-auto');
+  });
+
+  it('does not show third-party project names in the panel copy', () => {
+    expect(template.toLowerCase()).not.toContain('zemidala');
   });
 
   it('keeps the supplied panel structure and has no authorization screen', () => {

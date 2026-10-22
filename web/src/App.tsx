@@ -216,7 +216,7 @@ export default function App() {
 {"\n  "}
 {"\n  "}
 {"\n  "}
-    <div className={"flex-1 flex overflow-hidden max-w-[1920px] w-full mx-auto"}>
+    <div className={"flex-1 min-h-0 flex overflow-hidden max-w-[1920px] w-full mx-auto"}>
       {"\n\n    "}
       {"\n    "}
       <aside className={"w-64 lg:w-72 bg-[#090e1a] border-r border-slate-800/90 flex flex-col justify-between shrink-0 overflow-y-auto select-none"}>
@@ -476,7 +476,7 @@ export default function App() {
       {"\n    "}
       {"\n    "}
       {"\n    "}
-      <main className={"flex-1 overflow-y-auto p-4 lg:p-6 bg-slate-950"}>
+      <main className={"flex-1 min-h-0 overflow-y-auto p-4 lg:p-6 bg-slate-950"}>
         {"\n\n      "}
         {"\n      "}
         {"\n      "}
@@ -1072,7 +1072,7 @@ export default function App() {
               <button id={"traceStopButton"} data-action-click={"stopSiteTrace"} className={"hidden px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 font-bold text-sm transition-all"}>Остановить</button>
             </div>
             <p id={"traceOperationStatus"} className={"hidden mt-3 text-xs text-blue-300"} role={"status"} aria-live={"polite"}></p>
-            <p className={"mt-3 text-xs text-slate-500"}>Трассировка повторяет HTTP/HTTPS-процесс Zemidala. Проверка QUIC/HTTP3 остаётся отдельным этапом в «Проверке сайта».</p>
+              <p className={"mt-3 text-xs text-slate-500"}>Трассировка запускает копию текущей конфигурации с подробным журналом nfqws2. Проверка QUIC/HTTP3 остаётся отдельным этапом в «Проверке сайта».</p>
           </div>
           <div id={"traceResultContainer"} className={"grid grid-cols-1 lg:grid-cols-2 gap-5"}></div>
         </section>
