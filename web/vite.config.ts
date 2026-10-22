@@ -34,6 +34,10 @@ const serveDevShell: Plugin = {
 
 export default defineConfig({
   plugins: [serveDevShell],
+  // Library mode does not replace React's process.env.NODE_ENV check by
+  // default. The emitted browser bundle then throws because `process` is
+  // undefined, leaving the server-rendered shell completely blank.
+  define: { 'process.env.NODE_ENV': JSON.stringify('production') },
   server: { proxy: { '/api': 'http://127.0.0.1:1002' } },
   build: {
     lib: {

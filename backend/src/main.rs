@@ -87,6 +87,19 @@ struct InstallationResponse {
     init_script_candidates: Vec<PathInfo>,
     binary_candidates: Vec<PathInfo>,
     lists: Vec<PathInfo>,
+    module_references: Vec<ModuleReference>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModuleReference {
+    kind: &'static str,
+    argument: String,
+    path: Option<String>,
+    resolved_path: Option<String>,
+    exists: bool,
+    readable: bool,
+    resolution: &'static str,
 }
 
 #[derive(Serialize)]
@@ -225,8 +238,123 @@ fn inspect_path(path: &Path, used_by_active_config: bool) -> PathInfo {
     }
 }
 
+fn module_references(config_text: &str) -> Vec<ModuleReference> {
+    let mut references = Vec::new();
+    for line in config_text.lines() {
+        let line = strip_shell_comment(line);
+        // nfqws init scripts commonly store a complete argument list in one
+        // quoted shell assignment (for example NFQWS_ARGS="--lua-init=... --blob=...").
+        // Inspect the literal arguments inside that outer assignment without
+        // evaluating shell expansions or command substitutions.
+        let line =
+            line.split_once('=')
+                .and_then(|(name, value)| {
+                    let value = value.trim();
+                    let quote = value.chars().next()?;
+                    (matches!(quote, '\'' | '"') && value.ends_with(quote) && value.len() >= 2)
+                        .then(|| {
+                            format!(
+                                "{} {}",
+                                name.trim(),
+                                &value[quote.len_utf8()..value.len() - quote.len_utf8()]
+                            )
+                        })
+                })
+                .unwrap_or_else(|| line.to_string());
+        let mut word = String::new();
+        let mut quote = None;
+        let mut words = Vec::new();
+        let flush = |word: &mut String, words: &mut Vec<String>| {
+            if !word.is_empty() {
+                words.push(std::mem::take(word));
+            }
+        };
+        for character in line.chars() {
+            match quote {
+                Some(delimiter) if character == delimiter => quote = None,
+                Some(_) => word.push(character),
+                None if character == '\'' || character == '"' => quote = Some(character),
+                None if character.is_whitespace() || character == ';' => {
+                    flush(&mut word, &mut words)
+                }
+                None => word.push(character),
+            }
+        }
+        flush(&mut word, &mut words);
+
+        for word in words {
+            let Some(flag_start) = word.find("--") else {
+                continue;
+            };
+            let argument = &word[flag_start..];
+            let (kind, raw_path) = if let Some(value) = argument.strip_prefix("--lua-init=@") {
+                ("lua", value)
+            } else if let Some(value) = argument.strip_prefix("--blob=") {
+                let Some((_, path)) = value.rsplit_once('@') else {
+                    continue;
+                };
+                ("blob", path)
+            } else {
+                continue;
+            };
+            if raw_path.is_empty()
+                || references
+                    .iter()
+                    .any(|reference: &ModuleReference| reference.argument == argument)
+            {
+                continue;
+            }
+
+            let dynamic = raw_path.contains('$') || raw_path.starts_with('~');
+            let path = (!dynamic).then(|| PathBuf::from(raw_path));
+            let absolute = path.as_ref().is_some_and(|path| path.is_absolute());
+            let mut resolved = path.as_ref().filter(|_| absolute).cloned();
+            if let Some(candidate) = resolved.as_ref()
+                && !candidate.is_file()
+                && kind == "lua"
+            {
+                let mut gzip_name = candidate.as_os_str().to_os_string();
+                gzip_name.push(".gz");
+                let gzip_path = PathBuf::from(gzip_name);
+                if gzip_path.is_file() {
+                    resolved = Some(gzip_path);
+                } else {
+                    resolved = None;
+                }
+            }
+            let exists = resolved
+                .as_ref()
+                .is_some_and(|candidate| candidate.is_file());
+            let readable = resolved
+                .as_ref()
+                .is_some_and(|candidate| std::fs::File::open(candidate).is_ok());
+            references.push(ModuleReference {
+                kind,
+                argument: argument.to_string(),
+                path: path.map(|path| path.display().to_string()),
+                resolved_path: resolved.map(|path| path.display().to_string()),
+                exists,
+                readable,
+                resolution: if dynamic {
+                    "dynamic"
+                } else if absolute {
+                    "absolute"
+                } else {
+                    "relative_unknown"
+                },
+            });
+        }
+    }
+    references
+}
+
 async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
     let config = config_path_for_state(&state);
+    let module_references = config
+        .as_deref()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|text| module_references(&text))
+        .unwrap_or_default();
     let config_candidates = known_config_paths()
         .iter()
         .map(|candidate| {
@@ -272,6 +400,7 @@ async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
         init_script_candidates,
         binary_candidates,
         lists,
+        module_references,
     })
     .into_response()
 }
@@ -1717,13 +1846,26 @@ mod tests {
         let root = dir.path().join("etc/nfqws2");
         let config = root.join("nfqws2.conf");
         let list = root.join("custom/domains.list");
+        let lua = root.join("lua/custom.lua");
+        let blob = root.join("blobs/tls.bin");
         tokio::fs::create_dir_all(list.parent().unwrap())
             .await
             .unwrap();
-        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=custom/domains.list\n")
+        tokio::fs::create_dir_all(lua.parent().unwrap())
             .await
             .unwrap();
+        tokio::fs::create_dir_all(blob.parent().unwrap())
+            .await
+            .unwrap();
+        let config_text = format!(
+            "NFQWS_ARGS=\"--hostlist=custom/domains.list --lua-init=@{} --blob=tls_clienthello:@{}\"\n",
+            lua.display(),
+            blob.display(),
+        );
+        tokio::fs::write(&config, config_text).await.unwrap();
         tokio::fs::write(&list, "example.org\n").await.unwrap();
+        tokio::fs::write(&lua, "-- module\n").await.unwrap();
+        tokio::fs::write(&blob, b"blob").await.unwrap();
         let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
         let app = api_router(state, dir.path().join("web"));
 
@@ -1749,6 +1891,53 @@ mod tests {
         );
         assert_eq!(report["lists"][0]["usedByActiveConfig"], true);
         assert_eq!(report["lists"][0]["readable"], true);
+        assert_eq!(report["moduleReferences"].as_array().unwrap().len(), 2);
+        assert_eq!(report["moduleReferences"][0]["kind"], "lua");
+        assert_eq!(
+            report["moduleReferences"][0]["resolvedPath"],
+            lua.display().to_string()
+        );
+        assert_eq!(report["moduleReferences"][0]["readable"], true);
+        assert_eq!(report["moduleReferences"][1]["kind"], "blob");
+        assert_eq!(report["moduleReferences"][1]["exists"], true);
+    }
+
+    #[test]
+    fn module_reference_discovery_checks_literal_files_without_evaluating_shell() {
+        let dir = tempfile::tempdir().unwrap();
+        let lua = dir.path().join("lua/custom.lua");
+        let lua_gzip = PathBuf::from(format!("{}.gz", lua.display()));
+        let blob = dir.path().join("blobs/tls.bin");
+        std::fs::create_dir_all(lua.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+        std::fs::write(&lua_gzip, b"compressed").unwrap();
+        std::fs::write(&blob, b"blob").unwrap();
+        let config = format!(
+            "NFQWS_ARGS=\"--lua-init=@{} --blob=tls_clienthello:+1@{}\"\nMODE_X=\"--lua-init=@$DYNAMIC_LUA\"\nNFQWS_EXTRA_ARGS=\"--blob=relative:@blobs/other.bin\"\n# --lua-init=@/commented/out.lua\nNFQWS_ARGS_CUSTOM=\"--lua-init=print(1) --blob=inline:0x1234\"\n",
+            lua.display(),
+            blob.display(),
+        );
+
+        let references = module_references(&config);
+
+        assert_eq!(references.len(), 4);
+        assert_eq!(references[0].kind, "lua");
+        assert_eq!(references[0].path.as_deref(), Some(lua.to_str().unwrap()));
+        assert_eq!(
+            references[0].resolved_path.as_deref(),
+            Some(lua_gzip.to_str().unwrap())
+        );
+        assert!(references[0].exists);
+        assert!(references[0].readable);
+        assert_eq!(references[1].kind, "blob");
+        assert_eq!(references[1].path.as_deref(), Some(blob.to_str().unwrap()));
+        assert!(references[1].exists);
+        assert_eq!(references[2].resolution, "dynamic");
+        assert_eq!(references[2].resolved_path, None);
+        assert!(!references[2].exists);
+        assert_eq!(references[3].resolution, "relative_unknown");
+        assert_eq!(references[3].resolved_path, None);
+        assert!(!references[3].exists);
     }
 
     #[tokio::test]

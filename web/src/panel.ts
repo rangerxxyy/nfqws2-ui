@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type StatusResponse } from './api';
 import { deduplicateListContent } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 
@@ -81,9 +81,11 @@ async function loadConfig() {
     config = await api<ConfigResponse>('/api/config?file=nfqws2.conf');
     const applyButton = $('[data-action-click="applyConfigAndRestart"]');
     let canWriteConfig = false;
+    let moduleReferences: NfqwsModuleReference[] = [];
     try {
       const installation = await nfqwsInstallation.get();
       canWriteConfig = installation.config?.writable === true;
+      moduleReferences = installation.moduleReferences ?? [];
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Не удалось проверить права записи в конфиг', 'error');
     }
@@ -95,9 +97,8 @@ async function loadConfig() {
     if (editor instanceof HTMLTextAreaElement) editor.value = config.content;
     setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} строк`);
     setText('#currentConfigPath', config.file);
-    const moduleRefs = config.content.split(/\r?\n/).filter((line) => /^\s*[^#].*--(?:lua-init|blob)=/.test(line));
-    setText('#moduleStatusBadge', `${moduleRefs.length} ссылок в конфигурации`);
-    renderConfigModules(config.content);
+    setText('#moduleStatusBadge', `${moduleReferences.length} ссылок в конфигурации`);
+    renderConfigModules(moduleReferences);
     renderConfigSections(config.content);
     updateQuickParameters(config.content);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
@@ -131,18 +132,27 @@ function renderConfigSections(content: string) {
     row.append(label, details); box.append(row);
   }
 }
-function renderConfigModules(content: string) {
+function renderConfigModules(references: NfqwsModuleReference[]) {
   const host = $('#moduleFilesContainer'); if (!host) return;
   host.replaceChildren();
-  const args = content.split(/\r?\n/).filter((line) => !line.trimStart().startsWith('#')).flatMap((line) => line.match(/--(?:lua-init=@|blob=[^\s:@]+:@)[^\s'"\\]+/g) ?? []);
-  if (!args.length) { const empty = document.createElement('span'); empty.className = 'text-slate-500'; empty.textContent = 'Ссылки на Lua/blob не найдены'; host.append(empty); return; }
-  for (const argument of [...new Set(args)]) {
-    const path = argument.slice(argument.indexOf('@') + 1);
+  if (!references.length) { const empty = document.createElement('span'); empty.className = 'text-slate-500'; empty.textContent = 'Backend не обнаружил literal-ссылки Lua/blob в активном конфиге'; host.append(empty); return; }
+  for (const reference of references) {
+    const path = reference.resolvedPath ?? reference.path;
     const button = document.createElement('button');
-    button.className = 'px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800';
-    button.textContent = path.split('/').pop() || path;
-    button.title = `${path} · наличие файла не проверено`;
-    button.addEventListener('click', () => void navigator.clipboard.writeText(argument).then(() => toast('Аргумент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')));
+    button.className = `px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 ${reference.exists && reference.readable ? 'text-emerald-300' : 'text-amber-300'}`;
+    const fileName = path?.split(/[\\/]/).pop() ?? reference.argument;
+    const fileStatus = reference.resolution === 'dynamic'
+      ? 'путь вычисляется shell; файл не проверен'
+      : reference.resolution === 'relative_unknown'
+        ? 'относительный путь; базовый каталог неизвестен'
+        : reference.exists && reference.readable
+          ? 'файл существует и доступен для чтения'
+          : reference.exists
+            ? 'файл существует, но чтение не подтверждено'
+            : 'файл не найден по literal-пути';
+    button.textContent = `${reference.kind}: ${fileName}`;
+    button.title = `${path ?? reference.argument} · ${fileStatus}`;
+    button.addEventListener('click', () => void navigator.clipboard.writeText(reference.argument).then(() => toast('Аргумент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')));
     host.append(button);
   }
 }
