@@ -37,10 +37,13 @@ rollback() {
 	fi
 	SWITCHED=0
 }
+# These callbacks are invoked by POSIX shell traps.
+# shellcheck disable=SC2317
 cleanup() {
 	if [ "$COMMITTED" != 1 ]; then rollback || true; rm -rf "$STAGE"; fi
 	rm -rf "$TMP"
 }
+# shellcheck disable=SC2317
 on_abort() {
 	if rollback; then set_state rolled_back 'Update interrupted; previous version restored.' || true
 	else set_state failed 'Update interrupted and rollback failed.' || true; fi
@@ -74,7 +77,10 @@ if tar -tvzf "$TMP/$ASSET" | awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) !=
 fi
 mkdir -p "$STAGE"
 tar -xzf "$TMP/$ASSET" -C "$STAGE" || { set_state failed 'Could not unpack the release archive.'; exit 1; }
-[ -x "$STAGE/bin/nfqws2-ui" ] && [ -d "$STAGE/public" ] && [ -x "$STAGE/scripts/S99nfqws2-ui" ] && [ -r "$STAGE/scripts/symlink.sh" ] && [ -x "$STAGE/scripts/update-release.sh" ] && [ -x "$STAGE/scripts/update-core-release.sh" ] || { set_state failed 'Release archive is missing required updater files.'; exit 1; }
+if [ ! -x "$STAGE/bin/nfqws2-ui" ] || [ ! -d "$STAGE/public" ] || [ ! -x "$STAGE/scripts/S99nfqws2-ui" ] || [ ! -r "$STAGE/scripts/symlink.sh" ] || [ ! -x "$STAGE/scripts/update-release.sh" ] || [ ! -x "$STAGE/scripts/update-core-release.sh" ]; then
+	set_state failed 'Release archive is missing required updater files.'
+	exit 1
+fi
 . "$STAGE/scripts/symlink.sh"
 if [ -L "$CURRENT" ]; then PREVIOUS=$(readlink "$CURRENT"); fi
 set_state installing "Switching panel to $TAG."
