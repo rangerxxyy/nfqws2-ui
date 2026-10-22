@@ -1,7 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsInstallation, nfqwsLists, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('previews a quick setting through Rust without saving the draft', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"content":"ISP_INTERFACE=eth3\\n","changedVariable":"ISP_INTERFACE"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await nfqwsConfig.preview('ISP_INTERFACE=wan\n', 'ISP_INTERFACE', 'eth3');
+    expect(result.content).toBe('ISP_INTERFACE=eth3\n');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/config/preview');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({content: 'ISP_INTERFACE=wan\n', key: 'ISP_INTERFACE', value: 'eth3'});
+  });
+
   afterEach(() => { vi.restoreAllMocks(); });
 
   it('sends same-origin requests without session or CSRF requirements', async () => {

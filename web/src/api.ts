@@ -85,6 +85,13 @@ export const nfqwsApply = {
   ),
 };
 
+export const nfqwsConfig = {
+  preview: (content: string, key: string, value: string) => api<{ content: string; changedVariable: string }>(
+    '/api/nfqws2/config/preview',
+    { method: 'POST', body: JSON.stringify({ content, key, value }) },
+  ),
+};
+
 export const nfqwsUpdates = {
   releases: () => api<{ releases: PanelRelease[] }>('/api/updates/releases'),
   install: (tag: string) => api<UpdateOperation>('/api/updates/install', {

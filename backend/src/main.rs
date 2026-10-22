@@ -7,6 +7,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
+use nfqws2_ui::config_document::ConfigDocument;
 use nfqws2_ui::{
     ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
     network_interface_names, parse_meminfo_kb, process_matches, service_action, service_action_at,
@@ -157,6 +158,13 @@ struct ConfigQuery {
 struct ConfigWrite {
     content: String,
     revision: String,
+}
+
+#[derive(Deserialize)]
+struct ConfigPreviewRequest {
+    content: String,
+    key: String,
+    value: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1519,6 +1527,51 @@ fn validate_list_content(id: &str, content: &str) -> Result<(), String> {
     Ok(())
 }
 
+async fn preview_config(Json(request): Json<ConfigPreviewRequest>) -> Response {
+    if request.content.len() > MAX_CONFIG_BYTES || request.value.len() > 4096 {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Черновик или значение превышает лимит размера",
+        );
+    }
+    if ![
+        "ISP_INTERFACE",
+        "NFQWS_EXTRA_ARGS",
+        "NFQUEUE_NUM",
+        "POLICY_NAME",
+        "IPV6_ENABLED",
+        "LOG_LEVEL",
+    ]
+    .contains(&request.key.as_str())
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Эта переменная доступна только в raw-редакторе",
+        );
+    }
+    let document = match ConfigDocument::parse(&request.content) {
+        Ok(document) => document,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    let result = if request.key == "NFQWS_EXTRA_ARGS" {
+        document.set_mode(&request.value)
+    } else {
+        document.set_literal(&request.key, &request.value)
+    };
+    match result {
+        Ok(content) if content.len() <= MAX_CONFIG_BYTES => Json(serde_json::json!({
+            "content": content,
+            "changedVariable": request.key,
+        }))
+        .into_response(),
+        Ok(_) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Изменённый черновик превышает лимит размера",
+        ),
+        Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    }
+}
+
 fn revision(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -2307,6 +2360,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/status", get(get_status))
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
+        .route("/api/nfqws2/config/preview", post(preview_config))
         .route("/api/nfqws2/apply", post(apply_config))
         .route("/api/nfqws2/lists", get(get_lists))
         .route("/api/nfqws2/lists/{id}", get(get_list).put(put_list))
@@ -2996,6 +3050,67 @@ mod tests {
             saved_changed_version,
             "pre-restore config must be retained as a backup"
         );
+    }
+
+    #[tokio::test]
+    async fn config_preview_preserves_draft_and_never_writes_the_device_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = "# сохраняем\nISP_INTERFACE=\"wan\n eth2\" # comment\nUNKNOWN='keep'\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config.clone())),
+            dir.path().join("web"),
+        );
+        let response = app.clone().oneshot(Request::builder().method("POST")
+            .uri("/api/nfqws2/config/preview").header("content-type", "application/json")
+            .body(Body::from(serde_json::json!({"content": original, "key": "ISP_INTERFACE", "value": "eth3"}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = body_json(response).await;
+        assert_eq!(
+            result["content"],
+            original.replace("\"wan\n eth2\"", "\"eth3\"")
+        );
+        assert_eq!(tokio::fs::read_to_string(&config).await.unwrap(), original);
+        for (content, key, value, expected) in [
+            (
+                "ISP_INTERFACE=wan\nISP_INTERFACE=eth0\n",
+                "ISP_INTERFACE",
+                "eth3",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            ("UNKNOWN=one\n", "UNKNOWN", "two", StatusCode::BAD_REQUEST),
+            (
+                "NFQWS_EXTRA_ARGS='$MODE_LIST'\n",
+                "NFQWS_EXTRA_ARGS",
+                "$MODE_AUTO",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+            (
+                "ISP_INTERFACE=$(id)\n",
+                "ISP_INTERFACE",
+                "eth3",
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/nfqws2/config/preview")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"content": content, "key": key, "value": value})
+                                .to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            assert_eq!(tokio::fs::read_to_string(&config).await.unwrap(), original);
+        }
     }
 
     #[tokio::test]

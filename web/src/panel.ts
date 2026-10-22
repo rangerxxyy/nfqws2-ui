@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type PanelRelease, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsInstallation, nfqwsLists, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type PanelRelease, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -9,6 +9,7 @@ import { resourceUsagePercent, usageTone } from './metrics';
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
+let discoveredNetworkInterfaces: string[] = [];
 let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
 let busy = false;
@@ -134,6 +135,7 @@ async function loadConfig() {
       canWriteConfig = installation.config?.writable === true;
       moduleReferences = installation.moduleReferences ?? [];
       networkInterfaces = installation.networkInterfaces ?? [];
+      discoveredNetworkInterfaces = networkInterfaces;
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Не удалось проверить права записи в конфиг', 'error');
     }
@@ -244,18 +246,25 @@ function updateQuickParameters(content: string, networkInterfaces: string[] = []
     }
   });
 }
-function updateConfigVariable(key: string, value: string, quoted: boolean) {
-
+async function updateConfigVariable(key: string, value: string) {
+  if (busy || !config) return;
   const editor = $('#nfqwsConfTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return;
-  const escaped = quoted ? `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : value;
-  const lines = editor.value.split(/\r?\n/);
-  const index = lines.findIndex((line) => line.trimStart().startsWith(`${key}=`));
-  if (index >= 0) lines[index] = `${key}=${escaped}`;
-  else lines.push(`${key}=${escaped}`);
-  editor.value = lines.join('\n');
-  syncConfigLines();
-  toast('Черновик изменён. Нажмите «Применить конфигурацию», чтобы сохранить.');
+  const before = editor.value;
+  setBusy(true);
+  try {
+    const preview = await nfqwsConfig.preview(before, key, value);
+    if (editor.value !== before) throw new Error('Черновик изменился во время запроса; повторите выбор настройки.');
+    editor.value = preview.content;
+    syncConfigLines();
+    renderConfigSections(editor.value);
+    toast('Черновик изменён. Нажмите «Применить конфигурацию», чтобы сохранить.');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось изменить черновик', 'error');
+  } finally {
+    setBusy(false);
+    updateQuickParameters(editor.value, discoveredNetworkInterfaces);
+  }
 }
 function syncConfigLines() {
   const editor = $('#nfqwsConfTextarea'); const gutter = $('#confLineNumbers');
@@ -604,7 +613,7 @@ function bindPrototypeActions() {
     toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
     applyConfigAndRestart: () => void saveConfigAndApply(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
-    updateConfVariable: (key: string, value: string, quoted: boolean) => updateConfigVariable(key, value, quoted),
+    updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string) => void navigator.clipboard.writeText(String(value)).then(() => toast('Фрагмент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')),
     handleConfInput: () => syncConfigLines(),
     syncConfScroll: () => syncConfigLines(),
