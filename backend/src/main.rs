@@ -96,7 +96,6 @@ type SiteTraceRunner = dyn Fn(
         String,
         Vec<String>,
         String,
-        String,
         Arc<AtomicBool>,
     ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>>
     + Send
@@ -107,10 +106,9 @@ fn router_site_trace_runner(
     proto: String,
     args: Vec<String>,
     binary: String,
-    init_script: String,
     cancel: Arc<AtomicBool>,
 ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>> {
-    Box::pin(async move { site_trace::run(host, &proto, args, binary, init_script, cancel).await })
+    Box::pin(async move { site_trace::run(host, &proto, args, binary, cancel).await })
 }
 
 fn now_unix_seconds() -> u64 {
@@ -2021,26 +2019,17 @@ async fn trace_site(
             updated_at: now_unix_seconds(),
         };
         let _ = write_site_trace_operation(&operation_dir, &running).await;
-        let (binary, init_script) = if let Some(paths) = discover_system_paths() {
-            let init = tokio::fs::read_to_string(paths.init_script)
-                .await
-                .unwrap_or_default();
-            (paths.binary.to_string_lossy().into_owned(), init)
+        let binary = if let Some(paths) = discover_system_paths() {
+            paths.binary.to_string_lossy().into_owned()
         } else {
-            (String::new(), String::new())
+            String::new()
         };
         let args = active_process_snapshot()
             .map(|(_, args)| args)
             .unwrap_or_default();
-        let report = (task_state.site_trace_runner)(
-            task_host,
-            task_proto,
-            args,
-            binary,
-            init_script,
-            control.clone(),
-        )
-        .await;
+        let report =
+            (task_state.site_trace_runner)(task_host, task_proto, args, binary, control.clone())
+                .await;
         let cancelled = control.load(Ordering::Acquire);
         running.state = if cancelled { "cancelled" } else { "complete" }.into();
         running.stage = running.state.clone();
@@ -4745,7 +4734,7 @@ mod tests {
     #[tokio::test]
     async fn site_trace_start_returns_accepted_then_persists_runner_result() {
         let dir = tempfile::tempdir().unwrap();
-        let runner: Arc<SiteTraceRunner> = Arc::new(|host, _proto, _, _, _, _| {
+        let runner: Arc<SiteTraceRunner> = Arc::new(|host, _proto, _, _, _| {
             Box::pin(async move {
                 site_trace::TraceReport {
                     host,

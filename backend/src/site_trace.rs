@@ -181,21 +181,19 @@ pub fn trace_argv(args: &[String], queue: u16, debug_path: &Path) -> Vec<String>
     result
 }
 
-pub fn firewall_trace_safe(init_script: &str, input_output_rules: &str) -> bool {
-    let init = init_script.to_ascii_lowercase();
-    let touches_router_hooks = [
-        "-a input",
-        "-i input",
-        "-f input",
-        "-x input",
-        "-a output",
-        "-i output",
-        "-f output",
-        "-x output",
-    ]
-    .iter()
-    .any(|needle| init.contains(needle));
-    !init.trim().is_empty() && !touches_router_hooks && !input_output_rules.trim().is_empty()
+pub fn firewall_trace_safe(firewall_snapshot: &str) -> bool {
+    let mut hooks = std::collections::HashSet::new();
+    for line in firewall_snapshot.lines() {
+        let tokens = line.split_whitespace().collect::<Vec<_>>();
+        if tokens.first() == Some(&"-P")
+            && let Some(hook) = tokens.get(1)
+        {
+            hooks.insert(*hook);
+        }
+    }
+    ["PREROUTING", "OUTPUT", "POSTROUTING"]
+        .iter()
+        .all(|hook| hooks.contains(hook))
 }
 
 pub fn policy_route_mark(firewall_snapshot: &str) -> Option<String> {
@@ -797,7 +795,6 @@ pub async fn run(
     proto: &str,
     args: Vec<String>,
     binary: String,
-    init_script: String,
     cancel: Arc<AtomicBool>,
 ) -> TraceReport {
     let mut report = TraceReport {
@@ -855,9 +852,9 @@ pub async fn run(
         .filter(|(status, _)| *status == 0)
         .map(|(_, output)| String::from_utf8_lossy(&output).into_owned())
         .unwrap_or_default();
-    if firewall_snapshot.is_empty() || !firewall_trace_safe(&init_script, &firewall_snapshot) {
+    if firewall_snapshot.is_empty() || !firewall_trace_safe(&firewall_snapshot) {
         report.without_nfqws2 = TracePhase::unavailable(
-            "Не удалось подтвердить безопасное владение тестовыми правилами; firewall не изменялся",
+            "Не найдены mangle hooks PREROUTING/OUTPUT/POSTROUTING; firewall не изменялся",
         );
         report.with_nfqws2 =
             TracePhase::unavailable("Трассировка остановлена до изменения firewall");
@@ -1377,19 +1374,11 @@ mod tests {
     }
 
     #[test]
-    fn init_managed_hook_rules_fail_closed_while_nfqueue_rules_can_be_bypassed_in_private_chain() {
-        assert!(!firewall_trace_safe(
-            "iptables -t mangle -A OUTPUT -j ACCEPT",
-            "-P OUTPUT ACCEPT"
-        ));
-        assert!(firewall_trace_safe(
-            "# no output hooks",
-            "-A INPUT -j NFQUEUE --queue-num 2"
-        ));
-        assert!(firewall_trace_safe(
-            "iptables -A PREROUTING -j NFQUEUE",
-            "-P INPUT ACCEPT\n-P OUTPUT ACCEPT"
-        ));
+    fn trace_requires_only_the_mangle_hooks_it_uses() {
+        let hooks =
+            "-P PREROUTING ACCEPT\n-P INPUT ACCEPT\n-P OUTPUT ACCEPT\n-P POSTROUTING ACCEPT";
+        assert!(firewall_trace_safe(hooks));
+        assert!(!firewall_trace_safe("-P OUTPUT ACCEPT\n-P INPUT ACCEPT"));
     }
 
     #[test]
@@ -1414,7 +1403,6 @@ mod tests {
             "example.com".into(),
             "https",
             Vec::new(),
-            String::new(),
             String::new(),
             cancelled,
         )
