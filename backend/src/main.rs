@@ -129,6 +129,7 @@ struct SystemInfo {
     memory_total_bytes: Option<u64>,
     memory_used_bytes: Option<u64>,
     cpu_percent: Option<f64>,
+    source: &'static str,
 }
 
 #[derive(Serialize)]
@@ -947,12 +948,25 @@ async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
         .iter()
         .map(|candidate| inspect_path(candidate, false))
         .collect();
+    let active_arguments = active_process_arguments();
     let lists = config
         .as_ref()
-        .into_iter()
-        .flat_map(|config| LIST_IDS.iter().filter_map(|id| list_file_path(config, id)))
-        .map(|path| inspect_path(&path, true))
-        .collect();
+        .map(|config| {
+            LIST_IDS
+                .iter()
+                .filter_map(|id| {
+                    let path = list_file_path(config, id)?;
+                    let used = active_arguments
+                        .as_deref()
+                        .and_then(|args| list_reference_from_argv(args, id))
+                        .filter(|reference| reference.is_absolute())
+                        .and_then(|reference| reference.canonicalize().ok())
+                        .is_some_and(|reference| reference == path);
+                    Some(inspect_path(&path, used))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let platform = discovered.as_ref().map_or("unknown", |paths| {
         if paths.root == Path::new("/opt") {
             "entware"
@@ -1018,6 +1032,12 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
         .and_then(memory_usage_bytes)
         .map_or((None, None), |(used, total)| (Some(used), Some(total)));
     let cpu_percent = cpu_sample(&state).await;
+    let system = keenetic_system_stats().await.unwrap_or(SystemInfo {
+        memory_total_bytes,
+        memory_used_bytes,
+        cpu_percent,
+        source: "proc",
+    });
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1030,17 +1050,95 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
             checked_at,
             version: core_version,
         },
-        system: SystemInfo {
-            memory_total_bytes,
-            memory_used_bytes,
-            cpu_percent,
-        },
+        system,
         panel: PanelInfo {
             version: env!("CARGO_PKG_VERSION"),
             port: state.port,
         },
     })
     .into_response()
+}
+
+fn keenetic_system_metrics(data: &serde_json::Value) -> Option<SystemInfo> {
+    let total = data.get("memtotal")?.as_u64()?.checked_mul(1024)?;
+    let used = data
+        .get("memory")?
+        .as_str()?
+        .split_once('/')?
+        .0
+        .trim()
+        .parse::<u64>()
+        .ok()?
+        .checked_mul(1024)?;
+    let cpu = data.get("cpuload")?.as_f64()?;
+    if total == 0 || used > total || !cpu.is_finite() || !(0.0..=100.0).contains(&cpu) {
+        return None;
+    }
+    Some(SystemInfo {
+        memory_total_bytes: Some(total),
+        memory_used_bytes: Some(used),
+        cpu_percent: Some(cpu),
+        source: "keenetic-rci",
+    })
+}
+
+async fn keenetic_system_stats() -> Option<SystemInfo> {
+    // Fixed local firmware endpoint, as used by XKeen UI. No caller-supplied URL.
+    // wget decodes HTTP framing; limit both time and JSON size, kill on cancellation.
+    let request = async {
+        let wget = if Path::new("/opt/bin/wget").is_file() {
+            "/opt/bin/wget"
+        } else {
+            "wget"
+        };
+        let mut command = tokio::process::Command::new(wget);
+        command
+            .args(["-q", "-T", "2", "-O", "-"])
+            .env("no_proxy", "127.0.0.1,localhost")
+            .env("NO_PROXY", "127.0.0.1,localhost");
+        // Reuse an existing firmware token without exposing it through our API.
+        let token = std::env::var("NFQWS2_UI_RCI_TOKEN").ok().or_else(|| {
+            let contents = std::fs::read("/opt/etc/xkeen/xkeen.json").ok()?;
+            let config: serde_json::Value = serde_json::from_slice(&contents).ok()?;
+            config
+                .get("xkeen")?
+                .get("rci_token")?
+                .as_str()
+                .map(str::to_owned)
+        });
+        if let Some(token) = token {
+            if token.is_empty()
+                || token.len() > 512
+                || !token.bytes().all(|byte| (33..=126).contains(&byte))
+            {
+                return None;
+            }
+            command.arg(format!("--header=X-Ndma-Tkn: {token}"));
+        }
+        let mut child = command
+            .arg("http://127.0.0.1:79/rci/show/system")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .ok()?;
+        let mut bytes = Vec::new();
+        child
+            .stdout
+            .take()?
+            .take(65537)
+            .read_to_end(&mut bytes)
+            .await
+            .ok()?;
+        if bytes.len() > 65536 || !child.wait().await.ok()?.success() {
+            return None;
+        }
+        keenetic_system_metrics(&serde_json::from_slice(&bytes).ok()?)
+    };
+    tokio::time::timeout(std::time::Duration::from_millis(2500), request)
+        .await
+        .ok()
+        .flatten()
 }
 
 fn parse_meminfo_kb_key(text: &str, key: &str) -> Option<u64> {
@@ -1339,7 +1437,11 @@ fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
     let reference = active_process_arguments()
         .as_deref()
         .and_then(|args| list_reference_from_argv(args, id))
-        .or_else(|| configured_list_reference(&config_text, id))?;
+        .or_else(|| configured_list_reference(&config_text, id))
+        // Like zemidala's inventory of LISTS_DIR: an existing package list
+        // remains editable even when the selected mode does not reference it.
+        // Never create it, and keep the same root/symlink restrictions below.
+        .unwrap_or_else(|| PathBuf::from("lists").join(id));
     let candidate = if reference.is_absolute() {
         reference
     } else {
@@ -2760,7 +2862,7 @@ mod tests {
             report["lists"][0]["path"],
             list.canonicalize().unwrap().display().to_string()
         );
-        assert_eq!(report["lists"][0]["usedByActiveConfig"], true);
+        assert_eq!(report["lists"][0]["usedByActiveConfig"], false);
         assert_eq!(report["lists"][0]["readable"], true);
         assert_eq!(report["moduleReferences"].as_array().unwrap().len(), 2);
         assert_eq!(report["moduleReferences"][0]["kind"], "lua");
@@ -2897,12 +2999,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_update_requires_current_revision_and_returns_reread_file() {
+    async fn package_user_list_without_config_reference_can_be_read_saved_and_reread() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
         let list_dir = dir.path().join("lists");
         tokio::fs::create_dir_all(&list_dir).await.unwrap();
-        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n")
+        tokio::fs::write(&config, "NFQWS_EXTRA_ARGS=\"$MODE_ALL\"\n")
             .await
             .unwrap();
         tokio::fs::write(list_dir.join("user.list"), "example.org\n")
@@ -3051,6 +3153,51 @@ mod tests {
         assert!(validate_list_content("ipset.list", "192.0.2.0/33\n").is_err());
         assert!(validate_list_content("ipset.list", "192.0.2.0/\n").is_err());
         assert!(validate_list_content("../outside", "example.org\n").is_err());
+    }
+
+    #[test]
+    fn package_lists_are_available_even_when_mode_all_does_not_reference_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        std::fs::write(&config, "NFQWS_EXTRA_ARGS=\"$MODE_ALL\"\n").unwrap();
+        for id in LIST_IDS {
+            let path = lists.join(id);
+            std::fs::write(&path, "# existing package file\n").unwrap();
+            assert_eq!(
+                list_file_path(&config, id),
+                Some(path.canonicalize().unwrap())
+            );
+        }
+        std::fs::remove_file(lists.join("user.list")).unwrap();
+        assert!(list_file_path(&config, "user.list").is_none());
+        assert!(list_file_path(&config, "../nfqws2.conf").is_none());
+    }
+
+    #[test]
+    fn keenetic_metrics_use_rci_memory_capacity_without_rounding_or_invention() {
+        let metrics = keenetic_system_metrics(&serde_json::json!({
+            "memtotal": 524288, "memory": "131072/524288", "cpuload": 17
+        }))
+        .unwrap();
+        assert_eq!(metrics.memory_total_bytes, Some(512 * 1024 * 1024));
+        assert_eq!(metrics.memory_used_bytes, Some(128 * 1024 * 1024));
+        assert_eq!(metrics.cpu_percent, Some(17.0));
+        assert_eq!(metrics.source, "keenetic-rci");
+        assert!(keenetic_system_metrics(&serde_json::json!({"memtotal": 0})).is_none());
+        assert!(
+            keenetic_system_metrics(&serde_json::json!({
+                "memtotal": 524288, "memory": "999999/524288", "cpuload": 17
+            }))
+            .is_none()
+        );
+        assert!(
+            keenetic_system_metrics(&serde_json::json!({
+                "memtotal": 524288, "memory": "131072/524288", "cpuload": 101
+            }))
+            .is_none()
+        );
     }
 
     #[test]

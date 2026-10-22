@@ -81,7 +81,7 @@ async function fetchStatus() {
     const ramPercent = resourceUsagePercent(used, total);
     setText('#ramMetricText', used !== null && total !== null ? `${fmtMb(used)} / ${fmtMb(total)} МБ` : '—');
     const ramText = $('#ramMetricText');
-    if (ramText) ramText.title = ramPercent === null ? 'Загрузка памяти неизвестна' : `Использовано ${Math.round(ramPercent)}% физической памяти`;
+    if (ramText) ramText.title = ramPercent === null ? 'Загрузка памяти неизвестна' : `Использовано ${Math.round(ramPercent)}%. Источник: ${status.system.source === 'keenetic-rci' ? 'Keenetic RCI, как в XKeen UI' : 'Linux /proc/meminfo; объём после резервирования памяти прошивкой'}`;
     setWidth('#ramProgressBar', ramPercent);
     applyMetricTone('#ramMetricText', '#ramProgressBar', ramPercent);
     const cpu = status.system.cpuPercent;
@@ -340,7 +340,8 @@ async function loadList(id: NfqwsListId) {
       const available = tabId !== null && availableListIds.has(tabId);
       candidate.disabled = !available;
       candidate.classList.toggle('opacity-40', !available);
-      candidate.title = available ? 'Путь найден в активной конфигурации' : 'Файл не найден по буквальной ссылке в активной конфигурации';
+      const discovered = index.files.find((file) => file.id === tabId);
+      candidate.title = discovered ? `Обнаружен существующий файл: ${discovered.path}` : 'Файл не найден ни по ссылке конфигурации, ни в штатном каталоге lists';
     }
     if (!summary) {
       activeList = null;
@@ -348,7 +349,7 @@ async function loadList(id: NfqwsListId) {
       if (editor instanceof HTMLTextAreaElement) { editor.value = ''; editor.placeholder = 'Файл отсутствует; панель не создаёт списки автоматически.'; }
       setText('#currentListFilePath', 'Файл не найден');
       setText('#listFooterCount', 'Список недоступен');
-      return toast(`Путь ${id} не найден в активной конфигурации nfqws2.`, 'error');
+      return toast(`Файл ${id} не найден по настройкам nfqws2 или в штатном каталоге lists.`, 'error');
     }
     const result = await nfqwsLists.get(id);
     activeList = result;
@@ -356,7 +357,7 @@ async function loadList(id: NfqwsListId) {
     const editor = $('#listEditorTextarea');
     if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
     setText('#currentListFilePath', result.path);
-    setText('#currentListDescription', id.startsWith('ipset') ? 'IP-адреса и CIDR, обнаруженный список nfqws2' : 'Доменный список, обнаруженный рядом с конфигурацией nfqws2');
+    setText('#currentListDescription', `${id.startsWith('ipset') ? 'IP-адреса и CIDR' : 'Доменный список'}. Файл существует; его участие в фильтрации зависит от выбранного режима и профилей nfqws2.`);
     for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
       const selected = isListTabSelected(candidate.id, id);
       candidate.classList.toggle('active', selected);

@@ -14,7 +14,7 @@ export default function App() {
       <div className={"max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-12 items-center gap-3"}>
         {"\n      \n      "}
         {"\n      "}
-        <div className={"lg:col-span-5 flex flex-wrap items-center gap-2.5 justify-between lg:justify-start"}>
+        <div id={"headerStatusBar"} className={"lg:col-span-5 flex flex-wrap items-center gap-2.5 justify-start"}>
           {"\n        \n        "}
           {"\n        "}
           <div className={"flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3.5 py-2 rounded-xl shadow-inner"}>
@@ -35,6 +35,36 @@ export default function App() {
           </div>
           {"\n\n        "}
           {"\n        "}
+          <div id={"headerServiceControls"} className={"flex items-center gap-2"}>
+          <button data-action-click={"restartService"} className={"px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs sm:text-sm font-medium flex items-center gap-2 transition-all active:scale-95"}>
+            {"\n          "}
+            <svg id={"restartIcon"} className={"w-4 h-4 text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+              {"\n            "}
+              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"}></path>
+              {"\n          "}
+            </svg>
+            {"\n          "}
+            <span>
+              {"Перезапустить"}
+            </span>
+            {"\n        "}
+          </button>
+          {"\n\n        "}
+          {"\n        "}
+          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} className={"px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all active:scale-95"}>
+            {"\n          "}
+            <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+              {"\n            "}
+              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
+              {"\n          "}
+            </svg>
+            {"\n          "}
+            <span id={"togglePowerText"}>
+              {"Остановить"}
+            </span>
+            {"\n        "}
+          </button>
+          </div>
           <div className={"flex items-center gap-2.5"}>
             {"\n          \n          "}
             {"\n          "}
@@ -133,10 +163,10 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div className={"lg:col-span-5 flex flex-wrap items-center justify-end gap-2"}>
+        <div id={"headerUpdates"} className={"lg:col-span-5 flex flex-wrap items-center justify-end gap-2"}>
           {"\n        \n        "}
           {"\n        "}
-          <button data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
+          <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
             {"\n          "}
             <svg className={"w-4 h-4 text-slate-200"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
@@ -159,7 +189,7 @@ export default function App() {
           </button>
           {"\n\n        "}
           {"\n        "}
-          <button data-action-click={"openUpdateModal"} data-args={JSON.stringify(["ui"])} title={"Обновить веб-панель nfqws2-UI"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
+          <button id={"updateUiButton"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["ui"])} title={"Обновить веб-панель nfqws2-UI"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
             {"\n          "}
             <svg className={"w-4 h-4 text-slate-200"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
@@ -169,7 +199,7 @@ export default function App() {
               {"\n          "}
             </svg>
             {"\n          "}
-            <span id={"headerUiVersion"} className={"font-bold text-white font-mono"}>
+            <span className={"font-bold text-white"}>UI</span><span id={"headerUiVersion"} className={"font-bold text-white font-mono"}>
               {"—"}
             </span>
             {"\n        "}
@@ -178,34 +208,7 @@ export default function App() {
           <div className={"h-5 w-[1px] bg-slate-800 mx-0.5 hidden sm:block"}></div>
           {"\n\n        "}
           {"\n        "}
-          <button data-action-click={"restartService"} className={"px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs sm:text-sm font-medium flex items-center gap-2 transition-all active:scale-95"}>
-            {"\n          "}
-            <svg id={"restartIcon"} className={"w-4 h-4 text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-              {"\n            "}
-              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"}></path>
-              {"\n          "}
-            </svg>
-            {"\n          "}
-            <span>
-              {"Перезапустить"}
-            </span>
-            {"\n        "}
-          </button>
-          {"\n\n        "}
-          {"\n        "}
-          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} className={"px-3.5 py-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all active:scale-95"}>
-            {"\n          "}
-            <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-              {"\n            "}
-              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
-              {"\n          "}
-            </svg>
-            {"\n          "}
-            <span id={"togglePowerText"}>
-              {"Остановить"}
-            </span>
-            {"\n        "}
-          </button>
+
           {"\n\n      "}
         </div>
         {"\n\n    "}

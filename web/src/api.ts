@@ -1,7 +1,7 @@
 export type Locale = 'ru' | 'en' | 'zh' | 'tr';
 export type StatusResponse = {
   service: { state: string; detail: string; checkedAt: number | null; version: string | null };
-  system: { memoryTotalBytes: number | null; memoryUsedBytes: number | null; cpuPercent: number | null };
+  system: { memoryTotalBytes: number | null; memoryUsedBytes: number | null; cpuPercent: number | null; source?: 'keenetic-rci' | 'proc' };
   panel: { version: string; port: number };
 };
 export type ConfigResponse = { file: string; content: string; revision: string };

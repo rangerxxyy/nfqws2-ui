@@ -10,6 +10,19 @@ const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8'
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel without authentication', () => {
+  it('places service controls beside status and orders updates core left, UI right', () => {
+    const statusGroup = template.slice(template.indexOf('id="headerStatusBar"'), template.indexOf('id="headerUpdates"'));
+    expect(statusGroup).toContain('id="headerServiceControls"');
+    expect(statusGroup).toContain('data-action-click="restartService"');
+    expect(statusGroup).toContain('id="togglePowerBtn"');
+    const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
+    expect(updates).not.toContain('restartService');
+    expect(updates.indexOf('id="updateNfqws2Button"')).toBeLessThan(updates.indexOf('id="updateUiButton"'));
+    expect(updates).toMatch(/id="updateNfqws2Button"[^>]*data-args="\[&quot;core&quot;\]"/);
+    expect(updates).toMatch(/id="updateUiButton"[^>]*data-args="\[&quot;ui&quot;\]"/);
+    expect(updates).toContain('>UI</span>');
+  });
+
   it('keeps the interface in TSX and removes the HTML entry file', () => {
     expect(existsSync(new URL('../index.html', import.meta.url))).toBe(false);
     expect(template).toContain('id="tabContent-conf"');
