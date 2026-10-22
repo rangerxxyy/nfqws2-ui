@@ -16,6 +16,100 @@ pub struct ConfigDocument<'a> {
     assignments: Vec<Assignment<'a>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigDiagnostic {
+    pub severity: DiagnosticSeverity,
+    pub code: &'static str,
+    pub message: String,
+    pub line: Option<usize>,
+}
+
+/// Performs conservative checks derived from the nfqws2-keenetic init script.
+/// This does not expand shell variables or validate options against a binary.
+pub fn validate_nfqws2_config(source: &str) -> Result<Vec<ConfigDiagnostic>, String> {
+    let document = ConfigDocument::parse(source)?;
+    let delimiter_forbidden = [
+        "NFQWS_BASE_ARGS",
+        "NFQWS_ARGS",
+        "NFQWS_ARGS_QUIC",
+        "NFQWS_ARGS_UDP",
+        "NFQWS_EXTRA_ARGS",
+        "NFQWS_ARGS_IPSET",
+    ];
+    let argument_variables = [
+        "NFQWS_BASE_ARGS",
+        "NFQWS_ARGS",
+        "NFQWS_ARGS_QUIC",
+        "NFQWS_ARGS_UDP",
+        "NFQWS_EXTRA_ARGS",
+        "NFQWS_ARGS_IPSET",
+        "NFQWS_ARGS_CUSTOM",
+    ];
+    let mut diagnostics = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for assignment in &document.assignments {
+        if !argument_variables.contains(&assignment.name) {
+            continue;
+        }
+        let raw_value = &source[assignment.value.clone()];
+        let line = source[..assignment.value.start]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        if !seen.insert(assignment.name) {
+            diagnostics.push(ConfigDiagnostic {
+                severity: DiagnosticSeverity::Warning,
+                code: "duplicate_assignment",
+                message: format!(
+                    "Переменная {} задана несколько раз; фактическое значение shell здесь не вычисляется",
+                    assignment.name
+                ),
+                line: Some(line),
+            });
+        }
+        if delimiter_forbidden.contains(&assignment.name) && raw_value.contains("--new") {
+            let delimiter_line = raw_value
+                .find("--new")
+                .map(|offset| {
+                    source[..assignment.value.start + offset]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1
+                })
+                .unwrap_or(line);
+            diagnostics.push(ConfigDiagnostic {
+                severity: DiagnosticSeverity::Error,
+                code: "profile_delimiter_location",
+                message: format!(
+                    "--new запрещён в {}; штатный init-скрипт допускает разделители профилей только в NFQWS_ARGS_CUSTOM",
+                    assignment.name
+                ),
+                line: Some(delimiter_line),
+            });
+        }
+        if raw_value.contains('$') {
+            diagnostics.push(ConfigDiagnostic {
+                severity: DiagnosticSeverity::Warning,
+                code: "dynamic_shell_value",
+                message: format!(
+                    "Значение {} содержит shell-переменную; она не раскрывается и не проверяется этим endpoint",
+                    assignment.name
+                ),
+                line: Some(line),
+            });
+        }
+    }
+    Ok(diagnostics)
+}
+
 impl<'a> ConfigDocument<'a> {
     pub fn parse(source: &'a str) -> Result<Self, String> {
         if source.contains('\0') {
@@ -312,5 +406,82 @@ mod tests {
             edited,
             text.replacen("ISP_INTERFACE=\"eth3\"", "ISP_INTERFACE=\"eth4\"", 1)
         );
+    }
+
+    #[test]
+    fn nfqws2_static_validation_rejects_new_in_package_managed_argument_groups() {
+        let source = "NFQWS_ARGS=\"--filter-tcp=443 --new\"\nNFQWS_ARGS_CUSTOM=\"--new\"\n";
+        let diagnostics = validate_nfqws2_config(source).unwrap();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "profile_delimiter_location");
+        assert_eq!(diagnostics[0].line, Some(1));
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn nfqws2_static_validation_applies_package_delimiter_rule_to_every_managed_group() {
+        for variable in [
+            "NFQWS_BASE_ARGS",
+            "NFQWS_ARGS",
+            "NFQWS_ARGS_QUIC",
+            "NFQWS_ARGS_UDP",
+            "NFQWS_EXTRA_ARGS",
+            "NFQWS_ARGS_IPSET",
+        ] {
+            let source = format!("{variable}=\"--new\"\n");
+            let diagnostics = validate_nfqws2_config(&source).unwrap();
+            assert!(
+                diagnostics.iter().any(|item| {
+                    item.code == "profile_delimiter_location"
+                        && item.severity == DiagnosticSeverity::Error
+                }),
+                "package-managed group {variable} must reject --new"
+            );
+        }
+    }
+
+    #[test]
+    fn nfqws2_static_validation_reports_the_line_where_forbidden_delimiter_occurs() {
+        let diagnostics =
+            validate_nfqws2_config("NFQWS_ARGS=\"--filter-tcp=443\n --new\"\n").unwrap();
+        assert_eq!(diagnostics[0].line, Some(2));
+    }
+
+    #[test]
+    fn nfqws2_static_validation_warns_on_unresolved_shell_values_without_expanding_them() {
+        let diagnostics = validate_nfqws2_config(
+            "MODE_LIST=\"--hostlist=/opt/etc/nfqws2/lists/user.list\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n",
+        )
+        .unwrap();
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, "dynamic_shell_value");
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn nfqws2_static_validation_accepts_upstream_fixture_and_custom_delimiters() {
+        let diagnostics =
+            validate_nfqws2_config(include_str!("../tests/fixtures/nfqws2-keenetic.conf")).unwrap();
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|item| item.severity == DiagnosticSeverity::Error)
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|item| item.code == "dynamic_shell_value")
+        );
+        assert!(
+            validate_nfqws2_config(
+                "NFQWS_ARGS_CUSTOM=\"--filter-tcp=80 --new --filter-tcp=443\"\n"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn nfqws2_static_validation_rejects_unsafe_shell_syntax() {
+        assert!(validate_nfqws2_config("NFQWS_ARGS=$(touch /tmp/should-not-run)\n").is_err());
     }
 }

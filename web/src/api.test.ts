@@ -22,6 +22,15 @@ describe('API client used by the source-based panel', () => {
     expect(JSON.parse(String(init.body))).toEqual({content: 'ISP_INTERFACE=wan\n', key: 'ISP_INTERFACE', value: 'eth3'});
   });
 
+  it('validates config drafts through the Rust backend and reports check limitations', async () => {
+    const validation = { valid: true, diagnostics: [{ severity: 'warning', code: 'dynamic_shell_value', message: 'Не раскрывается', line: 4 }], checks: { parser: 'passed', installedBinary: 'not_run' } } as const;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(validation), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsConfig.validate('NFQWS_EXTRA_ARGS="$MODE_AUTO"\n')).toEqual(validation);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/config/validate');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ content: 'NFQWS_EXTRA_ARGS="$MODE_AUTO"\n' });
+  });
+
   afterEach(() => { vi.restoreAllMocks(); });
 
   it('sends same-origin requests without session or CSRF requirements', async () => {

@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -358,6 +358,32 @@ async function saveConfigAndApply() {
   if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
   const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
   setBusy(true);
+  let validation: ConfigValidationResponse;
+  try {
+    validation = await nfqwsConfig.validate(editor.value);
+  } catch (error) {
+    setBusy(false);
+    return toast(error instanceof Error ? `Проверка backend не выполнена: ${error.message}` : 'Проверка backend не выполнена', 'error');
+  }
+  if (!validation.valid) {
+    setBusy(false);
+    const messages = validation.diagnostics.filter((item) => item.severity === 'error')
+      .map((item) => `${item.line ? `Строка ${item.line}: ` : ''}${item.message}`);
+    return toast(`Конфигурация не прошла проверку: ${messages.join(' · ')}`, 'error');
+  }
+  const warnings = validation.diagnostics.filter((item) => item.severity === 'warning');
+  const binaryCheckNote = validation.checks.installedBinary === 'not_run'
+    ? 'Проверка установленным бинарником не выполнялась.'
+    : 'Проверка установленным бинарником выполнена.';
+  if ((warnings.length || validation.checks.installedBinary === 'not_run') && !window.confirm([
+    'Backend проверил только безопасно разбираемый синтаксис и известные ограничения init-скрипта.',
+    ...warnings.map((item) => `${item.line ? `Строка ${item.line}: ` : ''}${item.message}`),
+    binaryCheckNote,
+    'Продолжить запись и перезапуск?'
+  ].join('\n\n'))) {
+    setBusy(false);
+    return;
+  }
   setRestartInProgress(true);
   try {
     const result = await nfqwsApply.apply(editor.value, config.revision);

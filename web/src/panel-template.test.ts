@@ -128,6 +128,14 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('@keyframes status-spin');
   });
 
+  it('validates the config in Rust before applying and confirms unresolved shell values', () => {
+    expect(panelSource).toContain('await nfqwsConfig.validate(editor.value)');
+    expect(panelSource).toContain('if (!validation.valid)');
+    expect(panelSource).toContain('validation.checks.installedBinary');
+    expect(panelSource).toContain('Проверка установленным бинарником не выполнялась');
+    expect(panelSource.indexOf('await nfqwsConfig.validate(editor.value)')).toBeLessThan(panelSource.indexOf('nfqwsApply.apply(editor.value, config.revision)'));
+  });
+
   it('keeps separate version pickers for the panel and the nfqws2 core', () => {
     expect(template).toContain('data-action-click="openUpdateModal" data-args="[&quot;core&quot;]"');
     expect(template).toContain('data-action-click="openUpdateModal" data-args="[&quot;ui&quot;]"');

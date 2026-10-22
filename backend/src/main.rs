@@ -7,7 +7,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use nfqws2_ui::config_document::ConfigDocument;
+use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::{
     ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
@@ -188,6 +188,35 @@ struct ConfigPreviewRequest {
     content: String,
     key: String,
     value: String,
+}
+
+#[derive(Deserialize)]
+struct ConfigValidateRequest {
+    content: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigValidationDiagnostic {
+    severity: &'static str,
+    code: String,
+    message: String,
+    line: Option<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigValidationResponse {
+    valid: bool,
+    diagnostics: Vec<ConfigValidationDiagnostic>,
+    checks: ConfigValidationChecks,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigValidationChecks {
+    parser: &'static str,
+    installed_binary: &'static str,
 }
 
 #[derive(Deserialize)]
@@ -1789,6 +1818,59 @@ async fn preview_config(Json(request): Json<ConfigPreviewRequest>) -> Response {
     }
 }
 
+async fn validate_config(Json(request): Json<ConfigValidateRequest>) -> Response {
+    if request.content.len() > MAX_CONFIG_BYTES {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Конфигурация превышает лимит 512 КБ",
+        );
+    }
+    let (diagnostics, parser_status) = match validate_nfqws2_config(&request.content) {
+        Ok(diagnostics) => (
+            diagnostics
+                .into_iter()
+                .map(|diagnostic| ConfigValidationDiagnostic {
+                    severity: match diagnostic.severity {
+                        DiagnosticSeverity::Error => "error",
+                        DiagnosticSeverity::Warning => "warning",
+                    },
+                    code: diagnostic.code.into(),
+                    message: diagnostic.message,
+                    line: diagnostic.line,
+                })
+                .collect::<Vec<_>>(),
+            "passed",
+        ),
+        Err(message) => {
+            let line = message
+                .strip_prefix("Строка ")
+                .and_then(|rest| rest.split(':').next())
+                .and_then(|value| value.parse::<usize>().ok());
+            (
+                vec![ConfigValidationDiagnostic {
+                    severity: "error",
+                    code: "unsupported_shell_syntax".into(),
+                    message,
+                    line,
+                }],
+                "failed",
+            )
+        }
+    };
+    let valid = !diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == "error");
+    let response = ConfigValidationResponse {
+        valid,
+        diagnostics,
+        checks: ConfigValidationChecks {
+            parser: parser_status,
+            installed_binary: "not_run",
+        },
+    };
+    Json(response).into_response()
+}
+
 fn revision(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -2671,6 +2753,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/nfqws2/config/preview", post(preview_config))
+        .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
         .route("/api/nfqws2/apply", post(apply_config))
         .route("/api/nfqws2/lists", get(get_lists))
@@ -3524,6 +3607,44 @@ mod tests {
             assert_eq!(response.status(), expected);
             assert_eq!(tokio::fs::read_to_string(&config).await.unwrap(), original);
         }
+    }
+
+    #[tokio::test]
+    async fn config_validation_endpoint_reports_static_errors_without_writing_or_restarting() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("nfqws2.conf");
+        tokio::fs::write(&config_path, "NFQWS_ARGS=\"--filter-tcp=443\"\n")
+            .await
+            .unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().to_path_buf(), Some(config_path.clone())),
+            dir.path().into(),
+        );
+        let response = app
+            .oneshot(
+                Request::post("/api/nfqws2/config/validate")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"content":"NFQWS_ARGS=\"--filter-tcp=443 --new\"\\n"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let report = body_json(response).await;
+        assert_eq!(report["valid"], false);
+        assert_eq!(report["checks"]["parser"], "passed");
+        assert_eq!(report["checks"]["installedBinary"], "not_run");
+        assert_eq!(
+            report["diagnostics"][0]["code"],
+            "profile_delimiter_location"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&config_path).await.unwrap(),
+            "NFQWS_ARGS=\"--filter-tcp=443\"\n"
+        );
+        assert!(!dir.path().join("backups").exists());
     }
 
     #[tokio::test]

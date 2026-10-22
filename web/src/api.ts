@@ -5,6 +5,8 @@ export type StatusResponse = {
   panel: { version: string; port: number };
 };
 export type ConfigResponse = { file: string; content: string; revision: string };
+export type ConfigValidationDiagnostic = { severity: 'error' | 'warning'; code: string; message: string; line: number | null };
+export type ConfigValidationResponse = { valid: boolean; diagnostics: ConfigValidationDiagnostic[]; checks: { parser: 'passed' | 'failed'; installedBinary: 'not_run' } };
 export type SiteDiagnosticStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type SiteDiagnosticReport = { host: string; addresses: string[]; steps: SiteDiagnosticStep[]; summary: string; limitations: string[] };
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
@@ -94,6 +96,9 @@ export const nfqwsApply = {
 };
 
 export const nfqwsConfig = {
+  validate: (content: string) => api<ConfigValidationResponse>('/api/nfqws2/config/validate', {
+    method: 'POST', body: JSON.stringify({ content }),
+  }),
   preview: (content: string, key: string, value: string) => api<{ content: string; changedVariable: string }>(
     '/api/nfqws2/config/preview',
     { method: 'POST', body: JSON.stringify({ content, key, value }) },
