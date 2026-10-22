@@ -87,6 +87,19 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('UNAVAILABLE_PANEL_ROUTES');
   });
 
+  it('removes the logs and backup sections from navigation and panel actions', () => {
+    for (const route of ['logs', 'snapshots']) {
+      expect(template).not.toContain(`id="navBtn-${route}"`);
+      expect(template).not.toContain(`id="tabContent-${route}"`);
+    }
+    expect(template).not.toContain('Система и Архивы');
+    expect(template).not.toContain('148,920 пакетов');
+    expect(template).not.toContain('Удалённое копирование на NAS по SSH');
+    expect(panelSource).not.toContain('loadLogs');
+    expect(panelSource).not.toContain('loadBackups');
+    expect(panelSource).not.toContain('restoreSnapshot');
+  });
+
   it('keeps the interface in TSX and removes the HTML entry file', () => {
     expect(existsSync(new URL('../index.html', import.meta.url))).toBe(false);
     expect(template).toContain('id="tabContent-conf"');

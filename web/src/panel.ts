@@ -1,12 +1,12 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'monitor' | 'community';
 export const UNAVAILABLE_PANEL_ROUTES = ['autotune', 'monitor', 'community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
@@ -107,7 +107,6 @@ function showRoute(route: Route) {
     button.classList.toggle('active', active);
     button.classList.toggle('text-slate-400', !active);
   });
-  if (route === 'logs') void loadLogs();
   if (route === 'lists') void loadList(activeListId);
 }
 async function fetchStatus() {
@@ -448,40 +447,6 @@ async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = f
     await fetchStatus();
     await loadRuntimeProfiles();
   }
-}
-async function loadLogs() {
-
-  try { const result = await api<{ content: string }>('/api/logs?source=nfqws2&tail=500'); const host = $('#liveLogContainer'); if (host) host.textContent = result.content; }
-  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить журнал', 'error'); }
-}
-async function loadBackups() {
-
-  try {
-    const response = await nfqwsBackups.list();
-    setText('#snapshotCountBadge', String(response.backups.length));
-    const box = $('#snapshotsListBox'); if (!box) return;
-    box.replaceChildren();
-    if (!response.backups.length) { box.textContent = 'Резервных копий пока нет'; return; }
-    for (const backup of response.backups) {
-      const row = document.createElement('div'); row.className = 'p-3 rounded-lg bg-slate-900 border border-slate-800 flex justify-between items-center gap-3';
-      const label = document.createElement('span'); label.textContent = `${backup.file} · ${new Date(backup.createdAt * 1000).toLocaleString()}`;
-      const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs'; restore.textContent = 'Восстановить'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.arg = backup.id;
-      row.append(label, restore); box.append(row);
-    }
-  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить копии', 'error'); }
-}
-async function createNewSnapshot() {
-  setBusy(true);
-  try { const backup = await nfqwsBackups.create(); await loadBackups(); toast(`Снимок конфигурации создан: ${new Date(backup.createdAt * 1000).toLocaleString()}`); }
-  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось создать снимок', 'error'); }
-  finally { setBusy(false); }
-}
-async function restoreSnapshot(id: string) {
-  if (!window.confirm('Заменить текущую конфигурацию этим снимком? Перед восстановлением backend сохранит текущую версию. Служба nfqws2 автоматически не перезапускается.')) return;
-  setBusy(true);
-  try { const result = await nfqwsBackups.restore(id); await loadConfig(); await loadBackups(); toast(`${result.message}. Перезапустите nfqws2, чтобы применить.`); }
-  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить снимок', 'error'); }
-  finally { setBusy(false); }
 }
 async function loadList(id: NfqwsListId) {
 
@@ -878,13 +843,11 @@ function bindPrototypeActions() {
     modal.classList.remove('hidden'); modal.classList.add('flex');
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
-    switchMainTab: (route: Route) => { showRoute(route); if (route === 'snapshots') void loadBackups(); },
+    switchMainTab: (route: Route) => showRoute(route),
     runSiteDiagnosis: () => void runSiteDiagnosis(),
     runSiteTrace: () => void runSiteTrace(),
     stopSiteTrace: () => void stopSiteTrace(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
-    createNewSnapshot: () => void createNewSnapshot(),
-    restoreSnapshot: (id: string) => void restoreSnapshot(id),
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
     applyConfigAndRestart: () => void saveConfigAndApply(),
@@ -923,8 +886,6 @@ function bindPrototypeActions() {
       syncListLineNumbers(editor);
       toast(`Удалено дубликатов: ${result.removed}. Черновик изменён; нажмите «Сохранить» для записи.`);
     },
-    clearLogsBox: () => { const host = $('#liveLogContainer'); if (host) host.textContent = ''; },
-    emitTestLogEvent: () => toast('Тестовая генерация журналов отключена.'),
     showToast: (message: string) => toast(String(message)),
     ...Object.fromEntries(DISABLED_PANEL_ACTIONS.map((name) => [name, () => toast('Эта функция пока не подключена к backend и отключена, чтобы не показывать фиктивный результат.', 'error')])),
   };
