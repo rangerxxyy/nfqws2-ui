@@ -9,6 +9,9 @@ export type ConfigValidationDiagnostic = { severity: 'error' | 'warning'; code: 
 export type ConfigValidationResponse = { valid: boolean; diagnostics: ConfigValidationDiagnostic[]; checks: { parser: 'passed' | 'failed'; installedBinary: 'not_run' } };
 export type SiteDiagnosticStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type SiteDiagnosticReport = { host: string; addresses: string[]; steps: SiteDiagnosticStep[]; summary: string; limitations: string[] };
+export type SiteTracePhase = { state: 'complete' | 'error' | 'unavailable'; ok: boolean | null; code: number | null; durationMs: number | null; reason: string };
+export type SiteTraceReport = { host: string; address: string | null; withoutNfqws2: SiteTracePhase; withNfqws2: SiteTracePhase; traceLines: string[]; traceTruncated: boolean; traceHostname: string | null; traceProfile: string | null; traceActions: string[]; traceWarnings: string[]; summary: string };
+export type SiteTraceOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; message: string; report: SiteTraceReport | null; updatedAt: number };
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
 export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = 'user.list' | 'auto.list' | 'exclude.list' | 'ipset.list' | 'ipset_exclude.list';
@@ -109,6 +112,11 @@ export const nfqwsDiagnostics = {
   site: (host: string) => api<SiteDiagnosticReport>('/api/nfqws2/diagnostics/site', {
     method: 'POST', body: JSON.stringify({ host }),
   }),
+  traceStart: (host: string, proto: 'http' | 'https') => api<SiteTraceOperation>('/api/nfqws2/diagnostics/trace', {
+    method: 'POST', body: JSON.stringify({ host, proto }),
+  }),
+  traceStatus: (id: string) => api<SiteTraceOperation>(`/api/nfqws2/diagnostics/trace/operations/${encodeURIComponent(id)}`),
+  traceStop: (id: string) => api<SiteTraceOperation>(`/api/nfqws2/diagnostics/trace/operations/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
 };
 
 export const nfqwsUpdates = {

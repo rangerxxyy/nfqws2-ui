@@ -309,6 +309,10 @@ export default function App() {
               </button>
               {"\n\n            "}
               {"\n            "}
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["trace"])} id={"navBtn-trace"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <span className={"flex items-center gap-3"}><span className={"text-blue-400"}>⌁</span><span>Трассировка</span></span>
+                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300"}>--debug</span>
+              </button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["autotune"])} id={"navBtn-autotune"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 {"\n              "}
                 <div className={"flex items-center gap-3"}>
@@ -1051,6 +1055,27 @@ export default function App() {
         {"\n      "}
         {"\n      "}
         {"\n      "}
+        <section id={"tabContent-trace"} className={"hidden view-animate space-y-5"}>
+          <div className={"ui-card rounded-2xl p-6 shadow-xl"}>
+            <div className={"pb-5 border-b border-slate-800"}>
+              <span className={"px-2.5 py-0.5 rounded-md bg-blue-500/15 text-blue-300 border border-blue-500/30 text-xs font-mono font-bold"}>Диагностика nfqws2 --debug</span>
+              <h2 className={"mt-2 text-lg font-bold text-white"}>Трассировка домена</h2>
+              <p className={"mt-1 text-xs sm:text-sm text-slate-400"}>Сравнивает HTTP-ответ сайта с nfqws2 и без него. Запрос выполняется на роутере; основной процесс и конфигурация не должны изменяться.</p>
+            </div>
+            <div className={"mt-5 flex flex-col sm:flex-row gap-3"}>
+              <select id={"traceProtoSelect"} aria-label={"Протокол трассировки"} className={"bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"}>
+                <option value={"https"}>HTTPS</option>
+                <option value={"http"}>HTTP</option>
+              </select>
+              <input id={"traceDomainInput"} type={"text"} placeholder={"Введите домен, например example.com"} className={"flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-blue-500"} />
+              <button data-action-click={"runSiteTrace"} className={"px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-600/20"}>Запустить трассировку</button>
+              <button id={"traceStopButton"} data-action-click={"stopSiteTrace"} className={"hidden px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 font-bold text-sm transition-all"}>Остановить</button>
+            </div>
+            <p id={"traceOperationStatus"} className={"hidden mt-3 text-xs text-blue-300"} role={"status"} aria-live={"polite"}></p>
+            <p className={"mt-3 text-xs text-slate-500"}>Трассировка повторяет HTTP/HTTPS-процесс Zemidala. Проверка QUIC/HTTP3 остаётся отдельным этапом в «Проверке сайта».</p>
+          </div>
+          <div id={"traceResultContainer"} className={"grid grid-cols-1 lg:grid-cols-2 gap-5"}></div>
+        </section>
         <section id={"tabContent-autotune"} className={"hidden view-animate space-y-5"}>
           {"\n        \n        "}
           <div className={"ui-card rounded-2xl p-6 shadow-xl"}>

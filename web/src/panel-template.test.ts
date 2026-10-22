@@ -260,6 +260,23 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain("import '@fontsource-variable/jetbrains-mono'");
   });
 
+  it('keeps site diagnosis and packet tracing as separate navigation sections', () => {
+    expect(template).toContain('id="navBtn-check"');
+    expect(template).toContain('id="tabContent-check"');
+    expect(template).toContain('id="navBtn-trace"');
+    expect(template).toContain('id="tabContent-trace"');
+    expect(template).toContain('data-action-click="runSiteTrace"');
+  });
+
+  it('polls the router-side trace operation and exposes graceful stop', () => {
+    expect(template).toContain('id="traceStopButton"');
+    expect(template).toContain('id="traceOperationStatus"');
+    expect(panelSource).toContain('nfqwsDiagnostics.traceStart');
+    expect(panelSource).toContain('nfqwsDiagnostics.traceStatus');
+    expect(panelSource).toContain('nfqwsDiagnostics.traceStop');
+    expect(panelSource).toContain('stopSiteTrace:');
+  });
+
   it('has no duplicate action attributes and every template action is wired', () => {
     const tags = template.match(/<[a-z][^>]*>/gi) ?? [];
     for (const tag of tags) {

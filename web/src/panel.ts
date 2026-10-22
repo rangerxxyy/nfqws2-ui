@@ -1,12 +1,12 @@
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 
-type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
 export const UNAVAILABLE_PANEL_ROUTES = ['autotune', 'monitor', 'community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
@@ -16,6 +16,8 @@ let activeListId: NfqwsListId = 'user.list';
 let busy = false;
 let statusPolling = false;
 let diagnosisRunning = false;
+let traceRunning = false;
+let activeTraceOperationId: string | null = null;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
@@ -641,6 +643,99 @@ async function runSiteDiagnosis() {
   } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить домен'; }
 }
 
+function renderTraceReport(container: HTMLElement, report: SiteTraceReport) {
+  container.replaceChildren();
+  const phaseCard = (title: string, phase: SiteTraceReport['withoutNfqws2']) => {
+    const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-2';
+    const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = title;
+    const state = document.createElement('p'); state.className = `text-sm font-semibold ${phase.ok === true ? 'text-emerald-400' : phase.ok === false ? 'text-rose-400' : 'text-amber-300'}`;
+    state.textContent = phase.ok === true ? `Ответ получен${phase.code === null ? '' : ` · HTTP ${phase.code}`}` : phase.ok === false ? 'Ответ не получен' : 'Этап недоступен';
+    const reason = document.createElement('p'); reason.className = 'text-xs text-slate-300 whitespace-pre-wrap break-words'; reason.textContent = phase.reason;
+    const timing = phase.durationMs === null ? null : document.createElement('p');
+    if (timing) { timing.className = 'text-xs text-slate-500'; timing.textContent = `${phase.durationMs} мс`; }
+    card.append(heading, state, reason); if (timing) card.append(timing);
+    return card;
+  };
+  const header = document.createElement('div'); header.className = 'col-span-full ui-card rounded-2xl p-4';
+  const title = document.createElement('h3'); title.className = 'font-bold text-white'; title.textContent = `${report.host} · ${report.summary}`;
+  const address = document.createElement('p'); address.className = 'mt-1 text-xs font-mono text-slate-400'; address.textContent = `Проверенный адрес: ${report.address ?? 'не определён'}`;
+  header.append(title, address);
+  container.append(header, phaseCard('Без nfqws2', report.withoutNfqws2), phaseCard('С nfqws2', report.withNfqws2));
+  const insights = document.createElement('section'); insights.className = 'col-span-full ui-card rounded-2xl p-5 space-y-3';
+  const insightTitle = document.createElement('h3'); insightTitle.className = 'text-sm font-bold text-white'; insightTitle.textContent = 'Что произошло';
+  const host = document.createElement('p'); host.className = 'text-xs text-slate-300'; host.textContent = `Имя сайта по SNI/Host: ${report.traceHostname ?? 'не определено'}`;
+  const profile = document.createElement('p'); profile.className = 'text-xs text-slate-300'; profile.textContent = `Профиль: ${report.traceProfile ?? 'не обнаружен в журнале'}`;
+  insights.append(insightTitle, host, profile);
+  for (const [label, entries, color] of [['Действия', report.traceActions, 'text-emerald-300'], ['Предупреждения', report.traceWarnings, 'text-amber-300']] as const) {
+    if (!entries.length) continue;
+    const heading = document.createElement('p'); heading.className = `text-xs font-semibold ${color}`; heading.textContent = label; insights.append(heading);
+    const list = document.createElement('ul'); list.className = 'pl-4 list-disc text-xs text-slate-300 space-y-1';
+    for (const item of entries) { const row = document.createElement('li'); row.textContent = item; list.append(row); }
+    insights.append(list);
+  }
+  container.append(insights);
+  const logCard = document.createElement('section'); logCard.className = 'col-span-full ui-card rounded-2xl p-5 space-y-3';
+  const logHeading = document.createElement('h3'); logHeading.className = 'text-sm font-bold text-white'; logHeading.textContent = `Журнал nfqws2 --debug · ${report.traceLines.length} строк${report.traceTruncated ? ' · журнал обрезан по лимиту' : ''}`;
+  const filter = document.createElement('input'); filter.type = 'search'; filter.className = 'w-full bg-[#060a12] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white'; filter.placeholder = 'Фильтр журнала'; filter.setAttribute('aria-label', 'Фильтр журнала трассировки');
+  const pre = document.createElement('pre'); pre.className = 'max-h-[60vh] overflow-auto rounded-xl bg-[#060a12] border border-slate-800 p-4 text-[11px] leading-5 font-mono text-slate-300 whitespace-pre-wrap break-all';
+  const draw = () => { const query = filter.value.trim().toLowerCase(); pre.textContent = report.traceLines.filter((line) => !query || line.toLowerCase().includes(query)).join('\n'); };
+  filter.addEventListener('input', draw); draw(); logCard.append(logHeading, filter, pre); container.append(logCard);
+}
+
+async function runSiteTrace() {
+  if (traceRunning) return;
+  const input = $('#traceDomainInput'); const container = $('#traceResultContainer'); const button = $('[data-action-click="runSiteTrace"]');
+  if (!(input instanceof HTMLInputElement) || !container || !(button instanceof HTMLButtonElement)) return;
+  if (!input.value.trim()) return toast('Введите домен для трассировки.', 'error');
+  const stop = $('#traceStopButton'); const operationStatus = $('#traceOperationStatus');
+  traceRunning = true; activeTraceOperationId = null; input.disabled = true; button.disabled = true; button.textContent = 'Трассировка…';
+  if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.classList.remove('hidden'); }
+  if (operationStatus) { operationStatus.textContent = 'Подготовка фоновой проверки на роутере…'; operationStatus.classList.remove('hidden'); }
+  container.replaceChildren();
+  const progress = document.createElement('p'); progress.className = 'col-span-full text-sm text-blue-300 animate-pulse'; progress.textContent = 'Операция выполняется на роутере. Можно перейти в другой раздел; статус сохранится.'; container.append(progress);
+  const protocol = $('#traceProtoSelect');
+  const proto = protocol instanceof HTMLSelectElement && protocol.value === 'http' ? 'http' : 'https';
+  try {
+    const started = await nfqwsDiagnostics.traceStart(input.value, proto);
+    activeTraceOperationId = started.id;
+    let current: SiteTraceOperation = started;
+    const terminal = ['complete', 'cancelled', 'failed'];
+    for (let attempt = 0; attempt < 90 && !terminal.includes(current.state); attempt += 1) {
+      if (operationStatus) operationStatus.textContent = current.message || `Этап: ${current.stage}`;
+      await new Promise((resolve) => window.setTimeout(resolve, 900));
+      try { current = await nfqwsDiagnostics.traceStatus(started.id); }
+      catch (error) {
+        if (operationStatus) operationStatus.textContent = error instanceof Error ? `${current.message} · переподключение…` : 'Связь с роутером восстановится автоматически…';
+      }
+    }
+    if (current.report) renderTraceReport(container, current.report);
+    else {
+      container.replaceChildren(); const row = document.createElement('p'); row.className = `col-span-full text-sm ${current.state === 'failed' ? 'text-rose-400' : 'text-amber-300'}`;
+      row.textContent = current.message || 'Результат трассировки пока не получен'; container.append(row);
+    }
+    if (operationStatus) operationStatus.textContent = current.message;
+  } catch (error) {
+    container.replaceChildren(); const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = error instanceof Error ? error.message : 'Трассировка не выполнена'; container.append(row);
+  } finally {
+    traceRunning = false; activeTraceOperationId = null; input.disabled = false; button.disabled = false; button.textContent = 'Запустить трассировку';
+    if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.classList.add('hidden'); }
+  }
+}
+
+async function stopSiteTrace() {
+  if (!traceRunning || !activeTraceOperationId) return;
+  const button = $('#traceStopButton');
+  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Останавливаю…'; }
+  try {
+    const operation = await nfqwsDiagnostics.traceStop(activeTraceOperationId);
+    const status = $('#traceOperationStatus');
+    if (status) status.textContent = operation.message;
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось остановить трассировку', 'error');
+    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Остановить'; }
+  }
+}
+
 export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain','findTelegramChatId'] as const;
 
 function renderReleaseNotes(target: HTMLElement, notes: string) {
@@ -785,6 +880,8 @@ function bindPrototypeActions() {
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => { showRoute(route); if (route === 'snapshots') void loadBackups(); },
     runSiteDiagnosis: () => void runSiteDiagnosis(),
+    runSiteTrace: () => void runSiteTrace(),
+    stopSiteTrace: () => void stopSiteTrace(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
     createNewSnapshot: () => void createNewSnapshot(),
     restoreSnapshot: (id: string) => void restoreSnapshot(id),

@@ -9,6 +9,7 @@ use axum::{
 };
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
+use nfqws2_ui::site_trace;
 use nfqws2_ui::{
     ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
     network_interface_names, parse_meminfo_kb, process_matches, service_action, service_action_at,
@@ -17,10 +18,16 @@ use nfqws2_ui::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
+    future::Future,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    pin::Pin,
     process::Stdio,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -28,7 +35,6 @@ use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::{services::ServeDir, trace::TraceLayer};
 
 const MAX_CONFIG_BYTES: usize = 512 * 1024;
-static SITE_DIAGNOSTIC_LOCK: Mutex<()> = Mutex::const_new(());
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -66,6 +72,164 @@ struct AppState {
     config_write_lock: Mutex<()>,
     config_override: Option<PathBuf>,
     update_lock: Mutex<()>,
+    site_diagnostic_lock: Arc<Mutex<()>>,
+    site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    site_trace_runner: Arc<SiteTraceRunner>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SiteTraceOperation {
+    id: String,
+    state: String,
+    stage: String,
+    message: String,
+    report: Option<site_trace::TraceReport>,
+    updated_at: u64,
+}
+
+const MAX_SITE_TRACE_STATE_BYTES: usize = 512 * 1024;
+const MAX_SITE_TRACE_OPERATIONS: usize = 12;
+
+type SiteTraceRunner = dyn Fn(
+        String,
+        String,
+        Vec<String>,
+        String,
+        String,
+        Arc<AtomicBool>,
+    ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>>
+    + Send
+    + Sync;
+
+fn router_site_trace_runner(
+    host: String,
+    proto: String,
+    args: Vec<String>,
+    binary: String,
+    init_script: String,
+    cancel: Arc<AtomicBool>,
+) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>> {
+    Box::pin(async move { site_trace::run(host, &proto, args, binary, init_script, cancel).await })
+}
+
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn valid_site_trace_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn site_trace_operation_path(directory: &Path, id: &str) -> PathBuf {
+    directory.join(format!("{id}.json"))
+}
+
+async fn write_site_trace_operation(
+    directory: &Path,
+    operation: &SiteTraceOperation,
+) -> Result<(), String> {
+    if !valid_site_trace_id(&operation.id) {
+        return Err("Недопустимый идентификатор операции трассировки".into());
+    }
+    let bytes = serde_json::to_vec(operation).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_SITE_TRACE_STATE_BYTES {
+        return Err("Состояние трассировки превышает ограничение размера".into());
+    }
+    let destination = site_trace_operation_path(directory, &operation.id);
+    let temporary = directory.join(format!("{}.{}.tmp", operation.id, new_update_id()));
+    tokio::fs::write(&temporary, &bytes)
+        .await
+        .map_err(|e| format!("Не удалось сохранить статус трассировки: {e}"))?;
+    #[cfg(windows)]
+    if tokio::fs::try_exists(&destination).await.unwrap_or(false) {
+        tokio::fs::remove_file(&destination)
+            .await
+            .map_err(|e| format!("Не удалось заменить статус трассировки: {e}"))?;
+    }
+    if let Err(error) = tokio::fs::rename(&temporary, &destination).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(format!("Не удалось обновить статус трассировки: {error}"));
+    }
+    Ok(())
+}
+
+async fn read_site_trace_operation(
+    directory: &Path,
+    id: &str,
+) -> Result<Option<SiteTraceOperation>, String> {
+    if !valid_site_trace_id(id) {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    let file = match tokio::fs::File::open(site_trace_operation_path(directory, id)).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Не удалось прочитать статус трассировки: {error}")),
+    };
+    file.take((MAX_SITE_TRACE_STATE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| format!("Не удалось прочитать статус трассировки: {e}"))?;
+    if bytes.len() > MAX_SITE_TRACE_STATE_BYTES {
+        return Err("Сохранённое состояние трассировки превышает лимит".into());
+    }
+    let operation: SiteTraceOperation = serde_json::from_slice(&bytes)
+        .map_err(|_| "Повреждено состояние трассировки".to_string())?;
+    let valid_state = matches!(
+        operation.state.as_str(),
+        "queued" | "running" | "stopping" | "complete" | "cancelled" | "failed"
+    );
+    let valid_report = operation.report.as_ref().is_none_or(|report| {
+        report.trace_lines.len() <= site_trace::MAX_TRACE_LINES
+            && report
+                .trace_lines
+                .iter()
+                .all(|line| line.len() <= site_trace::MAX_TRACE_LINE_BYTES)
+    });
+    if operation.id != id || !valid_state || !valid_report {
+        return Err("Недопустимое состояние трассировки".into());
+    }
+    Ok(Some(operation))
+}
+
+async fn prune_site_trace_operations(directory: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(directory).await else {
+        return;
+    };
+    let mut completed = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if let Ok(Some(operation)) = read_site_trace_operation(directory, id).await
+            && matches!(
+                operation.state.as_str(),
+                "complete" | "cancelled" | "failed"
+            )
+        {
+            let updated = tokio::fs::metadata(&path)
+                .await
+                .and_then(|metadata| metadata.modified())
+                .ok();
+            completed.push((path, updated));
+        }
+    }
+    if completed.len() <= MAX_SITE_TRACE_OPERATIONS {
+        return;
+    }
+    let remove_count = completed.len() - MAX_SITE_TRACE_OPERATIONS;
+    completed.sort_by_key(|(_, modified)| *modified);
+    for (path, _) in completed.into_iter().take(remove_count) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
 }
 
 #[derive(Serialize)]
@@ -222,6 +386,12 @@ struct ConfigValidationChecks {
 #[derive(Deserialize)]
 struct SiteDiagnosticRequest {
     host: String,
+}
+
+#[derive(Deserialize)]
+struct SiteTraceRequest {
+    host: String,
+    proto: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1687,7 +1857,7 @@ async fn diagnose_site(
         Ok(host) => host,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    let Ok(_guard) = SITE_DIAGNOSTIC_LOCK.try_lock() else {
+    let Ok(_guard) = state.site_diagnostic_lock.try_lock() else {
         return error(
             StatusCode::CONFLICT,
             "Проверка сайта уже выполняется; дождитесь результата",
@@ -1775,6 +1945,163 @@ async fn diagnose_site(
         });
     }
     Json(report).into_response()
+}
+
+async fn trace_site(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SiteTraceRequest>,
+) -> Response {
+    let host = match site_diagnostics::normalize_host(&request.host) {
+        Ok(host) => host,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let proto = request.proto.as_deref().unwrap_or("https");
+    if !["http", "https"].contains(&proto) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Для трассировки доступны только HTTP и HTTPS; QUIC проверяется отдельно",
+        );
+    }
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Проверка сайта или трассировка уже выполняется; повторите позже",
+        );
+    };
+    let operation_dir = state.data_dir.join("site-trace-operations");
+    if let Err(io_error) = tokio::fs::create_dir_all(&operation_dir).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    #[cfg(unix)]
+    if let Ok(metadata) = tokio::fs::metadata(&operation_dir).await {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o700);
+        if let Err(io_error) = tokio::fs::set_permissions(&operation_dir, permissions).await {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось защитить каталог операций трассировки: {io_error}"),
+            );
+        }
+    }
+    prune_site_trace_operations(&operation_dir).await;
+    let id = new_update_id();
+    let control = Arc::new(AtomicBool::new(false));
+    let operation = SiteTraceOperation {
+        id: id.clone(),
+        state: "queued".into(),
+        stage: "queued".into(),
+        message: "Трассировка поставлена в очередь".into(),
+        report: None,
+        updated_at: now_unix_seconds(),
+    };
+    if let Err(message) = write_site_trace_operation(&operation_dir, &operation).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    state
+        .site_trace_controls
+        .lock()
+        .await
+        .insert(id.clone(), control.clone());
+    prune_site_trace_operations(&operation_dir).await;
+
+    let task_state = state.clone();
+    let task_id = id.clone();
+    let task_host = host.clone();
+    let task_proto = proto.to_owned();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let operation_dir = task_state.data_dir.join("site-trace-operations");
+        let mut running = SiteTraceOperation {
+            id: task_id.clone(),
+            state: "running".into(),
+            stage: "router_probe".into(),
+            message: "Выполняется проверка с роутера".into(),
+            report: None,
+            updated_at: now_unix_seconds(),
+        };
+        let _ = write_site_trace_operation(&operation_dir, &running).await;
+        let (binary, init_script) = if let Some(paths) = discover_system_paths() {
+            let init = tokio::fs::read_to_string(paths.init_script)
+                .await
+                .unwrap_or_default();
+            (paths.binary.to_string_lossy().into_owned(), init)
+        } else {
+            (String::new(), String::new())
+        };
+        let args = active_process_snapshot()
+            .map(|(_, args)| args)
+            .unwrap_or_default();
+        let report = (task_state.site_trace_runner)(
+            task_host,
+            task_proto,
+            args,
+            binary,
+            init_script,
+            control.clone(),
+        )
+        .await;
+        let cancelled = control.load(Ordering::Acquire);
+        running.state = if cancelled { "cancelled" } else { "complete" }.into();
+        running.stage = running.state.clone();
+        running.message = if cancelled {
+            "Трассировка остановлена; очистка завершена".into()
+        } else {
+            report.summary.clone()
+        };
+        running.report = Some(report);
+        running.updated_at = now_unix_seconds();
+        let _ = write_site_trace_operation(&operation_dir, &running).await;
+        task_state.site_trace_controls.lock().await.remove(&task_id);
+    });
+    (StatusCode::ACCEPTED, Json(operation)).into_response()
+}
+
+async fn get_site_trace_operation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_site_trace_id(&id) {
+        return error(StatusCode::NOT_FOUND, "Операция трассировки не найдена");
+    }
+    match read_site_trace_operation(&state.data_dir.join("site-trace-operations"), &id).await {
+        Ok(Some(operation)) => Json(operation).into_response(),
+        Ok(None) => error(StatusCode::NOT_FOUND, "Операция трассировки не найдена"),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn stop_site_trace_operation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_site_trace_id(&id) {
+        return error(StatusCode::NOT_FOUND, "Операция трассировки не найдена");
+    }
+    let operation_dir = state.data_dir.join("site-trace-operations");
+    let Some(mut operation) = (match read_site_trace_operation(&operation_dir, &id).await {
+        Ok(operation) => operation,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }) else {
+        return error(StatusCode::NOT_FOUND, "Операция трассировки не найдена");
+    };
+    if !matches!(operation.state.as_str(), "queued" | "running" | "stopping") {
+        return (StatusCode::OK, Json(operation)).into_response();
+    }
+    let controls = state.site_trace_controls.lock().await;
+    let Some(control) = controls.get(&id) else {
+        return error(StatusCode::CONFLICT, "Операция уже завершается");
+    };
+    control.store(true, Ordering::Release);
+    operation.state = "stopping".into();
+    operation.stage = "cleanup".into();
+    operation.message = "Остановка запрошена; завершаются дочерние процессы и очистка".into();
+    operation.updated_at = now_unix_seconds();
+    drop(controls);
+    if let Err(message) = write_site_trace_operation(&operation_dir, &operation).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    (StatusCode::ACCEPTED, Json(operation)).into_response()
 }
 
 async fn preview_config(Json(request): Json<ConfigPreviewRequest>) -> Response {
@@ -2759,6 +3086,15 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/preview", post(preview_config))
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
+        .route("/api/nfqws2/diagnostics/trace", post(trace_site))
+        .route(
+            "/api/nfqws2/diagnostics/trace/operations/{id}",
+            get(get_site_trace_operation),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/trace/operations/{id}/stop",
+            post(stop_site_trace_operation),
+        )
         .route("/api/nfqws2/apply", post(apply_config))
         .route("/api/nfqws2/lists", get(get_lists))
         .route("/api/nfqws2/lists/{id}", get(get_list).put(put_list))
@@ -2825,6 +3161,9 @@ async fn main() {
         config_write_lock: Mutex::new(()),
         config_override: None,
         update_lock: Mutex::new(()),
+        site_diagnostic_lock: Arc::new(Mutex::new(())),
+        site_trace_controls: Mutex::new(HashMap::new()),
+        site_trace_runner: Arc::new(router_site_trace_runner),
     });
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
@@ -2884,6 +3223,26 @@ mod tests {
             config_write_lock: Mutex::new(()),
             config_override,
             update_lock: Mutex::new(()),
+            site_diagnostic_lock: Arc::new(Mutex::new(())),
+            site_trace_controls: Mutex::new(HashMap::new()),
+            site_trace_runner: Arc::new(router_site_trace_runner),
+        })
+    }
+
+    fn test_state_with_trace_runner(
+        data_dir: PathBuf,
+        runner: Arc<SiteTraceRunner>,
+    ) -> Arc<AppState> {
+        Arc::new(AppState {
+            data_dir,
+            port: 1002,
+            cpu_previous: Arc::new(Mutex::new(None)),
+            config_write_lock: Mutex::new(()),
+            config_override: None,
+            update_lock: Mutex::new(()),
+            site_diagnostic_lock: Arc::new(Mutex::new(())),
+            site_trace_controls: Mutex::new(HashMap::new()),
+            site_trace_runner: runner,
         })
     }
 
@@ -3554,6 +3913,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn site_trace_rejects_local_or_injected_targets_before_firewall_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = api_router(test_state(dir.path().join("data")), dir.path().join("web"));
+        for host in [
+            "127.0.0.1",
+            "router.local",
+            "x.com;reboot",
+            "http://user:pass@x.com",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/nfqws2/diagnostics/trace")
+                        .header("content-type", "application/json")
+                        .body(Body::from(serde_json::json!({"host":host}).to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(body_json(response).await["error"].is_string());
+        }
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/trace")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"example.com","proto":"quic"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            body_json(response).await["error"]
+                .as_str()
+                .unwrap()
+                .contains("HTTP и HTTPS")
+        );
+    }
+
+    #[tokio::test]
+    async fn site_trace_invalid_request_does_not_create_operation_storage() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let app = api_router(test_state(data.clone()), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/trace")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"127.0.0.1"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!data.join("site-trace-operations").exists());
+    }
+
+    #[tokio::test]
+    async fn site_trace_unknown_operation_status_and_stop_are_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = api_router(test_state(dir.path().join("data")), dir.path().join("web"));
+        for (method, uri) in [
+            (
+                "GET",
+                "/api/nfqws2/diagnostics/trace/operations/0123456789abcdef0123456789abcdef",
+            ),
+            (
+                "POST",
+                "/api/nfqws2/diagnostics/trace/operations/0123456789abcdef0123456789abcdef/stop",
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert!(body_json(response).await["error"].is_string());
+        }
+    }
+
+    #[tokio::test]
+    async fn site_trace_rejects_a_concurrent_diagnostic_before_creating_an_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let state = test_state(data.clone());
+        let _guard = state.site_diagnostic_lock.clone().lock_owned().await;
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/trace")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"example.com"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(!data.join("site-trace-operations").exists());
+    }
+
+    #[tokio::test]
     async fn config_preview_preserves_draft_and_never_writes_the_device_file() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
@@ -4139,5 +4621,249 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(tokio::fs::read(&config).await.unwrap(), b"original\n");
         assert!(!dir.path().join("backups").exists());
+    }
+
+    #[tokio::test]
+    async fn site_trace_operation_storage_is_bounded_and_uses_camel_case_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let operation = SiteTraceOperation {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            state: "running".into(),
+            stage: "router_probe".into(),
+            message: "Проверяется сайт".into(),
+            report: None,
+            updated_at: 42,
+        };
+        write_site_trace_operation(dir.path(), &operation)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(
+            &tokio::fs::read(site_trace_operation_path(dir.path(), &operation.id))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json["updatedAt"], 42);
+        assert_eq!(json["stage"], "router_probe");
+        assert_eq!(
+            read_site_trace_operation(dir.path(), &operation.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .state,
+            "running"
+        );
+        let mut updated = operation.clone();
+        updated.stage = "cleanup".into();
+        updated.updated_at = 43;
+        write_site_trace_operation(dir.path(), &updated)
+            .await
+            .unwrap();
+        assert_eq!(
+            read_site_trace_operation(dir.path(), &operation.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .stage,
+            "cleanup"
+        );
+        assert!(
+            write_site_trace_operation(
+                dir.path(),
+                &SiteTraceOperation {
+                    message: "x".repeat(MAX_SITE_TRACE_STATE_BYTES),
+                    ..operation
+                }
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn site_trace_operation_reader_rejects_malformed_state_and_oversized_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        let path = site_trace_operation_path(dir.path(), id);
+        tokio::fs::write(
+            &path,
+            br#"{"id":"0123456789abcdef0123456789abcdef","state":"invented"}"#,
+        )
+        .await
+        .unwrap();
+        assert!(read_site_trace_operation(dir.path(), id).await.is_err());
+        tokio::fs::write(&path, vec![b'x'; MAX_SITE_TRACE_STATE_BYTES + 1])
+            .await
+            .unwrap();
+        assert!(read_site_trace_operation(dir.path(), id).await.is_err());
+        assert!(
+            read_site_trace_operation(dir.path(), "../unknown")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn site_trace_status_route_returns_persisted_camel_case_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let operation_dir = data.join("site-trace-operations");
+        tokio::fs::create_dir_all(&operation_dir).await.unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        write_site_trace_operation(
+            &operation_dir,
+            &SiteTraceOperation {
+                id: id.into(),
+                state: "running".into(),
+                stage: "router_probe".into(),
+                message: "Проверяется роутером".into(),
+                report: None,
+                updated_at: 123,
+            },
+        )
+        .await
+        .unwrap();
+        let app = api_router(test_state(data), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/nfqws2/diagnostics/trace/operations/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["id"], id);
+        assert_eq!(body["state"], "running");
+        assert_eq!(body["stage"], "router_probe");
+        assert_eq!(body["updatedAt"], 123);
+    }
+
+    #[tokio::test]
+    async fn site_trace_start_returns_accepted_then_persists_runner_result() {
+        let dir = tempfile::tempdir().unwrap();
+        let runner: Arc<SiteTraceRunner> = Arc::new(|host, _proto, _, _, _, _| {
+            Box::pin(async move {
+                site_trace::TraceReport {
+                    host,
+                    address: Some("93.184.216.34".into()),
+                    without_nfqws2: site_trace::TracePhase {
+                        state: "complete".into(),
+                        ok: Some(true),
+                        code: Some(200),
+                        duration_ms: Some(12),
+                        reason: "HTTP 200".into(),
+                    },
+                    with_nfqws2: site_trace::TracePhase::unavailable("fake runner"),
+                    trace_lines: vec!["test log".into()],
+                    trace_truncated: false,
+                    trace_hostname: None,
+                    trace_profile: None,
+                    trace_actions: Vec::new(),
+                    trace_warnings: Vec::new(),
+                    summary: "Тестовый результат".into(),
+                }
+            })
+        });
+        let app = api_router(
+            test_state_with_trace_runner(dir.path().join("data"), runner),
+            dir.path().join("web"),
+        );
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/trace")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"example.com"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let started = body_json(response).await;
+        let id = started["id"].as_str().unwrap().to_owned();
+        assert_eq!(started["state"], "queued");
+        assert!(started["report"].is_null());
+        let mut operation = serde_json::Value::Null;
+        for _ in 0..20 {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/nfqws2/diagnostics/trace/operations/{id}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            operation = body_json(response).await;
+            if operation["state"] == "complete" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(operation["state"], "complete");
+        assert_eq!(operation["report"]["host"], "example.com");
+        assert_eq!(operation["report"]["withoutNfqws2"]["code"], 200);
+        assert_eq!(operation["report"]["traceLines"][0], "test log");
+    }
+
+    #[tokio::test]
+    async fn site_trace_stop_route_sets_cancellation_and_persists_stopping_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let operation_dir = data.join("site-trace-operations");
+        tokio::fs::create_dir_all(&operation_dir).await.unwrap();
+        let id = "0123456789abcdef0123456789abcdef";
+        write_site_trace_operation(
+            &operation_dir,
+            &SiteTraceOperation {
+                id: id.into(),
+                state: "running".into(),
+                stage: "router_probe".into(),
+                message: "Проверяется".into(),
+                report: None,
+                updated_at: 123,
+            },
+        )
+        .await
+        .unwrap();
+        let state = test_state(data.clone());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        state
+            .site_trace_controls
+            .lock()
+            .await
+            .insert(id.into(), cancelled.clone());
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/nfqws2/diagnostics/trace/operations/{id}/stop"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = body_json(response).await;
+        assert_eq!(body["state"], "stopping");
+        assert_eq!(body["stage"], "cleanup");
+        assert!(cancelled.load(Ordering::Acquire));
+        let persisted = read_site_trace_operation(&operation_dir, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(persisted.state, "stopping");
     }
 }

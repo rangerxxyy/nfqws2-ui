@@ -2,6 +2,25 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('starts, polls and stops a background router-side site trace through Rust', async () => {
+    const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', message: 'Трассировка поставлена в очередь', report: null, updatedAt: 100 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(operation), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'running', stage: 'router_probe' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const started = await nfqwsDiagnostics.traceStart('example.com', 'https');
+    expect(await nfqwsDiagnostics.traceStatus(started.id)).toMatchObject({ state: 'running', stage: 'router_probe' });
+    expect(await nfqwsDiagnostics.traceStop(started.id)).toMatchObject({ state: 'stopping', stage: 'cleanup' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/trace');
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ host: 'example.com', proto: 'https' });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/nfqws2/diagnostics/trace/operations/${started.id}`);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/nfqws2/diagnostics/trace/operations/${started.id}/stop`);
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('POST');
+  });
+
   it('requests router-side website diagnostics and returns the real stage results', async () => {
     const report = { host: 'example.com', addresses: ['1.1.1.1'], steps: [{id:'https',status:'error',detail:'TLS timeout',durationMs:8000,httpCode:null}], summary: 'Не удалось проверить HTTPS', limitations: [] };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(report), {status:200}));
