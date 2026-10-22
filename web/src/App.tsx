@@ -17,7 +17,7 @@ export default function App() {
         <div id={"headerStatusBar"} className={"min-w-0 flex flex-nowrap whitespace-nowrap items-center gap-2 justify-start overflow-x-auto py-1 lg:col-span-3 2xl:col-span-1"}>
           {"\n        \n        "}
           {"\n        "}
-          <div className={"flex items-center gap-2 bg-[#060a12] border border-slate-800/90 px-2.5 py-1.5 rounded-lg shadow-inner"}>
+          <div className={"flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg shadow-inner"}>
             {"\n          "}
             <div id={"statusIndicator"} className={"relative flex items-center justify-center w-3 h-3"}>
               {"\n            "}
@@ -36,9 +36,9 @@ export default function App() {
           {"\n\n        "}
           {"\n        "}
           <div id={"headerServiceControls"} className={"shrink-0 flex items-center gap-1"}>
-          <button data-action-click={"restartService"} title={"Перезапустить nfqws2"} aria-label={"Перезапустить nfqws2"} className={"h-8 w-8 rounded-lg bg-slate-800/90 hover:bg-slate-700 hover:-translate-y-0.5 text-slate-100 border border-slate-700 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+          <button data-action-click={"restartService"} title={"Перезапустить nfqws2"} aria-label={"Перезапустить nfqws2"} className={"h-9 w-9 rounded-lg bg-slate-800/90 hover:bg-slate-700 hover:-translate-y-0.5 text-slate-100 border border-slate-700 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
             {"\n          "}
-            <svg id={"restartIcon"} aria-hidden={"true"} className={"w-4 h-4 text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+            <svg id={"restartIcon"} aria-hidden={"true"} className={"w-[18px] h-[18px] text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
               <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"}></path>
               {"\n          "}
@@ -48,9 +48,9 @@ export default function App() {
           </button>
           {"\n\n        "}
           {"\n        "}
-          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} title={"Остановить nfqws2"} aria-label={"Остановить nfqws2"} className={"h-8 w-8 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 hover:-translate-y-0.5 text-rose-400 border border-rose-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"}>
+          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} title={"Остановить nfqws2"} aria-label={"Остановить nfqws2"} className={"h-9 w-9 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 hover:-translate-y-0.5 text-rose-400 border border-rose-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"}>
             {"\n          "}
-            <svg aria-hidden={"true"} className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
+            <svg aria-hidden={"true"} className={"w-[18px] h-[18px]"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
               <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
               {"\n          "}
@@ -856,7 +856,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"user.list"}
+                  {"Пользовательские домены"}
                 </span>
                 {"\n            "}
               </button>
@@ -868,7 +868,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"exclude.list"}
+                  {"Исключённые домены"}
                 </span>
                 {"\n            "}
               </button>
@@ -880,7 +880,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"auto.list"}
+                  {"Домены для автообучения"}
                 </span>
                 {"\n            "}
               </button>
@@ -892,7 +892,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"ipset.list"}
+                  {"IP-адреса"}
                 </span>
                 {"\n            "}
               </button>
@@ -904,7 +904,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"ipset_exclude.list"}
+                  {"Исключённые IP-адреса"}
                 </span>
                 {"\n            "}
               </button>

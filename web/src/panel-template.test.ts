@@ -32,7 +32,8 @@ describe('TSX panel without authentication', () => {
     expect(statusGroup).toContain('id="togglePowerBtn"');
     expect(statusGroup).toContain('aria-label="Остановить nfqws2"');
     expect(statusGroup).toContain('id="togglePowerText" class="sr-only"');
-    expect(statusGroup).toContain('h-8 w-8');
+    expect(statusGroup).toContain('h-9 w-9');
+    expect(statusGroup).toContain('px-3 py-2 rounded-lg shadow-inner');
     expect(statusGroup).not.toContain('Перезапустить</span>');
     const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
     expect(updates).not.toContain('restartService');
@@ -98,6 +99,17 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('listIdFromTabElementId(candidate.id)');
     expect(panelSource).toContain('availableListIds.has(tabId)');
     expect(panelSource).not.toContain('index.files.some((file) => file.id === candidate.dataset.arg)');
+  });
+
+  it('shows localized list names while keeping real backend paths available as details', () => {
+    expect(template).toContain('Пользовательские домены');
+    expect(template).toContain('Домены для автообучения');
+    expect(template).toContain('Исключённые домены');
+    expect(template).toContain('IP-адреса');
+    expect(template).toContain('Исключённые IP-адреса');
+    expect(template).not.toContain('>user.list</span>');
+    expect(panelSource).toContain('listDisplayName(id)');
+    expect(panelSource).toContain('title = result.path');
   });
 
   it('refreshes real CPU and memory metrics every three seconds with usage thresholds', () => {

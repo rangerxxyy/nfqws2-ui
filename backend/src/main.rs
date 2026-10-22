@@ -32,6 +32,7 @@ static SITE_DIAGNOSTIC_LOCK: Mutex<()> = Mutex::const_new(());
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
+const WRITE_REVISION_CONFLICT: &str = "REVISION_CONFLICT";
 const GITHUB_RELEASES_API: &str =
     "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=100";
 const NFQWS2_RELEASES_API: &str =
@@ -1923,10 +1924,17 @@ async fn put_list(
         &format!("list-{id}"),
         MAX_LIST_BYTES,
         write.content.as_bytes(),
+        Some(&write.revision),
     )
     .await
     {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+        return match message {
+            BackupWriteError::Conflict => error(
+                StatusCode::CONFLICT,
+                "Список изменился во время сохранения; обновите его и проверьте изменения",
+            ),
+            BackupWriteError::Failed(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        };
     }
     let saved = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
@@ -1939,8 +1947,8 @@ async fn put_list(
     };
     if saved != write.content.as_bytes() {
         return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Повторное чтение не совпало с отправленным содержимым; backup сохранён",
+            StatusCode::CONFLICT,
+            "Список изменился параллельно с записью. Новое содержимое не перезаписывалось; перечитайте файл и проверьте изменения",
         );
     }
     Json(ListResponse {
@@ -1998,10 +2006,17 @@ async fn put_config(
         "nfqws2.conf",
         MAX_CONFIG_BYTES,
         write.content.as_bytes(),
+        Some(&write.revision),
     )
     .await
     {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+        return match message {
+            BackupWriteError::Conflict => error(
+                StatusCode::CONFLICT,
+                "Конфигурация изменилась во время сохранения; обновите её и проверьте diff",
+            ),
+            BackupWriteError::Failed(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        };
     }
     let saved = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
@@ -2014,8 +2029,8 @@ async fn put_config(
     };
     if saved != write.content.as_bytes() {
         return error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Повторное чтение конфига не совпало с отправленным содержимым; backup сохранён",
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась параллельно с записью. Перечитайте файл и проверьте изменения",
         );
     }
     Json(ConfigResponse {
@@ -2047,16 +2062,25 @@ where
     if revision(&original) != write.revision {
         return Err("Файл изменился после загрузки; обновите страницу и проверьте diff".into());
     }
+    let candidate_revision = revision(write.content.as_bytes());
     if let Err(write_error) = backup_and_write_named(
         &state.data_dir,
         &path,
         "nfqws2.conf",
         MAX_CONFIG_BYTES,
         write.content.as_bytes(),
+        Some(&write.revision),
     )
     .await
     {
-        let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+        if matches!(write_error, BackupWriteError::Conflict) {
+            return Err(WRITE_REVISION_CONFLICT.into());
+        }
+        let BackupWriteError::Failed(write_error) = write_error else {
+            unreachable!()
+        };
+        let rollback =
+            restore_config_content(&state.data_dir, &path, &original, &candidate_revision).await;
         return Err(match rollback {
             Ok(()) => format!(
                 "Не удалось записать новую конфигурацию: {write_error}. Исходная версия восстановлена."
@@ -2069,7 +2093,9 @@ where
     let saved = match tokio::fs::read(&path).await {
         Ok(saved) => saved,
         Err(error) => {
-            let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+            let rollback =
+                restore_config_content(&state.data_dir, &path, &original, &candidate_revision)
+                    .await;
             return Err(match rollback {
                 Ok(()) => format!(
                     "Конфиг записан, но повторное чтение не удалось: {error}. Исходная версия восстановлена."
@@ -2081,7 +2107,8 @@ where
         }
     };
     if saved != write.content.as_bytes() {
-        let rollback = restore_config_content(&state.data_dir, &path, &original).await;
+        let rollback =
+            restore_config_content(&state.data_dir, &path, &original, &candidate_revision).await;
         return Err(match rollback {
             Ok(()) => "Повторное чтение конфига не совпало с отправленным содержимым; исходная версия восстановлена.".into(),
             Err(error) => format!("Повторное чтение конфига не совпало; откат не подтверждён: {error}"),
@@ -2098,7 +2125,7 @@ where
         }),
         Err(apply_error) => {
             if let Err(rollback_error) =
-                restore_config_content(&state.data_dir, &path, &original).await
+                restore_config_content(&state.data_dir, &path, &original, &candidate_revision).await
             {
                 return Err(format!(
                     "Применение не удалось: {apply_error}. Не удалось восстановить старую конфигурацию: {rollback_error}"
@@ -2120,8 +2147,30 @@ async fn restore_config_content(
     data_dir: &Path,
     path: &Path,
     original: &[u8],
+    expected_current_revision: &str,
 ) -> Result<(), String> {
-    backup_and_write_named(data_dir, path, "nfqws2.conf", MAX_CONFIG_BYTES, original).await?;
+    let current = tokio::fs::read(path)
+        .await
+        .map_err(|error| format!("не удалось прочитать конфиг перед откатом: {error}"))?;
+    if current == original {
+        return Ok(());
+    }
+    if revision(&current) != expected_current_revision {
+        return Err(
+            "конфиг изменился после применения; откат остановлен, чтобы не затереть новые данные"
+                .into(),
+        );
+    }
+    backup_and_write_named(
+        data_dir,
+        path,
+        "nfqws2.conf",
+        MAX_CONFIG_BYTES,
+        original,
+        Some(expected_current_revision),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     let restored = tokio::fs::read(path)
         .await
         .map_err(|error| format!("не удалось повторно прочитать конфигурацию: {error}"))?;
@@ -2143,6 +2192,10 @@ async fn apply_config(
     .await
     {
         Ok(result) => Json(result).into_response(),
+        Err(message) if message == WRITE_REVISION_CONFLICT => error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась во время сохранения; повторите загрузку",
+        ),
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
 }
@@ -2158,8 +2211,37 @@ async fn backup_and_write(
         "nfqws2.conf",
         MAX_CONFIG_BYTES,
         new_content,
+        None,
     )
     .await
+    .map_err(|error| error.to_string())
+}
+
+#[derive(Debug)]
+enum BackupWriteError {
+    Conflict,
+    Failed(String),
+}
+
+impl std::fmt::Display for BackupWriteError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Conflict => formatter.write_str("Файл изменился перед атомарной заменой"),
+            Self::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<String> for BackupWriteError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+impl From<&str> for BackupWriteError {
+    fn from(message: &str) -> Self {
+        Self::Failed(message.to_owned())
+    }
 }
 
 async fn backup_and_write_named(
@@ -2168,21 +2250,23 @@ async fn backup_and_write_named(
     backup_name: &str,
     max_bytes: usize,
     new_content: &[u8],
-) -> Result<(), String> {
+    expected_revision: Option<&str>,
+) -> Result<(), BackupWriteError> {
     if new_content.len() > max_bytes {
-        return Err(format!(
-            "Новый файл превышает лимит {} КБ",
-            max_bytes / 1024
-        ));
+        return Err(format!("Новый файл превышает лимит {} КБ", max_bytes / 1024).into());
     }
     let old = tokio::fs::read(source)
         .await
         .map_err(|error| error.to_string())?;
+    if expected_revision.is_some_and(|expected| revision(&old) != expected) {
+        return Err(BackupWriteError::Conflict);
+    }
     if old.len() > max_bytes {
         return Err(format!(
             "Текущий файл превышает лимит {} КБ; изменение отменено",
             max_bytes / 1024
-        ));
+        )
+        .into());
     }
     if backup_name.is_empty()
         || backup_name.len() > 64
@@ -2276,11 +2360,20 @@ async fn backup_and_write_named(
         }
     }
     drop(tmp_file);
+    if let Some(expected_revision) = expected_revision {
+        let latest = tokio::fs::read(source).await.map_err(|error| {
+            format!("Не удалось повторно проверить файл перед заменой: {error}")
+        })?;
+        if revision(&latest) != expected_revision {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(BackupWriteError::Conflict);
+        }
+    }
     if let Err(error) = tokio::fs::rename(&tmp, source).await {
         let _ = tokio::fs::remove_file(&tmp).await;
-        return Err(format!(
-            "Не удалось атомарно заменить конфиг; backup сохранён: {error}"
-        ));
+        return Err(
+            format!("Не удалось атомарно заменить конфиг; backup сохранён: {error}").into(),
+        );
     }
     #[cfg(unix)]
     {
@@ -3785,6 +3878,60 @@ mod tests {
             tokio::fs::read_to_string(backup_path).await.unwrap(),
             "original config\n"
         );
+    }
+
+    #[tokio::test]
+    async fn atomic_write_rejects_stale_revision_before_creating_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        tokio::fs::write(&config, b"loaded version\n")
+            .await
+            .unwrap();
+        let loaded_revision = revision(b"loaded version\n");
+        tokio::fs::write(&config, b"external concurrent edit\n")
+            .await
+            .unwrap();
+
+        let result = backup_and_write_named(
+            dir.path(),
+            &config,
+            "nfqws2.conf",
+            MAX_CONFIG_BYTES,
+            b"browser draft\n",
+            Some(&loaded_revision),
+        )
+        .await;
+
+        assert!(matches!(result, Err(BackupWriteError::Conflict)));
+        assert_eq!(
+            tokio::fs::read(&config).await.unwrap(),
+            b"external concurrent edit\n"
+        );
+        assert!(!dir.path().join("backups").exists());
+    }
+
+    #[tokio::test]
+    async fn rollback_does_not_overwrite_a_newer_external_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        tokio::fs::write(&config, b"external newer config\n")
+            .await
+            .unwrap();
+
+        let result = restore_config_content(
+            dir.path(),
+            &config,
+            b"previous config\n",
+            &revision(b"candidate config\n"),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            tokio::fs::read(&config).await.unwrap(),
+            b"external newer config\n"
+        );
+        assert!(!dir.path().join("backups").exists());
     }
 
     #[cfg(unix)]

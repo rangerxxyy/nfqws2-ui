@@ -21,6 +21,14 @@ let selectedReleaseTag: string | null = null;
 let updatePolling = false;
 let updateTarget: 'ui' | 'core' = 'ui';
 let installedCoreTag: string | null = null;
+const LIST_DISPLAY_NAMES: Record<NfqwsListId, string> = {
+  'user.list': 'Пользовательские домены',
+  'auto.list': 'Домены для автообучения',
+  'exclude.list': 'Исключённые домены',
+  'ipset.list': 'IP-адреса',
+  'ipset_exclude.list': 'Исключённые IP-адреса',
+};
+export const listDisplayName = (id: NfqwsListId) => LIST_DISPLAY_NAMES[id];
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
@@ -423,7 +431,7 @@ async function loadList(id: NfqwsListId) {
       candidate.disabled = !available;
       candidate.classList.toggle('opacity-40', !available);
       const discovered = index.files.find((file) => file.id === tabId);
-      candidate.title = discovered ? `Обнаружен существующий файл: ${discovered.path}` : 'Файл не найден ни по ссылке конфигурации, ни в штатном каталоге lists';
+      candidate.title = discovered ? `${tabId ? listDisplayName(tabId) : 'Список'} — ${discovered.path}` : 'Файл не найден ни по ссылке конфигурации, ни в штатном каталоге lists';
     }
     if (!summary) {
       activeList = null;
@@ -438,7 +446,12 @@ async function loadList(id: NfqwsListId) {
     activeListId = id;
     const editor = $('#listEditorTextarea');
     if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
-    setText('#currentListFilePath', result.path);
+    const locationLabel = $('#currentListFilePath');
+    if (locationLabel) {
+      locationLabel.textContent = listDisplayName(id);
+      locationLabel.title = result.path;
+      locationLabel.setAttribute('aria-label', `${listDisplayName(id)}. Путь: ${result.path}`);
+    }
     for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
       const selected = isListTabSelected(candidate.id, id);
       candidate.classList.toggle('active', selected);
