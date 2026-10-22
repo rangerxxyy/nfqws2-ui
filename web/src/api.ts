@@ -15,6 +15,15 @@ export type InstallationPath = {
   writable: boolean;
   usedByActiveConfig: boolean;
 };
+export type NfqwsModuleReference = {
+  kind: 'lua' | 'blob';
+  argument: string;
+  path: string | null;
+  resolvedPath: string | null;
+  exists: boolean;
+  readable: boolean;
+  resolution: 'absolute' | 'dynamic' | 'relative_unknown';
+};
 export type NfqwsInstallation = {
   platform: 'entware' | 'unknown';
   config: InstallationPath | null;
@@ -23,6 +32,7 @@ export type NfqwsInstallation = {
   initScriptCandidates: InstallationPath[];
   binaryCandidates: InstallationPath[];
   lists: InstallationPath[];
+  moduleReferences?: NfqwsModuleReference[];
 };
 export type BackupItem = { id: string; createdAt: number; file: string };
 

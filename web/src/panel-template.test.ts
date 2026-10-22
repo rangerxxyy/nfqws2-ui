@@ -41,6 +41,14 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('renderConfigSections(config.content)');
   });
 
+  it('shows Lua/blob files from the backend instead of guessed example paths', () => {
+    expect(template).toContain('id="moduleFilesContainer"');
+    expect(template).not.toContain('/opt/etc/nfqws2/lua/');
+    expect(template).not.toContain('/opt/etc/nfqws2/blobs/');
+    expect(panelSource).toContain('installation.moduleReferences');
+    expect(panelSource).toContain('renderConfigModules(moduleReferences)');
+  });
+
   it('loads the selected mode from the backend config and limits choices to declared mode variables', () => {
     expect(panelSource).toContain('availableNfqwsModes(content)');
     expect(panelSource).toContain('select.value = [...select.options].some((option) => option.value === selectedMode) ? selectedMode :');

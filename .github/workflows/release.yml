@@ -42,6 +42,7 @@ jobs:
           test -f web/dist/nfqws2-ui.js
           test -f web/dist/nfqws2-ui.css
           test ! -e web/dist/index.html
+          ! grep -Fq 'process.env.NODE_ENV' web/dist/nfqws2-ui.js
           pnpm --dir web audit --prod
       - name: Cross-build router binary
         run: |

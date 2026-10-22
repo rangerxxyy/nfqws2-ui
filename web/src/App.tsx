@@ -844,35 +844,12 @@ export default function App() {
                 {"\n\n              "}
                 {"\n              "}
                 <div className={"pt-1"}>
-                  {"\n                "}
                   <div className={"text-[11px] text-slate-400 mb-2"}>
-                    {"Примеры ссылок Lua/blob (пути могут отличаться):"}
+                    {"Файлы Lua/blob из активной конфигурации:"}
                   </div>
-                  {"\n                "}
-                  <div className={"flex flex-wrap gap-1.5 font-mono text-[11px]"}>
-                    {"\n                  "}
-                    <button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify(["--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua"])} className={"px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800"}>
-                      {"zapret-lib.lua"}
-                    </button>
-                    {"\n                  "}
-                    <button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify(["--lua-init=@/opt/etc/nfqws2/lua/zapret-antidpi.lua"])} className={"px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800"}>
-                      {"zapret-antidpi.lua"}
-                    </button>
-                    {"\n                  "}
-                    <button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify(["--lua-init=@/opt/etc/nfqws2/lua/zapret-auto.lua"])} className={"px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-emerald-300 border border-slate-800"}>
-                      {"zapret-auto.lua"}
-                    </button>
-                    {"\n                  "}
-                    <button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify(["--blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin"])} className={"px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-sky-300 border border-slate-800"}>
-                      {"tls_clienthello.bin"}
-                    </button>
-                    {"\n                  "}
-                    <button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify(["--blob=quic_initial:@/opt/etc/nfqws2/blobs/quic_initial.bin"])} className={"px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-sky-300 border border-slate-800"}>
-                      {"quic_initial.bin"}
-                    </button>
-                    {"\n                "}
+                  <div id={"moduleFilesContainer"} className={"flex flex-wrap gap-1.5 font-mono text-[11px]"}>
+                    <span className={"text-slate-500"}>{"Ожидание данных backend"}</span>
                   </div>
-                  {"\n              "}
                 </div>
                 {"\n            "}
               </div>
