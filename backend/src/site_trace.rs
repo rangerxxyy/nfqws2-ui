@@ -181,10 +181,6 @@ pub fn trace_argv(args: &[String], queue: u16, debug_path: &Path) -> Vec<String>
     result
 }
 
-fn firewall_snapshot_usable(firewall_snapshot: &str) -> bool {
-    !firewall_snapshot.trim().is_empty()
-}
-
 pub fn policy_route_mark(firewall_snapshot: &str) -> Option<String> {
     for line in firewall_snapshot.lines() {
         let tokens = line.split_whitespace().collect::<Vec<_>>();
@@ -835,20 +831,14 @@ pub async fn run(
         return report;
     }
     let iptables_program = program_path("iptables");
+    // A table dump is useful for policy marks, but must not gate the baseline:
+    // some router iptables builds reject -S while permitting exact rule edits.
     let firewall_snapshot = command(&iptables_program, &["-w", "-t", "mangle", "-S"])
         .await
         .ok()
         .filter(|(status, _)| *status == 0)
         .map(|(_, output)| String::from_utf8_lossy(&output).into_owned())
         .unwrap_or_default();
-    if !firewall_snapshot_usable(&firewall_snapshot) {
-        report.without_nfqws2 =
-            TracePhase::unavailable("Не удалось прочитать таблицу mangle; firewall не изменялся");
-        report.with_nfqws2 =
-            TracePhase::unavailable("Трассировка остановлена до изменения firewall");
-        report.summary = "Трассировка недоступна: firewall не менялся".into();
-        return report;
-    }
     if cancel.load(Ordering::Acquire) {
         report.summary = "Трассировка остановлена до изменения firewall".into();
         return report;
@@ -919,17 +909,18 @@ pub async fn run(
         .filter(|(code, _)| *code == 0)
         .map(|(_, lines)| String::from_utf8_lossy(&lines).into_owned())
         .unwrap_or_default();
-    if let Ok(queue_status) = tokio::fs::read_to_string("/proc/net/netfilter/nfnetlink_queue").await
+    let queue_status = match tokio::fs::read_to_string("/proc/net/netfilter/nfnetlink_queue").await
     {
-        append_kernel_queue_listeners(&mut firewall_snapshot, &queue_status);
-    }
-    if firewall_snapshot.is_empty() {
-        report.with_nfqws2 = TracePhase::unavailable(
-            "Не удалось проверить занятые очереди; новая очередь не запускалась",
-        );
-        report.summary = "Есть базовый результат; трассировка недоступна".into();
-        return report;
-    }
+        Ok(status) => status,
+        Err(error) => {
+            report.with_nfqws2 = TracePhase::unavailable(format!(
+                "Не удалось проверить слушателей NFQUEUE: {error}; тестовая очередь не запускалась"
+            ));
+            report.summary = "Есть базовый результат; очередь nfqws2 не проверена".into();
+            return report;
+        }
+    };
+    append_kernel_queue_listeners(&mut firewall_snapshot, &queue_status);
     let Some(queue) = select_trace_queue(&args, &firewall_snapshot) else {
         report.with_nfqws2 =
             TracePhase::unavailable("Не удалось выбрать свободную NFQUEUE; конфликты не менялись");
@@ -1362,10 +1353,10 @@ mod tests {
     }
 
     #[test]
-    fn firewall_snapshot_without_builtin_policy_lines_is_still_usable() {
-        let snapshot = "-N nfqws_post\n-A nfqws_post -j RETURN\n";
-        assert!(firewall_snapshot_usable(snapshot));
-        assert!(!firewall_snapshot_usable("  \n"));
+    fn trace_queue_can_be_selected_from_kernel_inventory_without_firewall_dump() {
+        let mut snapshot = String::new();
+        append_kernel_queue_listeners(&mut snapshot, "0000012d 00000000 00000001\n");
+        assert_eq!(select_trace_queue(&[], &snapshot), Some(302));
     }
 
     #[test]
