@@ -2346,9 +2346,9 @@ async fn backup_and_write_named(
             if unsafe { libc::chown(path.as_ptr(), meta.uid(), meta.gid()) } != 0 {
                 let error = std::io::Error::last_os_error();
                 let _ = tokio::fs::remove_file(&tmp).await;
-                return Err(format!(
-                    "Не удалось сохранить владельца/группу конфигурации: {error}"
-                ));
+                return Err(
+                    format!("Не удалось сохранить владельца/группу конфигурации: {error}").into(),
+                );
             }
         }
         let mode = meta.permissions().mode();
@@ -2356,7 +2356,7 @@ async fn backup_and_write_named(
             tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).await
         {
             let _ = tokio::fs::remove_file(&tmp).await;
-            return Err(error.to_string());
+            return Err(error.to_string().into());
         }
     }
     drop(tmp_file);
