@@ -6,6 +6,7 @@ import App from './App';
 
 const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
+const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8');
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel without authentication', () => {
@@ -58,6 +59,14 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain("import { resourceUsagePercent, usageTone } from './metrics'");
     expect(template).toContain('id="ramMetricText"');
     expect(template).toContain('id="cpuMetricText"');
+  });
+
+  it('shows a spinning status-bar indicator during service restarts and reapplies the backend state afterward', () => {
+    expect(template).toContain('id="statusIndicator"');
+    expect(panelSource).toContain('setRestartInProgress(true)');
+    expect(panelSource).toContain('setRestartInProgress(false)');
+    expect(panelStyles).toMatch(/\.status-restarting\s+#statusRadarRing[\s\S]*?animation:\s*status-spin/);
+    expect(panelStyles).toContain('@keyframes status-spin');
   });
 
   it('does not label example profiles as active and renders config-derived sections', () => {

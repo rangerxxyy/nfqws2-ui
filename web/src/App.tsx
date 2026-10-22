@@ -19,7 +19,7 @@ export default function App() {
           {"\n        "}
           <div className={"flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3.5 py-2 rounded-xl shadow-inner"}>
             {"\n          "}
-            <div className={"relative flex items-center justify-center w-3 h-3"}>
+            <div id={"statusIndicator"} className={"relative flex items-center justify-center w-3 h-3"}>
               {"\n            "}
               <span id={"statusRadarRing"} className={"absolute inline-flex h-full w-full rounded-full bg-slate-400"}></span>
               {"\n            "}

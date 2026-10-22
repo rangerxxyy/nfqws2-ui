@@ -13,6 +13,7 @@ let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
 let busy = false;
 let statusPolling = false;
+let restartInProgress = false;
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
@@ -34,6 +35,17 @@ function setBusy(value: boolean) {
     else if (!value && select.dataset.busyDisabled === 'true') { select.disabled = false; delete select.dataset.busyDisabled; }
   });
 }
+function setRestartInProgress(value: boolean) {
+  restartInProgress = value;
+  const indicator = $('#statusIndicator');
+  indicator?.classList.toggle('status-restarting', value);
+  indicator?.setAttribute('aria-busy', String(value));
+  const label = $('#statusTextLabel');
+  if (value && label) {
+    label.textContent = 'Перезапуск nfqws2…';
+    label.className = 'text-xs sm:text-sm font-semibold text-blue-300 tracking-tight';
+  }
+}
 function showRoute(route: Route) {
   document.querySelectorAll<HTMLElement>('[id^="tabContent-"]').forEach((section) => section.classList.toggle('hidden', section.id !== `tabContent-${route}`));
   all<HTMLButtonElement>('.side-nav-btn').forEach((button) => {
@@ -54,9 +66,11 @@ async function fetchStatus() {
     const stopped = service === 'stopped';
     const label = running ? 'nfqws2 запущен' : stopped ? 'nfqws2 остановлен' : service === 'error' ? 'Ошибка nfqws2' : 'Статус неизвестен';
     const tone = running ? 'emerald' : stopped || service === 'error' ? 'rose' : 'slate';
-    const text = $('#statusTextLabel'); if (text) { text.textContent = label; text.className = `text-xs sm:text-sm font-semibold text-${tone}-400 tracking-tight`; }
-    const dot = $('#statusMainDot'); if (dot) dot.className = `status-dot-active relative inline-flex rounded-full h-2.5 w-2.5 bg-${tone}-400`;
-    const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
+    if (!restartInProgress) {
+      const text = $('#statusTextLabel'); if (text) { text.textContent = label; text.className = `text-xs sm:text-sm font-semibold text-${tone}-400 tracking-tight`; }
+      const dot = $('#statusMainDot'); if (dot) dot.className = `status-dot-active relative inline-flex rounded-full h-2.5 w-2.5 bg-${tone}-400`;
+      const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
+    }
     const monitorBadge = $('#sideMonitorBadge'); if (monitorBadge) monitorBadge.className = `w-2 h-2 rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
     const used = status.system.memoryUsedBytes, total = status.system.memoryTotalBytes;
     const ramPercent = resourceUsagePercent(used, total);
@@ -75,9 +89,11 @@ async function fetchStatus() {
     setText('#checkedAt', status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '—');
   } catch (error) {
     status = null;
-    const label = $('#statusTextLabel'); if (label) { label.textContent = 'Статус неизвестен'; label.className = 'text-xs sm:text-sm font-semibold text-slate-400 tracking-tight'; }
-    const dot = $('#statusMainDot'); if (dot) dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400';
-    const ring = $('#statusRadarRing'); if (ring) ring.className = 'absolute inline-flex h-full w-full rounded-full bg-slate-400';
+    if (!restartInProgress) {
+      const label = $('#statusTextLabel'); if (label) { label.textContent = 'Статус неизвестен'; label.className = 'text-xs sm:text-sm font-semibold text-slate-400 tracking-tight'; }
+      const dot = $('#statusMainDot'); if (dot) dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400';
+      const ring = $('#statusRadarRing'); if (ring) ring.className = 'absolute inline-flex h-full w-full rounded-full bg-slate-400';
+    }
     setText('#ramMetricText', '—'); setWidth('#ramProgressBar', null); applyMetricTone('#ramMetricText', '#ramProgressBar', null);
     setText('#cpuMetricText', '—'); setWidth('#cpuProgressBar', null); applyMetricTone('#cpuMetricText', '#cpuProgressBar', null);
     setText('#headerCoreVersion', '—'); setText('#headerUiVersion', '—');
@@ -249,13 +265,15 @@ async function saveConfigAndApply() {
   if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
   const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
   setBusy(true);
+  setRestartInProgress(true);
   try {
     const result = await nfqwsApply.apply(editor.value, config.revision);
     config = result.config;
+    setRestartInProgress(false);
     await fetchStatus();
     toast('Конфигурация сохранена, повторно прочитана; backend подтвердил перезапуск nfqws2.');
-  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
-  finally { setBusy(false); }
+  } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
+  finally { setRestartInProgress(false); setBusy(false); }
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = false) {
   if (busy) return;
@@ -263,9 +281,14 @@ async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = f
   if (!confirmed && action === 'stop' && !window.confirm('Остановить nfqws2?')) return;
   if (!confirmed && action === 'restart' && !window.confirm('Перезапустить nfqws2?')) return;
   setBusy(true);
-  try { await api('/api/service', { method: 'POST', body: JSON.stringify({ action }) }); await fetchStatus(); toast('Команда выполнена'); }
+  if (action === 'restart') setRestartInProgress(true);
+  try { await api('/api/service', { method: 'POST', body: JSON.stringify({ action }) }); toast('Команда выполнена'); }
   catch (error) { toast(error instanceof Error ? error.message : 'Команда не выполнена', 'error'); }
-  finally { setBusy(false); }
+  finally {
+    if (action === 'restart') setRestartInProgress(false);
+    setBusy(false);
+    await fetchStatus();
+  }
 }
 async function loadLogs() {
 
