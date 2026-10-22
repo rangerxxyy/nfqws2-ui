@@ -2,7 +2,7 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsBackups, nfqwsInstallation, nfqwsLists, type ConfigResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type StatusResponse } from './api';
-import { deduplicateListContent } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 
 type Route = 'conf' | 'lists' | 'check' | 'autotune' | 'monitor' | 'community' | 'snapshots' | 'logs';
@@ -333,7 +333,58 @@ function syncListScroll(editor: HTMLTextAreaElement) {
   const gutter = $('#listLineNumbers');
   if (gutter) gutter.scrollTop = editor.scrollTop;
 }
-export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','injectPresetDomains','findTelegramChatId'] as const;
+function appendListEntriesToDraft() {
+  if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
+  const editor = $('#listEditorTextarea'); const input = $('#listAddEntriesInput');
+  if (!(editor instanceof HTMLTextAreaElement) || !(input instanceof HTMLTextAreaElement)) return;
+  const before = editor.value;
+  editor.value = appendListEntries(before, input.value);
+  if (editor.value === before) return toast('Нет строк для добавления.', 'error');
+  input.value = '';
+  syncListLineNumbers(editor);
+  toast('Строки добавлены в черновик. Backend проверит список при сохранении.');
+}
+function removeSelectedListLines() {
+  if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
+  const editor = $('#listEditorTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return;
+  const result = removeListLines(editor.value, editor.selectionStart, editor.selectionEnd);
+  if (!result.removed) return toast('Список пуст.');
+  editor.value = result.content;
+  editor.focus();
+  syncListLineNumbers(editor);
+  toast(`Удалено строк: ${result.removed}. Изменён только черновик.`);
+}
+function findNextListEntry() {
+  const editor = $('#listEditorTextarea'); const input = $('#listSearchInput');
+  if (!(editor instanceof HTMLTextAreaElement) || !(input instanceof HTMLInputElement)) return;
+  const match = findNextListMatch(editor.value, input.value, editor.selectionEnd);
+  if (!match) return toast(input.value.trim() ? 'Совпадений не найдено.' : 'Введите текст для поиска.', 'error');
+  editor.focus(); editor.setSelectionRange(match.start, match.end);
+}
+async function importListDraft() {
+  if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
+  const input = $('#listImportFile'); const editor = $('#listEditorTextarea');
+  if (!(input instanceof HTMLInputElement) || !(editor instanceof HTMLTextAreaElement)) return;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    editor.value = appendListEntries(editor.value, await file.text());
+    syncListLineNumbers(editor);
+    toast(`Содержимое ${file.name} добавлено в черновик; сохранение и серверная проверка выполняются отдельно.`);
+  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать файл', 'error'); }
+  finally { input.value = ''; }
+}
+function exportListDraft() {
+  if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
+  const editor = $('#listEditorTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return;
+  const url = URL.createObjectURL(new Blob([editor.value], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a'); link.href = url; link.download = activeList.id; link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  toast('Текущий черновик экспортирован.');
+}
+export const DISABLED_PANEL_ACTIONS = ['runSiteDiagnosis','startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','installSelectedRelease','selectVersionItem','switchUpdateTarget','setDiagPreset','excludeBrokenDomain','findTelegramChatId'] as const;
 
 function bindPrototypeActions() {
   const showDiff = () => {
@@ -377,6 +428,12 @@ function bindPrototypeActions() {
     syncCustomHostInput: () => undefined,
     selectListFile: (name: NfqwsListId) => void loadList(name),
     saveActiveListFile: () => void saveActiveList(),
+    appendListEntriesToDraft: () => appendListEntriesToDraft(),
+    removeSelectedListLines: () => removeSelectedListLines(),
+    findNextListEntry: () => findNextListEntry(),
+    openListImport: () => $('#listImportFile')?.click(),
+    importListDraft: () => void importListDraft(),
+    exportListDraft: () => exportListDraft(),
     deduplicateCurrentList: () => {
       if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
       const editor = $('#listEditorTextarea');

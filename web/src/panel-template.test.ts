@@ -33,6 +33,18 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('deduplicateListContent');
   });
 
+  it('provides list draft add, line removal, search, import, and export actions without fabricated presets', () => {
+    expect(template).toContain('id="listAddEntriesInput"');
+    expect(template).toContain('id="listSearchInput"');
+    expect(template).toContain('id="listImportFile"');
+    expect(template).toContain('data-action-click="appendListEntriesToDraft"');
+    expect(template).toContain('data-action-click="removeSelectedListLines"');
+    expect(template).toContain('data-action-click="findNextListEntry"');
+    expect(template).toContain('data-action-click="exportListDraft"');
+    expect(template).not.toContain('injectPresetDomains');
+    expect(panelSource).toContain('nfqwsLists.save(activeList.id, editor.value, activeList.revision)');
+  });
+
   it('does not label example profiles as active and renders config-derived sections', () => {
     expect(template).not.toContain('TCP Circular (Стратегии 1–6)');
     expect(template).not.toContain('5 файлов OK');

@@ -979,20 +979,8 @@ export default function App() {
               {"\n\n            "}
               <div className={"flex flex-wrap items-center gap-2"}>
                 {"\n              "}
-                <button data-action-click={"injectPresetDomains"} data-args={JSON.stringify(["youtube"])} className={"px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/25 text-xs font-medium transition-all"}>
-                  {"+ YouTube CDN"}
-                </button>
-                {"\n              "}
-                <button data-action-click={"injectPresetDomains"} data-args={JSON.stringify(["discord"])} className={"px-3 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/25 text-xs font-medium transition-all"}>
-                  {"+ Discord"}
-                </button>
-                {"\n              "}
-                <button data-action-click={"injectPresetDomains"} data-args={JSON.stringify(["meta"])} className={"px-3 py-1.5 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/25 text-xs font-medium transition-all"}>
-                  {"+ Instagram / X"}
-                </button>
-                {"\n              "}
                 <button data-action-click={"deduplicateCurrentList"} className={"px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
-                  {"Удалить дубли и А-Я"}
+                  {"Удалить дубли"}
                 </button>
                 {"\n              "}
                 <button data-action-click={"saveActiveListFile"} className={"px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-all"}>
@@ -1003,6 +991,20 @@ export default function App() {
               {"\n          "}
             </div>
             {"\n\n          "}
+            <div className={"p-4 bg-[#090f1b] border-b border-slate-800 grid grid-cols-1 xl:grid-cols-[minmax(240px,1fr)_auto_minmax(220px,1fr)_auto] gap-2 items-center"}>
+              <textarea id={"listAddEntriesInput"} rows={2} placeholder={"Добавить строки (по одной на строку)"} className={"w-full resize-y rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500"}></textarea>
+              <button data-action-click={"appendListEntriesToDraft"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Добавить в черновик"}</button>
+              <div className={"flex gap-2"}>
+                <input id={"listSearchInput"} type={"search"} placeholder={"Найти в списке"} className={"min-w-0 flex-1 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500"} />
+                <button data-action-click={"findNextListEntry"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Найти далее"}</button>
+              </div>
+              <div className={"flex flex-wrap gap-2"}>
+                <button data-action-click={"removeSelectedListLines"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Удалить строку/выделение"}</button>
+                <button data-action-click={"openListImport"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Импорт"}</button>
+                <button data-action-click={"exportListDraft"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Экспорт"}</button>
+                <input id={"listImportFile"} type={"file"} accept={".list,.txt,text/plain"} className={"hidden"} data-action-change={"importListDraft"} />
+              </div>
+            </div>
             {"\n          "}
             <div className={"flex h-[610px] bg-[#060a12] font-mono text-[14.5px] leading-7 overflow-hidden"}>
               {"\n            "}

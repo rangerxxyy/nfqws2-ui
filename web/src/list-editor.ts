@@ -1,5 +1,37 @@
 import type { NfqwsListId } from './api';
 
+export function appendListEntries(content: string, entries: string): string {
+  const values = entries.split(/\r\n|\n/).map((entry) => entry.trim()).filter(Boolean);
+  if (!values.length) return content;
+  if (!content) return values.join('\n');
+  const newline = content.includes('\r\n') ? '\r\n' : '\n';
+  const endsWithNewline = content.endsWith('\n');
+  const separator = endsWithNewline ? '' : newline;
+  return `${content}${separator}${values.join(newline)}${endsWithNewline ? newline : ''}`;
+}
+
+export function removeListLines(content: string, selectionStart: number, selectionEnd: number): { content: string; removed: number } {
+  if (!content) return { content, removed: 0 };
+  const start = Math.max(0, Math.min(selectionStart, content.length));
+  const end = Math.max(start, Math.min(selectionEnd, content.length));
+  const firstLineStart = content.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+  const finalSelectedOffset = end > start ? end - 1 : start;
+  const nextNewline = content.indexOf('\n', finalSelectedOffset);
+  const afterLastLine = nextNewline === -1 ? content.length : nextNewline + 1;
+  const removed = content.slice(firstLineStart, afterLastLine).split(/\r\n|\n/).filter((line, index, lines) => !(index === lines.length - 1 && line === '')).length;
+  return { content: content.slice(0, firstLineStart) + content.slice(afterLastLine), removed };
+}
+
+export function findNextListMatch(content: string, query: string, caret: number): { start: number; end: number } | null {
+  const needle = query.trim().toLocaleLowerCase('en-US');
+  if (!needle) return null;
+  const haystack = content.toLocaleLowerCase('en-US');
+  const from = Math.max(0, Math.min(caret, content.length));
+  const start = haystack.indexOf(needle, from);
+  const wrappedStart = start === -1 ? haystack.indexOf(needle) : start;
+  return wrappedStart === -1 ? null : { start: wrappedStart, end: wrappedStart + needle.length };
+}
+
 export function deduplicateListContent(content: string, id: NfqwsListId): { content: string; removed: number } {
   const newline = content.includes('\r\n') ? '\r\n' : '\n';
   const seen = new Set<string>();

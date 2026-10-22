@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deduplicateListContent } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, removeListLines } from './list-editor';
 
 describe('list editor helpers', () => {
   it('removes case-insensitive domain duplicates while preserving comments, order, whitespace, and CRLF', () => {
@@ -23,5 +23,23 @@ describe('list editor helpers', () => {
   it('leaves a list byte-for-byte unchanged when there are no duplicates', () => {
     const source = '# note\nexample.org\n';
     expect(deduplicateListContent(source, 'user.list')).toEqual({ content: source, removed: 0 });
+  });
+
+  it('appends one or more non-empty entries without changing existing line endings', () => {
+    expect(appendListEntries('# note\r\nexample.org\r\n', '  one.example  \n\n two.example\n')).toBe(
+      '# note\r\nexample.org\r\none.example\r\ntwo.example\r\n',
+    );
+    expect(appendListEntries('', '192.0.2.1\n')).toBe('192.0.2.1');
+  });
+
+  it('removes whole selected lines, including the current line when selection is empty', () => {
+    const content = '# note\r\nexample.org\r\nother.example\r\n';
+    expect(removeListLines(content, 8, 8)).toEqual({ content: '# note\r\nother.example\r\n', removed: 1 });
+    expect(removeListLines(content, 8, 27)).toEqual({ content: '# note\r\n', removed: 2 });
+  });
+
+  it('searches case-insensitively from the caret and wraps to the first match', () => {
+    expect(findNextListMatch('Alpha.test\nbeta.test\nALPHA.test', 'alpha', 5)).toEqual({ start: 21, end: 26 });
+    expect(findNextListMatch('Alpha.test\nbeta.test', 'missing', 0)).toBeNull();
   });
 });
