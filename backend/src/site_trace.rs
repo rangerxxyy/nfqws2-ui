@@ -181,19 +181,8 @@ pub fn trace_argv(args: &[String], queue: u16, debug_path: &Path) -> Vec<String>
     result
 }
 
-pub fn firewall_trace_safe(firewall_snapshot: &str) -> bool {
-    let mut hooks = std::collections::HashSet::new();
-    for line in firewall_snapshot.lines() {
-        let tokens = line.split_whitespace().collect::<Vec<_>>();
-        if tokens.first() == Some(&"-P")
-            && let Some(hook) = tokens.get(1)
-        {
-            hooks.insert(*hook);
-        }
-    }
-    ["PREROUTING", "OUTPUT", "POSTROUTING"]
-        .iter()
-        .all(|hook| hooks.contains(hook))
+fn firewall_snapshot_usable(firewall_snapshot: &str) -> bool {
+    !firewall_snapshot.trim().is_empty()
 }
 
 pub fn policy_route_mark(firewall_snapshot: &str) -> Option<String> {
@@ -852,10 +841,9 @@ pub async fn run(
         .filter(|(status, _)| *status == 0)
         .map(|(_, output)| String::from_utf8_lossy(&output).into_owned())
         .unwrap_or_default();
-    if firewall_snapshot.is_empty() || !firewall_trace_safe(&firewall_snapshot) {
-        report.without_nfqws2 = TracePhase::unavailable(
-            "Не найдены mangle hooks PREROUTING/OUTPUT/POSTROUTING; firewall не изменялся",
-        );
+    if !firewall_snapshot_usable(&firewall_snapshot) {
+        report.without_nfqws2 =
+            TracePhase::unavailable("Не удалось прочитать таблицу mangle; firewall не изменялся");
         report.with_nfqws2 =
             TracePhase::unavailable("Трассировка остановлена до изменения firewall");
         report.summary = "Трассировка недоступна: firewall не менялся".into();
@@ -1374,11 +1362,10 @@ mod tests {
     }
 
     #[test]
-    fn trace_requires_only_the_mangle_hooks_it_uses() {
-        let hooks =
-            "-P PREROUTING ACCEPT\n-P INPUT ACCEPT\n-P OUTPUT ACCEPT\n-P POSTROUTING ACCEPT";
-        assert!(firewall_trace_safe(hooks));
-        assert!(!firewall_trace_safe("-P OUTPUT ACCEPT\n-P INPUT ACCEPT"));
+    fn firewall_snapshot_without_builtin_policy_lines_is_still_usable() {
+        let snapshot = "-N nfqws_post\n-A nfqws_post -j RETURN\n";
+        assert!(firewall_snapshot_usable(snapshot));
+        assert!(!firewall_snapshot_usable("  \n"));
     }
 
     #[test]
