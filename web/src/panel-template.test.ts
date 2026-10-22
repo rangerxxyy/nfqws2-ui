@@ -43,24 +43,25 @@ describe('TSX panel without authentication', () => {
     expect(updates).toContain('>UI</span>');
   });
 
-  it('centers the panel brand and aligns update controls toward the left of their header column', () => {
+  it('centers the panel brand and aligns update controls to the right with balanced spacing', () => {
     expect(template).toContain('lg:grid-cols-[repeat(3,minmax(0,1fr))]');
     expect(template).toContain('2xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]');
     expect(template).toContain('lg:col-span-3 2xl:col-span-1');
     expect(template).toContain('text-xl lg:text-2xl');
     const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
-    expect(updates).toContain('lg:justify-start');
+    expect(updates).toContain('lg:justify-end');
+    expect(updates).toContain('gap-3');
     expect(updates).not.toContain('lg:pr-8');
   });
 
-  it('widens memory and CPU meters and shifts version controls left in the header', () => {
+  it('widens memory and CPU meters and spaces version controls on the right', () => {
     expect(template).toContain('min-w-[150px]');
     expect(template).toContain('min-w-[108px]');
     expect(template).toContain('w-28 sm:w-32');
     expect(template).toContain('w-16 sm:w-20');
     const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
-    expect(updates).toContain('lg:justify-start');
-    expect(updates).not.toContain('justify-end');
+    expect(updates).toContain('lg:justify-end');
+    expect(updates).toContain('gap-3');
   });
 
   it('renders returned HTTP codes and animates diagnostic cards respectfully', () => {

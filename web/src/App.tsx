@@ -160,7 +160,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-2 lg:justify-start lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
+        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
           {"\n        \n        "}
           {"\n        "}
           <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
