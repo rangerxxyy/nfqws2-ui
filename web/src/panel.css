@@ -2,6 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  html {
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-kerning: normal;
+    font-feature-settings: "cv11", "ss01";
+  }
+  button, input, select, textarea {
+    font-family: inherit;
+  }
+}
 
     /* Кастомные скроллбары */
     ::-webkit-scrollbar {
@@ -95,6 +110,7 @@
     }
     .ui-card:hover {
       border-color: #334155;
+      box-shadow: 0 8px 24px rgba(2, 6, 23, 0.18);
     }
 
     /* Плашки версий в шапке (Стиль со скриншота 2) */
@@ -110,6 +126,9 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
+      .status-radar,
+      .status-dot-active,
+      .view-animate { animation: none; }
       .diag-result-card { animation: none; }
       .diagnosis-spinner { animation: none; }
       .version-pill, .side-nav-btn, .ui-card { transition-duration: 0.01ms; }

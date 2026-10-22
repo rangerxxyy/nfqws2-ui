@@ -43,12 +43,24 @@ describe('TSX panel without authentication', () => {
     expect(updates).toContain('>UI</span>');
   });
 
-  it('centers the panel brand and insets the update controls from the screen edge', () => {
+  it('centers the panel brand and aligns update controls toward the left of their header column', () => {
     expect(template).toContain('lg:grid-cols-[repeat(3,minmax(0,1fr))]');
     expect(template).toContain('2xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]');
     expect(template).toContain('lg:col-span-3 2xl:col-span-1');
     expect(template).toContain('text-xl lg:text-2xl');
-    expect(template).toContain('lg:pr-8 xl:pr-12');
+    const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
+    expect(updates).toContain('lg:justify-start');
+    expect(updates).not.toContain('lg:pr-8');
+  });
+
+  it('widens memory and CPU meters and shifts version controls left in the header', () => {
+    expect(template).toContain('min-w-[150px]');
+    expect(template).toContain('min-w-[108px]');
+    expect(template).toContain('w-28 sm:w-32');
+    expect(template).toContain('w-16 sm:w-20');
+    const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
+    expect(updates).toContain('lg:justify-start');
+    expect(updates).not.toContain('justify-end');
   });
 
   it('renders returned HTTP codes and animates diagnostic cards respectfully', () => {
@@ -116,13 +128,17 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).not.toContain('index.files.some((file) => file.id === candidate.dataset.arg)');
   });
 
-  it('shows localized list names while keeping real backend paths available as details', () => {
-    expect(template).toContain('Пользовательские домены');
-    expect(template).toContain('Домены для автообучения');
-    expect(template).toContain('Исключённые домены');
-    expect(template).toContain('IP-адреса');
-    expect(template).toContain('Исключённые IP-адреса');
-    expect(template).not.toContain('>user.list</span>');
+  it('shows list filenames in tabs and localized names in the selected list details', () => {
+    expect(template).toContain('user.list');
+    expect(template).toContain('auto.list');
+    expect(template).toContain('exclude.list');
+    expect(template).toContain('ipset.list');
+    expect(template).toContain('ipset_exclude.list');
+    expect(panelSource).toContain("'user.list': 'Пользовательские домены'");
+    expect(panelSource).toContain("'auto.list': 'Домены для автообучения'");
+    expect(panelSource).toContain("'exclude.list': 'Исключённые домены'");
+    expect(panelSource).toContain("'ipset.list': 'IP-адреса'");
+    expect(panelSource).toContain("'ipset_exclude.list': 'Исключённые IP-адреса'");
     expect(panelSource).toContain('listDisplayName(id)');
     expect(panelSource).toContain('title = result.path');
   });
@@ -160,6 +176,20 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain("nfqwsUpdates.installCore(tag)");
     expect(panelSource).toContain("textContent = line.replace");
     expect(panelSource).not.toMatch(/installSelectedRelease.*toast\('Эта функция пока не подключена/);
+  });
+
+  it('shows the confirmed update result after a cache-fresh page reload', () => {
+    expect(panelSource).toContain('schedulePanelRefreshAfterUpdate');
+    expect(panelSource).toContain('nfqws2-ui-update-notice');
+    expect(panelSource).toContain('window.location.reload()');
+    expect(backendSource).toContain('cache-control');
+  });
+
+  it('improves font rendering and preserves reduced-motion preferences', () => {
+    expect(panelStyles).toContain('-webkit-font-smoothing: antialiased');
+    expect(panelStyles).toContain('text-rendering: optimizeLegibility');
+    expect(panelStyles).toContain('.status-dot-active');
+    expect(panelStyles).toContain('prefers-reduced-motion: reduce');
   });
 
   it('does not label example profiles as active and renders config-derived sections', () => {

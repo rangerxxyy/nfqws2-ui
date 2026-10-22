@@ -22,6 +22,7 @@ let selectedReleaseTag: string | null = null;
 let updatePolling = false;
 let updateTarget: 'ui' | 'core' = 'ui';
 let installedCoreTag: string | null = null;
+const UPDATE_NOTICE_KEY = 'nfqws2-ui-update-notice';
 const LIST_DISPLAY_NAMES: Record<NfqwsListId, string> = {
   'user.list': 'Пользовательские домены',
   'auto.list': 'Домены для автообучения',
@@ -39,6 +40,19 @@ function toast(message: string, type: 'success' | 'error' = 'success') {
   const item = document.createElement('div');
   item.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-xl text-sm ${type === 'error' ? 'bg-rose-950 border-rose-700 text-rose-200' : 'bg-slate-900 border-slate-700 text-slate-100'}`;
   item.textContent = message; host.append(item); window.setTimeout(() => item.remove(), 4500);
+}
+function schedulePanelRefreshAfterUpdate(message: string) {
+  try { window.sessionStorage.setItem(UPDATE_NOTICE_KEY, message); } catch { /* The refresh still ensures the new bundle is loaded. */ }
+  toast(`${message} Страница обновится автоматически.`);
+  window.setTimeout(() => window.location.reload(), 1200);
+}
+function showPendingUpdateNotice() {
+  try {
+    const message = window.sessionStorage.getItem(UPDATE_NOTICE_KEY);
+    if (!message) return;
+    window.sessionStorage.removeItem(UPDATE_NOTICE_KEY);
+    window.setTimeout(() => toast(message), 100);
+  } catch { /* Storage can be unavailable in restricted browser contexts. */ }
 }
 function showDiagnosisProgress(host: HTMLElement, domain: string) {
   const item = document.createElement('div');
@@ -738,7 +752,7 @@ async function installSelectedRelease() {
       try { current = await nfqwsUpdates.status(operation.id); }
       catch { await new Promise((resolve) => window.setTimeout(resolve, 1000)); }
     }
-    if (current.state === 'success') toast(`${core ? 'Ядро nfqws2' : 'Панель'} обновлено до ${tag}.`);
+    if (current.state === 'success') schedulePanelRefreshAfterUpdate(`${core ? 'Ядро nfqws2' : 'Панель'} обновлено до ${tag}.`);
     else if (current.state === 'rolled_back') toast(current.message || 'Обновление не прошло проверку; восстановлена предыдущая версия.', 'error');
     else if (current.state === 'failed') toast(current.message || 'Не удалось установить обновление.', 'error');
     else toast('Статус обновления пока не получен. Проверьте панель через несколько секунд.', 'error');
@@ -855,6 +869,7 @@ function bindPrototypeActions() {
 function boot() {
   bindPrototypeActions();
   document.documentElement.classList.add('dark');
+  showPendingUpdateNotice();
   showRoute('conf');
   const applyButton = $('[data-action-click="applyConfigAndRestart"]');
   if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;

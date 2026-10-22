@@ -9,6 +9,7 @@ case "$ID" in *[!0-9a-fA-F]*|'') echo 'invalid operation id' >&2; exit 2 ;; esac
 ROOT=/opt/share/nfqws2-ui
 DATA=/opt/var/lib/nfqws2-ui/update-operations
 INIT=/opt/etc/init.d/S99nfqws2-ui
+CORE_INIT=/opt/etc/init.d/S51nfqws2
 PORT_FILE=/opt/var/run/nfqws2-ui.port
 TMP="/tmp/nfqws2-ui-update-$ID"
 STAGE="$ROOT/releases/$TAG-update-$ID"
@@ -35,6 +36,7 @@ rollback() {
 	else
 		rm -f "$CURRENT" "$INIT"
 	fi
+	"$CORE_INIT" restart >/dev/null 2>&1 || true
 	SWITCHED=0
 }
 # These callbacks are invoked by POSIX shell traps.
@@ -58,6 +60,7 @@ command -v tar >/dev/null 2>&1 || { set_state failed 'tar is not installed.'; ex
 command -v sha256sum >/dev/null 2>&1 || { set_state failed 'sha256sum is not installed.'; exit 1; }
 mkdir -p "$ROOT/releases" "$DATA" "$TMP" || { set_state failed 'Could not create update directories.'; exit 1; }
 chmod 700 "$DATA"
+[ -x "$CORE_INIT" ] || { set_state failed 'nfqws2 service script is missing; panel update cancelled.'; exit 1; }
 set_state downloading "Downloading release $TAG from GitHub."
 wget -q -O "$TMP/$ASSET" "$BASE/$ASSET" || { set_state failed 'Could not download the release archive.'; exit 1; }
 wget -q -O "$TMP/$ASSET.sha256" "$BASE/$ASSET.sha256" || { set_state failed 'Could not download the SHA-256 file.'; exit 1; }
@@ -88,7 +91,7 @@ set_state installing "Switching panel to $TAG."
 ln -s "$STAGE" "$ROOT/current.new.$ID"
 SWITCHED=1
 replace_symlink "$ROOT/current.new.$ID" "$CURRENT" || { rollback; set_state rolled_back 'Could not switch release; previous version restored.'; exit 1; }
-set_state health_check 'Waiting for the panel to start and pass its HTTP health-check.'
+set_state health_check 'Waiting for the panel health-check and nfqws2 service restart.'
 "$INIT" start >/dev/null 2>&1 || { if rollback; then set_state rolled_back 'Service did not start; previous release restored.'; else set_state failed 'Service did not start and rollback failed.'; fi; exit 1; }
 PORT=1002
 [ ! -s "$PORT_FILE" ] || PORT=$(cat "$PORT_FILE")
@@ -96,14 +99,22 @@ case "$PORT" in ''|*[!0-9]*) PORT=1002 ;; esac
 tries=0
 while [ "$tries" -lt 20 ]; do
 	if wget -q -O "$TMP/health" "http://127.0.0.1:$PORT/api/health" && grep -q '"ok":true' "$TMP/health"; then
-		SWITCHED=0
-		COMMITTED=1
-		set_state success "Panel $TAG started and passed the health-check. Previous release retained."
-		exit 0
+		break
 	fi
 	tries=$((tries + 1))
 	sleep 1
 done
-if rollback; then set_state rolled_back 'HTTP health-check failed; previous version restored.'
-else set_state failed 'HTTP health-check failed and rollback could not restore the previous version.'; fi
-exit 1
+if [ "$tries" -eq 20 ]; then
+	if rollback; then set_state rolled_back 'HTTP health-check failed; previous release restored.'
+	else set_state failed 'HTTP health-check failed and rollback could not restore the previous release.'; fi
+	exit 1
+fi
+if ! "$CORE_INIT" restart || ! "$CORE_INIT" status; then
+	if rollback; then set_state rolled_back 'nfqws2 restart/status check failed; previous panel release restored.'
+	else set_state failed 'nfqws2 restart/status check failed and panel rollback could not restore the previous release.'; fi
+	exit 1
+fi
+SWITCHED=0
+COMMITTED=1
+set_state success "Panel $TAG passed HTTP health-check; nfqws2 restarted and status verified. Previous release retained."
+exit 0

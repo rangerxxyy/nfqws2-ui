@@ -1075,6 +1075,10 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
         HeaderValue::from_static("no-referrer"),
     );
     headers.insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-store"),
+    );
+    headers.insert(
         HeaderName::from_static("content-security-policy"),
         HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"),
     );
@@ -3110,6 +3114,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["cache-control"], "no-store");
         let html = String::from_utf8(
             to_bytes(response.into_body(), usize::MAX)
                 .await

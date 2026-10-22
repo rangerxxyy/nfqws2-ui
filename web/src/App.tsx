@@ -65,7 +65,7 @@ export default function App() {
           <div className={"flex items-center gap-2.5"}>
             {"\n          \n          "}
             {"\n          "}
-            <div className={"bg-[#060a12] border border-slate-800/90 px-2.5 py-1 rounded-lg flex items-center gap-2"}>
+            <div className={"min-w-[150px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
               {"\n            "}
               <div className={"p-1 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/20"} title={"Оперативная память роутера"}>
                 {"\n              "}
@@ -91,7 +91,7 @@ export default function App() {
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <div className={"w-20 sm:w-24 bg-slate-800/90 h-1 rounded-full overflow-hidden mt-1"}>
+                <div className={"w-28 sm:w-32 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
                   {"\n                "}
                   <div id={"ramProgressBar"} className={"bg-sky-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}
@@ -102,7 +102,7 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"bg-[#060a12] border border-slate-800/90 px-2.5 py-1 rounded-lg flex items-center gap-2"}>
+            <div className={"min-w-[108px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
               {"\n            "}
               <div className={"p-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"} title={"Загрузка процессора"}>
                 {"\n              "}
@@ -132,7 +132,7 @@ export default function App() {
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <div className={"w-12 sm:w-14 bg-slate-800/90 h-1 rounded-full overflow-hidden mt-1"}>
+                <div className={"w-16 sm:w-20 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
                   {"\n                "}
                   <div id={"cpuProgressBar"} className={"bg-emerald-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}
@@ -160,7 +160,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-end gap-2 lg:col-start-3 lg:row-start-2 lg:pr-8 xl:pr-12 2xl:col-start-auto 2xl:row-start-auto"}>
+        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-2 lg:justify-start lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
           {"\n        \n        "}
           {"\n        "}
           <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
@@ -856,7 +856,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"Пользовательские домены"}
+                  {"user.list"}
                 </span>
                 {"\n            "}
               </button>
@@ -868,7 +868,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"Исключённые домены"}
+                  {"exclude.list"}
                 </span>
                 {"\n            "}
               </button>
@@ -880,7 +880,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"Домены для автообучения"}
+                  {"auto.list"}
                 </span>
                 {"\n            "}
               </button>
@@ -892,7 +892,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"IP-адреса"}
+                  {"ipset.list"}
                 </span>
                 {"\n            "}
               </button>
@@ -904,7 +904,7 @@ export default function App() {
                 </svg>
                 {"\n              "}
                 <span>
-                  {"Исключённые IP-адреса"}
+                  {"ipset_exclude.list"}
                 </span>
                 {"\n            "}
               </button>
