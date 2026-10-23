@@ -17,7 +17,7 @@ export default function App() {
         <div id={"headerStatusBar"} className={"min-w-0 flex flex-nowrap whitespace-nowrap items-center gap-2 justify-start overflow-x-auto py-1 lg:col-span-3 2xl:col-span-1"}>
           {"\n        \n        "}
           {"\n        "}
-          <div className={"flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg shadow-inner"}>
+          <div className={"status-pill flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg shadow-inner"}>
             {"\n          "}
             <div id={"statusIndicator"} className={"relative flex items-center justify-center w-3 h-3"}>
               {"\n            "}
@@ -62,10 +62,10 @@ export default function App() {
             {"\n        "}
           </button>
           </div>
-          <div className={"flex items-center gap-2.5"}>
+          <div className={"metric-group flex items-center gap-2.5"}>
             {"\n          \n          "}
             {"\n          "}
-            <div className={"min-w-[150px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
+            <div className={"metric-chip min-w-[150px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
               {"\n            "}
               <div className={"p-1 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/20"} title={"Оперативная память роутера"}>
                 {"\n              "}
@@ -81,7 +81,7 @@ export default function App() {
                 {"\n              "}
                 <div className={"flex items-center gap-1.5 text-xs font-mono"}>
                   {"\n                "}
-                  <span className={"text-slate-400 font-semibold"}>
+                  <span className={"metric-label text-slate-400 font-semibold"}>
                     {"RAM"}
                   </span>
                   {"\n                "}
@@ -91,7 +91,7 @@ export default function App() {
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <div className={"w-28 sm:w-32 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
+                <div className={"metric-track w-28 sm:w-32 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
                   {"\n                "}
                   <div id={"ramProgressBar"} className={"bg-sky-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}
@@ -102,7 +102,7 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"min-w-[108px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
+            <div className={"metric-chip min-w-[108px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
               {"\n            "}
               <div className={"p-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"} title={"Загрузка процессора"}>
                 {"\n              "}
@@ -122,7 +122,7 @@ export default function App() {
                 {"\n              "}
                 <div className={"flex items-center gap-1.5 text-xs font-mono"}>
                   {"\n                "}
-                  <span className={"text-slate-400 font-semibold"}>
+                  <span className={"metric-label text-slate-400 font-semibold"}>
                     {"CPU"}
                   </span>
                   {"\n                "}
@@ -132,7 +132,7 @@ export default function App() {
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <div className={"w-16 sm:w-20 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
+                <div className={"metric-track w-16 sm:w-20 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
                   {"\n                "}
                   <div id={"cpuProgressBar"} className={"bg-emerald-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
                   {"\n              "}

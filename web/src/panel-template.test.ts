@@ -82,6 +82,15 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('lg:pr-2');
   });
 
+  it('wraps existing status controls and metrics on narrow screens without changing their controls', () => {
+    expect(template).toContain('class="metric-group flex items-center gap-2.5"');
+    expect(panelStyles).toContain('@media (max-width: 640px)');
+    expect(panelStyles).toContain('#headerStatusBar { flex-wrap: wrap;');
+    expect(template).toContain('id="headerServiceControls"');
+    expect(template).toContain('id="ramMetricText"');
+    expect(template).toContain('id="cpuMetricText"');
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');

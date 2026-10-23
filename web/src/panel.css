@@ -218,3 +218,239 @@
   .diagnosis-checks-header { flex-wrap: wrap; padding: 1rem; gap: .3rem; }
 }
 @media (prefers-reduced-motion: reduce) { .diagnosis-retry, .trace-protocol-select, .trace-protocol-chevron { transition: none; } }
+
+/* ==========================================================================
+   0.2.8 — слой дизайна: типографика, читаемость, анимации, статус-бар.
+   Только оформление; разметка, ID и логика панели не затронуты.
+   ========================================================================== */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 0.15s;
+  --dur-base: 0.24s;
+  --text-strong: #f8fafc;
+  --text-body: #e2e8f0;
+  --text-muted: #a3b1c6;
+  --text-subtle: #8896ad;
+}
+
+/* ---------- Шрифты ---------- */
+html { font-size: 16px; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  line-height: 1.6;
+  font-variant-numeric: lining-nums;
+  letter-spacing: -0.003em;
+}
+h1, h2, h3, h4 { letter-spacing: -0.012em; text-wrap: balance; }
+p, li { text-wrap: pretty; }
+.font-mono, code, kbd, samp, pre, textarea {
+  font-family: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums slashed-zero;
+  letter-spacing: 0;
+}
+textarea { line-height: 1.7; tab-size: 4; }
+::placeholder { color: #7b8aa1; opacity: 1; }
+
+/* Мелкий текст — крупнее; базовый «xs» чуть читабельнее */
+.text-xs { font-size: 0.8125rem; line-height: 1.25rem; }
+.text-\[11px\] { font-size: 0.75rem; line-height: 1.15rem; }
+.text-\[10px\] { font-size: 0.71875rem; line-height: 1.1rem; }
+
+/* ---------- Контраст приглушённого текста ---------- */
+.text-slate-500 { color: var(--text-subtle); }
+.text-slate-600 { color: #7a89a0; }
+.text-slate-400 { color: var(--text-muted); }
+.line-numbers-col { color: #6b7a92; }
+.diagnosis-row-inactive .diagnosis-state-icon { color: #7d8ca3; }
+.diagnosis-row-inactive .diagnosis-row-label { color: #8e9db4; }
+
+/* ---------- Фокус и состояния ---------- */
+:where(a, button, [role='button'], summary, select, input, textarea):focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+:where(input, textarea, select) {
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background-color var(--dur-fast) ease;
+}
+:where(input, textarea, select):focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+}
+:where(button, a, summary) {
+  transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease, border-color var(--dur-fast) ease,
+    box-shadow var(--dur-fast) ease, opacity var(--dur-fast) ease, transform var(--dur-fast) var(--ease-out);
+}
+:where(button:not(:disabled)):active { transform: scale(0.97); }
+:where(button:disabled) { cursor: not-allowed; }
+
+/* ---------- Анимации ---------- */
+/* Каскадное появление блоков при смене вкладки */
+.view-animate > * { animation: fadeSlideIn 0.34s var(--ease-out) backwards; }
+.view-animate > :nth-child(2) { animation-delay: 40ms; }
+.view-animate > :nth-child(3) { animation-delay: 80ms; }
+.view-animate > :nth-child(4) { animation-delay: 120ms; }
+.view-animate > :nth-child(5) { animation-delay: 160ms; }
+.view-animate > :nth-child(n + 6) { animation-delay: 190ms; }
+
+/* Уведомления */
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+#toastWrapper > * {
+  max-width: min(26rem, calc(100vw - 2.5rem));
+  font-size: 0.875rem;
+  line-height: 1.5;
+  box-shadow: 0 12px 32px rgba(2, 6, 23, 0.45);
+  animation: toast-in 0.34s var(--ease-out) both;
+}
+
+/* Модальные окна */
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-pop {
+  from { opacity: 0; transform: translateY(14px) scale(0.975); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+#updateModalBackdrop:not(.hidden), #diffModalBackdrop:not(.hidden) { animation: modal-fade 0.2s ease-out both; }
+#updateModalBackdrop:not(.hidden) > *, #diffModalBackdrop:not(.hidden) > * { animation: modal-pop 0.32s var(--ease-out) backwards; }
+
+/* Боковая навигация: индикатор активного пункта выезжает плавно */
+.side-nav-btn { transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.2s var(--ease-out); }
+.side-nav-btn:not(.active):hover { background-color: rgba(148, 163, 184, 0.08); color: #e2e8f0; }
+.side-nav-btn::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 18%;
+  bottom: 18%;
+  width: 3.5px;
+  border-radius: 0 4px 4px 0;
+  background-color: #3b82f6;
+  box-shadow: 0 0 10px #3b82f6;
+  opacity: 0;
+  transform: scaleY(0.3);
+  transition: opacity 0.2s ease, transform 0.3s var(--ease-out);
+}
+.side-nav-btn.active::before { opacity: 1; transform: scaleY(1); }
+
+/* Карточки и плашки версий */
+.ui-card { transition: border-color 0.2s ease, box-shadow 0.25s ease, background-color 0.2s ease; }
+.version-pill {
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.25s ease, transform 0.2s var(--ease-out);
+}
+.version-pill:hover { box-shadow: 0 6px 18px -8px rgba(59, 130, 246, 0.55); }
+.version-pill:active { transform: translateY(0) scale(0.98); }
+#headerCoreVersion { color: #cbd5e1; font-weight: 600; font-variant-numeric: tabular-nums; }
+#headerUiVersion { font-variant-numeric: tabular-nums; }
+
+/* ---------- Статус-бар ---------- */
+#headerStatusBar { scrollbar-width: none; gap: 0.6rem; }
+#headerStatusBar::-webkit-scrollbar { display: none; }
+
+.status-pill {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 1rem 0.55rem 0.85rem;
+  border-radius: 0.8rem;
+  border: 1px solid #1e293b;
+  background: linear-gradient(180deg, #0b111e 0%, #060a12 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  transition: border-color 0.35s ease, background 0.35s ease, box-shadow 0.35s ease;
+}
+.status-pill:has(#statusMainDot.bg-emerald-400) {
+  border-color: rgba(52, 211, 153, 0.34);
+  background: linear-gradient(180deg, rgba(16, 185, 129, 0.12) 0%, #060a12 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px -12px rgba(16, 185, 129, 0.6);
+}
+.status-pill:has(#statusMainDot.bg-rose-400) {
+  border-color: rgba(251, 113, 133, 0.36);
+  background: linear-gradient(180deg, rgba(244, 63, 94, 0.12) 0%, #060a12 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px -12px rgba(244, 63, 94, 0.6);
+}
+.status-restarting .status-pill {
+  border-color: rgba(96, 165, 250, 0.4);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.13) 0%, #060a12 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px -12px rgba(59, 130, 246, 0.65);
+}
+#statusIndicator { width: 1rem; height: 1rem; flex-shrink: 0; }
+#statusMainDot { width: 0.6875rem; height: 0.6875rem; transition: background-color 0.3s ease, opacity 0.2s ease; }
+#statusTextLabel {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  transition: color 0.3s ease;
+}
+.status-pill:has(#statusMainDot.bg-emerald-400) #statusTextLabel { color: #6ee7b7; }
+.status-pill:has(#statusMainDot.bg-rose-400) #statusTextLabel { color: #fda4af; }
+
+/* Кнопки перезапуска и питания */
+#headerServiceControls { gap: 0.4rem; }
+#headerServiceControls button { transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.25s ease, transform 0.2s var(--ease-out); }
+#headerServiceControls button:hover { box-shadow: 0 6px 16px -8px rgba(59, 130, 246, 0.6); }
+#headerServiceControls button:not(:disabled):active { transform: scale(0.94); }
+#restartIcon { transition: transform 0.6s var(--ease-out); }
+[data-action-click='restartService']:hover #restartIcon { transform: rotate(180deg); }
+.status-restarting #restartIcon { transition: none; }
+
+/* Метрики RAM / CPU */
+.metric-chip {
+  border-radius: 0.8rem;
+  background: linear-gradient(180deg, #0b111e 0%, #060a12 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+  padding: 0.5rem 0.85rem;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+.metric-chip:hover { border-color: #334155; }
+.metric-label {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.metric-chip .font-mono { font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.metric-track {
+  height: 0.375rem;
+  background: rgba(30, 41, 59, 0.95);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+#ramProgressBar, #cpuProgressBar {
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.3) 100%);
+  transition: width 0.7s var(--ease-out), background-color 0.4s ease, box-shadow 0.4s ease;
+  box-shadow: 0 0 10px -2px currentColor;
+}
+
+/* Мягкая пульсация индикатора «запущен» */
+@keyframes dot-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(16, 185, 129, 0.65); }
+  50% { box-shadow: 0 0 16px rgba(16, 185, 129, 0.95); }
+}
+.status-radar { animation-duration: 2.4s; }
+
+/* ---------- Адаптивность ---------- */
+@media (max-width: 640px) {
+  #headerStatusBar { flex-wrap: wrap; white-space: normal; overflow-x: visible; }
+  .metric-group { flex-wrap: wrap; }
+  .status-pill { padding: 0.5rem 0.8rem 0.5rem 0.7rem; }
+  #statusTextLabel { font-size: 0.8125rem; }
+  .metric-chip { padding: 0.45rem 0.7rem; }
+}
+
+/* ---------- Уважение prefers-reduced-motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .view-animate > *,
+  #toastWrapper > *,
+  #updateModalBackdrop:not(.hidden),
+  #diffModalBackdrop:not(.hidden),
+  #updateModalBackdrop:not(.hidden) > *,
+  #diffModalBackdrop:not(.hidden) > * { animation: none; }
+  .side-nav-btn, .side-nav-btn::before, .status-pill, #statusMainDot, #statusTextLabel,
+  #restartIcon, #ramProgressBar, #cpuProgressBar, .metric-chip, #headerServiceControls button,
+  :where(button, a, summary, input, textarea, select) { transition-duration: 0.01ms; }
+  :where(button:not(:disabled)):active, .version-pill:active, #headerServiceControls button:active { transform: none; }
+  [data-action-click='restartService']:hover #restartIcon { transform: none; }
+}
