@@ -69,6 +69,7 @@ jobs:
           install -m 755 scripts/update-release.sh "$PACKAGE/scripts/update-release.sh"
           install -m 755 scripts/update-core-release.sh "$PACKAGE/scripts/update-core-release.sh"
           install -m 755 scripts/uninstall.sh "$PACKAGE/uninstall.sh"
+          install -m 644 THIRD_PARTY_NOTICES.md "$PACKAGE/THIRD_PARTY_NOTICES.md"
           # Replace only the assignment; a global replacement also rewrites the
           # installer's unresolved-placeholder guard and rejects every version.
           sed "s/^VERSION='@VERSION@'$/VERSION='${VERSION}'/" scripts/install.sh > "$PACKAGE/install.sh"
@@ -79,7 +80,7 @@ jobs:
           # must pass the version guard and stop at the intentionally mocked
           # missing sha256sum before making any package-manager changes.
           sh tests/installer-preflight.sh "$PACKAGE/install.sh"
-          tar -C "$PACKAGE" -czf "$RUNNER_TEMP/$ASSET" bin public scripts uninstall.sh
+          tar -C "$PACKAGE" -czf "$RUNNER_TEMP/$ASSET" bin public scripts uninstall.sh THIRD_PARTY_NOTICES.md
           cd "$RUNNER_TEMP"
           sha256sum "$ASSET" > "$ASSET.sha256"
           cp "$PACKAGE/install.sh" "$RUNNER_TEMP/install.sh"
@@ -96,6 +97,7 @@ jobs:
           grep -Fxq 'scripts/update-release.sh' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'scripts/update-core-release.sh' "$RUNNER_TEMP/archive-entries.txt"
           grep -Fxq 'uninstall.sh' "$RUNNER_TEMP/archive-entries.txt"
+          grep -Fxq 'THIRD_PARTY_NOTICES.md' "$RUNNER_TEMP/archive-entries.txt"
           (cd "$RUNNER_TEMP" && sha256sum -c "$ASSET.sha256")
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch'
@@ -115,6 +117,9 @@ jobs:
           body: |
             Выпуск nfqws2-ui для ARM64 Entware.
 
+            - Диагноз сравнивает HTTPS напрямую, мимо nfqws2, с текущим маршрутом роутера. Детали DNS/TCP/HTTP/SNI и списков раскрываются отдельно.
+            - QUIC проверяется настоящим Initial-пакетом через Lua установленного nfqws2 даже без HTTP3 в curl; сетевой ответ QUIC и полный HTTP/3 различаются. Временные bypass-правила ограничены проверочными соединениями самого роутера.
+            - В трассировке добавлены понятные плашки доступности для обоих режимов; HTTP-ошибки и технически недоступные пробы показываются отдельно.
             - Интерфейс перенесён из макета в TypeScript/TSX; исходных HTML-файлов нет, Rust отдаёт только загрузочную оболочку.
             - Авторизация полностью удалена по запросу пользователя.
             - CSS и шрифты включены в пакет локально; внешний CDN и inline-обработчики не требуются.

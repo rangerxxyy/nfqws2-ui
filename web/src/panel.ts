@@ -1,7 +1,8 @@
+import { comparisonVerdict, presentStep, presentTrace, quicExplanation, type Presentation } from './diagnosis-presenter';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -567,6 +568,16 @@ function exportListDraft() {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
   toast('Текущий черновик экспортирован.');
 }
+function resultBanner(presentation: Presentation): HTMLElement {
+  const banner = document.createElement('p'); banner.className = `diagnosis-verdict diagnosis-${presentation.kind} col-span-full`; banner.setAttribute('role', 'status'); banner.textContent = presentation.text; return banner;
+}
+function diagnosticComparisonCard(title: string, step: SiteDiagnosticStep): HTMLElement {
+  const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-3';
+  const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = title;
+  const detail = document.createElement('p'); detail.className = 'text-xs text-slate-300 whitespace-pre-wrap break-words'; detail.textContent = step.detail;
+  const timing = document.createElement('p'); timing.className = 'text-xs font-mono text-slate-400'; timing.textContent = [step.httpCode === null ? null : `HTTP ${step.httpCode}`, step.durationMs === null ? null : `${step.durationMs} мс`].filter(Boolean).join(' · ');
+  card.append(heading, resultBanner(presentStep(step)), timing, detail); return card;
+}
 async function runSiteDiagnosis() {
   if (diagnosisRunning) return;
   const input = $('#diagDomainInput'); const container = $('#diagResultContainer');
@@ -578,7 +589,7 @@ async function runSiteDiagnosis() {
   const toastHost = $('#toastWrapper');
   const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
   const loading = document.createElement('p'); loading.className = 'col-span-full text-sm text-blue-300 animate-pulse';
-  loading.textContent = 'Проверяются DNS, соединение и ответы сайта с роутера…'; container.append(loading);
+  loading.setAttribute('role', 'status'); loading.textContent = 'Сравниваем доступ напрямую, текущий маршрут и QUIC с роутера…'; container.append(loading);
   try {
     const report = await nfqwsDiagnostics.site(input.value);
     container.replaceChildren();
@@ -586,16 +597,30 @@ async function runSiteDiagnosis() {
     const title = document.createElement('h3'); title.className = 'font-bold text-white'; title.textContent = `${report.host} · ${report.summary}`;
     const addresses = document.createElement('p'); addresses.className = 'mt-2 text-xs font-mono text-slate-400'; addresses.textContent = report.addresses.join(', ');
     summary.append(title, addresses); container.append(summary);
+    container.append(resultBanner(comparisonVerdict(report.direct, report.current)));
+    container.append(diagnosticComparisonCard('Напрямую, мимо nfqws2', report.direct), diagnosticComparisonCard('Как открывается сейчас', report.current));
+    const routeNote = document.createElement('p'); routeNote.className = 'col-span-full text-xs text-slate-400'; routeNote.textContent = 'Текущая проверка использует обычный маршрут роутера. Участие nfqws2 зависит от действующих правил и списков.'; container.append(routeNote);
+    if (report.quic) {
+      const quic = document.createElement('section'); quic.className = 'col-span-full ui-card rounded-2xl p-5 space-y-3';
+      const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = report.quic.method === 'http3' ? 'Сравнение HTTP/3 (QUIC)' : 'Сравнение QUIC · сетевой ответ';
+      const explanation = document.createElement('p'); explanation.className = 'text-xs text-slate-400'; explanation.textContent = quicExplanation(report.quic.method, report.quic.http3Advertised);
+      const comparison = document.createElement('div'); comparison.className = 'grid grid-cols-1 lg:grid-cols-2 gap-3'; comparison.append(diagnosticComparisonCard('Напрямую, мимо nfqws2', report.quic.direct), diagnosticComparisonCard('Как открывается сейчас', report.quic.current));
+      quic.append(heading, explanation, comparison); container.append(quic);
+    } else {
+      const note = document.createElement('p'); note.className = 'col-span-full text-xs text-slate-400'; note.textContent = 'Сравнение QUIC недоступно.'; container.append(note);
+    }
+    const details = document.createElement('details'); details.className = 'col-span-full ui-card rounded-2xl p-5';
+    const disclosure = document.createElement('summary'); disclosure.className = 'cursor-pointer text-sm font-bold text-white'; disclosure.textContent = 'Подробности диагностики';
+    const steps = document.createElement('div'); steps.className = 'grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4'; details.append(disclosure, steps); container.append(details);
     const labels: Record<string, string> = { dns: 'DNS роутера', doh: 'Сверка DNS через DoH', tcp: 'TCP 443', https: 'HTTPS / TLS', http: 'HTTP 80', route: 'Маршрут ядра', sni: 'Контрольное SNI', quic: 'HTTP/3 (QUIC)', lists: 'Совпадения в списках' };
-    const statuses = { ok: 'Ответ получен', warning: 'Требует внимания', error: 'Проверка не прошла', unavailable: 'Не проверено' };
     for (const [index, step] of report.steps.entries()) {
       const card = document.createElement('div'); card.className = 'diag-result-card ui-card rounded-2xl p-4 space-y-2';
       card.style.animationDelay = `${index * 55}ms`;
       const heading = document.createElement('h3'); heading.className = 'text-sm font-semibold text-white'; heading.textContent = labels[step.id] ?? step.id;
       const state = document.createElement('p'); state.className = `text-xs font-semibold ${step.status === 'ok' ? 'text-emerald-400' : step.status === 'error' ? 'text-rose-400' : 'text-amber-300'}`;
-      state.textContent = `${statuses[step.status]}${step.httpCode !== null ? ` · HTTP ${step.httpCode}` : ''}${step.durationMs !== null ? ` · ${step.durationMs} мс` : ''}`;
+      state.textContent = `${presentStep(step).text}${step.httpCode !== null ? ` · HTTP ${step.httpCode}` : ''}${step.durationMs !== null ? ` · ${step.durationMs} мс` : ''}`;
       const detail = document.createElement('p'); detail.className = 'text-xs text-slate-300 whitespace-pre-wrap break-all'; detail.textContent = step.detail;
-      card.append(heading, state, detail); container.append(card);
+      card.append(heading, state, detail); steps.append(card);
     }
     for (const note of report.limitations) {
       const row = document.createElement('p'); row.className = 'col-span-full text-xs text-slate-400'; row.textContent = note; container.append(row);
@@ -610,11 +635,12 @@ async function runSiteDiagnosis() {
 
 function renderTraceReport(container: HTMLElement, report: SiteTraceReport) {
   container.replaceChildren();
-  const phaseCard = (title: string, phase: SiteTraceReport['withoutNfqws2']) => {
+  const phaseCard = (title: string, phase: SiteTraceReport['withoutNfqws2'], route: 'direct' | 'current') => {
+    const presentation = presentTrace(phase, route);
     const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-2';
     const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = title;
-    const state = document.createElement('p'); state.className = `text-sm font-semibold ${phase.ok === true ? 'text-emerald-400' : phase.ok === false ? 'text-rose-400' : 'text-amber-300'}`;
-    state.textContent = phase.ok === true ? `Ответ получен${phase.code === null ? '' : ` · HTTP ${phase.code}`}` : phase.ok === false ? 'Ответ не получен' : 'Этап недоступен';
+    const state = resultBanner(presentation);
+    if (phase.code !== null && phase.code < 400) state.textContent += ` · HTTP ${phase.code}`;
     const reason = document.createElement('p'); reason.className = 'text-xs text-slate-300 whitespace-pre-wrap break-words'; reason.textContent = phase.reason;
     const timing = phase.durationMs === null ? null : document.createElement('p');
     if (timing) { timing.className = 'text-xs text-slate-500'; timing.textContent = `${phase.durationMs} мс`; }
@@ -625,7 +651,7 @@ function renderTraceReport(container: HTMLElement, report: SiteTraceReport) {
   const title = document.createElement('h3'); title.className = 'font-bold text-white'; title.textContent = `${report.host} · ${report.summary}`;
   const address = document.createElement('p'); address.className = 'mt-1 text-xs font-mono text-slate-400'; address.textContent = `Проверенный адрес: ${report.address ?? 'не определён'}`;
   header.append(title, address);
-  container.append(header, phaseCard('Без nfqws2', report.withoutNfqws2), phaseCard('С nfqws2', report.withNfqws2));
+  container.append(header, phaseCard('Напрямую, мимо nfqws2', report.withoutNfqws2, 'direct'), phaseCard('Текущая стратегия nfqws2', report.withNfqws2, 'current'));
   const insights = document.createElement('section'); insights.className = 'col-span-full ui-card rounded-2xl p-5 space-y-3';
   const insightTitle = document.createElement('h3'); insightTitle.className = 'text-sm font-bold text-white'; insightTitle.textContent = 'Что произошло';
   const host = document.createElement('p'); host.className = 'text-xs text-slate-300'; host.textContent = `Имя сайта по SNI/Host: ${report.traceHostname ?? 'не определено'}`;
@@ -657,7 +683,7 @@ async function runSiteTrace() {
   if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.classList.remove('hidden'); }
   if (operationStatus) { operationStatus.textContent = 'Подготовка фоновой проверки на роутере…'; operationStatus.classList.remove('hidden'); }
   container.replaceChildren();
-  const progress = document.createElement('p'); progress.className = 'col-span-full text-sm text-blue-300 animate-pulse'; progress.textContent = 'Операция выполняется на роутере. Можно перейти в другой раздел; статус сохранится.'; container.append(progress);
+  const progress = document.createElement('p'); progress.className = 'col-span-full text-sm text-blue-300 animate-pulse'; progress.setAttribute('role', 'status'); progress.textContent = 'Операция выполняется на роутере. Можно перейти в другой раздел; статус сохранится.'; container.append(progress);
   const protocol = $('#traceProtoSelect');
   const proto = protocol instanceof HTMLSelectElement && protocol.value === 'http' ? 'http' : 'https';
   try {

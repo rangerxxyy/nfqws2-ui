@@ -1,5 +1,9 @@
-//! Bounded router-side website probes. No shell, arbitrary URLs or firewall edits.
+//! Bounded router-side probes, comparing an isolated bypass and the current route.
 
+use crate::{
+    quic_probe,
+    site_trace::{ProbeTransport, bypass_probe},
+};
 use serde::Serialize;
 use std::{
     net::{IpAddr, SocketAddr},
@@ -24,7 +28,7 @@ pub struct DiagnosticStep {
 }
 
 impl DiagnosticStep {
-    fn new(id: &str, status: &'static str, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(id: &str, status: &'static str, detail: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             status,
@@ -43,6 +47,36 @@ pub struct DiagnosticReport {
     pub steps: Vec<DiagnosticStep>,
     pub summary: String,
     pub limitations: Vec<String>,
+    pub direct: DiagnosticStep,
+    pub current: DiagnosticStep,
+    pub quic: Option<QuicComparison>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuicComparison {
+    pub direct: DiagnosticStep,
+    pub current: DiagnosticStep,
+    pub method: &'static str,
+    pub http3_advertised: Option<bool>,
+}
+
+fn probe_open(step: &DiagnosticStep) -> bool {
+    step.status == "ok" && step.http_code.is_none_or(|code| code < 400)
+}
+
+fn diagnosis_summary(direct: &DiagnosticStep, current: &DiagnosticStep) -> &'static str {
+    if direct.status == "unavailable" || current.status == "unavailable" {
+        return "Сравнение неполное: один из способов не проверен";
+    }
+    match (probe_open(direct), probe_open(current)) {
+        (true, true) => "Сайт ответил напрямую и через текущий маршрут",
+        (false, true) => "Сейчас сайт отвечает, напрямую успешного ответа нет",
+        (true, false) => "Напрямую сайт отвечает, через текущий маршрут — нет",
+        (false, false) => {
+            "Сайт не открылся ни напрямую, ни через текущий маршрут; причина требует проверки"
+        }
+    }
 }
 
 pub fn list_entry_matches(host: &str, ips: &[IpAddr], line: &str, ip_list: bool) -> bool {
@@ -145,7 +179,7 @@ fn public_ip(ip: IpAddr) -> bool {
     }
 }
 
-async fn capture(
+pub(crate) async fn capture(
     program: &str,
     args: &[String],
     seconds: u64,
@@ -280,7 +314,24 @@ fn parse_curl(id: &str, exit_code: i32, stdout: &[u8]) -> DiagnosticStep {
 }
 
 async fn probe(id: &str, host: &str, ip: IpAddr, port: u16, http3: bool) -> DiagnosticStep {
+    probe_scoped(id, host, ip, port, http3, false).await
+}
+
+async fn probe_scoped(
+    id: &str,
+    host: &str,
+    ip: IpAddr,
+    port: u16,
+    http3: bool,
+    direct: bool,
+) -> DiagnosticStep {
     let mut args = curl_args();
+    if direct {
+        args.extend(["--local-port".into(), "40000-40999".into()]);
+    }
+    if id == "sni" {
+        args.push("--insecure".into());
+    }
     let address = match ip {
         IpAddr::V6(_) => format!("[{ip}]"),
         _ => ip.to_string(),
@@ -405,7 +456,50 @@ async fn route_step(ip: IpAddr) -> DiagnosticStep {
     }
 }
 
-async fn quic_step(host: &str, ip: IpAddr) -> DiagnosticStep {
+fn http3_advertised(headers: &[u8]) -> Option<bool> {
+    let text = String::from_utf8_lossy(headers);
+    if !text.lines().any(|line| line.starts_with("HTTP/")) {
+        return None;
+    }
+    Some(
+        text.lines()
+            .filter_map(|line| line.split_once(':'))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("alt-svc"))
+            .flat_map(|(_, value)| value.split(','))
+            .any(|entry| {
+                let protocol = entry.trim().split('=').next().unwrap_or_default();
+                protocol == "h3"
+                    || protocol
+                        .strip_prefix("h3-")
+                        .is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
+            }),
+    )
+}
+
+async fn advertised_http3(host: &str, ip: IpAddr) -> Option<bool> {
+    let mut args = curl_args();
+    args.extend([
+        "--head".into(),
+        "--dump-header".into(),
+        "-".into(),
+        "--output".into(),
+        if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
+        "--resolve".into(),
+        format!("{host}:443:{ip}"),
+        format!("https://{host}/"),
+    ]);
+    match capture(curl_program(), &args, 10, 16384).await {
+        Ok((0, bytes)) => http3_advertised(&bytes),
+        _ => None,
+    }
+}
+
+async fn quic_comparison(
+    host: &str,
+    ip: std::net::Ipv4Addr,
+    binary: &str,
+    advertised: Option<bool>,
+) -> QuicComparison {
     let capability = capture(
         curl_program(),
         &[
@@ -417,23 +511,58 @@ async fn quic_step(host: &str, ip: IpAddr) -> DiagnosticStep {
         16384,
     )
     .await;
-    match capability {
-        Ok((0, bytes)) if has_http3_feature(&bytes) => probe("quic", host, ip, 443, true).await,
-        Ok((0, _)) => DiagnosticStep::new(
-            "quic",
-            "unavailable",
-            "curl не собран с функцией HTTP/3; QUIC не проверен",
-        ),
-        Ok(_) => DiagnosticStep::new(
-            "quic",
-            "unavailable",
-            "curl не поддерживает параметр --http3-only; QUIC не проверен",
-        ),
-        Err(message) => DiagnosticStep::new(
-            "quic",
-            "unavailable",
-            format!("Не удалось определить поддержку HTTP/3: {message}"),
-        ),
+    let full_http3 = matches!(capability, Ok((0, ref bytes)) if has_http3_feature(bytes));
+    let (method, current, direct) = if full_http3 {
+        let current = probe("quic", host, ip.into(), 443, true).await;
+        let direct = bypass_probe(
+            ip,
+            443,
+            ProbeTransport::Udp,
+            probe_scoped("quic", host, ip.into(), 443, true, true),
+        )
+        .await;
+        ("http3", current, direct)
+    } else {
+        let packet = match quic_probe::generate(binary, host).await {
+            Ok(packet) => packet,
+            Err(message) => {
+                return QuicComparison {
+                    direct: DiagnosticStep::new("quic", "unavailable", &message),
+                    current: DiagnosticStep::new("quic", "unavailable", message),
+                    method: "quic_initial",
+                    http3_advertised: advertised,
+                };
+            }
+        };
+        let current = quic_probe::probe(&packet, ip, false).await;
+        // Independent routes need independent QUIC connection IDs. Replaying
+        // one Initial from a new source port can be suppressed as a duplicate.
+        let direct_packet = match quic_probe::generate(binary, host).await {
+            Ok(packet) => packet,
+            Err(message) => {
+                return QuicComparison {
+                    direct: DiagnosticStep::new("quic", "unavailable", message),
+                    current,
+                    method: "quic_initial",
+                    http3_advertised: advertised,
+                };
+            }
+        };
+        let direct = bypass_probe(
+            ip,
+            443,
+            ProbeTransport::Udp,
+            quic_probe::probe(&direct_packet, ip, true),
+        )
+        .await;
+        ("quic_initial", current, direct)
+    };
+    QuicComparison {
+        direct: direct
+            .unwrap_or_else(|message| DiagnosticStep::new("quic", "unavailable", message)),
+        current,
+        method,
+        http3_advertised: advertised,
     }
 }
 
@@ -454,9 +583,9 @@ async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
             "Имя сайта совпадает с контрольным именем; отдельное сравнение SNI не выполнялось",
         );
     }
-    let mut result = probe("sni", "example.com", ip, 443, false).await;
+    let mut result = probe_scoped("sni", "example.com", ip, 443, false, true).await;
     result.detail = format!(
-        "Контрольное SNI example.com закреплено на {ip}: {}. Проверка сертификата включена; результат этой отдельной пробы сам по себе не доказывает блокировку.",
+        "Контрольное SNI example.com закреплено на {ip}: {}. Для чужого имени проверка сертификата отключена; результат этой отдельной пробы сам по себе не доказывает блокировку.",
         result.detail
     );
     if result.status == "error" {
@@ -465,7 +594,7 @@ async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
     result
 }
 
-pub async fn diagnose(host: String) -> DiagnosticReport {
+pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
     let (system, (mut reference_step, reference)) = tokio::join!(
         timeout(Duration::from_secs(4), lookup_host(format!("{host}:443"))),
         dns_reference(&host)
@@ -515,46 +644,129 @@ pub async fn diagnose(host: String) -> DiagnosticReport {
             ". Ответы отличаются; это возможно у CDN и само по себе не доказывает подмену DNS",
         );
     }
-    let mut limitations = vec!["Проверки выполняются с роутера. Маршрут клиентского трафика и выбранный профиль могут отличаться.".into(),
-        "Изолированное сравнение с обходом nfqws2 и точное сопоставление профилей ещё не выполнены; причину DPI или поломку стратегией эти пробы сами по себе не доказывают.".into()];
+    let mut limitations = vec![
+        "Оба режима проверяют один публичный IPv4. Прямой запрос исключён из nfqws2 точечными временными правилами.".into(),
+        "«Как сейчас» — обычный маршрут самого роутера. В режиме «только устройства политики» этот трафик может идти мимо nfqws2; результат не доказывает выбор профиля для клиентских устройств.".into(),
+    ];
     if addresses.is_empty() && !reference.is_empty() {
         addresses.clone_from(&reference);
         limitations.push("Для HTTP-проб использованы адреса DoH: системный DNS не дал публичного адреса (возможен FakeIP).".into());
     }
     let mut steps = vec![dns, reference_step];
-    let Some(ip) = addresses.first().copied() else {
+    let Some(ip) = addresses.iter().find_map(|ip| match ip {
+        IpAddr::V4(ip) => Some(*ip),
+        _ => None,
+    }) else {
         return DiagnosticReport {
             host,
             addresses,
             steps,
-            summary: "Нет публичного адреса для безопасной сетевой проверки".into(),
+            summary: "Нет публичного IPv4 для сравнения доступности".into(),
             limitations,
+            direct: DiagnosticStep::new("direct", "unavailable", "DNS не вернул публичный IPv4"),
+            current: DiagnosticStep::new("current", "unavailable", "DNS не вернул публичный IPv4"),
+            quic: None,
         };
     };
-    let (tcp, https, http, route, quic, sni) = tokio::join!(
+    let (tcp, current, route, advertised) = tokio::join!(
         tcp_step(&addresses),
-        probe("https", &host, ip, 443, false),
-        probe("http", &host, ip, 80, false),
-        route_step(ip),
-        quic_step(&host, ip),
-        sni_step(&host, ip)
+        probe("current", &host, ip.into(), 443, false),
+        route_step(ip.into()),
+        advertised_http3(&host, ip.into())
     );
-    let summary = if https.http_code.is_some() {"HTTPS-сервер ответил; HTTP-код и детали приведены ниже"}
-        else if tcp.status == "ok" {"TCP доступен, но HTTPS не завершился; проверьте TLS и сообщения проб"}
-        else {"Не удалось установить соединение с проверенными адресами; причина требует дополнительной диагностики"}.into();
-    steps.extend([tcp, https, http, route, sni, quic]);
+    steps.extend([tcp, route]);
+    let direct = match bypass_probe(ip, 443, ProbeTransport::Tcp, async {
+        tokio::join!(
+            probe_scoped("direct", &host, ip.into(), 443, false, true),
+            sni_step(&host, ip.into())
+        )
+    })
+    .await
+    {
+        Ok((direct, sni)) => {
+            steps.push(sni);
+            direct
+        }
+        Err(message) => {
+            let direct = DiagnosticStep::new("direct", "unavailable", message);
+            return DiagnosticReport {
+                summary: diagnosis_summary(&direct, &current).into(),
+                host,
+                addresses,
+                steps,
+                limitations,
+                direct,
+                current,
+                quic: None,
+            };
+        }
+    };
+    match bypass_probe(
+        ip,
+        80,
+        ProbeTransport::Tcp,
+        probe_scoped("http", &host, ip.into(), 80, false, true),
+    )
+    .await
+    {
+        Ok(http) => steps.push(http),
+        Err(message) => {
+            steps.push(DiagnosticStep::new("http", "unavailable", message));
+            return DiagnosticReport {
+                summary: diagnosis_summary(&direct, &current).into(),
+                host,
+                addresses,
+                steps,
+                limitations,
+                direct,
+                current,
+                quic: None,
+            };
+        }
+    }
+    let quic = Some(quic_comparison(&host, ip, &binary, advertised).await);
+    let summary = diagnosis_summary(&direct, &current).into();
     DiagnosticReport {
         host,
         addresses,
         steps,
         summary,
         limitations,
+        direct,
+        current,
+        quic,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnosis_summary_does_not_label_missing_or_http_errors_as_open() {
+        let open = DiagnosticStep::new("direct", "ok", "HTTP 200");
+        let failed = DiagnosticStep::new("current", "error", "timeout");
+        let unavailable = DiagnosticStep::new("direct", "unavailable", "iptables unavailable");
+        assert!(diagnosis_summary(&failed, &open).contains("Сейчас"));
+        assert!(diagnosis_summary(&open, &failed).contains("Напрямую"));
+        assert!(diagnosis_summary(&failed, &failed).contains("не открылся"));
+        assert!(diagnosis_summary(&unavailable, &failed).contains("неполное"));
+        let error = parse_curl("direct", 0, b"\nNFQWS2_DIAG|451|0.1|0.2|0.3|7");
+        assert!(!probe_open(&error));
+    }
+
+    #[test]
+    fn alt_svc_is_an_advertisement_not_an_http3_probe() {
+        assert_eq!(
+            http3_advertised(b"HTTP/1.1 200 OK\r\nAlt-Svc: h3=\":443\"; ma=86400\r\n"),
+            Some(true)
+        );
+        assert_eq!(
+            http3_advertised(b"HTTP/1.1 200 OK\r\nX-Test: h3\r\n"),
+            Some(false)
+        );
+        assert_eq!(http3_advertised(b"curl error"), None);
+    }
 
     #[test]
     fn list_membership_matches_domains_subdomains_and_both_ip_families() {

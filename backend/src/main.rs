@@ -1855,23 +1855,28 @@ async fn diagnose_site(
         Ok(host) => host,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    let Ok(_guard) = state.site_diagnostic_lock.try_lock() else {
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
         return error(
             StatusCode::CONFLICT,
             "Проверка сайта уже выполняется; дождитесь результата",
         );
     };
-    let mut report = match tokio::time::timeout(
-        std::time::Duration::from_secs(45),
-        site_diagnostics::diagnose(host),
-    )
+    let binary = discover_system_paths()
+        .map(|paths| paths.binary.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // Keep isolation and cleanup alive even if the browser disconnects. Every
+    // individual command/probe is bounded; do not cancel while rules are live.
+    let mut report = match tokio::spawn(async move {
+        let _guard = guard;
+        site_diagnostics::diagnose(host, binary).await
+    })
     .await
     {
         Ok(report) => report,
-        Err(_) => {
+        Err(task_error) => {
             return error(
-                StatusCode::GATEWAY_TIMEOUT,
-                "Истекло общее время диагностики сайта",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Диагностика прервана: {task_error}"),
             );
         }
     };

@@ -22,6 +22,23 @@ pub const MAX_TRACE_LINES: usize = 1_500;
 pub const MAX_TRACE_LINE_BYTES: usize = 2_048;
 pub const MAX_TRACE_BYTES: usize = 256 * 1024;
 
+#[derive(Clone, Copy)]
+pub enum ProbeTransport {
+    Tcp,
+    Udp,
+}
+
+fn transport_rule(mut rule: Vec<String>, transport: ProbeTransport) -> Vec<String> {
+    if let Some(index) = rule.iter().position(|part| part == "-p") {
+        rule[index + 1] = match transport {
+            ProbeTransport::Tcp => "tcp",
+            ProbeTransport::Udp => "udp",
+        }
+        .into();
+    }
+    rule
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TracePhase {
@@ -226,25 +243,42 @@ fn valid_policy_mark(value: &str) -> bool {
         && ["0xfffffff", "0x0fffffff"].contains(&mask.to_ascii_lowercase().as_str())
 }
 
+async fn drain_bounded(
+    mut stream: impl tokio::io::AsyncRead + Unpin,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let mut kept = Vec::new();
+    let mut chunk = [0; 4096];
+    loop {
+        let size = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
+        if size == 0 {
+            return Ok(kept);
+        }
+        let retain = size.min(limit.saturating_sub(kept.len()));
+        kept.extend_from_slice(&chunk[..retain]);
+    }
+}
+
 async fn command(program: &str, args: &[&str]) -> Result<(i32, Vec<u8>), String> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Не удалось запустить {program}: {e}"))?;
     let result = timeout(Duration::from_secs(4), async {
-        let mut out = Vec::new();
-        if let Some(stdout) = child.stdout.take() {
-            stdout
-                .take(8193)
-                .read_to_end(&mut out)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+        let stdout = child.stdout.take().ok_or("Нет stdout команды")?;
+        let stderr = child.stderr.take().ok_or("Нет stderr команды")?;
+        let (read_out, read_err) =
+            tokio::join!(drain_bounded(stdout, 65536), drain_bounded(stderr, 8192));
+        let mut out = read_out?;
+        let err = read_err?;
         let status = child.wait().await.map_err(|e| e.to_string())?;
+        if !status.success() {
+            out.extend_from_slice(&err);
+        }
         Ok::<_, String>((status.code().unwrap_or(-1), out))
     })
     .await;
@@ -493,6 +527,25 @@ async fn iptables_owned(args: &[String]) -> Result<(), String> {
     iptables(&refs).await
 }
 
+fn local_flow_hook(mut rule: Vec<String>, direction: &str, source: Ipv4Addr) -> Vec<String> {
+    let index = rule
+        .iter()
+        .position(|value| value == "-j")
+        .unwrap_or(rule.len());
+    let scope = if direction == "out" {
+        vec!["-s".into(), source.to_string()]
+    } else {
+        vec![
+            "-m".into(),
+            "conntrack".into(),
+            "--ctorigsrc".into(),
+            source.to_string(),
+        ]
+    };
+    rule.splice(index..index, scope);
+    rule
+}
+
 async fn install_rules(
     address: Ipv4Addr,
     port: u16,
@@ -500,6 +553,39 @@ async fn install_rules(
     token: &str,
     policy_mark: Option<&str>,
 ) -> Result<Vec<Vec<String>>, String> {
+    install_rules_for_transport(
+        address,
+        port,
+        queue,
+        token,
+        policy_mark,
+        ProbeTransport::Tcp,
+    )
+    .await
+}
+
+async fn install_rules_for_transport(
+    address: Ipv4Addr,
+    port: u16,
+    queue: Option<u16>,
+    token: &str,
+    policy_mark: Option<&str>,
+    transport: ProbeTransport,
+) -> Result<Vec<Vec<String>>, String> {
+    // UDP connect selects a local route/source address without sending packets.
+    // Match the original router source as well as test ports so forwarded LAN
+    // clients using the same source ports are never captured by these hooks.
+    let socket = tokio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .await
+        .map_err(|e| e.to_string())?;
+    socket
+        .connect((address, port))
+        .await
+        .map_err(|e| e.to_string())?;
+    let source = match socket.local_addr().map_err(|e| e.to_string())?.ip() {
+        std::net::IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+        _ => return Err("Не найден исходящий IPv4 роутера".into()),
+    };
     let output_chain = trace_chain_name(token, "out");
     let input_chain = trace_chain_name(token, "in");
     let mut cleanup = Vec::new();
@@ -529,6 +615,7 @@ async fn install_rules(
         let mut flush_registered = false;
         for mut rule in trace_chain_rules(address, port, direction, queue) {
             rule[4] = chain.clone();
+            let rule = transport_rule(rule, transport);
             if let Err(error) = iptables_owned(&rule).await {
                 return match remove_rules(&cleanup).await {
                     Ok(()) => Err(error),
@@ -551,7 +638,14 @@ async fn install_rules(
     }
     for (direction, chain) in [("out", output_chain.as_str()), ("in", input_chain.as_str())] {
         let hook = trace_hook(direction);
-        let insert = hook_jump("-I", hook, address, direction, port, chain);
+        let insert = transport_rule(
+            local_flow_hook(
+                hook_jump("-I", hook, address, direction, port, chain),
+                direction,
+                source,
+            ),
+            transport,
+        );
         if let Err(error) = iptables_owned(&insert).await {
             return match remove_rules(&cleanup).await {
                 Ok(()) => Err(error),
@@ -560,7 +654,14 @@ async fn install_rules(
                 )),
             };
         }
-        cleanup.push(hook_jump("-D", hook, address, direction, port, chain));
+        cleanup.push(transport_rule(
+            local_flow_hook(
+                hook_jump("-D", hook, address, direction, port, chain),
+                direction,
+                source,
+            ),
+            transport,
+        ));
     }
     if let Some(mark) = policy_mark {
         let chain = format!("N2UM{token}");
@@ -587,6 +688,20 @@ async fn install_rules(
             chain.clone(),
         ]);
         if let Some(rule) = policy_mark_rule(&chain, mark) {
+            let mut rule = transport_rule(rule, transport);
+            let index = rule
+                .iter()
+                .position(|value| value == "-j")
+                .unwrap_or(rule.len());
+            rule.splice(
+                index..index,
+                [
+                    "-d".into(),
+                    address.to_string(),
+                    "--dport".into(),
+                    port.to_string(),
+                ],
+            );
             if let Err(error) = iptables_owned(&rule).await {
                 return match remove_rules(&cleanup).await {
                     Ok(()) => Err(error),
@@ -615,6 +730,31 @@ async fn install_rules(
         cleanup.push(chain_jump("-D", "OUTPUT", &chain));
     }
     Ok(cleanup)
+}
+
+/// The caller must keep this future alive through cleanup (the API runs the
+/// whole diagnosis in an owned task, including when its HTTP client disconnects).
+pub async fn bypass_probe<T>(
+    address: Ipv4Addr,
+    port: u16,
+    transport: ProbeTransport,
+    probe: impl std::future::Future<Output = T>,
+) -> Result<T, String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos() as u64)
+        .unwrap_or_default();
+    let token = format!(
+        "{:04x}{:010x}",
+        std::process::id() & 0xffff,
+        nonce & 0xffffffffff
+    );
+    let rules = install_rules_for_transport(address, port, None, &token, None, transport).await?;
+    let result = probe.await;
+    remove_rules(&rules)
+        .await
+        .map_err(|error| format!("Не удалось удалить временные правила: {error}"))?;
+    Ok(result)
 }
 
 async fn remove_rules(rules: &[Vec<String>]) -> Result<(), String> {
@@ -843,7 +983,16 @@ pub async fn run(
         report.summary = "Трассировка остановлена до изменения firewall".into();
         return report;
     }
-    let policy_mark = policy_route_mark(&firewall_snapshot);
+    let mut policy_mark = policy_route_mark(&firewall_snapshot);
+    if policy_mark.is_none()
+        && let Ok((0, output)) = command(
+            &iptables_program,
+            &["-w", "-t", "mangle", "-S", "nfqws_post"],
+        )
+        .await
+    {
+        policy_mark = policy_route_mark(&String::from_utf8_lossy(&output));
+    }
     let (base_code, base_ms, base_reason) =
         match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
             Ok(rules) => {
@@ -1170,6 +1319,79 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn command_keeps_stderr_for_real_firewall_errors() {
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            (
+                "cmd.exe",
+                &["/C", "echo trace-fixture-error 1>&2 & exit /b 7"],
+            )
+        } else {
+            ("sh", &["-c", "printf trace-fixture-error >&2; exit 7"])
+        };
+        let (code, output) = command(program, args).await.unwrap();
+        assert_eq!(code, 7);
+        assert!(String::from_utf8_lossy(&output).contains("trace-fixture-error"));
+    }
+
+    #[tokio::test]
+    async fn large_firewall_output_is_drained_without_pipe_deadlock() {
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            (
+                "cmd.exe",
+                &["/C", "for /L %i in (1,1,10000) do @echo fixture-rule-line"],
+            )
+        } else {
+            (
+                "sh",
+                &[
+                    "-c",
+                    "i=0; while [ $i -lt 10000 ]; do printf 'fixture-rule-line\\n'; i=$((i+1)); done",
+                ],
+            )
+        };
+        let (code, output) = command(program, args).await.unwrap();
+        assert_eq!(code, 0);
+        assert!(output.len() <= 65536);
+        assert!(output.len() > 8193);
+    }
+
+    #[test]
+    fn udp_bypass_preserves_exact_destination_and_owned_ports() {
+        let target = Ipv4Addr::new(93, 184, 216, 34);
+        let rule = transport_rule(
+            fw_args("-A", "N2UOfixture", target, "out", 443, None),
+            ProbeTransport::Udp,
+        );
+        assert!(rule.windows(2).any(|p| p == ["-p", "udp"]));
+        assert!(rule.windows(2).any(|p| p == ["-d", "93.184.216.34"]));
+        assert!(rule.windows(2).any(|p| p == ["--sport", "40000:40999"]));
+        assert!(rule.ends_with(&["-j".into(), "ACCEPT".into()]));
+    }
+
+    #[test]
+    fn hooks_only_match_connections_originating_on_this_router() {
+        let target = Ipv4Addr::new(93, 184, 216, 34);
+        let local = Ipv4Addr::new(192, 168, 1, 1);
+        let out = local_flow_hook(
+            hook_jump("-I", "POSTROUTING", target, "out", 443, "N2UOfixture"),
+            "out",
+            local,
+        );
+        let incoming = local_flow_hook(
+            hook_jump("-I", "PREROUTING", target, "in", 443, "N2UIfixture"),
+            "in",
+            local,
+        );
+        assert!(out.windows(2).any(|p| p == ["-s", "192.168.1.1"]));
+        assert!(
+            incoming
+                .windows(2)
+                .any(|p| p == ["--ctorigsrc", "192.168.1.1"])
+        );
+        assert!(incoming.windows(2).any(|p| p == ["-m", "conntrack"]));
+    }
 
     #[test]
     fn any_http_status_is_a_reachable_site_response() {

@@ -956,7 +956,7 @@ export default function App() {
                 </div>
                 {"\n              "}
                 <p className={"text-xs sm:text-sm text-slate-400 mt-1"}>
-                  {"\n                Проверяет DNS, TCP, HTTPS, HTTP, SNI, QUIC и совпадения в списках. Результаты получаются с роутера.\n              "}
+                  {"\n                Сравнивает доступ напрямую, мимо nfqws2, с текущим маршрутом роутера. Отдельно проверяет QUIC и показывает подробности соединения.\n              "}
                 </p>
                 {"\n            "}
               </div>
@@ -997,7 +997,7 @@ export default function App() {
           </div>
           {"\n\n        "}
           {"\n        "}
-          <div id={"diagResultContainer"} className={"grid grid-cols-1 lg:grid-cols-3 gap-5"}>
+          <div id={"diagResultContainer"} className={"grid grid-cols-1 lg:grid-cols-2 gap-5"}>
             {"\n          "}
             {"\n        "}
           </div>

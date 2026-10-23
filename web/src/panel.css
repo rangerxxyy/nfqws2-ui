@@ -165,3 +165,8 @@
       color: #475569;
       font-variant-numeric: tabular-nums;
     }
+
+.diagnosis-verdict { padding: .75rem 1rem; border: 1px solid; border-radius: .75rem; font-size: .875rem; font-weight: 600; overflow-wrap: anywhere; }
+.diagnosis-success { color: #6ee7b7; border-color: #10b98150; background: #10b9810d; }
+.diagnosis-failure { color: #fda4af; border-color: #f43f5e50; background: #f43f5e0d; }
+.diagnosis-unknown { color: #fcd34d; border-color: #f59e0b50; background: #f59e0b0d; }
