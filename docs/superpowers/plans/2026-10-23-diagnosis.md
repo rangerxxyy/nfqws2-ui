@@ -32,7 +32,7 @@
 ### Task 3: Diagnosis integration
 - [x] Add verdict tests, implement direct/current sequential comparison with guaranteed cleanup and HTTP3/native QUIC fallback.
 - [x] Pass installed binary from Rust endpoint; remove outer cancellation while firewall rules may be active.
-- [ ] Run full tests/build/audits; independent final review, fix important findings, publish authorized release after CI.
+- [x] Run full tests/build/audits; independent final review, fix important findings, publish authorized release after CI.
 
 ## Verification ledger
 
@@ -43,3 +43,4 @@
 - Independent read-only review: one Important finding (shared QUIC CID between routes); fixed by fresh generator invocation per route. No Critical findings. Device interoperability remains outside available evidence.
 - Ruling: keep GET probes and omit reference volume POST — comparison must not upload random content to arbitrary sites; this does not diagnose volume-dependent freezes.
 - Ruling: pin both modes to the same validated public IPv4 — avoids DNS rebinding and makes comparison reproducible; ordinary router DNS/route limitations are disclosed.
+- Release v0.2.5 published after successful Linux/ARM64 CI (run 39906363689). Downloaded archive SHA-256 verified: 6bda7d90e416e63b07bfc6d51366c008c29b6c2427f19439c5511a47c3db90eb. Required binary/UI/notices and installer VERSION=0.2.5 confirmed; no index.html in package.
