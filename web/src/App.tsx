@@ -216,7 +216,7 @@ export default function App() {
 {"\n  "}
 {"\n  "}
 {"\n  "}
-    <div className={"flex-1 min-h-0 flex overflow-hidden max-w-[1920px] w-full mx-auto"}>
+    <div className={"app-main-layout flex-1 min-h-0 flex overflow-hidden max-w-[1920px] w-full mx-auto"}>
       {"\n\n    "}
       {"\n    "}
       <aside className={"w-64 lg:w-72 bg-[#090e1a] border-r border-slate-800/90 flex flex-col justify-between shrink-0 overflow-y-auto select-none"}>
@@ -491,7 +491,7 @@ export default function App() {
               </div>
               {"\n\n            "}
               {"\n            "}
-              <div className={"flex h-[740px] bg-[#060a12] font-mono text-[14px] leading-[1.68] overflow-hidden"}>
+              <div className={"mobile-code-editor flex h-[740px] bg-[#060a12] font-mono text-[14px] leading-[1.68] overflow-hidden"}>
                 {"\n              "}
                 <div id={"confLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3 w-13 overflow-hidden select-none text-xs leading-[1.68]"}>
                   {"\n                1\n              "}
@@ -906,7 +906,7 @@ export default function App() {
               </div>
             </div>
             {"\n          "}
-            <div className={"flex h-[610px] bg-[#060a12] font-mono text-[14.5px] leading-7 overflow-hidden"}>
+            <div className={"mobile-list-editor flex h-[610px] bg-[#060a12] font-mono text-[14.5px] leading-7 overflow-hidden"}>
               {"\n            "}
               <div id={"listLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3.5 w-14 overflow-hidden select-none text-xs leading-7"}>
                 {"\n              1\n            "}

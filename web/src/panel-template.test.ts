@@ -91,6 +91,17 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('id="cpuMetricText"');
   });
 
+  it('reflows navigation and editors for phone-sized screens', () => {
+    expect(template).toContain('class="app-main-layout flex-1 min-h-0 flex overflow-hidden');
+    expect(template).toContain('class="mobile-code-editor flex h-[740px]');
+    expect(template).toContain('class="mobile-list-editor flex h-[610px]');
+    expect(panelStyles).toContain('@media (max-width: 767px)');
+    expect(panelStyles).toContain('.app-main-layout > aside');
+    expect(panelStyles).toContain('.app-main-layout > aside > div:first-child');
+    expect(panelStyles).toContain('.mobile-code-editor');
+    expect(panelStyles).toContain('.mobile-list-editor');
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');
