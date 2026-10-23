@@ -499,6 +499,49 @@ textarea { line-height: 1.7; tab-size: 4; }
 }
 @keyframes freeze-scan-spin { to { transform: rotate(360deg); } }
 
+/* Improve scan result readability and make newly discovered network rows easy to follow. */
+#tabContent-diagnostic16k,
+#tabContent-autotune { color: #f1f5f9; }
+#tabContent-diagnostic16k :where(p, label, td, th),
+#tabContent-autotune :where(p, label) { text-rendering: optimizeLegibility; }
+#tabContent-diagnostic16k .freeze-scan-table tbody tr {
+  animation: freeze-row-enter 220ms var(--ease-out) both;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+#tabContent-diagnostic16k .freeze-scan-table tbody tr:hover {
+  background-color: rgb(30 41 59 / 62%);
+}
+#tabContent-diagnostic16k .freeze-scan-table td {
+  color: #f1f5f9;
+  font-weight: 600;
+}
+#tabContent-diagnostic16k .freeze-scan-table td:first-child,
+#tabContent-diagnostic16k .freeze-scan-table td:nth-child(2) {
+  font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+#tabContent-autotune :where(input[type="checkbox"], select, textarea) {
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+#tabContent-autotune select:focus-visible {
+  box-shadow: 0 0 0 3px rgb(96 165 250 / 22%);
+}
+.strategy-mode-help.mode-help-enter { animation: mode-help-enter 190ms var(--ease-out) both; }
+.strategy-result-enter { animation: freeze-row-enter 220ms var(--ease-out) both; }
+@keyframes mode-help-enter {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+#tabContent-autotune input[type="checkbox"] { accent-color: #60a5fa; }
+#tabContent-autotune input[type="checkbox"]:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 3px;
+}
+@keyframes freeze-row-enter {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @media (max-width: 700px) {
   #freezeScanResults { overflow: visible; border: 0; }
   .freeze-scan-table { min-width: 0; display: block; }
@@ -522,4 +565,8 @@ textarea { line-height: 1.7; tab-size: 4; }
   :where(button:not(:disabled)):active, .version-pill:active, #headerServiceControls button:active { transform: none; }
   [data-action-click='restartService']:hover #restartIcon { transform: none; }
   #freezeScanStatus[aria-busy="true"]::before { animation: none; }
+  #tabContent-diagnostic16k .freeze-scan-table tbody tr { animation: none; transition: none; }
+  #tabContent-autotune :where(input[type="checkbox"], select, textarea) { transition: none; }
+  .strategy-mode-help.mode-help-enter { animation: none; }
+  .strategy-result-enter { animation: none; }
 }

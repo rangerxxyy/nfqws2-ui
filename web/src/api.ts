@@ -15,10 +15,6 @@ export type SiteTraceOperation = { id: string; state: 'queued' | 'running' | 'st
 export type StrategyPickResult = { candidate: { name: string; source: string; steps: string[] }; attempts: number; successes: number; confirmed: boolean; detail: string };
 export type StrategyPickOperation = { id: string; host: string; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; message: string; updatedAt: number };
 export type StrategyPickPreview = { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickResult['candidate']; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
-export type TransferAttempt = { bytesReceived: number; sampleBytes: number; httpStatus: number | null; elapsedMs: number; firstByteMs: number | null; transportError: string | null; uploadStalledAfterTls: boolean };
-export type TransferSideResult = { attempts: TransferAttempt[]; diagnosis: { classification: string; attempts: number; minBytes: number | null; maxBytes: number | null; repeatableBoundaryStall: boolean; summary: string; limitations: string[] } };
-export type TransferComparison = { host: string; address: string; direct: TransferSideResult; current: TransferSideResult };
-export type TransferDiagnosticOperation = { id: string; host: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; attempt: number; message: string; result: TransferComparison | null; updatedAt: number };
 export type FreezeStrategyMatch = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; reusedFrom: string | null };
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
 export type FreezeNetworkResult = { label: string; host: string; path: string; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
@@ -128,13 +124,10 @@ export const nfqwsDiagnostics = {
   }),
   traceStatus: (id: string) => api<SiteTraceOperation>(`/api/nfqws2/diagnostics/trace/operations/${encodeURIComponent(id)}`),
   traceStop: (id: string) => api<SiteTraceOperation>(`/api/nfqws2/diagnostics/trace/operations/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
-  transferStart: (host: string) => api<TransferDiagnosticOperation>('/api/nfqws2/diagnostics/transfer', { method: 'POST', body: JSON.stringify({ host }) }),
-  transferStatus: (id: string) => api<TransferDiagnosticOperation>(`/api/nfqws2/diagnostics/transfer/operations/${encodeURIComponent(id)}`),
-  transferCancel: (id: string) => api<TransferDiagnosticOperation>(`/api/nfqws2/diagnostics/transfer/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   freezeScanStart: (extraHosts: string[]) => api<FreezeScanOperation>('/api/nfqws2/diagnostics/freeze-scan', { method: 'POST', body: JSON.stringify({ extraHosts }) }),
   freezeScanStatus: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}`),
   freezeScanCancel: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
-  strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended') => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode }) }),
+  strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended' | 'full' | 'custom', repeats = 3, customSteps?: string[], stopAfterFirstConfirmed = false, includeCommunity = false, includeOtherHistory = false) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode, repeats, stopAfterFirstConfirmed, includeCommunity, includeOtherHistory, ...(customSteps ? { customSteps } : {}) }) }),
   strategyStatus: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}`),
   strategyCancel: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   strategyHistory: () => api<StrategyPickOperation[]>('/api/nfqws2/strategies/pick/history'),

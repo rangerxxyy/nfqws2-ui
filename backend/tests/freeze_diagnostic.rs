@@ -1,7 +1,8 @@
 use nfqws2_ui::freeze_diagnostic::{
-    AsnVerification, FreezeTargetKind, PAD_REQUESTS, PadClassification, build_targets,
-    candidate_confirmed, classify_padded_head, freeze_candidates, instantiate_template,
-    network_has_freeze, padded_head_curl_args, verify_asn_hint,
+    AsnVerification, FreezeNetworkResult, FreezeStrategyMatch, FreezeTargetKind, PAD_REQUESTS,
+    PadClassification, build_targets, candidate_confirmed, classify_padded_head,
+    confirmed_strategy_candidates, freeze_candidates, instantiate_template, network_has_freeze,
+    padded_head_curl_args, verify_asn_hint,
 };
 use nfqws2_ui::transfer_diagnostic::{TransferAttempt, TransferClass, classify_transfer};
 use std::net::Ipv4Addr;
@@ -40,6 +41,39 @@ fn extra_public_hosts_are_normalized_deduplicated_and_bounded() {
     assert_eq!(targets[0].host, "example.com");
     assert!(build_targets(&["router.lan".into()]).is_err());
     assert!(build_targets(&vec!["site.example".into(); 21]).is_err());
+}
+
+#[test]
+fn freeze_network_results_expose_domain_path_ip_and_asn_for_the_ui() {
+    let result = FreezeNetworkResult {
+        label: "Hetzner".into(),
+        host: "hetzner.com".into(),
+        path: "/".into(),
+        address: Some(Ipv4Addr::new(91, 98, 156, 82)),
+        asn_hint: Some(24940),
+        asn: AsnVerification::Verified { asn: 24940 },
+        direct: unreachable_measurement(),
+        current: unreachable_measurement(),
+        freeze_detected: false,
+        tried_candidates: 0,
+        found_strategy: None,
+        candidate_attempts: Vec::new(),
+    };
+    let result = serde_json::to_value(result).unwrap();
+    assert_eq!(result["host"], "hetzner.com");
+    assert_eq!(result["address"], "91.98.156.82");
+    assert_eq!(result["asnHint"], 24940);
+}
+
+fn unreachable_measurement() -> nfqws2_ui::freeze_diagnostic::FreezeMeasurement {
+    nfqws2_ui::freeze_diagnostic::FreezeMeasurement {
+        classification: "Inconclusive".into(),
+        ok: false,
+        bytes_received: None,
+        replies: None,
+        elapsed_ms: 0,
+        reason: "not probed".into(),
+    }
 }
 
 #[test]
@@ -161,6 +195,65 @@ fn fake_sni_candidates_follow_template_then_name_order_and_installed_catalog() {
             .iter()
             .all(|(_, step)| step.contains("--lua-desync=fake:"))
     );
+}
+
+#[test]
+fn confirmed_freeze_scan_results_are_reusable_candidates_but_inconclusive_rows_are_not() {
+    let mut confirmed = sample_freeze_result("Hetzner", true);
+    confirmed.found_strategy = Some(FreezeStrategyMatch {
+        sni: "ya.ru".into(),
+        step: "--lua-desync=hostfakesplit:host=ya.ru:repeats=4".into(),
+        attempts: 3,
+        successes: 3,
+        average_ms: Some(120),
+        reused_from: None,
+    });
+    let mut unconfirmed = sample_freeze_result("OVH", true);
+    unconfirmed.found_strategy = Some(FreezeStrategyMatch {
+        sni: "google.com".into(),
+        step: "--lua-desync=fake:blob=fake_default_tls".into(),
+        attempts: 3,
+        successes: 2,
+        average_ms: Some(180),
+        reused_from: None,
+    });
+    let not_affected = sample_freeze_result("Cloudflare", false);
+    let candidates = confirmed_strategy_candidates(&[confirmed, unconfirmed, not_affected]);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].name, "Обрыв на 16 КБ · ya.ru · Hetzner");
+    assert_eq!(candidates[0].source, "Найдено проверкой сетей 16 КБ");
+}
+
+fn sample_freeze_result(label: &str, freeze_detected: bool) -> FreezeNetworkResult {
+    use std::net::Ipv4Addr;
+    FreezeNetworkResult {
+        label: label.into(),
+        host: format!("{label}.example"),
+        path: "/large.bin".into(),
+        address: Some(Ipv4Addr::new(203, 0, 113, 1)),
+        asn_hint: None,
+        asn: AsnVerification::Unavailable,
+        direct: nfqws2_ui::freeze_diagnostic::FreezeMeasurement {
+            classification: "PossibleFreeze".into(),
+            ok: false,
+            bytes_received: Some(18_000),
+            replies: None,
+            elapsed_ms: 4_000,
+            reason: "повторяемый тайм-аут после начала ответа".into(),
+        },
+        current: nfqws2_ui::freeze_diagnostic::FreezeMeasurement {
+            classification: "PossibleFreeze".into(),
+            ok: false,
+            bytes_received: Some(18_000),
+            replies: None,
+            elapsed_ms: 4_000,
+            reason: "повторяемый тайм-аут после начала ответа".into(),
+        },
+        freeze_detected,
+        tried_candidates: 3,
+        found_strategy: None,
+        candidate_attempts: Vec::new(),
+    }
 }
 
 #[test]

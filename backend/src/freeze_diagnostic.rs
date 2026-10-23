@@ -453,6 +453,30 @@ pub struct FreezeNetworkResult {
     pub candidate_attempts: Vec<FreezeCandidateAttempt>,
 }
 
+/// Convert only strategies confirmed by the 16 KB scan into picker candidates.
+/// The picker still probes them against its requested host; a success on a
+/// reference network is a ranking hint, never a claim that it works elsewhere.
+pub fn confirmed_strategy_candidates(
+    results: &[FreezeNetworkResult],
+) -> Vec<crate::strategy_picker::StrategyCandidate> {
+    let mut seen = HashSet::new();
+    results
+        .iter()
+        .filter(|result| result.freeze_detected)
+        .filter_map(|result| {
+            let found = result.found_strategy.as_ref()?;
+            if found.attempts < 3 || found.successes < 3 || !seen.insert(found.step.clone()) {
+                return None;
+            }
+            Some(crate::strategy_picker::StrategyCandidate {
+                name: format!("Обрыв на 16 КБ · {} · {}", found.sni, result.label),
+                source: "Найдено проверкой сетей 16 КБ".into(),
+                steps: vec![found.step.clone()],
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreezeScanOutcome {
     pub results: Vec<FreezeNetworkResult>,

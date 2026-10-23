@@ -117,6 +117,14 @@ struct StrategyPickRequest {
     host: String,
     protocol: Option<String>,
     mode: Option<String>,
+    repeats: Option<usize>,
+    #[serde(default)]
+    stop_after_first_confirmed: bool,
+    #[serde(default)]
+    include_community: bool,
+    #[serde(default)]
+    include_other_history: bool,
+    custom_steps: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -193,6 +201,7 @@ type SiteTraceRunner = dyn Fn(
         Vec<String>,
         String,
         Arc<AtomicBool>,
+        Option<bool>,
     ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>>
     + Send
     + Sync;
@@ -203,8 +212,15 @@ fn router_site_trace_runner(
     args: Vec<String>,
     binary: String,
     cancel: Arc<AtomicBool>,
+    known_baseline: Option<bool>,
 ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>> {
-    Box::pin(async move { site_trace::run(host, &proto, args, binary, cancel).await })
+    Box::pin(async move {
+        if let Some(baseline_ok) = known_baseline {
+            site_trace::run_candidate(host, &proto, args, binary, baseline_ok, cancel).await
+        } else {
+            site_trace::run(host, &proto, args, binary, cancel).await
+        }
+    })
 }
 
 fn strategy_probe_argv(binary: &str, profile_args: &[String]) -> Vec<String> {
@@ -401,6 +417,125 @@ async fn read_strategy_pick_operation(
         return Err("Недопустимое состояние автоподбора".into());
     }
     Ok(Some(operation))
+}
+
+async fn load_confirmed_strategy_candidates(
+    directory: &Path,
+    host: &str,
+    protocol: &str,
+    include_other_hosts: bool,
+) -> Vec<strategy_picker::StrategyCandidate> {
+    let Ok(mut entries) = tokio::fs::read_dir(directory).await else {
+        return Vec::new();
+    };
+    let mut operations = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("json")
+        {
+            continue;
+        }
+        let Some(id) = entry
+            .path()
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        if let Ok(Some(operation)) = read_strategy_pick_operation(directory, &id).await
+            && operation.protocol == protocol
+            && matches!(
+                operation.state.as_str(),
+                "complete" | "no_match" | "cancelled" | "failed"
+            )
+        {
+            operations.push(operation);
+        }
+    }
+    operations.sort_by_key(|operation| {
+        (
+            operation.host != host,
+            std::cmp::Reverse(operation.updated_at),
+        )
+    });
+    let mut seen = std::collections::HashSet::new();
+    let mut same_host = Vec::new();
+    let mut other_hosts = Vec::new();
+    for operation in operations {
+        if operation.state == "site_unblocked" {
+            continue;
+        }
+        let source_host = operation.host.clone();
+        for result in operation
+            .results
+            .into_iter()
+            .filter(|result| result.confirmed)
+        {
+            let candidate = result.candidate;
+            if seen.insert(candidate.steps.clone()) {
+                let history_candidate = strategy_picker::StrategyCandidate {
+                    name: candidate.name,
+                    source: if source_host == host {
+                        "Ранее подтверждена для этого домена".into()
+                    } else {
+                        format!("История: раньше помогла {source_host}")
+                    },
+                    steps: candidate.steps,
+                };
+                if source_host == host {
+                    if same_host.len() < 5 {
+                        same_host.push(history_candidate);
+                    }
+                } else if include_other_hosts && other_hosts.len() < 5 {
+                    other_hosts.push(history_candidate);
+                }
+            }
+        }
+    }
+    same_host.extend(other_hosts);
+    same_host
+}
+
+async fn load_confirmed_freeze_candidates(
+    directory: &Path,
+) -> Vec<strategy_picker::StrategyCandidate> {
+    let Ok(mut entries) = tokio::fs::read_dir(directory).await else {
+        return Vec::new();
+    };
+    let mut newest: Option<FreezeScanOperation> = None;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("json")
+        {
+            continue;
+        }
+        let Some(id) = entry
+            .path()
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        if let Ok(Some(operation)) = read_freeze_scan_operation(directory, &id).await
+            && matches!(operation.state.as_str(), "complete" | "partial")
+            && newest
+                .as_ref()
+                .is_none_or(|previous| operation.updated_at > previous.updated_at)
+        {
+            newest = Some(operation);
+        }
+    }
+    newest.map_or_else(Vec::new, |operation| {
+        freeze_diagnostic::confirmed_strategy_candidates(&operation.results)
+    })
 }
 
 fn build_strategy_pick_preview(
@@ -2481,9 +2616,15 @@ async fn trace_site(
         let args = active_process_snapshot()
             .map(|(_, args)| args)
             .unwrap_or_default();
-        let report =
-            (task_state.site_trace_runner)(task_host, task_proto, args, binary, control.clone())
-                .await;
+        let report = (task_state.site_trace_runner)(
+            task_host,
+            task_proto,
+            args,
+            binary,
+            control.clone(),
+            None,
+        )
+        .await;
         let cancelled = control.load(Ordering::Acquire);
         running.state = if cancelled { "cancelled" } else { "complete" }.into();
         running.stage = running.state.clone();
@@ -2504,6 +2645,13 @@ async fn start_strategy_pick(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StrategyPickRequest>,
 ) -> Response {
+    let repeats = request.repeats.unwrap_or(3);
+    if !(2..=5).contains(&repeats) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Число повторов должно быть от 2 до 5",
+        );
+    }
     let host = match site_diagnostics::normalize_host(&request.host) {
         Ok(host) => host,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
@@ -2525,22 +2673,18 @@ async fn start_strategy_pick(
         }
     };
     let mode = match request.mode.as_deref().unwrap_or("quick") {
-        "quick" => StrategyMode::Quick,
-        "extended" => StrategyMode::Extended,
-        "full" => {
-            return error(
-                StatusCode::NOT_IMPLEMENTED,
-                "Полный каталог ещё не перенесён; доступен расширенный последовательный подбор",
-            );
-        }
-        "custom" => {
-            return error(
-                StatusCode::NOT_IMPLEMENTED,
-                "Проверка собственных стратегий пока не подключена",
-            );
-        }
+        "quick" => Some(StrategyMode::Quick),
+        "extended" => Some(StrategyMode::Extended),
+        "full" => Some(StrategyMode::Full),
+        "custom" => None,
         _ => return error(StatusCode::BAD_REQUEST, "Неизвестный режим подбора"),
     };
+    if mode.is_none() && request.custom_steps.is_none() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Для режима собственной стратегии укажите от 1 до 8 строк --lua-desync=…",
+        );
+    }
     let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
         return error(
             StatusCode::CONFLICT,
@@ -2566,10 +2710,45 @@ async fn start_strategy_pick(
             "Не удалось прочитать Lua-функции, подключённые к работающему nfqws2",
         );
     }
-    let configured = strategy_picker::configured_candidates(&active_args, protocol);
     let blobs = active_blob_names(&active_args);
-    let plan = strategy_picker::build_plan(protocol, mode, &configured, &functions, &blobs);
-    if plan.candidates.is_empty() {
+    let mut plan = if let Some(mode) = mode {
+        let configured = strategy_picker::configured_candidates(&active_args, protocol);
+        strategy_picker::build_plan(protocol, mode, &configured, &functions, &blobs)
+    } else {
+        let Some(steps) = request.custom_steps.as_deref() else {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Для режима собственной стратегии укажите от 1 до 8 строк --lua-desync=…",
+            );
+        };
+        match strategy_picker::build_custom_plan(protocol, steps, &functions, &blobs) {
+            Ok(plan) => plan,
+            Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+        }
+    };
+    if mode.is_some() {
+        let history = load_confirmed_strategy_candidates(
+            &state.data_dir.join("strategy-pick-operations"),
+            &host,
+            match protocol {
+                StrategyProtocol::Http => "http",
+                StrategyProtocol::Https => "https",
+                StrategyProtocol::Quic => "quic",
+            },
+            request.include_other_history,
+        )
+        .await;
+        strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
+    }
+    let freeze_candidates = if mode.is_some() {
+        load_confirmed_freeze_candidates(&state.data_dir.join("freeze-diagnostic-operations")).await
+    } else {
+        Vec::new()
+    };
+    if plan.candidates.is_empty()
+        && freeze_candidates.is_empty()
+        && !(request.include_community && mode.is_some())
+    {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Нет совместимых стратегий для выбранного протокола в активном конфиге и подключённых Lua-файлах",
@@ -2628,6 +2807,11 @@ async fn start_strategy_pick(
     let task_id = id.clone();
     let task_host = host.clone();
     let task_proto = operation.protocol.clone();
+    let task_repeats = repeats;
+    let stop_after_first_confirmed = request.stop_after_first_confirmed;
+    let include_community = request.include_community && mode.is_some();
+    let community_cache_dir = state.data_dir.join("community-strategy-cache");
+    let include_catalog_sources = mode.is_some();
     let binary = paths.binary.to_string_lossy().into_owned();
     let active_args_for_task = active_args.clone();
     let functions_for_task = functions.clone();
@@ -2638,18 +2822,147 @@ async fn start_strategy_pick(
         let _guard = guard;
         let operation_dir = task_state.data_dir.join("strategy-pick-operations");
         operation.state = "running".into();
-        operation.stage = "baseline_and_pick".into();
-        operation.message = "Проверяются реальные запросы через отдельный тестовый nfqws2".into();
+        operation.stage = "baseline".into();
+        operation.message = "Сначала выполняется один прямой запрос; если он не откроет сайт, начнётся перебор стратегий".into();
         operation.updated_at = now_unix_seconds();
         let shared = Arc::new(std::sync::Mutex::new(operation));
         if let Ok(current) = shared.lock() {
             let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
         }
+        let baseline_report = runner(
+            task_host.clone(),
+            task_proto.clone(),
+            Vec::new(),
+            binary.clone(),
+            control.clone(),
+            None,
+        )
+        .await;
+        let Some(baseline_ok) = baseline_report.without_nfqws2.ok else {
+            if let Ok(mut current) = shared.lock() {
+                current.state = if control.load(Ordering::Acquire) {
+                    "cancelled".into()
+                } else {
+                    "failed".into()
+                };
+                current.stage = "baseline".into();
+                current.message = if control.load(Ordering::Acquire) {
+                    "Подбор отменён во время прямой проверки".into()
+                } else {
+                    format!(
+                        "Прямую проверку не удалось завершить; подбор не запускался: {}",
+                        baseline_report.without_nfqws2.reason
+                    )
+                };
+                current.updated_at = now_unix_seconds();
+                let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
+            }
+            task_state
+                .strategy_pick_controls
+                .lock()
+                .await
+                .remove(&task_id);
+            return;
+        };
+        if baseline_ok {
+            if let Ok(mut current) = shared.lock() {
+                current.state = "site_unblocked".into();
+                current.stage = "complete".into();
+                current.message = format!(
+                    "Прямой запрос открыл сайт ({}); подбор стратегий не требуется",
+                    baseline_report.without_nfqws2.reason
+                );
+                current.updated_at = now_unix_seconds();
+                let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
+            }
+            task_state
+                .strategy_pick_controls
+                .lock()
+                .await
+                .remove(&task_id);
+            return;
+        }
+        if let Ok(mut current) = shared.lock() {
+            current.stage = "baseline".into();
+            current.message =
+                "Прямая проверка не открыла сайт; собираются совместимые стратегии".into();
+            current.updated_at = now_unix_seconds();
+            let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
+        }
+        let mut community_notice = String::new();
+        if include_community && !control.load(Ordering::SeqCst) {
+            match nfqws2_ui::community_strategies::discover_candidates(
+                &task_host,
+                protocol,
+                &functions,
+                &blobs,
+                &community_cache_dir,
+            )
+            .await
+            {
+                Ok(discovery) => {
+                    let count = discovery.candidates.len();
+                    strategy_picker::insert_reusable_candidates(
+                        &mut plan,
+                        discovery.candidates,
+                        &functions,
+                        &blobs,
+                    );
+                    community_notice = if count == 0 {
+                        format!(
+                            "Каталог сообщества для провайдера AS{} не содержит совместимых вариантов",
+                            discovery.provider_asn
+                        )
+                    } else {
+                        format!(
+                            "Добавлено вариантов сообщества: {count} · провайдер AS{}",
+                            discovery.provider_asn
+                        )
+                    };
+                }
+                Err(message) => {
+                    community_notice = format!(
+                        "Каталог сообщества недоступен ({message}); продолжается обычный подбор"
+                    )
+                }
+            }
+        }
+        if include_catalog_sources {
+            strategy_picker::insert_reusable_candidates(
+                &mut plan,
+                freeze_candidates,
+                &functions,
+                &blobs,
+            );
+        }
+        if let Ok(mut current) = shared.lock() {
+            current.total = plan.candidates.len();
+            current.stage = "testing".into();
+            current.message = if matches!(mode, Some(StrategyMode::Full)) {
+                format!(
+                    "Проверяется полный каталог blockcheck2 последовательно; отмена доступна в любой момент{}",
+                    if community_notice.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {community_notice}")
+                    }
+                )
+            } else if community_notice.is_empty() {
+                "Проверяются реальные запросы через отдельный тестовый nfqws2".into()
+            } else {
+                format!("{community_notice}; каждый вариант проверяется на этом роутере")
+            };
+            current.updated_at = now_unix_seconds();
+            let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
+        }
         let progress_state = shared.clone();
         let progress_dir = operation_dir.clone();
-        let plan_result = strategy_picker::run_candidates(
+        let plan_result = strategy_picker::run_candidates_with_compaction(
             plan,
             control.clone(),
+            task_repeats,
+            stop_after_first_confirmed,
+            mode == Some(StrategyMode::Full),
             move |candidate, _repeat| {
                 let steps = candidate.steps.clone();
                 let candidate_argv = strategy_picker::candidate_argv(
@@ -2675,14 +2988,13 @@ async fn start_strategy_pick(
                             };
                         }
                     };
-                    let report = runner(host, proto, args, binary, cancel).await;
-                    let direct = report.without_nfqws2.ok;
+                    let report = runner(host, proto, args, binary, cancel, Some(baseline_ok)).await;
                     let candidate = (report.with_nfqws2.state == "complete")
                         .then_some(report.with_nfqws2.ok)
                         .flatten();
                     let detail = format!("{}; {}", report.summary, report.with_nfqws2.reason);
                     strategy_picker::StrategyProbeResult {
-                        baseline_ok: direct,
+                        baseline_ok: Some(baseline_ok),
                         candidate_ok: candidate,
                         detail,
                     }
@@ -2708,7 +3020,11 @@ async fn start_strategy_pick(
             operation.total = plan_result.total;
             operation.results = plan_result.results;
             operation.current = None;
-            operation.message = plan_result.message;
+            operation.message = if community_notice.is_empty() {
+                plan_result.message
+            } else {
+                format!("{} · {community_notice}", plan_result.message)
+            };
             operation.updated_at = now_unix_seconds();
             let _ = write_strategy_pick_operation_sync(&operation_dir, &operation);
         }
@@ -4675,6 +4991,37 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn picker_reuses_only_confirmed_candidates_for_the_same_host_and_protocol() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut saved = confirmed_strategy_pick("complete", "https", true);
+        write_strategy_pick_operation_sync(dir.path(), &saved).unwrap();
+        saved.id = "1123456789abcdef0123456789abcdef".into();
+        saved.host = "other.example".into();
+        saved.results[0].candidate.steps = vec!["--lua-desync=multisplit:pos=2".into()];
+        write_strategy_pick_operation_sync(dir.path(), &saved).unwrap();
+        saved.id = "2123456789abcdef0123456789abcdef".into();
+        saved.host = "example.com".into();
+        saved.protocol = "http".into();
+        write_strategy_pick_operation_sync(dir.path(), &saved).unwrap();
+        saved.id = "3123456789abcdef0123456789abcdef".into();
+        saved.protocol = "https".into();
+        saved.results[0].confirmed = false;
+        write_strategy_pick_operation_sync(dir.path(), &saved).unwrap();
+
+        let candidates =
+            load_confirmed_strategy_candidates(dir.path(), "example.com", "https", false).await;
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].source, "Ранее подтверждена для этого домена");
+        let candidates =
+            load_confirmed_strategy_candidates(dir.path(), "example.com", "https", true).await;
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates[1].source,
+            "История: раньше помогла other.example"
+        );
+    }
+
     #[test]
     fn strategy_preview_uses_only_the_confirmed_persisted_candidate_and_preserves_config() {
         let original = "MODE_LIST='--hostlist=lists/user.list'\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80\" # custom\n";
@@ -5683,6 +6030,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn picker_reuses_confirmed_strategy_from_latest_completed_freeze_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().join("freeze-diagnostic-operations");
+        let result = |label: &str, step: &str| freeze_diagnostic::FreezeNetworkResult {
+            label: label.into(),
+            host: format!("{label}.example"),
+            path: "/large.bin".into(),
+            address: Some(std::net::Ipv4Addr::new(203, 0, 113, 1)),
+            asn_hint: None,
+            asn: freeze_diagnostic::AsnVerification::Unavailable,
+            direct: freeze_diagnostic::FreezeMeasurement {
+                classification: "PossibleFreeze".into(),
+                ok: false,
+                bytes_received: Some(18_000),
+                replies: None,
+                elapsed_ms: 4_000,
+                reason: "повторяемый тайм-аут после начала ответа".into(),
+            },
+            current: freeze_diagnostic::FreezeMeasurement {
+                classification: "PossibleFreeze".into(),
+                ok: false,
+                bytes_received: Some(18_000),
+                replies: None,
+                elapsed_ms: 4_000,
+                reason: "повторяемый тайм-аут после начала ответа".into(),
+            },
+            freeze_detected: true,
+            tried_candidates: 1,
+            found_strategy: Some(freeze_diagnostic::FreezeStrategyMatch {
+                sni: "ya.ru".into(),
+                step: step.into(),
+                attempts: 3,
+                successes: 3,
+                average_ms: Some(120),
+                reused_from: None,
+            }),
+            candidate_attempts: Vec::new(),
+        };
+        let save = |id: &str, state: &str, updated_at, label: &str, step: &str| {
+            write_freeze_scan_operation(
+                &directory,
+                &FreezeScanOperation {
+                    id: id.into(),
+                    state: state.into(),
+                    stage: state.into(),
+                    current: None,
+                    done: 1,
+                    total: 1,
+                    results: vec![result(label, step)],
+                    message: state.into(),
+                    updated_at,
+                },
+            )
+            .unwrap();
+        };
+        save(
+            "11111111111111111111111111111111",
+            "complete",
+            10,
+            "older",
+            "--lua-desync=hostfakesplit:host=old.example",
+        );
+        save(
+            "22222222222222222222222222222222",
+            "partial",
+            20,
+            "newer",
+            "--lua-desync=hostfakesplit:host=new.example",
+        );
+        save(
+            "33333333333333333333333333333333",
+            "running",
+            30,
+            "active",
+            "--lua-desync=hostfakesplit:host=active.example",
+        );
+        let candidates = load_confirmed_freeze_candidates(&directory).await;
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "Обрыв на 16 КБ · ya.ru · newer");
+        assert_eq!(
+            candidates[0].steps,
+            ["--lua-desync=hostfakesplit:host=new.example"]
+        );
+    }
+
+    #[tokio::test]
     async fn strategy_pick_cancel_persists_stopping_and_signals_owned_task() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
@@ -5854,11 +6287,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_modes_and_quic_strategy_runs_are_reported_as_unimplemented() {
+    async fn strategy_picker_rejects_repeat_counts_outside_the_bounded_range() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
         let app = api_router(test_state(data.clone()), dir.path().join("web"));
-        for mode in ["full", "custom"] {
+        for repeats in [1, 6] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/nfqws2/strategies/pick")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"host":"example.com","repeats":repeats}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        assert!(!data.join("strategy-pick-operations").exists());
+    }
+
+    #[tokio::test]
+    async fn full_mode_is_accepted_and_unknown_modes_and_quic_runs_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let app = api_router(test_state(data.clone()), dir.path().join("web"));
+        for (mode, status) in [
+            ("full", StatusCode::CONFLICT),
+            ("not-a-mode", StatusCode::BAD_REQUEST),
+        ] {
             let response = app
                 .clone()
                 .oneshot(
@@ -5873,8 +6334,23 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+            assert_eq!(response.status(), status);
         }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/strategies/pick")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"example.com","mode":"custom"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let response = app
             .oneshot(
                 Request::builder()
@@ -6686,7 +7162,7 @@ mod tests {
     #[tokio::test]
     async fn site_trace_start_returns_accepted_then_persists_runner_result() {
         let dir = tempfile::tempdir().unwrap();
-        let runner: Arc<SiteTraceRunner> = Arc::new(|host, _proto, _, _, _| {
+        let runner: Arc<SiteTraceRunner> = Arc::new(|host, _proto, _, _, _, _baseline| {
             Box::pin(async move {
                 site_trace::TraceReport {
                     host,

@@ -33,9 +33,8 @@ pub struct StrategyPlan {
     pub candidates: Vec<StrategyCandidate>,
 }
 
-/// A single router session stays deliberately small and sequential; wider
-/// catalog searches need hardware-specific resource measurements first.
-pub const MAX_CANDIDATES: usize = 24;
+/// Upper bound accommodates the blockcheck2 full catalog plus local candidates.
+pub const MAX_CANDIDATES: usize = 4096;
 const MAX_STEPS: usize = 8;
 const MAX_STEP_BYTES: usize = 512;
 
@@ -277,6 +276,214 @@ fn candidates_for(
     }
 }
 
+const CATALOG_FOOLING: [&str; 8] = [
+    "tcp_md5",
+    "badsum",
+    "tcp_seq=-3000",
+    "tcp_seq=1000000",
+    "tcp_ack=-66000:tcp_ts_up",
+    "tcp_ts=-1000",
+    "tcp_flags_unset=ACK",
+    "tcp_flags_set=SYN",
+];
+const CATALOG_TLS_SPLITS: [&str; 9] = [
+    "2",
+    "1",
+    "sniext+1",
+    "sniext+4",
+    "host+1",
+    "midsld",
+    "1,midsld",
+    "1,midsld,1220",
+    "1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1",
+];
+const CATALOG_HTTP_SPLITS: [&str; 3] = ["method+2", "midsld", "method+2,midsld"];
+
+fn catalog_candidates(protocol: StrategyProtocol, full: bool) -> Vec<Vec<String>> {
+    let http = protocol == StrategyProtocol::Http;
+    let splits: &[&str] = if http {
+        &CATALOG_HTTP_SPLITS
+    } else {
+        &CATALOG_TLS_SPLITS
+    };
+    let fake_blob = if http {
+        "fake_default_http"
+    } else {
+        "fake_default_tls"
+    };
+    let mut fooling = CATALOG_FOOLING
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect::<Vec<_>>();
+    fooling.extend((1..=5).map(|ttl| format!("ip_autottl=-{ttl},3-20")));
+    if full {
+        fooling.extend((1..=12).map(|ttl| format!("ip_ttl={ttl}")));
+    }
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+    let mut add = |steps: Vec<String>| {
+        if seen.insert(steps.clone()) {
+            candidates.push(steps);
+        }
+    };
+    let desync = |function: &str, params: &str| format!("--lua-desync={function}:{params}");
+    let fakes = |fooling: &str| {
+        let mut variants = vec![
+            vec![desync("fake", &format!("blob={fake_blob}:{fooling}"))],
+            vec![desync("fake", &format!("blob=0x00000000:{fooling}"))],
+        ];
+        if !http {
+            variants.push(vec![
+                desync("fake", &format!("blob=0x00000000:{fooling}")),
+                desync(
+                    "fake",
+                    &format!("blob={fake_blob}:{fooling}:tls_mod=rnd,dupsid"),
+                ),
+            ]);
+            variants.push(vec![desync(
+                "multisplit",
+                &format!("blob={fake_blob}:{fooling}:pos=2:nodrop"),
+            )]);
+            variants.push(vec![desync(
+                "fake",
+                &format!("blob={fake_blob}:{fooling}:tls_mod=rnd,dupsid,padencap"),
+            )]);
+        }
+        variants
+    };
+
+    for function in ["multisplit", "multidisorder"] {
+        for position in splits {
+            add(vec![desync(function, &format!("pos={position}"))]);
+        }
+    }
+    for fool in &fooling {
+        for variant in fakes(fool) {
+            add(variant);
+        }
+    }
+    for fool in &fooling {
+        let middle_options: &[&str] = if full {
+            &[
+                "",
+                "nofake1:",
+                "nofake2:",
+                "midhost=midsld:",
+                "nofake1:midhost=midsld:",
+                "nofake2:midhost=midsld:",
+            ]
+        } else {
+            &["", "midhost=midsld:"]
+        };
+        let disorder_options: &[&str] = if full {
+            &["", "disorder_after:"]
+        } else {
+            &[""]
+        };
+        for disorder in disorder_options {
+            for middle in middle_options {
+                add(vec![desync(
+                    "hostfakesplit",
+                    &format!("{disorder}{middle}{fool}"),
+                )]);
+            }
+        }
+    }
+    let mixed_splits: &[&str] = if full || http {
+        splits
+    } else {
+        &["2", "midsld", "1,midsld"]
+    };
+    for function in ["multisplit", "multidisorder"] {
+        for position in mixed_splits {
+            for fool in &fooling {
+                let fake_variants = fakes(fool);
+                let selected = if full { fake_variants.len() } else { 2 };
+                for variant in fake_variants.into_iter().take(selected) {
+                    let mut steps = variant;
+                    steps.push(desync(function, &format!("pos={position}")));
+                    add(steps);
+                }
+            }
+        }
+    }
+
+    if full {
+        let split_positions: &[&str] = if http {
+            splits
+        } else {
+            &[
+                "2",
+                "1",
+                "sniext+1",
+                "sniext+4",
+                "host+1",
+                "midsld",
+                "1,midsld",
+                "1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1",
+            ]
+        };
+        for function in ["fakedsplit", "fakeddisorder"] {
+            for position in split_positions {
+                for fool in &fooling {
+                    add(vec![desync(function, &format!("pos={position}:{fool}"))]);
+                }
+            }
+        }
+        add(vec![
+            desync("tcpseg", "pos=0,-1:seqovl=1"),
+            "--lua-desync=drop".into(),
+        ]);
+        let tcpseg_positions: &[&str] = if http {
+            &["0,method+2", "0,midsld"]
+        } else {
+            &["0,1", "0,midsld"]
+        };
+        for repeats in [1, 20, 100, 260] {
+            for position in tcpseg_positions {
+                add(vec![desync(
+                    "tcpseg",
+                    &format!("pos={position}:ip_id=rnd:repeats={repeats}"),
+                )]);
+            }
+        }
+    }
+
+    let seq_positions: &[&str] = if http {
+        &["method+2", "method+2,midsld"]
+    } else {
+        &["10", "10,sniext+1", "10,sniext+4", "10,midsld"]
+    };
+    for position in seq_positions {
+        add(vec![desync(
+            "multisplit",
+            &format!("pos={position}:seqovl=1"),
+        )]);
+    }
+    let disorder_pairs: &[(&str, &str)] = if http {
+        &[
+            ("method+1", "method+2"),
+            ("midsld-1", "midsld"),
+            ("method+1", "method+2,midsld"),
+        ]
+    } else {
+        &[
+            ("1", "2"),
+            ("sniext", "sniext+1"),
+            ("sniext+3", "sniext+4"),
+            ("midsld-1", "midsld"),
+            ("1", "2,midsld"),
+        ]
+    };
+    for (overlap, position) in disorder_pairs {
+        add(vec![desync(
+            "multidisorder",
+            &format!("pos={position}:seqovl={overlap}"),
+        )]);
+    }
+    candidates
+}
+
 pub fn build_plan(
     protocol: StrategyProtocol,
     mode: StrategyMode,
@@ -319,10 +526,108 @@ pub fn build_plan(
             });
         }
     }
+    if matches!(mode, StrategyMode::Extended | StrategyMode::Full)
+        && protocol != StrategyProtocol::Quic
+    {
+        for steps in catalog_candidates(protocol, mode == StrategyMode::Full) {
+            if candidates.len() >= MAX_CANDIDATES {
+                break;
+            }
+            if validate_candidate(&steps, available_functions, available_blobs).is_ok()
+                && seen.insert(steps.clone())
+            {
+                candidates.push(StrategyCandidate {
+                    name: steps
+                        .iter()
+                        .filter_map(|step| parse_step(step).ok().map(|(function, _)| function))
+                        .collect::<Vec<_>>()
+                        .join(" + "),
+                    source: if mode == StrategyMode::Full {
+                        "Каталог zapret2 (полный)".into()
+                    } else {
+                        "Каталог zapret2 (расширенный)".into()
+                    },
+                    steps,
+                });
+            }
+        }
+    }
     StrategyPlan {
         protocol,
         candidates,
     }
+}
+
+/// Place confirmed candidates from prior diagnostics after active-profile and
+/// standard candidates, but before the larger generated catalog. They remain
+/// hints: `run_candidates` sends every one through a fresh real probe.
+pub fn insert_reusable_candidates(
+    plan: &mut StrategyPlan,
+    reusable: impl IntoIterator<Item = StrategyCandidate>,
+    available_functions: &HashSet<String>,
+    available_blobs: &[String],
+) {
+    let mut accepted = Vec::new();
+    let mut accepted_steps = HashSet::new();
+    for candidate in reusable {
+        if validate_candidate(&candidate.steps, available_functions, available_blobs).is_err()
+            || accepted_steps.contains(&candidate.steps)
+        {
+            continue;
+        }
+        let catalog_duplicate = plan.candidates.iter().position(|existing| {
+            existing.source.starts_with("Каталог zapret2") && existing.steps == candidate.steps
+        });
+        let catalog_start = plan
+            .candidates
+            .iter()
+            .position(|existing| existing.source.starts_with("Каталог zapret2"))
+            .unwrap_or(plan.candidates.len());
+        if plan.candidates[..catalog_start]
+            .iter()
+            .any(|existing| existing.steps == candidate.steps)
+        {
+            continue;
+        }
+        if let Some(index) = catalog_duplicate {
+            plan.candidates.remove(index);
+        } else if plan.candidates.len() + accepted.len() >= MAX_CANDIDATES {
+            break;
+        }
+        accepted_steps.insert(candidate.steps.clone());
+        accepted.push(candidate);
+    }
+    let insertion = plan
+        .candidates
+        .iter()
+        .position(|candidate| candidate.source.starts_with("Каталог zapret2"))
+        .unwrap_or(plan.candidates.len());
+    plan.candidates.splice(insertion..insertion, accepted);
+}
+
+/// Build a single candidate from user-entered nfqws2 Lua desync arguments.
+/// The candidate is validated against the active installation before it can
+/// reach the isolated runner; user input is never interpreted by a shell.
+pub fn build_custom_plan(
+    protocol: StrategyProtocol,
+    steps: &[String],
+    available_functions: &HashSet<String>,
+    available_blobs: &[String],
+) -> Result<StrategyPlan, String> {
+    validate_candidate(steps, available_functions, available_blobs)?;
+    let name = steps
+        .iter()
+        .filter_map(|step| parse_step(step).ok().map(|(function, _)| function))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    Ok(StrategyPlan {
+        protocol,
+        candidates: vec![StrategyCandidate {
+            name,
+            source: "Пользовательская стратегия".into(),
+            steps: steps.to_vec(),
+        }],
+    })
 }
 
 /// Build a one-profile test argv from the active process. Global options/Lua
@@ -460,7 +765,7 @@ pub fn build_domain_profile(
 
 #[cfg(test)]
 mod application_tests {
-    use super::{StrategyProtocol, build_domain_profile};
+    use super::{StrategyProtocol, build_custom_plan, build_domain_profile};
     use std::collections::HashSet;
 
     #[test]
@@ -527,6 +832,78 @@ mod application_tests {
             .is_err()
         );
     }
+
+    #[test]
+    fn accepts_a_custom_strategy_only_when_every_step_is_available() {
+        let functions = HashSet::from(["multisplit".to_string()]);
+        let plan = build_custom_plan(
+            StrategyProtocol::Https,
+            &["--lua-desync=multisplit:pos=1".into()],
+            &functions,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].source, "Пользовательская стратегия");
+        assert!(
+            build_custom_plan(
+                StrategyProtocol::Https,
+                &["--lua-desync=not_installed".into()],
+                &functions,
+                &[],
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod repeat_tests {
+    use super::{
+        StrategyCandidate, StrategyPlan, StrategyProbeResult, StrategyProtocol, run_candidates,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[tokio::test]
+    async fn confirms_a_candidate_only_after_the_requested_number_of_real_probe_results() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runner_calls = calls.clone();
+        let plan = StrategyPlan {
+            protocol: StrategyProtocol::Https,
+            candidates: vec![StrategyCandidate {
+                name: "test candidate".into(),
+                source: "test".into(),
+                steps: vec!["--lua-desync=multisplit:pos=1".into()],
+            }],
+        };
+        let result = run_candidates(
+            plan,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            3,
+            false,
+            move |_, _| {
+                runner_calls.fetch_add(1, Ordering::SeqCst);
+                async {
+                    StrategyProbeResult {
+                        baseline_ok: Some(false),
+                        candidate_ok: Some(true),
+                        detail: "router probe completed".into(),
+                    }
+                }
+            },
+            |_, _, _| {},
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(result.results[0].attempts, 3);
+        assert_eq!(result.results[0].successes, 3);
+        assert!(result.results[0].confirmed);
+        assert!(result.message.contains("3 последовательными"));
+    }
 }
 
 /// Parse only public nfqws2 desync functions from inspected Lua source lines,
@@ -578,16 +955,49 @@ pub struct StrategyRunResult {
     pub checked: usize,
     pub total: usize,
     pub results: Vec<StrategyCandidateResult>,
+    pub failures: usize,
+    pub omitted_results: usize,
     pub message: String,
 }
 
-/// Sequentially execute each candidate twice. A direct success means there is
-/// no evidence that DPI mitigation is needed; partial/random success is never
-/// marked confirmed. The runner is the real isolated network probe supplied by
-/// the application, not a simulated result.
+/// Sequentially execute candidates for the requested number of real probes.
+/// A direct success means there is no evidence that mitigation is needed;
+/// partial/random success is never marked confirmed. The runner is the isolated
+/// network probe supplied by the application, not a simulated result.
 pub async fn run_candidates<F, Fut, P>(
     plan: StrategyPlan,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    repeats: usize,
+    stop_after_first_confirmed: bool,
+    runner: F,
+    progress: P,
+) -> StrategyRunResult
+where
+    F: FnMut(&StrategyCandidate, usize) -> Fut,
+    Fut: std::future::Future<Output = StrategyProbeResult>,
+    P: FnMut(usize, usize, &str),
+{
+    run_candidates_with_compaction(
+        plan,
+        cancel,
+        repeats,
+        stop_after_first_confirmed,
+        false,
+        runner,
+        progress,
+    )
+    .await
+}
+
+/// Run the full blockcheck2 catalog without persisting thousands of negative
+/// rows. Upstream likewise keeps only catalog strategies that opened the site
+/// and aggregates the rest into a failure count.
+pub async fn run_candidates_with_compaction<F, Fut, P>(
+    plan: StrategyPlan,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    repeats: usize,
+    stop_after_first_confirmed: bool,
+    compact_failures: bool,
     mut runner: F,
     mut progress: P,
 ) -> StrategyRunResult
@@ -602,6 +1012,8 @@ where
         checked: 0,
         total,
         results: Vec::new(),
+        failures: 0,
+        omitted_results: 0,
         message: "Подготовка кандидатов".into(),
     };
     for candidate in plan.candidates {
@@ -613,7 +1025,7 @@ where
         let mut attempts = 0;
         let mut successes = 0;
         let mut detail = String::new();
-        for repeat in 1..=2 {
+        for repeat in 1..=repeats {
             progress(result.checked, total, &candidate.name);
             if cancel.load(std::sync::atomic::Ordering::Acquire) {
                 result.state = "cancelled".into();
@@ -646,15 +1058,25 @@ where
                 }
             }
         }
-        let confirmed = successes == 2;
-        result.results.push(StrategyCandidateResult {
+        let confirmed = successes == repeats;
+        let candidate_result = StrategyCandidateResult {
             candidate: candidate.clone(),
             attempts,
             successes,
             confirmed,
             detail,
-        });
+        };
+        if compact_failures && successes == 0 {
+            result.failures += 1;
+        } else if compact_failures && result.results.len() >= 256 {
+            result.omitted_results += 1;
+        } else {
+            result.results.push(candidate_result);
+        }
         result.checked += 1;
+        if confirmed && stop_after_first_confirmed {
+            break;
+        }
     }
     result.state = if result.results.iter().any(|item| item.confirmed) {
         "complete"
@@ -663,10 +1085,24 @@ where
     }
     .into();
     result.message = if result.state == "complete" {
-        "Найдены варианты, подтверждённые двумя последовательными сетевыми проверками".into()
+        if stop_after_first_confirmed {
+            format!(
+                "Автоматический подбор остановлен: стратегия подтверждена {repeats} последовательными сетевыми проверками"
+            )
+        } else {
+            format!(
+                "Найдены варианты, подтверждённые {repeats} последовательными сетевыми проверками"
+            )
+        }
     } else {
         "Подтверждённая стратегия не найдена".into()
     };
+    if compact_failures {
+        result.message.push_str(&format!(
+            " · без успешного ответа: {} · скрыто строк каталога: {}",
+            result.failures, result.omitted_results
+        ));
+    }
     result
 }
 

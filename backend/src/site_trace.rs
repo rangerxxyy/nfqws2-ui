@@ -1041,6 +1041,30 @@ pub async fn run(
         args,
         binary,
         cancel,
+        None,
+    )
+    .await
+}
+
+/// Runs only the current-route candidate probe using the result of a separate
+/// direct baseline. This avoids repeating the bypass request for every
+/// candidate/repeat in the strategy picker.
+pub async fn run_candidate(
+    host: String,
+    proto: &str,
+    args: Vec<String>,
+    binary: String,
+    baseline_ok: bool,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::Http(proto.into()),
+        None,
+        args,
+        binary,
+        cancel,
+        Some(baseline_ok),
     )
     .await
 }
@@ -1061,6 +1085,7 @@ pub async fn run_padded_target(
         args,
         binary,
         cancel,
+        None,
     )
     .await
 }
@@ -1082,6 +1107,7 @@ pub async fn run_transfer_target(
         args,
         binary,
         cancel,
+        None,
     )
     .await
 }
@@ -1093,6 +1119,7 @@ async fn run_inner(
     args: Vec<String>,
     binary: String,
     cancel: Arc<AtomicBool>,
+    known_baseline: Option<bool>,
 ) -> TraceReport {
     let mut report = TraceReport {
         host: host.clone(),
@@ -1172,42 +1199,52 @@ async fn run_inner(
     {
         policy_mark = policy_route_mark(&String::from_utf8_lossy(&output));
     }
-    let (base_code, base_ms, base_reason) =
-        match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
-            Ok(rules) => {
-                if cancel.load(Ordering::Acquire) {
+    if let Some(baseline_ok) = known_baseline {
+        report.without_nfqws2 = TracePhase {
+            state: if baseline_ok { "complete" } else { "error" }.into(),
+            ok: Some(baseline_ok),
+            code: None,
+            duration_ms: None,
+            reason: "Прямой базовый запрос выполнен отдельным этапом подбора".into(),
+        };
+    } else {
+        let (base_code, base_ms, base_reason) =
+            match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
+                Ok(rules) => {
+                    if cancel.load(Ordering::Acquire) {
+                        let cleanup = remove_rules(&rules).await;
+                        report.without_nfqws2 = TracePhase::unavailable(match cleanup {
+                            Ok(()) => "Остановлено до запроса; временные правила удалены".into(),
+                            Err(error) => {
+                                format!("Остановлено; очистка правил не подтверждена: {error}")
+                            }
+                        });
+                        report.summary = "Трассировка остановлена".into();
+                        return report;
+                    }
+                    let result = probe_mode(&host, address, &mode, &cancel).await;
                     let cleanup = remove_rules(&rules).await;
-                    report.without_nfqws2 = TracePhase::unavailable(match cleanup {
-                        Ok(()) => "Остановлено до запроса; временные правила удалены".into(),
-                        Err(error) => {
-                            format!("Остановлено; очистка правил не подтверждена: {error}")
-                        }
-                    });
-                    report.summary = "Трассировка остановлена".into();
+                    match (result, cleanup) {
+                        (Ok(value), Ok(())) => value,
+                        (Err(e), Ok(())) => (None, None, e),
+                        (_, Err(e)) => (
+                            None,
+                            None,
+                            format!("Не удалось очистить временные правила: {e}"),
+                        ),
+                    }
+                }
+                Err(error) => {
+                    report.without_nfqws2 = TracePhase::unavailable(format!(
+                        "Не удалось изолировать базовый запрос: {error}"
+                    ));
+                    report.with_nfqws2 = TracePhase::unavailable("Тестовая очередь не запускалась");
+                    report.summary = "Проверка не завершена".into();
                     return report;
                 }
-                let result = probe_mode(&host, address, &mode, &cancel).await;
-                let cleanup = remove_rules(&rules).await;
-                match (result, cleanup) {
-                    (Ok(value), Ok(())) => value,
-                    (Err(e), Ok(())) => (None, None, e),
-                    (_, Err(e)) => (
-                        None,
-                        None,
-                        format!("Не удалось очистить временные правила: {e}"),
-                    ),
-                }
-            }
-            Err(error) => {
-                report.without_nfqws2 = TracePhase::unavailable(format!(
-                    "Не удалось изолировать базовый запрос: {error}"
-                ));
-                report.with_nfqws2 = TracePhase::unavailable("Тестовая очередь не запускалась");
-                report.summary = "Проверка не завершена".into();
-                return report;
-            }
-        };
-    report.without_nfqws2 = phase_from_http(base_code, base_ms, base_reason);
+            };
+        report.without_nfqws2 = phase_from_http(base_code, base_ms, base_reason);
+    }
     if report
         .without_nfqws2
         .reason
