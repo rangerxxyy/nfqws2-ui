@@ -3,7 +3,7 @@ import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type TransferDiagnosticOperation } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type TransferDiagnosticOperation } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -24,6 +24,8 @@ let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
 let transferDiagnosticRunning = false;
 let activeTransferDiagnosticId: string | null = null;
+let freezeScanRunning = false;
+let activeFreezeScanId: string | null = null;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
@@ -927,13 +929,103 @@ function renderTransferDiagnostic(operation: TransferDiagnosticOperation) {
   for (const [label, side] of [['Напрямую, мимо nfqws2', result.direct], ['Через текущий маршрут', result.current]] as const) {
     const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-3';
     const title = document.createElement('h3'); title.className = 'text-base font-bold text-white'; title.textContent = label;
-    const summary = document.createElement('p'); summary.className = `text-sm font-semibold ${side.diagnosis.repeatableBoundaryStall ? 'text-amber-200' : side.diagnosis.classification === 'complete' ? 'text-emerald-200' : 'text-slate-200'}`; summary.textContent = side.diagnosis.summary;
+    const summary = document.createElement('p'); summary.className = `text-sm font-semibold ${['possible_boundary_stall', 'possible_upload_stall'].includes(side.diagnosis.classification) ? 'text-amber-200' : side.diagnosis.classification === 'complete' ? 'text-emerald-200' : 'text-slate-200'}`; summary.textContent = side.diagnosis.summary;
     const metrics = document.createElement('p'); metrics.className = 'text-sm font-medium text-slate-300';
     metrics.textContent = `Получено: ${side.diagnosis.minBytes ?? 0}–${side.diagnosis.maxBytes ?? 0} байт · ${side.attempts.length} запроса · IP ${result.address}`;
     const list = document.createElement('ul'); list.className = 'space-y-1 text-xs font-medium text-slate-300';
-    for (const [index, attempt] of side.attempts.entries()) { const row = document.createElement('li'); row.textContent = `Попытка ${index + 1}: ${attempt.bytesReceived} байт · HTTP ${attempt.httpStatus ?? '—'} · ${attempt.elapsedMs} мс · первый байт ${attempt.firstByteMs ?? '—'} мс${attempt.transportError ? ` · ${attempt.transportError}` : ''}`; list.append(row); }
+    for (const [index, attempt] of side.attempts.entries()) { const row = document.createElement('li'); row.textContent = `Попытка ${index + 1}: ${attempt.bytesReceived} байт · HTTP ${attempt.httpStatus ?? '—'} · ${attempt.elapsedMs} мс · первый байт ${attempt.firstByteMs ?? '—'} мс${attempt.transportError ? ` · ${attempt.transportError}` : ''}${attempt.uploadStalledAfterTls ? ' · тайм-аут отправки после TLS' : ''}`; list.append(row); }
     card.append(title, summary, metrics, list); container.append(card);
   }
+}
+
+function freezeMeasurementLabel(measurement: FreezeScanOperation['results'][number]['current']) {
+  if (measurement.ok) return `ответ получен · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'PossibleFreeze') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'PossibleUploadStall') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'TimeoutBeforeResponse' || measurement.classification === 'TimeoutBeforeBody') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'ServerDoesNotKeepConnection') return 'сервер не удерживает соединение';
+  if (measurement.classification === 'ConnectFailure') return 'TCP-соединение не установлено';
+  if (measurement.classification === 'TlsFailure') return 'ошибка TLS';
+  if (measurement.classification === 'Reset') return 'соединение сброшено';
+  if (measurement.classification === 'dns_failure') return 'DNS не разрешил адрес';
+  return measurement.reason || 'результат не определён';
+}
+
+function renderFreezeScan(operation: FreezeScanOperation) {
+  const status = $('#freezeScanStatus');
+  if (status) {
+    status.textContent = `${operation.message}${operation.current ? ` · сейчас: ${operation.current}` : ''} · ${operation.done}/${operation.total}`;
+    status.setAttribute('aria-busy', String(['queued', 'running', 'stopping'].includes(operation.state)));
+    status.classList.remove('hidden');
+  }
+  const container = $('#freezeScanResults');
+  if (!container) return;
+  container.replaceChildren();
+  if (!operation.results.length) { container.classList.add('hidden'); return; }
+  container.classList.remove('hidden');
+  const table = document.createElement('table'); table.className = 'freeze-scan-table min-w-[760px] w-full text-left text-sm';
+  const head = document.createElement('thead'); head.className = 'bg-slate-900/80 text-xs uppercase text-slate-300';
+  const headerRow = document.createElement('tr');
+  const labels = ['Сеть', 'Адрес / ASN', 'Напрямую', 'Текущий маршрут', 'Итог'];
+  for (const title of labels) { const cell = document.createElement('th'); cell.className = 'px-3 py-3 font-bold'; cell.textContent = title; headerRow.append(cell); }
+  head.append(headerRow); table.append(head);
+  const body = document.createElement('tbody'); body.className = 'divide-y divide-slate-800 text-slate-200';
+  for (const result of operation.results) {
+    const row = document.createElement('tr'); row.className = 'align-top hover:bg-slate-900/50';
+    const recentAttempts = result.candidateAttempts.slice(-3).map((attempt) => `${attempt.sni} · ${attempt.successes}/${attempt.attempts}${attempt.reason ? ` · ${attempt.reason}` : ''}`).join('\n');
+    const cells = [
+      `${result.label}\n${result.host}${result.path === '/' ? '' : result.path}`,
+      `${result.address ?? 'адрес не найден'}\n${result.asn.state === 'verified' ? `AS${result.asn.asn} · подтверждён` : result.asn.state === 'changed' ? `ASN изменился: ожидался AS${result.asn.expected}, сейчас AS${result.asn.actual}` : 'ASN не подтверждён'}`,
+      freezeMeasurementLabel(result.direct),
+      freezeMeasurementLabel(result.current),
+      result.foundStrategy ? `Найдено имя ${result.foundStrategy.sni} · ${result.foundStrategy.successes}/${result.foundStrategy.attempts} успешных${result.foundStrategy.reusedFrom ? ` · совпадающий ASN, найдено на ${result.foundStrategy.reusedFrom}` : ''}\n${result.foundStrategy.step}${recentAttempts ? `\nПредыдущие проверки:\n${recentAttempts}` : ''}` : result.freezeDetected ? `Возможный обрыв · проверено вариантов: ${result.triedCandidates}${result.triedCandidates ? ', подтверждённый вариант не найден' : ''}${recentAttempts ? `\nПоследние проверки:\n${recentAttempts}` : ''}` : result.direct.ok && result.current.ok ? 'Обрыв не обнаружен' : 'Результат не подтверждает обрыв 16–20 КБ',
+    ];
+    cells.forEach((value, index) => { const cell = document.createElement('td'); cell.dataset.label = labels[index]; cell.className = `whitespace-pre-line px-3 py-3 ${index === 4 && result.foundStrategy ? 'font-bold text-emerald-200' : index === 4 && result.freezeDetected ? 'font-bold text-amber-100' : 'font-semibold text-white'}`; cell.textContent = value; row.append(cell); });
+    body.append(row);
+  }
+  table.append(body); container.append(table);
+}
+
+async function pollFreezeScan(id: string) {
+  activeFreezeScanId = id; freezeScanRunning = true;
+  const input = $('#freezeScanHostsInput'); const start = $('[data-action-click="runFreezeScan"]'); const stop = $('#freezeScanCancel');
+  if (input instanceof HTMLInputElement) input.disabled = true;
+  if (start instanceof HTMLButtonElement) start.disabled = true;
+  stop?.classList.remove('hidden');
+  try {
+    let current = await nfqwsDiagnostics.freezeScanStatus(id); renderFreezeScan(current);
+    for (let index = 0; index < 920 && ['queued', 'running', 'stopping'].includes(current.state); index += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      try { current = await nfqwsDiagnostics.freezeScanStatus(id); renderFreezeScan(current); }
+      catch { setText('#freezeScanStatus', 'Связь с роутером восстанавливается…'); }
+    }
+    renderFreezeScan(current);
+  } catch (error) { setText('#freezeScanStatus', error instanceof Error ? error.message : 'Статус проверки сетей недоступен'); }
+  finally {
+    freezeScanRunning = false; activeFreezeScanId = null;
+    if (input instanceof HTMLInputElement) input.disabled = false;
+    if (start instanceof HTMLButtonElement) start.disabled = false;
+    stop?.classList.add('hidden');
+  }
+}
+
+async function startFreezeScan() {
+  if (freezeScanRunning) return;
+  const input = $('#freezeScanHostsInput');
+  if (!(input instanceof HTMLInputElement)) return;
+  const extraHosts = input.value.split(',').map((host) => host.trim()).filter(Boolean);
+  if (extraHosts.length > 20) return toast('Можно добавить не более 20 своих доменов.', 'error');
+  $('#freezeScanResults')?.replaceChildren();
+  try { const operation = await nfqwsDiagnostics.freezeScanStart(extraHosts); localStorage.setItem('nfqws2-ui-freeze-scan', operation.id); await pollFreezeScan(operation.id); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить проверку сетей', 'error'); }
+}
+
+async function cancelFreezeScan() {
+  if (!activeFreezeScanId) return;
+  const stop = $('#freezeScanCancel'); if (stop instanceof HTMLButtonElement) { stop.disabled = true; stop.textContent = 'Останавливаю…'; }
+  try { const operation = await nfqwsDiagnostics.freezeScanCancel(activeFreezeScanId); setText('#freezeScanStatus', operation.message); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось остановить проверку сетей', 'error'); }
+  finally { if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.textContent = 'Остановить'; } }
 }
 
 async function pollTransferDiagnostic(id: string) {
@@ -1124,6 +1216,8 @@ function bindPrototypeActions() {
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
     runTransferDiagnostic: () => void startTransferDiagnostic(),
     cancelTransferDiagnostic: () => void cancelTransferDiagnostic(),
+    runFreezeScan: () => void startFreezeScan(),
+    cancelFreezeScan: () => void cancelFreezeScan(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
@@ -1210,6 +1304,8 @@ function boot() {
   if (savedPick) void pollStrategyPick(savedPick);
   const savedTransfer = localStorage.getItem(TRANSFER_DIAGNOSTIC_STORAGE);
   if (savedTransfer) void pollTransferDiagnostic(savedTransfer);
+  const savedFreezeScan = localStorage.getItem('nfqws2-ui-freeze-scan');
+  if (savedFreezeScan) void pollFreezeScan(savedFreezeScan);
     void loadStrategyPickHistory();
   const applyButton = $('[data-action-click="applyConfigAndRestart"]');
   if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;

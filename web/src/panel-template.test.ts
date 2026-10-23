@@ -111,6 +111,14 @@ describe('TSX panel without authentication', () => {
     expect(transfer).toContain('flex flex-col sm:flex-row');
     expect(transfer).toContain('min-w-0 flex-1');
     expect(transfer).toContain('grid grid-cols-1 lg:grid-cols-2');
+    expect(transfer).toContain('id="freezeScanHostsInput"');
+    expect(transfer).toContain('Проверить сети');
+    expect(transfer).toContain('id="freezeScanResults"');
+    expect(panelSource).toContain('freezeScanStart');
+    expect(panelSource).toContain('freeze-scan-table');
+    expect(panelSource).toContain("status.setAttribute('aria-busy'");
+    expect(panelSource).toContain("cell.dataset.label = labels[index]");
+    expect(panelSource).toContain('cancelFreezeScan');
   });
 
   it('keeps long strategy jobs cancellable until the backend reports a terminal state', () => {

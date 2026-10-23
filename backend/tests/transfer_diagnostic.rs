@@ -1,5 +1,6 @@
 use nfqws2_ui::transfer_diagnostic::{
-    TransferAttempt, TransferClass, assemble_curl_args, classify_transfer, parse_curl_attempt,
+    TransferAttempt, TransferClass, assemble_curl_args, assemble_curl_args_for_path,
+    classify_transfer, parse_curl_attempt, upload_stall_confirmed,
 };
 use std::net::IpAddr;
 
@@ -143,6 +144,43 @@ fn curl_args_pin_https_host_and_cap_volume_without_a_shell() {
     );
 }
 
+#[test]
+fn known_network_reference_path_is_preserved_in_the_pinned_probe_url() {
+    let args = assemble_curl_args_for_path(
+        "proof.ovh.net",
+        "93.184.216.34".parse().unwrap(),
+        "/files/1Mb.dat",
+        "/tmp/body",
+        "/tmp/headers",
+    );
+    assert!(args.contains(&"https://proof.ovh.net/files/1Mb.dat".into()));
+    assert!(!args.iter().any(|arg| arg.contains("/files/1Mb.dat;")));
+}
+
+#[test]
+fn small_response_upload_stall_requires_timeout_after_tls_handshake() {
+    assert!(upload_stall_confirmed(
+        28,
+        "NFQWS2_UPLOAD|0.241000",
+        "NFQWS2_UPLOAD"
+    ));
+    assert!(!upload_stall_confirmed(
+        28,
+        "NFQWS2_UPLOAD|0.000000",
+        "NFQWS2_UPLOAD"
+    ));
+    assert!(!upload_stall_confirmed(
+        28,
+        "NFQWS2_UPLOAD|not-a-time",
+        "NFQWS2_UPLOAD"
+    ));
+    assert!(!upload_stall_confirmed(
+        0,
+        "NFQWS2_UPLOAD|0.241000",
+        "NFQWS2_UPLOAD"
+    ));
+}
+
 fn attempt(bytes: u64, error: Option<&str>, status: u16) -> TransferAttempt {
     TransferAttempt {
         bytes_received: bytes,
@@ -151,5 +189,17 @@ fn attempt(bytes: u64, error: Option<&str>, status: u16) -> TransferAttempt {
         elapsed_ms: 140,
         first_byte_ms: Some(45),
         transport_error: error.map(str::to_string),
+        upload_stalled_after_tls: false,
     }
+}
+
+#[test]
+fn small_page_upload_timeout_is_distinguished_from_inbound_16kb_stall() {
+    let mut first = attempt(180, None, 200);
+    first.upload_stalled_after_tls = true;
+    let second = attempt(180, None, 200);
+    let result = classify_transfer(&[first, second], Some(180));
+    assert_eq!(result.classification, TransferClass::PossibleUploadStall);
+    assert!(!result.repeatable_boundary_stall);
+    assert!(result.summary.contains("После TLS handshake"));
 }

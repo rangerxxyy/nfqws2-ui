@@ -1,5 +1,6 @@
 use serde::Serialize;
 pub mod config_document;
+pub mod freeze_diagnostic;
 pub mod quic_probe;
 pub mod site_diagnostics;
 pub mod site_trace;

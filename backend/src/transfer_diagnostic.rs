@@ -19,6 +19,7 @@ use std::{
 use tokio::{net::lookup_host, process::Command, time::timeout};
 
 pub const TRANSFER_SAMPLE_BYTES: u64 = 65_536;
+pub const SMALL_RESPONSE_BYTES: u64 = 24_576;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTransferAttempt {
@@ -32,6 +33,16 @@ pub fn assemble_curl_args(
     body_path: &str,
     headers_path: &str,
 ) -> Vec<String> {
+    assemble_curl_args_for_path(host, ip, "/", body_path, headers_path)
+}
+
+pub fn assemble_curl_args_for_path(
+    host: &str,
+    ip: IpAddr,
+    request_path: &str,
+    body_path: &str,
+    headers_path: &str,
+) -> Vec<String> {
     let address = match ip {
         IpAddr::V4(ip) => ip.to_string(),
         IpAddr::V6(ip) => format!("[{ip}]"),
@@ -40,6 +51,7 @@ pub fn assemble_curl_args(
         "--disable".to_string(),
         "--silent".into(),
         "--show-error".into(),
+        "--insecure".into(),
         "--noproxy".into(),
         "*".into(),
         "--proto".into(),
@@ -64,10 +76,18 @@ pub fn assemble_curl_args(
         headers_path.into(),
         "--write-out".into(),
         "NFQWS2_TRANSFER|%{http_code}|%{time_total}|%{time_starttransfer}|%{size_download}".into(),
-        format!("https://{host}/"),
+        format!("https://{host}{request_path}"),
     ]
     .into_iter()
     .collect()
+}
+
+pub fn upload_stall_confirmed(exit_code: i32, metadata: &str, marker: &str) -> bool {
+    exit_code == 28
+        && metadata
+            .rsplit_once(&format!("{marker}|"))
+            .and_then(|(_, value)| value.trim().parse::<f64>().ok())
+            .is_some_and(|appconnect| appconnect.is_finite() && appconnect > 0.0)
 }
 
 pub fn parse_curl_attempt(
@@ -140,6 +160,7 @@ pub fn parse_curl_attempt(
             elapsed_ms,
             first_byte_ms: time_ms(2),
             transport_error,
+            upload_stalled_after_tls: false,
         },
         expected_bytes,
     }
@@ -151,6 +172,7 @@ const REPEAT_TOLERANCE_BYTES: u64 = 2 * 1024;
 pub enum TransferClass {
     Complete,
     PossibleBoundaryStall,
+    PossibleUploadStall,
     TimeoutBeforeBody,
     TimeoutAfterBody,
     ConnectionReset,
@@ -167,6 +189,8 @@ pub struct TransferAttempt {
     pub elapsed_ms: u64,
     pub first_byte_ms: Option<u64>,
     pub transport_error: Option<String>,
+    #[serde(default)]
+    pub upload_stalled_after_tls: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,9 +243,14 @@ pub fn classify_transfer(
         && timed_out_at_boundary.iter().max().unwrap()
             - timed_out_at_boundary.iter().min().unwrap()
             <= REPEAT_TOLERANCE_BYTES;
+    let upload_stall = attempts
+        .iter()
+        .any(|attempt| attempt.upload_stalled_after_tls);
 
-    let classification = if successful_complete {
+    let classification = if successful_complete && !upload_stall {
         TransferClass::Complete
+    } else if upload_stall {
+        TransferClass::PossibleUploadStall
     } else if repeatable_boundary_stall {
         TransferClass::PossibleBoundaryStall
     } else if attempts.is_empty() {
@@ -257,6 +286,7 @@ pub fn classify_transfer(
     let summary = match classification {
         TransferClass::Complete => "Передача завершилась; повторяемый обрыв не обнаружен".into(),
         TransferClass::PossibleBoundaryStall => "Передача повторно остановилась около 16–20 КБ; это указывает на возможный сетевой обрыв, но не доказывает DPI".into(),
+        TransferClass::PossibleUploadStall => "После TLS handshake истёк тайм-аут при отправке тестового тела; возможна остановка передачи, причина не установлена".into(),
         TransferClass::TimeoutBeforeBody => "Тайм-аут до получения тела ответа; обрыв на 16–20 КБ не подтверждён".into(),
         TransferClass::TimeoutAfterBody => "Передача завершилась по тайм-ауту, но точка обрыва не повторяется в диапазоне 16–20 КБ".into(),
         TransferClass::ConnectionReset => "Соединение было сброшено; причина и связь с объёмом передачи не установлены".into(),
@@ -297,7 +327,7 @@ impl Drop for ScratchDir {
     }
 }
 
-async fn curl_attempt(host: &str, ip: Ipv4Addr) -> ParsedTransferAttempt {
+async fn curl_attempt(host: &str, ip: Ipv4Addr, request_path: &str) -> ParsedTransferAttempt {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -325,7 +355,7 @@ async fn curl_attempt(host: &str, ip: Ipv4Addr) -> ParsedTransferAttempt {
     let (Some(body), Some(headers)) = (body.to_str(), headers.to_str()) else {
         return parse_curl_attempt(-1, &[], 0, &[], 0);
     };
-    let args = assemble_curl_args(host, IpAddr::V4(ip), body, headers);
+    let args = assemble_curl_args_for_path(host, IpAddr::V4(ip), request_path, body, headers);
     let program = if std::path::Path::new("/opt/bin/curl").is_file() {
         "/opt/bin/curl"
     } else if cfg!(windows) {
@@ -357,13 +387,105 @@ async fn curl_attempt(host: &str, ip: Ipv4Addr) -> ParsedTransferAttempt {
     let header_bytes = tokio::fs::read(dir.join("headers"))
         .await
         .unwrap_or_default();
-    parse_curl_attempt(
+    let mut parsed = parse_curl_attempt(
         code,
         &stdout,
         body_bytes,
         &header_bytes,
         started.elapsed().as_millis() as u64,
-    )
+    );
+    if parsed.attempt.transport_error.is_none()
+        && parsed.attempt.bytes_received < SMALL_RESPONSE_BYTES
+        && parsed
+            .attempt
+            .http_status
+            .is_some_and(|status| (200..400).contains(&status))
+    {
+        parsed.attempt.upload_stalled_after_tls =
+            upload_stalled_after_tls(host, ip, request_path, &dir).await;
+    }
+    parsed
+}
+
+async fn upload_stalled_after_tls(
+    host: &str,
+    ip: Ipv4Addr,
+    request_path: &str,
+    directory: &std::path::Path,
+) -> bool {
+    let payload_path = directory.join("upload-body");
+    let mut payload = vec![0u8; TRANSFER_SAMPLE_BYTES as usize];
+    if getrandom::fill(&mut payload).is_err()
+        || tokio::fs::write(&payload_path, payload).await.is_err()
+    {
+        return false;
+    }
+    let Some(payload_path) = payload_path.to_str() else {
+        return false;
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let marker = format!("nfqws2-ui-upload-{nonce}");
+    let args = [
+        "--disable".to_owned(),
+        "--silent".into(),
+        "--show-error".into(),
+        "--insecure".into(),
+        "--noproxy".into(),
+        "*".into(),
+        "--proto".into(),
+        "=https".into(),
+        "--connect-timeout".into(),
+        "5".into(),
+        "--max-time".into(),
+        "8".into(),
+        "--max-filesize".into(),
+        "262144".into(),
+        "--max-redirs".into(),
+        "0".into(),
+        "--local-port".into(),
+        "40000-40999".into(),
+        "--resolve".into(),
+        format!("{host}:443:{ip}"),
+        "-H".into(),
+        "Expect:".into(),
+        "-H".into(),
+        "Content-Type: application/octet-stream".into(),
+        "--data-binary".into(),
+        format!("@{payload_path}"),
+        "--write-out".into(),
+        format!("{marker}|%{{time_appconnect}}"),
+        format!(
+            "https://{host}{request_path}{}t={nonce}",
+            if request_path.contains('?') { "&" } else { "?" }
+        ),
+    ];
+    let program = if std::path::Path::new("/opt/bin/curl").is_file() {
+        "/opt/bin/curl"
+    } else if cfg!(windows) {
+        "curl.exe"
+    } else {
+        "curl"
+    };
+    let result = timeout(Duration::from_secs(10), async {
+        Command::new(program)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output()
+            .await
+    })
+    .await;
+    let Ok(Ok(output)) = result else {
+        return false;
+    };
+    let exit_code = output.status.code().unwrap_or(-1);
+    let metadata = String::from_utf8_lossy(&output.stdout);
+    upload_stall_confirmed(exit_code, &metadata, &marker)
 }
 
 async fn resolve_public_ipv4(host: &str) -> Result<Ipv4Addr, String> {
@@ -402,11 +524,29 @@ pub async fn probe_transfer_at(
     direct: bool,
     cancel: &AtomicBool,
 ) -> Result<ParsedTransferAttempt, String> {
+    probe_transfer_at_path(host, address, "/", direct, cancel).await
+}
+
+pub async fn probe_transfer_at_path(
+    host: &str,
+    address: Ipv4Addr,
+    request_path: &str,
+    direct: bool,
+    cancel: &AtomicBool,
+) -> Result<ParsedTransferAttempt, String> {
     if cancel.load(Ordering::Acquire) || !public_ip(IpAddr::V4(address)) {
         return Err("Проверка отменена или адрес не является публичным".into());
     }
     let host = normalize_host(host)?;
-    let probe = curl_attempt(&host, address);
+    if !request_path.starts_with('/')
+        || request_path.len() > 512
+        || request_path
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte.is_ascii_whitespace() || byte == b'\\')
+    {
+        return Err("Путь проверки должен быть безопасным относительным URL-путём".into());
+    }
+    let probe = curl_attempt(&host, address, request_path);
     let attempt = if direct {
         bypass_probe(address, 443, ProbeTransport::Tcp, probe).await?
     } else {

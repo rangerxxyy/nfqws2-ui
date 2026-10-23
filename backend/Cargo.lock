@@ -412,6 +412,7 @@ version = "0.2.9"
 dependencies = [
  "axum",
  "flate2",
+ "getrandom",
  "hex",
  "libc",
  "serde",

@@ -1139,7 +1139,21 @@ export default function App() {
         {"\n      "}
         <section id={"tabContent-diagnostic16k"} className={"hidden view-animate space-y-5"}>
           <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
-            <div><h2 className={"text-lg font-bold text-white"}>Диагностика передачи данных</h2><p className={"mt-1 text-sm font-medium text-slate-300"}>Два ограниченных HTTPS-запроса напрямую и через текущий маршрут. Повторяемый тайм-аут около 16–20 КБ отмечается как возможный обрыв, а не доказательство DPI.</p></div>
+            <div>
+              <h2 className={"text-lg font-bold text-white"}>Проверка сетей на обрыв</h2>
+              <p className={"mt-1 text-sm font-semibold leading-relaxed text-slate-200"}>Сравнивает прямое соединение с изолированной копией активной конфигурации nfqws2. При тайм-ауте до первого ответа отдельно проверяет TCP. Для сетей с повторяемым обрывом проверяет совместимые fake-SNI варианты; совпадение ASN подтверждается через RIPEstat.</p>
+            </div>
+            <div className={"flex flex-col sm:flex-row gap-3"}>
+              <input id={"freezeScanHostsInput"} type={"text"} placeholder={"Свои сайты через запятую (необязательно)"} autoCapitalize={"none"} spellCheck={false} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white"} />
+              <button data-action-click={"runFreezeScan"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Проверить сети</button>
+              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>Остановить</button>
+            </div>
+            <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
+            <div id={"freezeScanResults"} className={"hidden overflow-x-auto rounded-xl border border-slate-800"}></div>
+            <p className={"text-xs font-semibold leading-relaxed text-slate-300"}>Проверки идут последовательно, с лимитом времени на сеть и общий запуск. Найденные варианты требуют трёх успешных проверок; конфигурация и основная служба не изменяются.</p>
+          </div>
+          <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
+            <div><h2 className={"text-lg font-bold text-white"}>Диагностика передачи данных</h2><p className={"mt-1 text-sm font-medium text-slate-300"}>Два ограниченных HTTPS-запроса напрямую и через текущий маршрут. Для короткой страницы дополнительно отправляется случайное тестовое тело 64 КБ; тайм-аут после TLS отмечается как возможное зависание, а не доказательство DPI.</p></div>
             <div className={"flex flex-col sm:flex-row gap-3"}>
               <input id={"transferDomainInput"} type={"text"} placeholder={"example.com"} autoCapitalize={"none"} spellCheck={false} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white"} />
               <button data-action-click={"runTransferDiagnostic"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Проверить передачу</button>

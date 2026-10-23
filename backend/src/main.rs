@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
+use nfqws2_ui::freeze_diagnostic;
 use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::site_trace;
 use nfqws2_ui::strategy_picker::{self, StrategyMode, StrategyProtocol};
@@ -80,6 +81,7 @@ struct AppState {
     site_trace_runner: Arc<SiteTraceRunner>,
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    freeze_scan_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,11 +158,34 @@ struct TransferDiagnosticRequest {
     host: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FreezeScanOperation {
+    id: String,
+    state: String,
+    stage: String,
+    current: Option<String>,
+    done: usize,
+    total: usize,
+    results: Vec<freeze_diagnostic::FreezeNetworkResult>,
+    message: String,
+    updated_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FreezeScanRequest {
+    #[serde(default)]
+    extra_hosts: Vec<String>,
+}
+
 const MAX_SITE_TRACE_STATE_BYTES: usize = 512 * 1024;
 const MAX_SITE_TRACE_OPERATIONS: usize = 12;
 const MAX_STRATEGY_PICK_STATE_BYTES: usize = 512 * 1024;
 const MAX_STRATEGY_PICK_OPERATIONS: usize = 12;
 const MAX_TRANSFER_DIAGNOSTIC_STATE_BYTES: usize = 128 * 1024;
+const MAX_FREEZE_SCAN_STATE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_FREEZE_SCAN_PROGRESS: usize = freeze_diagnostic::MAX_TARGETS * 2;
 
 type SiteTraceRunner = dyn Fn(
         String,
@@ -180,6 +205,12 @@ fn router_site_trace_runner(
     cancel: Arc<AtomicBool>,
 ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>> {
     Box::pin(async move { site_trace::run(host, &proto, args, binary, cancel).await })
+}
+
+fn strategy_probe_argv(binary: &str, profile_args: &[String]) -> Vec<String> {
+    std::iter::once(binary.to_owned())
+        .chain(profile_args.iter().cloned())
+        .collect()
 }
 
 fn now_unix_seconds() -> u64 {
@@ -2635,7 +2666,7 @@ async fn start_strategy_pick(
                 let cancel = probe_cancel.clone();
                 async move {
                     let args = match candidate_argv {
-                        Ok(args) => args,
+                        Ok(args) => strategy_probe_argv(&binary, &args),
                         Err(message) => {
                             return strategy_picker::StrategyProbeResult {
                                 baseline_ok: None,
@@ -2853,13 +2884,335 @@ async fn read_transfer_operation(
     if operation.id != id
         || !matches!(
             operation.state.as_str(),
-            "queued" | "running" | "stopping" | "complete" | "cancelled" | "failed"
+            "queued" | "running" | "stopping" | "complete" | "partial" | "cancelled" | "failed"
         )
         || operation.attempt > 2
     {
         return Err("Недопустимое состояние диагностики передачи".into());
     }
     Ok(Some(operation))
+}
+
+fn freeze_scan_operation_path(directory: &Path, id: &str) -> PathBuf {
+    directory.join(format!("{id}.json"))
+}
+
+fn write_freeze_scan_operation(
+    directory: &Path,
+    operation: &FreezeScanOperation,
+) -> Result<(), String> {
+    if !valid_site_trace_id(&operation.id) {
+        return Err("Недопустимый идентификатор диагностики сетей".into());
+    }
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec(operation).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_FREEZE_SCAN_STATE_BYTES {
+        return Err("Результат диагностики сетей превышает лимит размера".into());
+    }
+    let destination = freeze_scan_operation_path(directory, &operation.id);
+    let temporary = directory.join(format!("{}.{}.tmp", operation.id, new_update_id()));
+    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    if destination.exists() {
+        std::fs::remove_file(&destination).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = std::fs::rename(&temporary, &destination) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+async fn read_freeze_scan_operation(
+    directory: &Path,
+    id: &str,
+) -> Result<Option<FreezeScanOperation>, String> {
+    if !valid_site_trace_id(id) {
+        return Ok(None);
+    }
+    let file = match tokio::fs::File::open(freeze_scan_operation_path(directory, id)).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "Не удалось прочитать статус проверки сетей: {error}"
+            ));
+        }
+    };
+    let max_bytes = MAX_FREEZE_SCAN_STATE_BYTES;
+    let mut bytes = Vec::new();
+    file.take((max_bytes + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > max_bytes {
+        return Err("Сохранённое состояние проверки сетей превышает лимит".into());
+    }
+    let operation: FreezeScanOperation = serde_json::from_slice(&bytes)
+        .map_err(|_| "Повреждено состояние проверки сетей".to_string())?;
+    if operation.id != id
+        || !matches!(
+            operation.state.as_str(),
+            "queued" | "running" | "stopping" | "complete" | "partial" | "cancelled" | "failed"
+        )
+        || operation.done > operation.total
+        || operation.total > MAX_FREEZE_SCAN_PROGRESS
+        || operation.results.len() > freeze_diagnostic::MAX_TARGETS
+    {
+        return Err("Недопустимое состояние проверки сетей".into());
+    }
+    Ok(Some(operation))
+}
+
+async fn start_freeze_scan(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<FreezeScanRequest>,
+) -> Response {
+    if let Err(message) = freeze_diagnostic::build_targets(&request.extra_hosts) {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
+    let Some((_, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Проверка сетей остановлена: не найден однозначно работающий nfqws2",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let functions = active_lua_functions(&active_args, &paths.lua_dir);
+    let blobs = active_blob_names(&active_args);
+    if functions.is_empty() {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Не удалось прочитать Lua-функции активного nfqws2; перебор остановлен до запуска",
+        );
+    }
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Сейчас выполняется другая сетевая диагностика или трассировка",
+        );
+    };
+    let directory = state.data_dir.join("freeze-diagnostic-operations");
+    if let Err(io_error) = tokio::fs::create_dir_all(&directory).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    prune_finished_json_operations(&directory, 11);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(io_error) =
+            tokio::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).await
+        {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось защитить каталог результатов: {io_error}"),
+            );
+        }
+    }
+    let id = new_update_id();
+    let control = Arc::new(AtomicBool::new(false));
+    let operation = FreezeScanOperation {
+        id: id.clone(),
+        state: "queued".into(),
+        stage: "queued".into(),
+        current: None,
+        done: 0,
+        total: freeze_diagnostic::build_targets(&request.extra_hosts)
+            .map_or(0, |targets| targets.len()),
+        results: Vec::new(),
+        message: "Проверка сетей поставлена в очередь".into(),
+        updated_at: now_unix_seconds(),
+    };
+    if let Err(message) = write_freeze_scan_operation(&directory, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    state
+        .freeze_scan_controls
+        .lock()
+        .await
+        .insert(id.clone(), control.clone());
+    let accepted = operation.clone();
+    let task_state = state.clone();
+    let task_id = id;
+    let binary = paths.binary.to_string_lossy().into_owned();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let directory = task_state.data_dir.join("freeze-diagnostic-operations");
+        let mut operation = operation;
+        operation.state = "running".into();
+        operation.stage = "baseline".into();
+        operation.message = "Проверяются контрольные сети напрямую и через текущий маршрут".into();
+        let shared = Arc::new(std::sync::Mutex::new(operation));
+        if let Ok(value) = shared.lock() {
+            let _ = write_freeze_scan_operation(&directory, &value);
+        }
+        let progress = shared.clone();
+        let progress_directory = directory.clone();
+        let cancel = control.clone();
+        let scan_args = active_args;
+        let scan_functions = functions;
+        let scan_blobs = blobs;
+        let result = freeze_diagnostic::scan_network_baselines(
+            &request.extra_hosts,
+            control,
+            scan_args,
+            binary,
+            scan_functions,
+            scan_blobs,
+            move |done, total, target| {
+                if let Ok(mut value) = progress.lock() {
+                    value.stage = if target.contains(": проверка SNI ") {
+                        "strategy_search"
+                    } else {
+                        "baseline"
+                    }
+                    .into();
+                    value.done = done.min(total);
+                    value.total = total;
+                    value.current = Some(target.chars().take(128).collect());
+                    value.message = if value.stage == "strategy_search" {
+                        "Проверяется совместимое имя fake-SNI; требуется три последовательных успеха".into()
+                    } else {
+                        format!("Проверена сеть {} из {}", value.done, total)
+                    };
+                    value.updated_at = now_unix_seconds();
+                    let _ = write_freeze_scan_operation(&progress_directory, &value);
+                }
+            },
+        )
+        .await;
+        if let Ok(mut value) = shared.lock() {
+            value.updated_at = now_unix_seconds();
+            match result {
+                Ok(outcome) if cancel.load(Ordering::Acquire) => {
+                    value.state = "cancelled".into();
+                    value.stage = "cleanup".into();
+                    value.done = outcome.done.min(outcome.total);
+                    value.total = outcome.total;
+                    value.current = None;
+                    value.results = outcome.results;
+                    value.message = "Проверка остановлена; завершённые результаты сохранены, временные правила очищены".into();
+                }
+                Ok(outcome) => {
+                    value.state = if outcome.limited {
+                        "partial"
+                    } else {
+                        "complete"
+                    }
+                    .into();
+                    value.stage = value.state.clone();
+                    value.done = outcome.done.min(outcome.total);
+                    value.total = outcome.total;
+                    value.current = None;
+                    value.results = outcome.results;
+                    let matches = value
+                        .results
+                        .iter()
+                        .filter(|result| result.found_strategy.is_some())
+                        .count();
+                    let affected = value
+                        .results
+                        .iter()
+                        .filter(|result| result.freeze_detected)
+                        .count();
+                    value.message = if outcome.limited {
+                        format!(
+                            "Проверка частично завершена по лимиту времени: подтверждено имён для {matches} из {affected} сетей; непроверенные сети не считаются успешными, конфигурация не менялась"
+                        )
+                    } else if matches > 0 {
+                        format!(
+                            "Проверка завершена: подтверждено имён для {matches} из {affected} сетей; конфигурация не менялась"
+                        )
+                    } else if affected > 0 {
+                        format!(
+                            "Проверка завершена: обрыв возможен в {affected} сетях, подтверждённая стратегия не найдена; конфигурация не менялась"
+                        )
+                    } else {
+                        "Проверка завершена: воспроизводимого обрыва 16–20 КБ и необходимости подбора не обнаружено".into()
+                    };
+                }
+                Err(message) if cancel.load(Ordering::Acquire) || message.contains("отмен") => {
+                    value.state = "cancelled".into();
+                    value.stage = "cleanup".into();
+                    value.current = None;
+                    value.message = "Проверка отменена; временные правила очищены".into();
+                }
+                Err(message) => {
+                    value.state = "failed".into();
+                    value.stage = "failed".into();
+                    value.current = None;
+                    value.message = message;
+                }
+            }
+            let _ = write_freeze_scan_operation(&directory, &value);
+        }
+        task_state
+            .freeze_scan_controls
+            .lock()
+            .await
+            .remove(&task_id);
+    });
+    (StatusCode::ACCEPTED, Json(accepted)).into_response()
+}
+
+async fn get_freeze_scan(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let directory = state.data_dir.join("freeze-diagnostic-operations");
+    match read_freeze_scan_operation(&directory, &id).await {
+        Ok(Some(mut operation)) => {
+            if matches!(operation.state.as_str(), "queued" | "running" | "stopping")
+                && !state.freeze_scan_controls.lock().await.contains_key(&id)
+            {
+                operation.state = "failed".into();
+                operation.stage = "interrupted".into();
+                operation.message =
+                    "Проверка прервалась при перезапуске backend; повторите запуск".into();
+                operation.updated_at = now_unix_seconds();
+                let _ = write_freeze_scan_operation(&directory, &operation);
+            }
+            Json(operation).into_response()
+        }
+        Ok(None) => error(StatusCode::NOT_FOUND, "Операция проверки сетей не найдена"),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn cancel_freeze_scan(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let directory = state.data_dir.join("freeze-diagnostic-operations");
+    let Some(mut operation) = (match read_freeze_scan_operation(&directory, &id).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }) else {
+        return error(StatusCode::NOT_FOUND, "Операция проверки сетей не найдена");
+    };
+    if !matches!(operation.state.as_str(), "queued" | "running" | "stopping") {
+        return error(StatusCode::CONFLICT, "Проверка уже завершена");
+    }
+    let controls = state.freeze_scan_controls.lock().await;
+    let Some(control) = controls.get(&id) else {
+        return error(StatusCode::CONFLICT, "Операция уже завершается");
+    };
+    control.store(true, Ordering::Release);
+    operation.state = "stopping".into();
+    operation.stage = "cleanup".into();
+    operation.message =
+        "Остановка запрошена; текущий запрос завершится с очисткой временных правил".into();
+    operation.updated_at = now_unix_seconds();
+    drop(controls);
+    if let Err(message) = write_freeze_scan_operation(&directory, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    (StatusCode::ACCEPTED, Json(operation)).into_response()
 }
 
 async fn start_transfer_diagnostic(
@@ -4078,6 +4431,18 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             "/api/nfqws2/diagnostics/transfer/operations/{id}/cancel",
             post(cancel_transfer_diagnostic),
         )
+        .route(
+            "/api/nfqws2/diagnostics/freeze-scan",
+            post(start_freeze_scan),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/freeze-scan/operations/{id}",
+            get(get_freeze_scan),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/freeze-scan/operations/{id}/cancel",
+            post(cancel_freeze_scan),
+        )
         .route("/api/nfqws2/diagnostics/trace", post(trace_site))
         .route("/api/nfqws2/strategies/pick", post(start_strategy_pick))
         .route(
@@ -4175,6 +4540,7 @@ async fn main() {
         site_trace_runner: Arc::new(router_site_trace_runner),
         strategy_pick_controls: Mutex::new(HashMap::new()),
         transfer_diagnostic_controls: Mutex::new(HashMap::new()),
+        freeze_scan_controls: Mutex::new(HashMap::new()),
     });
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
@@ -4239,6 +4605,7 @@ mod tests {
             site_trace_runner: Arc::new(router_site_trace_runner),
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
+            freeze_scan_controls: Mutex::new(HashMap::new()),
         })
     }
 
@@ -4258,7 +4625,24 @@ mod tests {
             site_trace_runner: runner,
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
+            freeze_scan_controls: Mutex::new(HashMap::new()),
         })
+    }
+
+    #[test]
+    fn isolated_strategy_probe_keeps_first_profile_filter_after_trace_argv_cleanup() {
+        let candidate_args = vec![
+            "--filter-tcp=443".to_string(),
+            "--filter-l7=tls".to_string(),
+            "--payload=tls_client_hello".to_string(),
+            "--lua-desync=hostfakesplit:host=ya.ru".to_string(),
+        ];
+        let argv = strategy_probe_argv("/opt/usr/bin/nfqws2", &candidate_args);
+        let result = site_trace::trace_argv(&argv, 301, Path::new("/tmp/trace.log"));
+        assert_eq!(result.first().map(String::as_str), Some("--filter-tcp=443"));
+        assert!(result.contains(&"--filter-l7=tls".into()));
+        assert!(result.contains(&"--payload=tls_client_hello".into()));
+        assert!(result.contains(&"--lua-desync=hostfakesplit:host=ya.ru".into()));
     }
 
     fn confirmed_strategy_pick(
@@ -5234,6 +5618,68 @@ mod tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
         }
+    }
+
+    #[tokio::test]
+    async fn freeze_scan_rejects_invalid_hosts_without_scheduling_router_probes() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let app = api_router(test_state(data.clone()), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/freeze-scan")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"extraHosts":["127.0.0.1"]}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!data.join("freeze-diagnostic-operations").exists());
+    }
+
+    #[tokio::test]
+    async fn freeze_scan_status_reads_a_bounded_persisted_operation() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let directory = data.join("freeze-diagnostic-operations");
+        let id = "abcdef0123456789abcdef0123456789";
+        write_freeze_scan_operation(
+            &directory,
+            &FreezeScanOperation {
+                id: id.into(),
+                state: "partial".into(),
+                stage: "partial".into(),
+                current: None,
+                done: 19,
+                total: 21,
+                results: Vec::new(),
+                message: "done".into(),
+                updated_at: 12,
+            },
+        )
+        .unwrap();
+        let app = api_router(test_state(data), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/nfqws2/diagnostics/freeze-scan/operations/{id}"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let operation = body_json(response).await;
+        assert_eq!(operation["done"], 19);
+        assert_eq!(operation["total"], 21);
+        assert_eq!(operation["state"], "partial");
     }
 
     #[tokio::test]

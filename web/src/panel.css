@@ -485,6 +485,30 @@ textarea { line-height: 1.7; tab-size: 4; }
 }
 
 /* ---------- Уважение prefers-reduced-motion ---------- */
+#freezeScanStatus[aria-busy="true"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.8rem;
+  height: 0.8rem;
+  margin-right: 0.55rem;
+  vertical-align: -0.12rem;
+  border: 2px solid rgb(96 165 250 / 35%);
+  border-top-color: rgb(147 197 253);
+  border-radius: 999px;
+  animation: freeze-scan-spin 0.8s linear infinite;
+}
+@keyframes freeze-scan-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 700px) {
+  #freezeScanResults { overflow: visible; border: 0; }
+  .freeze-scan-table { min-width: 0; display: block; }
+  .freeze-scan-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .freeze-scan-table tbody { display: grid; gap: 0.65rem; }
+  .freeze-scan-table tr { display: grid; gap: 0.35rem; padding: 0.8rem; border: 1px solid rgb(51 65 85 / 75%); border-radius: 0.8rem; background: rgb(15 23 42 / 58%); }
+  .freeze-scan-table td { display: grid; grid-template-columns: minmax(6.5rem, 0.7fr) minmax(0, 1.3fr); gap: 0.65rem; padding: 0.25rem 0; overflow-wrap: anywhere; font-size: 0.82rem; line-height: 1.45; }
+  .freeze-scan-table td::before { content: attr(data-label); color: #a9bad2; font-weight: 700; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .view-animate > *,
   #toastWrapper > *,
@@ -497,4 +521,5 @@ textarea { line-height: 1.7; tab-size: 4; }
   :where(button, a, summary, input, textarea, select) { transition-duration: 0.01ms; }
   :where(button:not(:disabled)):active, .version-pill:active, #headerServiceControls button:active { transform: none; }
   [data-action-click='restartService']:hover #restartIcon { transform: none; }
+  #freezeScanStatus[aria-busy="true"]::before { animation: none; }
 }

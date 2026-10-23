@@ -2,6 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('starts, polls and cancels a persisted network freeze baseline scan', async () => {
+    const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', current: null, done: 0, total: 20, results: [], message: 'queued', updatedAt: 100 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(operation), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'running', stage: 'baseline', current: 'Hetzner' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const started = await nfqwsDiagnostics.freezeScanStart(['example.com']);
+    expect(await nfqwsDiagnostics.freezeScanStatus(started.id)).toMatchObject({ state: 'running', current: 'Hetzner' });
+    expect(await nfqwsDiagnostics.freezeScanCancel(started.id)).toMatchObject({ state: 'stopping' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/freeze-scan');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ extraHosts: ['example.com'] });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/nfqws2/diagnostics/freeze-scan/operations/${started.id}`);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/nfqws2/diagnostics/freeze-scan/operations/${started.id}/cancel`);
+  });
+
   it('starts, polls and stops a background router-side site trace through Rust', async () => {
     const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', message: 'Трассировка поставлена в очередь', report: null, updatedAt: 100 };
     const fetchMock = vi.fn()
