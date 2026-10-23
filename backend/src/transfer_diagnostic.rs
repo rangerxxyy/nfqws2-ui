@@ -21,6 +21,22 @@ use tokio::{net::lookup_host, process::Command, time::timeout};
 pub const TRANSFER_SAMPLE_BYTES: u64 = 65_536;
 pub const SMALL_RESPONSE_BYTES: u64 = 24_576;
 
+/// The small-response upload fallback is restricted to fixed, static download
+/// files owned by the reference-network catalog. User-entered sites and paths
+/// never receive a test POST.
+pub fn should_probe_upload_stall(host: &str, request_path: &str) -> bool {
+    [
+        ("proof.ovh.net", "/files/1Mb.dat"),
+        ("speedtest.frankfurt.linode.com", "/100MB-frankfurt.bin"),
+        ("fra-de-ping.vultr.com", "/vultr.com.100MB.bin"),
+        ("fra.download.datapacket.com", "/100mb.bin"),
+    ]
+    .iter()
+    .any(|(known_host, known_path)| {
+        host.eq_ignore_ascii_case(known_host) && request_path == *known_path
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTransferAttempt {
     pub attempt: TransferAttempt,
@@ -407,7 +423,8 @@ async fn curl_attempt(host: &str, ip: Ipv4Addr, request_path: &str) -> ParsedTra
         &header_bytes,
         started.elapsed().as_millis() as u64,
     );
-    if parsed.attempt.transport_error.is_none()
+    if should_probe_upload_stall(host, request_path)
+        && parsed.attempt.transport_error.is_none()
         && parsed.attempt.bytes_received < SMALL_RESPONSE_BYTES
         && parsed
             .attempt

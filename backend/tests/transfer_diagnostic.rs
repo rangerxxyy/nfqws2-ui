@@ -1,6 +1,7 @@
 use nfqws2_ui::transfer_diagnostic::{
     TransferAttempt, TransferClass, assemble_curl_args, assemble_curl_args_for_path,
-    classify_transfer, parse_curl_attempt, successful_http_response, upload_stall_confirmed,
+    classify_transfer, parse_curl_attempt, should_probe_upload_stall, successful_http_response,
+    upload_stall_confirmed,
 };
 use std::net::IpAddr;
 
@@ -165,6 +166,14 @@ fn known_network_reference_path_is_preserved_in_the_pinned_probe_url() {
     );
     assert!(args.contains(&"https://proof.ovh.net/files/1Mb.dat".into()));
     assert!(!args.iter().any(|arg| arg.contains("/files/1Mb.dat;")));
+}
+
+#[test]
+fn upload_stall_probe_is_limited_to_known_static_download_endpoints() {
+    assert!(!should_probe_upload_stall("example.com", "/"));
+    assert!(!should_probe_upload_stall("proof.ovh.net", "/"));
+    assert!(!should_probe_upload_stall("proof.ovh.net", "/api/action"));
+    assert!(should_probe_upload_stall("proof.ovh.net", "/files/1Mb.dat"));
 }
 
 #[test]
