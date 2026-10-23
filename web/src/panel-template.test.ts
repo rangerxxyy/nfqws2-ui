@@ -74,6 +74,14 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.diag-result-card');
   });
 
+  it('styles the trace protocol picker and diagnosis helper text for clear reading', () => {
+    expect(template).toContain('class="trace-protocol-picker"');
+    expect(template).toContain('diagnosis-help mt-4');
+    expect(panelStyles).toContain('.trace-protocol-picker:focus-within');
+    expect(panelStyles).toContain('.diagnosis-row-detail');
+    expect(template).toContain('lg:pr-2');
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');

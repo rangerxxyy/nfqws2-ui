@@ -20,7 +20,7 @@ export function comparisonVerdict(direct: SiteDiagnosticStep, current: SiteDiagn
   return b.kind === 'success' ? { kind: 'success', text: 'Ответ получен обоими способами' } : { kind: 'failure', text: 'Оба способа не дали успешного ответа. Причина может быть в сети или самом сайте' };
 }
 export function quicExplanation(method: 'quic_initial' | 'http3', advertised: boolean | null): string {
-  const probe = method === 'http3' ? 'Полноценный запрос HTTP/3.' : 'Ответ QUIC подтверждает сетевой обмен, это не полный запрос HTTP/3.';
-  const advertisement = advertised === true ? 'Сайт объявил поддержку HTTP/3 через Alt-Svc.' : advertised === false ? 'В ответе нет объявления HTTP/3 через Alt-Svc; это не доказывает отсутствие поддержки.' : 'Объявление поддержки HTTP/3 не проверено.';
+  const probe = method === 'http3' ? 'Выполнен запрос HTTP/3.' : 'QUIC Initial отвечает; полный запрос HTTP/3 не выполнялся.';
+  const advertisement = advertised === true ? 'Alt-Svc: HTTP/3 заявлен.' : advertised === false ? 'Alt-Svc не найден.' : 'Alt-Svc не проверен.';
   return `${probe} ${advertisement}`;
 }

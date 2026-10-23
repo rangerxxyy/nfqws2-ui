@@ -17,5 +17,5 @@ it('keeps QUIC transport and advertised HTTP3 separate and includes both paths',
   expect(rows.find(row => row.id === 'dns')?.kind).toBe('unknown');
   expect(rows.find(row => row.id === 'quic')?.detail).toContain('Напрямую:');
   expect(rows.find(row => row.id === 'quic')?.detail).toContain('Сейчас:');
-  expect(rows.find(row => row.id === 'quic')?.note).toContain('не полный запрос HTTP/3');
+  expect(rows.find(row => row.id === 'quic')?.note).toContain('полный запрос HTTP/3 не выполнялся');
 });

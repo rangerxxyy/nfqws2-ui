@@ -160,7 +160,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
+        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:pr-2 lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
           {"\n        \n        "}
           {"\n        "}
           <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
@@ -950,7 +950,7 @@ export default function App() {
               <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["youtube.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>youtube.com</button>
               <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["openai.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>openai.com</button>
             </div>
-            <p className={"mt-4 text-xs text-slate-400 leading-relaxed"}>Роутер проверяет DNS, соединение и ответ сайта: напрямую, мимо nfqws2, и через текущий маршрут. QUIC проверяется отдельно. Основная служба продолжает работать.</p>
+            <p className={"diagnosis-help mt-4 text-xs leading-relaxed"}>Роутер сравнит прямой доступ и текущий маршрут, включая QUIC. nfqws2 продолжит работать.</p>
           </div>
           <div id={"diagResultContainer"} className={"diagnosis-results"}></div>
         </section>
@@ -966,16 +966,19 @@ export default function App() {
               <p className={"mt-1 text-xs sm:text-sm text-slate-400"}>Сравнивает HTTP-ответ сайта с nfqws2 и без него. Запрос выполняется на роутере; основной процесс и конфигурация не должны изменяться.</p>
             </div>
             <div className={"mt-5 flex flex-col sm:flex-row gap-3"}>
-              <select id={"traceProtoSelect"} aria-label={"Протокол трассировки"} className={"bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"}>
-                <option value={"https"}>HTTPS</option>
-                <option value={"http"}>HTTP</option>
-              </select>
+              <div className={"trace-protocol-picker"}>
+                <select id={"traceProtoSelect"} aria-label={"Протокол трассировки"} className={"trace-protocol-select"}>
+                  <option value={"https"}>HTTPS</option>
+                  <option value={"http"}>HTTP</option>
+                </select>
+                <svg className={"trace-protocol-chevron"} aria-hidden={"true"} viewBox={"0 0 20 20"} fill={"none"}><path d={"m5 7.5 5 5 5-5"} stroke={"currentColor"} strokeWidth={"1.8"} strokeLinecap={"round"} strokeLinejoin={"round"}></path></svg>
+              </div>
               <input id={"traceDomainInput"} type={"text"} placeholder={"Введите домен, например example.com"} className={"flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-blue-500"} />
               <button data-action-click={"runSiteTrace"} className={"px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-600/20"}>Запустить трассировку</button>
               <button id={"traceStopButton"} data-action-click={"stopSiteTrace"} className={"hidden px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 font-bold text-sm transition-all"}>Остановить</button>
             </div>
             <p id={"traceOperationStatus"} className={"hidden mt-3 text-xs text-blue-300"} role={"status"} aria-live={"polite"}></p>
-              <p className={"mt-3 text-xs text-slate-500"}>Трассировка запускает копию текущей конфигурации с подробным журналом nfqws2. Проверка QUIC/HTTP3 остаётся отдельным этапом в «Проверке сайта».</p>
+              <p className={"trace-help mt-3 text-xs"}>Запускается отдельная проверка с копией конфига и подробным журналом. QUIC проверяется в разделе «Проверка сайта».</p>
           </div>
           <div id={"traceResultContainer"} className={"grid grid-cols-1 lg:grid-cols-2 gap-5"}></div>
         </section>

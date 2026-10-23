@@ -639,9 +639,9 @@ function renderTraceReport(container: HTMLElement, report: SiteTraceReport) {
     const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = title;
     const state = resultBanner(presentation);
     if (phase.code !== null && phase.code < 400) state.textContent += ` · HTTP ${phase.code}`;
-    const reason = document.createElement('p'); reason.className = 'text-xs text-slate-300 whitespace-pre-wrap break-words'; reason.textContent = phase.reason;
+    const reason = document.createElement('p'); reason.className = 'trace-result-copy text-xs whitespace-pre-wrap break-words'; reason.textContent = phase.reason;
     const timing = phase.durationMs === null ? null : document.createElement('p');
-    if (timing) { timing.className = 'text-xs text-slate-500'; timing.textContent = `${phase.durationMs} мс`; }
+    if (timing) { timing.className = 'trace-result-metric text-xs'; timing.textContent = `${phase.durationMs} мс`; }
     card.append(heading, state, reason); if (timing) card.append(timing);
     return card;
   };
