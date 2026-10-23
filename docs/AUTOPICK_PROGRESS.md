@@ -3,8 +3,8 @@
 ## Time record
 
 - Goal timer started: 2026-10-23 16:20:28 UTC. This is the measured goal creation time; the exact first keystroke/tool action was not separately recorded.
-- Latest observed checkpoint: 2026-10-23 17:14:44 UTC. The goal timer reported 54m 14s of active work at this checkpoint. Do not count idle wall-clock time as engineering work.
-- A final completion timestamp and active duration will be recorded only after the remaining review and verification pass.
+- Latest observed checkpoint: 2026-10-23 17:20:52 UTC. The goal timer reported 60m 19s of active work at this checkpoint. This is the measured active-work duration; idle wall time is excluded.
+- The v0.2.9 release check is in progress. Record final publication/workflow status after GitHub Actions completes.
 
 ## Audited sources
 
@@ -30,11 +30,11 @@
 
 ## Verification observed
 
-- `cargo fmt --check` passed before the final bounded-history and permission changes; `cargo fmt` was run after them. Run `cargo fmt --check` again at the final pass.
-- Latest: `cargo fmt --check`, `cargo test --all-targets` (137 Rust tests), `cargo clippy --all-targets -- -D warnings`, host `cargo build --release`, `cargo check --all-targets --target aarch64-unknown-linux-musl --locked`, and `cargo audit` passed.
-- Latest frontend: full `pnpm test` passed (92 tests), `pnpm typecheck` and Vite production build passed.
+- Latest: `cargo fmt --check`, `cargo test --all-targets --locked` (137 Rust tests), `cargo clippy --all-targets --locked -- -D warnings`, host `cargo build --release --locked`, `cargo check --all-targets --target aarch64-unknown-linux-musl --locked`, and `cargo audit --file backend/Cargo.lock` passed after the 0.2.9 version bump.
+- Latest frontend after the 0.2.9 version bump: `pnpm test` passed (92 tests), `pnpm typecheck`, Vite production build and `pnpm audit --prod` passed.
 - `pnpm audit --prod` passed with no known vulnerabilities. The remote `v0.2.8` tag is already present; it points to commit `12c0cde919de16e9fc1542f76166a4ee5dd2302a`.
-- `cargo check --all-targets --target aarch64-unknown-linux-musl --locked` passed. `cargo test`/release link for ARM64 could not run because no `cc` cross-linker is installed; the failure was `linker 'cc' not found`.
+- Verified commit `4764faa59bf47c30eea52b5f5f059d1836c87d5c` on pushed branch `codex/autopick-transfer-diagnostics`; the remote branch points to the same SHA. This is a feature branch, not a release tag.
+- ARM64 `cargo check` passed, but target `cargo test` and release linking require the Linux `cross` toolchain; they are delegated to the GitHub release workflow.
 - Local browser loads TypeScript app at `http://127.0.0.1:5173/`; the configured backend currently returns HTTP 500, so backend flows could not be exercised interactively on this host.
 
 ## Explicitly incomplete / device-only acceptance
@@ -45,10 +45,10 @@
 - The 16 KB feature is a bounded same-domain HTTPS body-volume classifier, not Zemidala’s padded-HEAD/ASN/name-template search. It uses IPv4, does not prove DPI, and has parser/classifier tests rather than a controlled local TLS server fixture.
 - No live Keenetic/Entware test was run. NFQUEUE/firewall lifecycle, actual curl routing, router CPU/RAM, and interruption cleanup therefore remain unverified on target hardware.
 - No visual phone-browser/device QA was available; responsive source/template coverage is not equivalent to a real mobile screenshot review.
-- The full request’s acceptance scenarios are not satisfied, so this work is not ready to tag or publish as a complete autopick/16 KB release.
+- This is a limited v0.2.9 milestone release, not completion of the full acceptance scope. The explicit feature gaps above remain; no claim of full autopick, application/rollback or target-router validation is made.
 
 ## Current review focus
 
-- Finish final review of pinned upstream test-job/status/stop path and API boundaries; update source map if further behavior differences are found.
-- Run final Rust and frontend checks after all edits, review the diff for unrelated/work-owned file changes, and recalculate the active-work timer accurately.
+- Final release preparation is limited to documented 0.2.9 functionality; publish excludes the pre-existing user-owned untracked `work/` directory.
+- Confirm tag, release asset checksum, and Linux workflow completion before reporting publication.
 - Keep the router-only and unimplemented requirements listed above visible; do not claim a full Zemidala feature port or target-device validation.
