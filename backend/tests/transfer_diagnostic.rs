@@ -1,6 +1,6 @@
 use nfqws2_ui::transfer_diagnostic::{
     TransferAttempt, TransferClass, assemble_curl_args, assemble_curl_args_for_path,
-    classify_transfer, parse_curl_attempt, upload_stall_confirmed,
+    classify_transfer, parse_curl_attempt, successful_http_response, upload_stall_confirmed,
 };
 use std::net::IpAddr;
 
@@ -12,6 +12,16 @@ fn complete_short_response_is_not_a_boundary_stall() {
     );
     assert_eq!(result.classification, TransferClass::Complete);
     assert!(!result.repeatable_boundary_stall);
+}
+
+#[test]
+fn completed_small_http_response_is_reachable_without_claiming_full_volume() {
+    let attempts = [attempt(180, None, 200), attempt(180, None, 200)];
+    assert!(successful_http_response(&attempts));
+    assert_eq!(
+        classify_transfer(&attempts, None).classification,
+        TransferClass::PartialTransfer
+    );
 }
 
 #[test]
@@ -198,8 +208,10 @@ fn small_page_upload_timeout_is_distinguished_from_inbound_16kb_stall() {
     let mut first = attempt(180, None, 200);
     first.upload_stalled_after_tls = true;
     let second = attempt(180, None, 200);
-    let result = classify_transfer(&[first, second], Some(180));
+    let attempts = [first, second];
+    let result = classify_transfer(&attempts, Some(180));
     assert_eq!(result.classification, TransferClass::PossibleUploadStall);
+    assert!(!successful_http_response(&attempts));
     assert!(!result.repeatable_boundary_stall);
     assert!(result.summary.contains("После TLS handshake"));
 }

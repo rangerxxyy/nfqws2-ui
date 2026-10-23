@@ -90,6 +90,19 @@ pub fn upload_stall_confirmed(exit_code: i32, metadata: &str, marker: &str) -> b
             .is_some_and(|appconnect| appconnect.is_finite() && appconnect > 0.0)
 }
 
+/// Matches the upstream probe's availability criterion: a completed HTTP
+/// response is reachable even when its body is too small to measure volume.
+pub fn successful_http_response(attempts: &[TransferAttempt]) -> bool {
+    !attempts.is_empty()
+        && attempts.iter().all(|attempt| {
+            attempt.transport_error.is_none()
+                && attempt
+                    .http_status
+                    .is_some_and(|status| status > 0 && status < 600)
+                && !attempt.upload_stalled_after_tls
+        })
+}
+
 pub fn parse_curl_attempt(
     exit_code: i32,
     metadata: &[u8],

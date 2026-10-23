@@ -1012,8 +1012,7 @@ async fn probe_mode(
                 attempts.len()
             );
             Ok((
-                (diagnosis.classification == crate::transfer_diagnostic::TransferClass::Complete)
-                    .then_some(200),
+                crate::transfer_diagnostic::successful_http_response(&attempts).then_some(200),
                 Some(attempts.iter().map(|attempt| attempt.elapsed_ms).sum()),
                 reason,
             ))

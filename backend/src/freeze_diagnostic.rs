@@ -629,7 +629,7 @@ async fn measure_target(
     let bytes_received = attempts.iter().map(|attempt| attempt.bytes_received).min();
     Ok(FreezeMeasurement {
         classification: format!("{:?}", diagnosis.classification),
-        ok: diagnosis.classification == TransferClass::Complete,
+        ok: crate::transfer_diagnostic::successful_http_response(&attempts),
         bytes_received,
         replies: None,
         elapsed_ms,
