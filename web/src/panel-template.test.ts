@@ -66,8 +66,10 @@ describe('TSX panel without authentication', () => {
   });
 
   it('renders returned HTTP codes and animates diagnostic cards respectfully', () => {
-    expect(panelSource).toContain('step.httpCode !== null');
-    expect(panelSource).toContain('diag-result-card');
+    expect(template).toContain('class="diagnosis-results"');
+    expect(template).toContain('Диагноз блокировки');
+    expect(panelSource).toContain('item.metrics');
+    expect(panelSource).toContain('diagnosis-row');
     expect(panelStyles).toContain('@media (prefers-reduced-motion: reduce)');
     expect(panelStyles).toContain('.diag-result-card');
   });

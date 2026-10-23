@@ -1,8 +1,9 @@
-import { comparisonVerdict, presentStep, presentTrace, quicExplanation, type Presentation } from './diagnosis-presenter';
+import { diagnosisRows } from './diagnosis-layout';
+import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -571,12 +572,40 @@ function exportListDraft() {
 function resultBanner(presentation: Presentation): HTMLElement {
   const banner = document.createElement('p'); banner.className = `diagnosis-verdict diagnosis-${presentation.kind} col-span-full`; banner.setAttribute('role', 'status'); banner.textContent = presentation.text; return banner;
 }
-function diagnosticComparisonCard(title: string, step: SiteDiagnosticStep): HTMLElement {
-  const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-3';
-  const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = title;
-  const detail = document.createElement('p'); detail.className = 'text-xs text-slate-300 whitespace-pre-wrap break-words'; detail.textContent = step.detail;
-  const timing = document.createElement('p'); timing.className = 'text-xs font-mono text-slate-400'; timing.textContent = [step.httpCode === null ? null : `HTTP ${step.httpCode}`, step.durationMs === null ? null : `${step.durationMs} мс`].filter(Boolean).join(' · ');
-  card.append(heading, resultBanner(presentStep(step)), timing, detail); return card;
+function diagnosisIcon(kind: Presentation['kind']): HTMLElement {
+  const icon = document.createElement('span'); icon.className = `diagnosis-state-icon diagnosis-icon-${kind}`;
+  icon.textContent = kind === 'success' ? '✓' : kind === 'failure' ? '×' : '!';
+  icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', kind === 'success' ? 'Ответ получен' : kind === 'failure' ? 'Ошибка проверки' : 'Результат не определён'); return icon;
+}
+function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticReport) {
+  container.replaceChildren();
+  const verdict = comparisonVerdict(report.direct, report.current);
+  const overview = document.createElement('section'); overview.className = `diagnosis-overview diagnosis-${verdict.kind}`; overview.setAttribute('role', 'status');
+  const copy = document.createElement('div'); copy.className = 'diagnosis-overview-copy';
+  const title = document.createElement('h3'); title.className = 'diagnosis-overview-title'; title.textContent = verdict.text;
+  const subtitle = document.createElement('p'); subtitle.className = 'diagnosis-overview-detail'; subtitle.textContent = [report.host, report.addresses.join(', ')].filter(Boolean).join(' · '); copy.append(title, subtitle);
+  const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'diagnosis-retry'; retry.textContent = '↻ Ещё раз'; retry.setAttribute('aria-label', `Повторить проверку ${report.host}`);
+  retry.addEventListener('click', () => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = report.host; void runSiteDiagnosis(); } });
+  overview.append(diagnosisIcon(verdict.kind), copy, retry); container.append(overview);
+  const checks = document.createElement('section'); checks.className = 'diagnosis-checks ui-card rounded-2xl';
+  const header = document.createElement('div'); header.className = 'diagnosis-checks-header';
+  const heading = document.createElement('h3'); heading.className = 'diagnosis-checks-title'; heading.textContent = 'Что проверено';
+  const host = document.createElement('span'); host.className = 'diagnosis-checks-host'; host.textContent = report.host; header.append(heading, host); checks.append(header);
+  const list = document.createElement('div'); list.setAttribute('role', 'list');
+  for (const item of diagnosisRows(report)) {
+    const row = document.createElement('div'); row.className = `diagnosis-row${item.inactive ? ' diagnosis-row-inactive' : ''}`; row.setAttribute('role', 'listitem');
+    const label = document.createElement('h4'); label.className = 'diagnosis-row-label'; label.textContent = item.label;
+    const body = document.createElement('div'); body.className = 'diagnosis-row-body';
+    if (item.metrics) { const metrics = document.createElement('p'); metrics.className = 'diagnosis-row-metrics'; metrics.textContent = item.metrics; body.append(metrics); }
+    const detail = document.createElement('p'); detail.className = 'diagnosis-row-detail'; detail.textContent = item.detail; body.append(detail);
+    if (item.note) { const note = document.createElement('p'); note.className = 'diagnosis-row-note'; note.textContent = item.note; body.append(note); }
+    const icon = diagnosisIcon(item.kind); if (item.inactive) { icon.textContent = '—'; icon.setAttribute('aria-label', 'Этап не выполнялся'); }
+    row.append(icon, label, body); list.append(row);
+  }
+  checks.append(list); container.append(checks);
+  const notes = document.createElement('details'); notes.className = 'diagnosis-notes';
+  const disclosure = document.createElement('summary'); disclosure.textContent = 'Как читать результаты'; notes.append(disclosure);
+  for (const text of [report.summary, ...report.limitations]) { const p = document.createElement('p'); p.textContent = text; notes.append(p); } container.append(notes);
 }
 async function runSiteDiagnosis() {
   if (diagnosisRunning) return;
@@ -593,44 +622,13 @@ async function runSiteDiagnosis() {
   try {
     const report = await nfqwsDiagnostics.site(input.value);
     container.replaceChildren();
-    const summary = document.createElement('div'); summary.className = 'col-span-full ui-card rounded-2xl p-5';
-    const title = document.createElement('h3'); title.className = 'font-bold text-white'; title.textContent = `${report.host} · ${report.summary}`;
-    const addresses = document.createElement('p'); addresses.className = 'mt-2 text-xs font-mono text-slate-400'; addresses.textContent = report.addresses.join(', ');
-    summary.append(title, addresses); container.append(summary);
-    container.append(resultBanner(comparisonVerdict(report.direct, report.current)));
-    container.append(diagnosticComparisonCard('Напрямую, мимо nfqws2', report.direct), diagnosticComparisonCard('Как открывается сейчас', report.current));
-    const routeNote = document.createElement('p'); routeNote.className = 'col-span-full text-xs text-slate-400'; routeNote.textContent = 'Текущая проверка использует обычный маршрут роутера. Участие nfqws2 зависит от действующих правил и списков.'; container.append(routeNote);
-    if (report.quic) {
-      const quic = document.createElement('section'); quic.className = 'col-span-full ui-card rounded-2xl p-5 space-y-3';
-      const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = report.quic.method === 'http3' ? 'Сравнение HTTP/3 (QUIC)' : 'Сравнение QUIC · сетевой ответ';
-      const explanation = document.createElement('p'); explanation.className = 'text-xs text-slate-400'; explanation.textContent = quicExplanation(report.quic.method, report.quic.http3Advertised);
-      const comparison = document.createElement('div'); comparison.className = 'grid grid-cols-1 lg:grid-cols-2 gap-3'; comparison.append(diagnosticComparisonCard('Напрямую, мимо nfqws2', report.quic.direct), diagnosticComparisonCard('Как открывается сейчас', report.quic.current));
-      quic.append(heading, explanation, comparison); container.append(quic);
-    } else {
-      const note = document.createElement('p'); note.className = 'col-span-full text-xs text-slate-400'; note.textContent = 'Сравнение QUIC недоступно.'; container.append(note);
-    }
-    const details = document.createElement('details'); details.className = 'col-span-full ui-card rounded-2xl p-5';
-    const disclosure = document.createElement('summary'); disclosure.className = 'cursor-pointer text-sm font-bold text-white'; disclosure.textContent = 'Подробности диагностики';
-    const steps = document.createElement('div'); steps.className = 'grid grid-cols-1 lg:grid-cols-2 gap-3 mt-4'; details.append(disclosure, steps); container.append(details);
-    const labels: Record<string, string> = { dns: 'DNS роутера', doh: 'Сверка DNS через DoH', tcp: 'TCP 443', https: 'HTTPS / TLS', http: 'HTTP 80', route: 'Маршрут ядра', sni: 'Контрольное SNI', quic: 'HTTP/3 (QUIC)', lists: 'Совпадения в списках' };
-    for (const [index, step] of report.steps.entries()) {
-      const card = document.createElement('div'); card.className = 'diag-result-card ui-card rounded-2xl p-4 space-y-2';
-      card.style.animationDelay = `${index * 55}ms`;
-      const heading = document.createElement('h3'); heading.className = 'text-sm font-semibold text-white'; heading.textContent = labels[step.id] ?? step.id;
-      const state = document.createElement('p'); state.className = `text-xs font-semibold ${step.status === 'ok' ? 'text-emerald-400' : step.status === 'error' ? 'text-rose-400' : 'text-amber-300'}`;
-      state.textContent = `${presentStep(step).text}${step.httpCode !== null ? ` · HTTP ${step.httpCode}` : ''}${step.durationMs !== null ? ` · ${step.durationMs} мс` : ''}`;
-      const detail = document.createElement('p'); detail.className = 'text-xs text-slate-300 whitespace-pre-wrap break-all'; detail.textContent = step.detail;
-      card.append(heading, state, detail); steps.append(card);
-    }
-    for (const note of report.limitations) {
-      const row = document.createElement('p'); row.className = 'col-span-full text-xs text-slate-400'; row.textContent = note; container.append(row);
-    }
+    renderSiteDiagnosis(container, report);
     closeProgress();
     toast(`Проверка ${report.host} завершена: ${report.summary}`);
   } catch (error) {
     container.replaceChildren(); const message = error instanceof Error ? error.message : 'Не удалось выполнить проверку сайта';
     const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); closeProgress(); toast(message, 'error');
-  } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить домен'; }
+  } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить'; }
 }
 
 function renderTraceReport(container: HTMLElement, report: SiteTraceReport) {

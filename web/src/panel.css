@@ -170,3 +170,42 @@
 .diagnosis-success { color: #6ee7b7; border-color: #10b98150; background: #10b9810d; }
 .diagnosis-failure { color: #fda4af; border-color: #f43f5e50; background: #f43f5e0d; }
 .diagnosis-unknown { color: #fcd34d; border-color: #f59e0b50; background: #f59e0b0d; }
+
+.diagnosis-results { display: flex; flex-direction: column; gap: 1rem; }
+.diagnosis-overview { display: flex; align-items: center; gap: 1rem; padding: 1.15rem 1.3rem; border: 1px solid; border-radius: 1rem; }
+.diagnosis-overview .diagnosis-state-icon { width: 2rem; height: 2rem; font-size: 1.1rem; flex-shrink: 0; }
+.diagnosis-overview-copy { flex: 1; min-width: 0; }
+.diagnosis-overview-title { font-size: .9rem; font-weight: 700; line-height: 1.5; }
+.diagnosis-overview-detail { margin-top: .2rem; color: #94a3b8; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+.diagnosis-retry { display: inline-flex; align-items: center; gap: .45rem; padding: .5rem .75rem; color: #cbd5e1; border: 1px solid #334155; border-radius: .65rem; background: #0b1220; font-size: .75rem; white-space: nowrap; transition: border-color .18s, background .18s; }
+.diagnosis-retry:hover { background: #17233a; border-color: #3b82f6; }
+.diagnosis-checks { overflow: hidden; }
+.diagnosis-checks-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.3rem; border-bottom: 1px solid #1e293b; }
+.diagnosis-checks-title { font-size: .85rem; font-weight: 700; color: #f1f5f9; }
+.diagnosis-checks-host { color: #64748b; font-size: .7rem; font-family: 'JetBrains Mono Variable', monospace; overflow-wrap: anywhere; }
+.diagnosis-row { display: grid; grid-template-columns: 1.5rem minmax(10rem, 13rem) minmax(0, 1fr); align-items: start; gap: .8rem; margin: 0 1.3rem; padding: .95rem 0; border-bottom: 1px solid #1e293b; }
+.diagnosis-row:last-child { border-bottom: 0; }
+.diagnosis-state-icon { display: inline-flex; align-items: center; justify-content: center; width: 1.15rem; height: 1.15rem; border-radius: 50%; font-size: .7rem; font-weight: 700; border: 1px solid currentColor; }
+.diagnosis-icon-success { color: #34d399; background: #10b98112; }
+.diagnosis-icon-failure { color: #fb7185; background: #f43f5e12; }
+.diagnosis-icon-unknown { color: #fbbf24; background: #f59e0b12; }
+.diagnosis-row-label { color: #cbd5e1; font-size: .78rem; line-height: 1.5; font-weight: 600; }
+.diagnosis-row-detail { color: #94a3b8; font-size: .75rem; line-height: 1.65; white-space: pre-line; overflow-wrap: anywhere; }
+.diagnosis-row-metrics { color: #93c5fd; font-size: .68rem; font-family: 'JetBrains Mono Variable', monospace; margin-bottom: .25rem; }
+.diagnosis-row-note { color: #64748b; font-size: .7rem; line-height: 1.6; margin-top: .4rem; }
+.diagnosis-notes { padding: .85rem 1.3rem; color: #64748b; font-size: .72rem; line-height: 1.65; }
+.diagnosis-notes summary { color: #94a3b8; cursor: pointer; }
+.diagnosis-notes p { margin-top: .6rem; }
+.diagnosis-row { padding-top: .72rem; padding-bottom: .72rem; }
+.diagnosis-row-metrics { display: inline; margin: 0 .55rem 0 0; }
+.diagnosis-row-detail { display: inline; }
+.diagnosis-row-inactive .diagnosis-state-icon { border-color: transparent; color: #64748b; background: none; }
+.diagnosis-row-inactive .diagnosis-row-label { color: #64748b; }
+@media (max-width: 700px) {
+  .diagnosis-overview { flex-wrap: wrap; padding: 1rem; gap: .7rem; }
+  .diagnosis-retry { margin-left: 2.7rem; }
+  .diagnosis-row { grid-template-columns: 1.2rem minmax(0,1fr); gap: .3rem .65rem; margin: 0 1rem; }
+  .diagnosis-row-body { grid-column: 2; }
+  .diagnosis-checks-header { flex-wrap: wrap; padding: 1rem; gap: .3rem; }
+}
+@media (prefers-reduced-motion: reduce) { .diagnosis-retry { transition: none; } }

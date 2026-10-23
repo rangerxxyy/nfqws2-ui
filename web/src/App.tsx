@@ -935,73 +935,24 @@ export default function App() {
         {"\n      "}
         {"\n      "}
         {"\n      "}
-        <section id={"tabContent-check"} className={"hidden view-animate space-y-5"}>
-          {"\n        \n        "}
-          <div className={"ui-card rounded-2xl p-6 shadow-xl"}>
-            {"\n          "}
-            <div className={"flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800"}>
-              {"\n            "}
-              <div>
-                {"\n              "}
-                <div className={"flex items-center gap-2.5"}>
-                  {"\n                "}
-                  <span className={"px-2.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-xs font-mono font-bold"}>
-                    {"Диагностика сайта"}
-                  </span>
-                  {"\n                "}
-                  <h2 className={"text-lg font-bold text-white"}>
-                    {"Проверка доступности сайта"}
-                  </h2>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <p className={"text-xs sm:text-sm text-slate-400 mt-1"}>
-                  {"\n                Сравнивает доступ напрямую, мимо nfqws2, с текущим маршрутом роутера. Отдельно проверяет QUIC и показывает подробности соединения.\n              "}
-                </p>
-                {"\n            "}
-              </div>
-              {"\n          "}
+        <section id={"tabContent-check"} className={"hidden view-animate space-y-4"}>
+          <div className={"ui-card rounded-2xl p-5 sm:p-6"}>
+            <div className={"flex flex-wrap items-center justify-between gap-2 mb-4"}>
+              <h2 className={"text-lg font-bold text-white"}>Диагноз блокировки</h2>
+              <span className={"text-[10px] tracking-wider font-mono text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1"}>DNS · HTTPS · QUIC</span>
             </div>
-            {"\n\n          "}
-            {"\n          "}
-            <div className={"mt-5 flex flex-col sm:flex-row gap-3"}>
-              {"\n            "}
-              <input id={"diagDomainInput"} type={"text"} placeholder={"Введите домен для проверки"} className={"flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-blue-500"} />
-              {"\n            "}
-              <button data-action-click={"runSiteDiagnosis"} className={"px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-600/20"}>
-                {"\n              Проверить домен\n            "}
-              </button>
-              {"\n          "}
+            <div className={"flex flex-col sm:flex-row gap-2.5"}>
+              <input id={"diagDomainInput"} type={"text"} aria-label={"Домен для проверки"} autoCapitalize={"none"} spellCheck={false} placeholder={"example.com"} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-colors"} />
+              <button data-action-click={"runSiteDiagnosis"} className={"min-w-[140px] px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-colors shadow-lg shadow-blue-600/15"}>Проверить</button>
             </div>
-            {"\n\n          "}
-            <div className={"flex flex-wrap items-center gap-2 mt-3 text-xs font-mono"}>
-              {"\n            "}
-              <span className={"text-slate-500"}>
-                {"Быстрые сценарии:"}
-              </span>
-              {"\n            "}
-              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["youtube.com"])} className={"px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800"}>
-                {"youtube.com"}
-              </button>
-              {"\n            "}
-              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["example.com"])} className={"px-2.5 py-1 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"}>
-                {"example.com"}
-              </button>
-              {"\n            "}
-              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["openai.com"])} className={"px-2.5 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30"}>
-                {"openai.com"}
-              </button>
-              {"\n          "}
+            <div className={"flex flex-wrap items-center gap-2 mt-3 text-[11px] font-mono"}>
+              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["example.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>example.com</button>
+              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["youtube.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>youtube.com</button>
+              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["openai.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>openai.com</button>
             </div>
-            {"\n        "}
+            <p className={"mt-4 text-xs text-slate-400 leading-relaxed"}>Роутер проверяет DNS, соединение и ответ сайта: напрямую, мимо nfqws2, и через текущий маршрут. QUIC проверяется отдельно. Основная служба продолжает работать.</p>
           </div>
-          {"\n\n        "}
-          {"\n        "}
-          <div id={"diagResultContainer"} className={"grid grid-cols-1 lg:grid-cols-2 gap-5"}>
-            {"\n          "}
-            {"\n        "}
-          </div>
-          {"\n\n      "}
+          <div id={"diagResultContainer"} className={"diagnosis-results"}></div>
         </section>
         {"\n\n      "}
         {"\n      "}
