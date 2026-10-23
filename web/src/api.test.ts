@@ -43,6 +43,17 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/history');
   });
 
+  it('requests a backend-generated strategy preview by persisted operation and candidate index', async () => {
+    const preview = { operationId: '0123456789abcdef0123456789abcdef', candidateIndex: 0, host: 'example.com', protocol: 'https', candidate: { name: 'multisplit', source: 'current', steps: ['--lua-desync=multisplit:pos=1'] }, originalRevision: 'abc', originalContent: 'NFQWS_ARGS_CUSTOM=""\n', proposedContent: 'NFQWS_ARGS_CUSTOM="--new --filter-tcp=443"\n', summary: 'Preview only' };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(preview), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsDiagnostics.strategyPreview(preview.operationId, 0)).toEqual(preview);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/nfqws2/strategies/pick/operations/${preview.operationId}/preview`);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ candidateIndex: 0 });
+  });
+
   it('starts and polls the bounded byte-transfer diagnostic', async () => {
     const queued = { id: '0123456789abcdef0123456789abcdef', host: 'example.com', state: 'queued', stage: 'queued', attempt: 0, message: 'queued', result: null, updatedAt: 100 } as const;
     const fetchMock = vi.fn()

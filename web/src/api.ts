@@ -14,6 +14,7 @@ export type SiteTraceReport = { host: string; address: string | null; withoutNfq
 export type SiteTraceOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; message: string; report: SiteTraceReport | null; updatedAt: number };
 export type StrategyPickResult = { candidate: { name: string; source: string; steps: string[] }; attempts: number; successes: number; confirmed: boolean; detail: string };
 export type StrategyPickOperation = { id: string; host: string; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; message: string; updatedAt: number };
+export type StrategyPickPreview = { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickResult['candidate']; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
 export type TransferAttempt = { bytesReceived: number; sampleBytes: number; httpStatus: number | null; elapsedMs: number; firstByteMs: number | null; transportError: string | null };
 export type TransferSideResult = { attempts: TransferAttempt[]; diagnosis: { classification: string; attempts: number; minBytes: number | null; maxBytes: number | null; repeatableBoundaryStall: boolean; summary: string; limitations: string[] } };
 export type TransferComparison = { host: string; address: string; direct: TransferSideResult; current: TransferSideResult };
@@ -130,6 +131,7 @@ export const nfqwsDiagnostics = {
   strategyStatus: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}`),
   strategyCancel: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   strategyHistory: () => api<StrategyPickOperation[]>('/api/nfqws2/strategies/pick/history'),
+  strategyPreview: (id: string, candidateIndex: number) => api<StrategyPickPreview>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/preview`, { method: 'POST', body: JSON.stringify({ candidateIndex }) }),
 };
 
 export const nfqwsUpdates = {

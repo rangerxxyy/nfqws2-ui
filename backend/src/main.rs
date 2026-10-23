@@ -117,6 +117,26 @@ struct StrategyPickRequest {
     mode: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategyPickPreviewRequest {
+    candidate_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategyPickPreview {
+    operation_id: String,
+    candidate_index: usize,
+    host: String,
+    protocol: String,
+    candidate: strategy_picker::StrategyCandidate,
+    original_revision: String,
+    original_content: String,
+    proposed_content: String,
+    summary: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TransferDiagnosticOperation {
@@ -350,6 +370,137 @@ async fn read_strategy_pick_operation(
         return Err("Недопустимое состояние автоподбора".into());
     }
     Ok(Some(operation))
+}
+
+fn build_strategy_pick_preview(
+    operation: &StrategyPickOperation,
+    candidate_index: usize,
+    original_content: &str,
+    original_revision: String,
+    functions: &HashSet<String>,
+    blobs: &[String],
+) -> Result<StrategyPickPreview, String> {
+    if operation.state != "complete" {
+        return Err("Применять можно только завершённый подбор".into());
+    }
+    let protocol = match operation.protocol.as_str() {
+        "http" => StrategyProtocol::Http,
+        "https" => StrategyProtocol::Https,
+        _ => return Err("Применение этой версии протокола не поддерживается".into()),
+    };
+    let result = operation
+        .results
+        .get(candidate_index)
+        .ok_or_else(|| "Индекс кандидата вне сохранённого результата подбора".to_string())?;
+    if !result.confirmed || result.attempts < 2 || result.successes < 2 {
+        return Err("Кандидат не прошёл повторное подтверждение; preview недоступен".into());
+    }
+    let profile = strategy_picker::build_domain_profile(
+        &operation.host,
+        protocol,
+        &result.candidate.steps,
+        functions,
+        blobs,
+    )?;
+    let document = ConfigDocument::parse(original_content)?;
+    let custom_args = document.literal_value("NFQWS_ARGS_CUSTOM")?;
+    let selector = format!("--hostlist-domains={}", operation.host);
+    if custom_args.split_whitespace().any(|arg| arg == selector) {
+        return Err(
+            "Для этого домена уже есть пользовательский профиль; сначала проверьте его вручную"
+                .into(),
+        );
+    }
+    let proposed_content = document.append_literal_words("NFQWS_ARGS_CUSTOM", &profile)?;
+    let diagnostics = validate_nfqws2_config(&proposed_content)?;
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
+        return Err("Сформированный профиль не прошёл статическую проверку конфигурации".into());
+    }
+    if proposed_content.len() > MAX_CONFIG_BYTES {
+        return Err("Изменённая конфигурация превышает лимит размера".into());
+    }
+    Ok(StrategyPickPreview {
+        operation_id: operation.id.clone(),
+        candidate_index,
+        host: operation.host.clone(),
+        protocol: operation.protocol.clone(),
+        candidate: result.candidate.clone(),
+        original_revision,
+        original_content: original_content.to_owned(),
+        proposed_content,
+        summary: "Будет добавлен отдельный доменный профиль в NFQWS_ARGS_CUSTOM. Применение и перезапуск пока не выполняются.".into(),
+    })
+}
+
+async fn preview_strategy_pick(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(request): Json<StrategyPickPreviewRequest>,
+) -> Response {
+    if !valid_site_trace_id(&id) {
+        return error(StatusCode::NOT_FOUND, "Операция автоподбора не найдена");
+    }
+    let operation_dir = state.data_dir.join("strategy-pick-operations");
+    let operation = match read_strategy_pick_operation(&operation_dir, &id).await {
+        Ok(Some(operation)) => operation,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "Операция автоподбора не найдена"),
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let Some((_, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Preview остановлен: работающий nfqws2 не обнаружен однозначно",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let functions = active_lua_functions(&active_args, &paths.lua_dir);
+    let blobs = active_blob_names(&active_args);
+    let Some(config_path) = config_path_for_state(&state) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    };
+    let bytes = match tokio::fs::read(config_path).await {
+        Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => bytes,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Конфигурация превышает лимит 512 КБ",
+            );
+        }
+        Err(io_error) => {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+        }
+    };
+    let content = match String::from_utf8(bytes.clone()) {
+        Ok(content) => content,
+        Err(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Конфигурация не является UTF-8 текстом",
+            );
+        }
+    };
+    match build_strategy_pick_preview(
+        &operation,
+        request.candidate_index,
+        &content,
+        revision(&bytes),
+        &functions,
+        &blobs,
+    ) {
+        Ok(preview) => Json(preview).into_response(),
+        Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    }
 }
 
 fn prune_finished_json_operations(directory: &Path, limit: usize) {
@@ -3942,6 +4093,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             post(stop_strategy_pick_operation),
         )
         .route(
+            "/api/nfqws2/strategies/pick/operations/{id}/preview",
+            post(preview_strategy_pick),
+        )
+        .route(
             "/api/nfqws2/diagnostics/trace/operations/{id}",
             get(get_site_trace_operation),
         )
@@ -4104,6 +4259,95 @@ mod tests {
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn confirmed_strategy_pick(
+        state: &str,
+        protocol: &str,
+        confirmed: bool,
+    ) -> StrategyPickOperation {
+        StrategyPickOperation {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            host: "example.com".into(),
+            protocol: protocol.into(),
+            state: state.into(),
+            stage: state.into(),
+            current: None,
+            done: 1,
+            total: 1,
+            results: vec![strategy_picker::StrategyCandidateResult {
+                candidate: strategy_picker::StrategyCandidate {
+                    name: "multisplit".into(),
+                    source: "verified test fixture".into(),
+                    steps: vec!["--lua-desync=multisplit:pos=1".into()],
+                },
+                attempts: 2,
+                successes: if confirmed { 2 } else { 1 },
+                confirmed,
+                detail: "two target probes".into(),
+            }],
+            message: state.into(),
+            updated_at: now_unix_seconds(),
+        }
+    }
+
+    #[test]
+    fn strategy_preview_uses_only_the_confirmed_persisted_candidate_and_preserves_config() {
+        let original = "MODE_LIST='--hostlist=lists/user.list'\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80\" # custom\n";
+        let functions = HashSet::from(["multisplit".to_string()]);
+        let preview = build_strategy_pick_preview(
+            &confirmed_strategy_pick("complete", "https", true),
+            0,
+            original,
+            "rev-1".into(),
+            &functions,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(preview.host, "example.com");
+        assert_eq!(preview.protocol, "https");
+        assert_eq!(preview.original_revision, "rev-1");
+        assert!(
+            preview
+                .proposed_content
+                .contains("MODE_LIST='--hostlist=lists/user.list'")
+        );
+        assert!(preview.proposed_content.contains("# custom"));
+        assert!(
+            preview
+                .proposed_content
+                .contains("--hostlist-domains=example.com")
+        );
+        assert!(
+            preview
+                .proposed_content
+                .starts_with(original.split("NFQWS_ARGS_CUSTOM").next().unwrap())
+        );
+    }
+
+    #[test]
+    fn strategy_preview_rejects_incomplete_unconfirmed_quic_and_out_of_range_results() {
+        let original = "NFQWS_ARGS_CUSTOM=\"\"\n";
+        let functions = HashSet::from(["multisplit".to_string()]);
+        let revision = "rev".to_owned();
+        for (operation, index) in [
+            (confirmed_strategy_pick("cancelled", "https", true), 0),
+            (confirmed_strategy_pick("complete", "https", false), 0),
+            (confirmed_strategy_pick("complete", "quic", true), 0),
+            (confirmed_strategy_pick("complete", "https", true), 1),
+        ] {
+            assert!(
+                build_strategy_pick_preview(
+                    &operation,
+                    index,
+                    original,
+                    revision.clone(),
+                    &functions,
+                    &[],
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

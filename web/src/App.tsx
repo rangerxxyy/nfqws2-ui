@@ -1097,6 +1097,14 @@ export default function App() {
           <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5"}>
             {"\n          "}
             <div className={"xl:col-span-8 space-y-3"} id={"autotuneStrategiesList"}></div>
+            <section id={"autotunePreviewPanel"} className={"hidden xl:col-span-8 ui-card rounded-2xl p-4 space-y-3"} aria-live={"polite"}>
+              <div>
+                <h3 className={"text-sm font-bold text-white"}>Предпросмотр применения</h3>
+                <p id={"autotunePreviewSummary"} className={"mt-1 text-sm font-medium text-slate-300"}></p>
+              </div>
+              <div id={"autotunePreviewDiff"} className={"max-h-96 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
+              <p className={"text-xs font-medium text-slate-400"}>Это только просмотр. Конфигурация и служба не изменены.</p>
+            </section>
             {"\n\n          "}
             <div className={"xl:col-span-4 ui-card rounded-2xl p-5 flex flex-col min-h-[220px] xl:h-[540px]"}>
               {"\n            "}

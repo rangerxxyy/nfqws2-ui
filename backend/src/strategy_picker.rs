@@ -422,6 +422,113 @@ pub fn candidate_argv(
     Ok(args)
 }
 
+/// Construct one domain-scoped profile for an explicitly selected, locally
+/// validated HTTP/HTTPS candidate. QUIC application needs its own real runner.
+pub fn build_domain_profile(
+    host: &str,
+    protocol: StrategyProtocol,
+    steps: &[String],
+    available_functions: &HashSet<String>,
+    available_blobs: &[String],
+) -> Result<String, String> {
+    let normalized = crate::site_diagnostics::normalize_host(host)?;
+    if normalized != host {
+        return Err("Имя домена должно быть нормализовано перед подготовкой профиля".into());
+    }
+    validate_candidate(steps, available_functions, available_blobs)?;
+    let (transport, layer, payload) = match protocol {
+        StrategyProtocol::Http => ("--filter-tcp=80", "--filter-l7=http", "--payload=http_req"),
+        StrategyProtocol::Https => (
+            "--filter-tcp=443",
+            "--filter-l7=tls",
+            "--payload=tls_client_hello",
+        ),
+        StrategyProtocol::Quic => {
+            return Err("Применение QUIC-стратегии пока не поддерживается".into());
+        }
+    };
+    let mut profile = vec![
+        "--new".to_owned(),
+        transport.to_owned(),
+        layer.to_owned(),
+        format!("--hostlist-domains={normalized}"),
+        payload.to_owned(),
+    ];
+    profile.extend(steps.iter().cloned());
+    Ok(profile.join(" "))
+}
+
+#[cfg(test)]
+mod application_tests {
+    use super::{StrategyProtocol, build_domain_profile};
+    use std::collections::HashSet;
+
+    #[test]
+    fn builds_domain_scoped_http_and_https_profiles_from_validated_steps() {
+        let functions = HashSet::from(["multisplit".to_string()]);
+        let https = build_domain_profile(
+            "youtube.com",
+            StrategyProtocol::Https,
+            &["--lua-desync=multisplit:pos=1,midsld".into()],
+            &functions,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            https,
+            "--new --filter-tcp=443 --filter-l7=tls --hostlist-domains=youtube.com --payload=tls_client_hello --lua-desync=multisplit:pos=1,midsld"
+        );
+
+        let http = build_domain_profile(
+            "example.org",
+            StrategyProtocol::Http,
+            &["--lua-desync=multisplit:pos=method+2".into()],
+            &functions,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            http,
+            "--new --filter-tcp=80 --filter-l7=http --hostlist-domains=example.org --payload=http_req --lua-desync=multisplit:pos=method+2"
+        );
+    }
+
+    #[test]
+    fn refuses_unsafe_hosts_unknown_lua_and_quic_application_profiles() {
+        let functions = HashSet::from(["multisplit".to_string()]);
+        assert!(
+            build_domain_profile(
+                "example.org;id",
+                StrategyProtocol::Https,
+                &["--lua-desync=multisplit:pos=1".into()],
+                &functions,
+                &[],
+            )
+            .is_err()
+        );
+        assert!(
+            build_domain_profile(
+                "example.org",
+                StrategyProtocol::Https,
+                &["--lua-desync=unknown:pos=1".into()],
+                &functions,
+                &[],
+            )
+            .is_err()
+        );
+        assert!(
+            build_domain_profile(
+                "example.org",
+                StrategyProtocol::Quic,
+                &["--lua-desync=multisplit:pos=1".into()],
+                &functions,
+                &[],
+            )
+            .is_err()
+        );
+    }
+}
+
 /// Parse only public nfqws2 desync functions from inspected Lua source lines,
 /// matching the upstream catalog's `function name(ctx, desync)` signature.
 pub fn parse_lua_functions(source: &str) -> HashSet<String> {

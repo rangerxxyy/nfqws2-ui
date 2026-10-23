@@ -143,6 +143,15 @@ describe('TSX panel without authentication', () => {
     expect(renderer).not.toContain('if (!container || !operation.results.length) return');
   });
 
+  it('exposes a read-only backend preview only for confirmed strategy candidates', () => {
+    const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('async function loadStrategyPickHistory'));
+    expect(renderer).toContain("operation.state === 'complete' && result.confirmed");
+    expect(renderer).toContain("preview.dataset.actionClick = 'previewStrategyPick'");
+    expect(panelSource).toContain('nfqwsDiagnostics.strategyPreview');
+    expect(template).toContain('id="autotunePreviewPanel"');
+    expect(template).not.toContain('data-action-click="applyStrategyPick"');
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');

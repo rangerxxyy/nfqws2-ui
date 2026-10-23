@@ -3,7 +3,7 @@ import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type TransferDiagnosticOperation } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type TransferDiagnosticOperation } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -732,6 +732,7 @@ async function stopSiteTrace() {
 const STRATEGY_PICK_STORAGE = 'nfqws2-ui-strategy-pick-id';
 const TRANSFER_DIAGNOSTIC_STORAGE = 'nfqws2-ui-transfer-diagnostic-id';
 function renderStrategyPick(operation: StrategyPickOperation) {
+  localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
   setText('#scanProgressLabel', operation.current ? `${operation.done}/${operation.total} · ${operation.current}` : operation.message);
   const bar = $('#scanProgressBar');
   if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(100 * operation.done / operation.total) : 0}%`;
@@ -746,7 +747,7 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     container.append(empty);
     return;
   }
-  for (const result of operation.results) {
+  operation.results.forEach((result, index) => {
     const card = document.createElement('article');
     card.className = 'ui-card rounded-xl p-4 space-y-2';
     const heading = document.createElement('h3');
@@ -757,7 +758,62 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     summary.textContent = `${result.successes}/${result.attempts} успешных проверок · ${result.candidate.source}`;
     const detail = document.createElement('p'); detail.className = 'text-xs text-slate-400 break-words'; detail.textContent = result.detail;
     const args = document.createElement('code'); args.className = 'block whitespace-pre-wrap break-all rounded-lg bg-[#060a12] p-2 text-xs text-cyan-200'; args.textContent = result.candidate.steps.join('\n');
-    card.append(heading, summary, detail, args); container.append(card);
+    card.append(heading, summary, detail, args);
+    if (operation.state === 'complete' && result.confirmed) {
+      const preview = document.createElement('button');
+      preview.type = 'button';
+      preview.className = 'rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 transition hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
+      preview.dataset.actionClick = 'previewStrategyPick';
+      preview.dataset.arg = String(index);
+      preview.textContent = 'Предпросмотр профиля';
+      card.append(preview);
+    }
+    container.append(card);
+  });
+}
+
+function renderStrategyPickPreview(preview: StrategyPickPreview) {
+  const panel = $('#autotunePreviewPanel');
+  const summary = $('#autotunePreviewSummary');
+  const diff = $('#autotunePreviewDiff');
+  if (!panel || !summary || !diff) return;
+  panel.classList.remove('hidden');
+  summary.textContent = `${preview.host} · ${preview.protocol.toUpperCase()} · ${preview.candidate.name}. ${preview.summary} Revision: ${preview.originalRevision.slice(0, 12)}.`;
+  diff.replaceChildren();
+  const before = preview.originalContent.split(/\r?\n/);
+  const after = preview.proposedContent.split(/\r?\n/);
+  const maxLines = Math.max(before.length, after.length);
+  for (let index = 0; index < maxLines; index += 1) {
+    if (before[index] === after[index]) continue;
+    const row = document.createElement('div');
+    row.className = 'grid gap-1 border-b border-slate-800 py-2 last:border-0 sm:grid-cols-2';
+    const oldLine = document.createElement('code');
+    oldLine.className = 'whitespace-pre-wrap break-all text-rose-200';
+    oldLine.textContent = before[index] === undefined ? '− (нет строки)' : `− ${before[index]}`;
+    const newLine = document.createElement('code');
+    newLine.className = 'whitespace-pre-wrap break-all text-emerald-200';
+    newLine.textContent = after[index] === undefined ? '+ (удалено)' : `+ ${after[index]}`;
+    row.append(oldLine, newLine);
+    diff.append(row);
+  }
+  if (!diff.childElementCount) diff.textContent = 'Изменений нет.';
+}
+
+async function previewStrategyPick(candidateIndex: string) {
+  const operationId = activeStrategyPickId ?? localStorage.getItem(STRATEGY_PICK_STORAGE);
+  const index = Number(candidateIndex);
+  if (!operationId || !Number.isInteger(index) || index < 0) return toast('Результат подбора не выбран.', 'error');
+  const panel = $('#autotunePreviewPanel');
+  panel?.classList.remove('hidden');
+  setText('#autotunePreviewSummary', 'Проверяется подтверждённый результат и текущая конфигурация…');
+  const diff = $('#autotunePreviewDiff');
+  if (diff) diff.textContent = '';
+  try {
+    const preview = await nfqwsDiagnostics.strategyPreview(operationId, index);
+    renderStrategyPickPreview(preview);
+  } catch (error) {
+    panel?.classList.add('hidden');
+    toast(error instanceof Error ? error.message : 'Предпросмотр стратегии недоступен.', 'error');
   }
 }
 
@@ -845,6 +901,7 @@ async function startStrategyPick() {
   const protocol = proto instanceof HTMLSelectElement && ['http', 'https'].includes(proto.value) ? proto.value as 'http' | 'https' : 'https';
   const selectedMode = mode instanceof HTMLSelectElement && mode.value === 'extended' ? 'extended' : 'quick';
   const container = $('#autotuneStrategiesList'); container?.replaceChildren();
+  $('#autotunePreviewPanel')?.classList.add('hidden');
   try {
     const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode);
     activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
@@ -1064,6 +1121,7 @@ function bindPrototypeActions() {
     stopSiteTrace: () => void stopSiteTrace(),
     startStrategyPick: () => void startStrategyPick(),
     cancelStrategyPick: () => void cancelStrategyPick(),
+    previewStrategyPick: (index: string) => void previewStrategyPick(index),
     runTransferDiagnostic: () => void startTransferDiagnostic(),
     cancelTransferDiagnostic: () => void cancelTransferDiagnostic(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
