@@ -3,8 +3,9 @@
 ## Time record
 
 - Goal timer started: 2026-10-23 16:20:28 UTC. This is the measured goal creation time; the exact first keystroke/tool action was not separately recorded.
-- Latest observed checkpoint: 2026-10-23 17:20:52 UTC. The goal timer reported 60m 19s of active work at this checkpoint. This is the measured active-work duration; idle wall time is excluded.
-- The v0.2.9 release check is in progress. Record final publication/workflow status after GitHub Actions completes.
+- Final checkpoint: 2026-10-23 17:26:02 UTC. The goal timer reported 65m 31s of active work. This is measured active work; idle wall time is excluded.
+- Published `v0.2.9` at https://github.com/rangerxxyy/nfqws2-ui/releases/tag/v0.2.9 from commit `7e19c4187059c747175c6c1e1092ffd09342eeb0`. Release workflow #49 completed successfully, including Linux ARM64 test/build/package steps.
+- Router validation and the incomplete features listed below remain outstanding; the release is a limited milestone, not completion of the full autopick/16 KB scope.
 
 ## Audited sources
 
