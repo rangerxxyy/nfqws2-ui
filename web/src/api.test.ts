@@ -2,6 +2,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('starts, polls and cancels a persisted network freeze baseline scan', async () => {
+    const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', current: null, done: 0, total: 20, results: [], message: 'queued', updatedAt: 100 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(operation), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'running', stage: 'baseline', current: 'Hetzner' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const started = await nfqwsDiagnostics.freezeScanStart(['example.com']);
+    expect(await nfqwsDiagnostics.freezeScanStatus(started.id)).toMatchObject({ state: 'running', current: 'Hetzner' });
+    expect(await nfqwsDiagnostics.freezeScanCancel(started.id)).toMatchObject({ state: 'stopping' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/freeze-scan');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ extraHosts: ['example.com'] });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/nfqws2/diagnostics/freeze-scan/operations/${started.id}`);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/nfqws2/diagnostics/freeze-scan/operations/${started.id}/cancel`);
+  });
+
   it('starts, polls and stops a background router-side site trace through Rust', async () => {
     const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', message: 'Трассировка поставлена в очередь', report: null, updatedAt: 100 };
     const fetchMock = vi.fn()
@@ -28,11 +44,19 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'running', stage: 'testing', current: 'multisplit' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
-    const started = await nfqwsDiagnostics.strategyStart('example.com', 'https', 'quick');
+    const started = await nfqwsDiagnostics.strategyStart('example.com', 'https', 'custom', 4, ['--lua-desync=multisplit:pos=1'], true, true, true);
     expect(await nfqwsDiagnostics.strategyStatus(started.id)).toMatchObject({ state: 'running', current: 'multisplit' });
     expect(await nfqwsDiagnostics.strategyCancel(started.id)).toMatchObject({ state: 'stopping' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'quick' });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeCommunity: true, includeOtherHistory: true, customSteps: ['--lua-desync=multisplit:pos=1'] });
+  });
+
+  it('requests the full blockcheck2 candidate catalog explicitly', async () => {
+    const queued = { id: '0123456789abcdef0123456789abcdef', host: 'example.com', protocol: 'https', state: 'queued', stage: 'queued', current: null, done: 0, total: 3100, results: [], message: 'queued', updatedAt: 100 } as const;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(queued), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await nfqwsDiagnostics.strategyStart('example.com', 'https', 'full');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ host: 'example.com', protocol: 'https', mode: 'full' });
   });
 
   it('loads persisted strategy-pick history from Rust', async () => {
@@ -43,18 +67,15 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/history');
   });
 
-  it('starts and polls the bounded byte-transfer diagnostic', async () => {
-    const queued = { id: '0123456789abcdef0123456789abcdef', host: 'example.com', state: 'queued', stage: 'queued', attempt: 0, message: 'queued', result: null, updatedAt: 100 } as const;
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(queued), { status: 202 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'running', stage: 'direct', attempt: 1 }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
+  it('requests a backend-generated strategy preview by persisted operation and candidate index', async () => {
+    const preview = { operationId: '0123456789abcdef0123456789abcdef', candidateIndex: 0, host: 'example.com', protocol: 'https', candidate: { name: 'multisplit', source: 'current', steps: ['--lua-desync=multisplit:pos=1'] }, originalRevision: 'abc', originalContent: 'NFQWS_ARGS_CUSTOM=""\n', proposedContent: 'NFQWS_ARGS_CUSTOM="--new --filter-tcp=443"\n', summary: 'Preview only' };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(preview), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const started = await nfqwsDiagnostics.transferStart('example.com');
-    expect(await nfqwsDiagnostics.transferStatus(started.id)).toMatchObject({ state: 'running', attempt: 1 });
-    expect(await nfqwsDiagnostics.transferCancel(started.id)).toMatchObject({ state: 'stopping' });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/transfer');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com' });
+    expect(await nfqwsDiagnostics.strategyPreview(preview.operationId, 0)).toEqual(preview);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`/api/nfqws2/strategies/pick/operations/${preview.operationId}/preview`);
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({ candidateIndex: 0 });
   });
 
   it('requests router-side website diagnostics and returns the real stage results', async () => {

@@ -285,6 +285,61 @@ impl<'a> ConfigDocument<'a> {
         Ok(self.replace(assignment, &encoded))
     }
 
+    /// Read a shell assignment only when its full value is a single literal.
+    /// Expansions, concatenated quote fragments and escaped syntax are refused;
+    /// this parser never evaluates shell code.
+    pub fn literal_value(&self, name: &str) -> Result<String, String> {
+        let assignment = self.unique(name)?;
+        let raw = &self.source[assignment.value.clone()];
+        if raw.starts_with('"') || raw.starts_with('\'') {
+            let quote = raw.as_bytes()[0];
+            if raw.len() < 2 || raw.as_bytes().last() != Some(&quote) {
+                return Err(format!("Значение {name} не является одной строкой"));
+            }
+            let value = &raw[1..raw.len() - 1];
+            if value.bytes().any(|byte| {
+                byte == quote || byte == b'\\' || (quote == b'"' && matches!(byte, b'$' | b'`'))
+            }) {
+                return Err(format!(
+                    "Значение {name} содержит shell-синтаксис и не может безопасно редактироваться"
+                ));
+            }
+            return Ok(value.to_owned());
+        }
+        if raw.is_empty()
+            || !raw
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_./:=,+-".contains(&byte))
+        {
+            return Err(format!(
+                "Значение {name} не является безопасным shell-литералом"
+            ));
+        }
+        Ok(raw.to_owned())
+    }
+
+    /// Append a sequence of plain nfqws2 argument tokens to a literal variable.
+    pub fn append_literal_words(&self, name: &str, words: &str) -> Result<String, String> {
+        if words.is_empty()
+            || words.bytes().any(|byte| {
+                byte.is_ascii_control()
+                    || matches!(
+                        byte,
+                        b'\'' | b'"' | b'`' | b'$' | b'\\' | b';' | b'&' | b'|'
+                    )
+            })
+        {
+            return Err("Добавляемые параметры содержат недопустимый shell-синтаксис".into());
+        }
+        let existing = self.literal_value(name)?;
+        let value = if existing.is_empty() {
+            words.to_owned()
+        } else {
+            format!("{existing} {words}")
+        };
+        self.set_literal(name, &value)
+    }
+
     pub fn set_mode(&self, mode: &str) -> Result<String, String> {
         if !["$MODE_LIST", "$MODE_AUTO", "$MODE_ALL"].contains(&mode) {
             return Err("Неизвестный режим nfqws2".into());
@@ -405,6 +460,56 @@ mod tests {
         assert_eq!(
             edited,
             text.replacen("ISP_INTERFACE=\"eth3\"", "ISP_INTERFACE=\"eth4\"", 1)
+        );
+    }
+
+    #[test]
+    fn reads_only_unambiguous_literal_assignment_values() {
+        for (source, expected) in [
+            (
+                "NFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443\"\n",
+                "--new --filter-tcp=443",
+            ),
+            (
+                "NFQWS_ARGS_CUSTOM='--new --filter-tcp=443'\n",
+                "--new --filter-tcp=443",
+            ),
+            ("NFQWS_ARGS_CUSTOM=--new\n", "--new"),
+        ] {
+            let document = ConfigDocument::parse(source).unwrap();
+            assert_eq!(
+                document.literal_value("NFQWS_ARGS_CUSTOM").unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_dynamic_quoted_and_duplicate_values_when_reading_literal() {
+        for source in [
+            "NFQWS_ARGS_CUSTOM=\"$MODE\"\n",
+            "NFQWS_ARGS_CUSTOM=\"--new\\\"--other\"\n",
+            "NFQWS_ARGS_CUSTOM=\"--new\"'--other'\n",
+            "NFQWS_ARGS_CUSTOM=\"--new\"\nNFQWS_ARGS_CUSTOM=\"--other\"\n",
+        ] {
+            let document = ConfigDocument::parse(source).unwrap();
+            assert!(
+                document.literal_value("NFQWS_ARGS_CUSTOM").is_err(),
+                "accepted {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn appends_words_to_custom_args_and_preserves_comments_and_other_assignments() {
+        let source = "OTHER='keep'\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80\" # profiles\n";
+        let updated = ConfigDocument::parse(source)
+            .unwrap()
+            .append_literal_words("NFQWS_ARGS_CUSTOM", "--new --filter-tcp=443")
+            .unwrap();
+        assert_eq!(
+            updated,
+            "OTHER='keep'\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80 --new --filter-tcp=443\" # profiles\n"
         );
     }
 

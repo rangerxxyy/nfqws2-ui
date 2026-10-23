@@ -11,6 +11,17 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel without authentication', () => {
+  it('exposes the full blockcheck2 catalog mode and submits it to the Rust API', () => {
+    expect(template).toContain('value="full"');
+    expect(template).toContain('каталог blockcheck2 (~3 000)');
+    expect(template).toContain('id="strategyModeHelp"');
+    expect(panelSource).toContain("['extended', 'full', 'custom']");
+    expect(panelSource).toContain('Проверка идёт по одному, занимает дольше');
+    expect(panelStyles).toContain('.strategy-mode-help.mode-help-enter');
+    expect(panelSource).toContain('Полный перебор завершён: подтверждённых стратегий нет.');
+    expect(backendSource).toContain('"full" => Some(StrategyMode::Full)');
+  });
+
   it('keeps the requested configuration and list toolbar free of removed labels', () => {
     expect(template).toContain('Конфигурация');
     expect(template).not.toContain('Секции:');
@@ -102,15 +113,40 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.mobile-list-editor');
   });
 
-  it('keeps new diagnostic inputs and result panels usable on a phone', () => {
+  it('keeps the 16 KB diagnosis as one mobile-friendly test with one start and one cancel action', () => {
     const picker = template.slice(template.indexOf('id="tabContent-autotune"'), template.indexOf('id="tabContent-monitor"'));
-    const transfer = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-monitor"'));
+    const diagnostic16k = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-monitor"'));
     expect(picker).toContain('flex flex-col lg:flex-row');
-    expect(picker).toContain('grid grid-cols-1 md:grid-cols-4');
+    expect(picker).toContain('grid grid-cols-1 md:grid-cols-5');
+    expect(picker).toContain('id="strategyRepeatsSelect"');
+    expect(picker).toContain('id="strategyStopAfterFirst"');
+    expect(picker).toContain('id="strategyIncludeCommunity"');
+    expect(picker).toContain('id="strategyIncludeOtherHistory"');
+    expect(panelSource).toContain("$('#strategyStopAfterFirst')");
+    expect(picker).toContain('id="strategyCustomSteps"');
+    expect(picker).toContain('value="custom"');
+    expect(picker).toContain('Расширенный · каталог blockcheck2');
+    expect(panelSource).toContain("value.split(/\\r?\\n/)");
     expect(picker).toContain('min-h-[220px] xl:h-[540px]');
-    expect(transfer).toContain('flex flex-col sm:flex-row');
-    expect(transfer).toContain('min-w-0 flex-1');
-    expect(transfer).toContain('grid grid-cols-1 lg:grid-cols-2');
+    expect(diagnostic16k).toContain('flex flex-col sm:flex-row');
+    expect(diagnostic16k).toContain('min-w-0 flex-1');
+    expect(diagnostic16k).toContain('id="freezeScanHostsInput"');
+    expect(diagnostic16k).toContain('Запустить пробу');
+    expect(diagnostic16k).toContain('id="freezeScanSummary"');
+    expect(diagnostic16k).toContain('id="freezeScanResults"');
+    expect(diagnostic16k.match(/data-action-click="runFreezeScan"/g)).toHaveLength(1);
+    expect(diagnostic16k.match(/data-action-click="cancelFreezeScan"/g)).toHaveLength(1);
+    expect(diagnostic16k).not.toContain('transferDomainInput');
+    expect(diagnostic16k).not.toContain('Диагностика передачи данных');
+    expect(panelSource).toContain('freezeScanStart');
+    expect(panelSource).toContain('freeze-scan-table');
+    expect(panelSource).toContain("result.host}${result.path === '/' ? '' : result.path}");
+    expect(panelSource).toContain('result.address ??');
+    expect(panelStyles).toContain('@keyframes freeze-row-enter');
+    expect(panelStyles).toContain('prefers-reduced-motion: reduce');
+    expect(panelSource).toContain("status.setAttribute('aria-busy'");
+    expect(panelSource).toContain("cell.dataset.label = labels[index]");
+    expect(panelSource).toContain('cancelFreezeScan');
   });
 
   it('keeps long strategy jobs cancellable until the backend reports a terminal state', () => {
@@ -122,9 +158,8 @@ describe('TSX panel without authentication', () => {
 
   it('retains completed diagnostic operation IDs so the latest results restore after reload', () => {
     expect(panelSource).not.toContain('localStorage.removeItem(STRATEGY_PICK_STORAGE)');
-    expect(panelSource).not.toContain('localStorage.removeItem(TRANSFER_DIAGNOSTIC_STORAGE)');
     expect(panelSource).toContain('const savedPick = localStorage.getItem(STRATEGY_PICK_STORAGE)');
-    expect(panelSource).toContain('const savedTransfer = localStorage.getItem(TRANSFER_DIAGNOSTIC_STORAGE)');
+    expect(panelSource).toContain("const savedFreezeScan = localStorage.getItem('nfqws2-ui-freeze-scan')");
   });
 
   it('shows persisted strategy history and can reopen a saved result', () => {
@@ -143,6 +178,15 @@ describe('TSX panel without authentication', () => {
     expect(renderer).not.toContain('if (!container || !operation.results.length) return');
   });
 
+  it('exposes a read-only backend preview only for confirmed strategy candidates', () => {
+    const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('async function loadStrategyPickHistory'));
+    expect(renderer).toContain("operation.state === 'complete' && result.confirmed");
+    expect(renderer).toContain("preview.dataset.actionClick = 'previewStrategyPick'");
+    expect(panelSource).toContain('nfqwsDiagnostics.strategyPreview');
+    expect(template).toContain('id="autotunePreviewPanel"');
+    expect(template).not.toContain('data-action-click="applyStrategyPick"');
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');
@@ -158,7 +202,7 @@ describe('TSX panel without authentication', () => {
     expect(template).toMatch(/id="navBtn-autotune" class="(?![^"]*hidden)[^"]*side-nav-btn/);
     expect(template).toContain('data-action-click="startStrategyPick"');
     expect(template).toContain('id="tabContent-diagnostic16k"');
-    expect(template).toContain('data-action-click="runTransferDiagnostic"');
+    expect(template).toContain('data-action-click="runFreezeScan"');
     expect(panelSource).toContain('UNAVAILABLE_PANEL_ROUTES');
   });
 

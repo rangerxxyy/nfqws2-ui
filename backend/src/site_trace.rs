@@ -915,12 +915,211 @@ async fn stop_child(child: &mut Child) {
     let _ = timeout(Duration::from_secs(2), child.wait()).await;
 }
 
+async fn probe_padded_head(
+    host: &str,
+    address: Ipv4Addr,
+    cancel: &AtomicBool,
+) -> Result<(Option<u16>, Option<u64>, String), String> {
+    let args = crate::freeze_diagnostic::padded_head_curl_args(address, 443, host)?;
+    let started = std::time::Instant::now();
+    let mut child = Command::new(program_path("curl"))
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("Не удалось запустить padded curl-запрос: {error}"))?;
+    let result = tokio::select! {
+        result = timeout(Duration::from_secs(105), child.wait()) => result,
+        _ = async {
+            while !cancel.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        } => {
+            let _ = child.start_kill();
+            let _ = timeout(Duration::from_secs(2), child.wait()).await;
+            return Ok((None, Some(started.elapsed().as_millis() as u64), "Проверка отменена; тестовый curl остановлен".into()));
+        }
+    };
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(Ok(status)) => {
+            let mut stdout = Vec::new();
+            if let Some(pipe) = child.stdout.take() {
+                use tokio::io::AsyncReadExt;
+                let _ = timeout(
+                    Duration::from_secs(1),
+                    pipe.take(64 * 1024).read_to_end(&mut stdout),
+                )
+                .await;
+            }
+            let details = crate::freeze_diagnostic::classify_padded_head(
+                status.code().unwrap_or(-1),
+                &String::from_utf8_lossy(&stdout),
+            );
+            let complete =
+                details.classification == crate::freeze_diagnostic::PadClassification::Complete;
+            Ok((
+                complete.then_some(200),
+                Some(details.elapsed_ms.max(elapsed_ms)),
+                details.reason,
+            ))
+        }
+        Ok(Err(error)) => Err(format!("Не удалось выполнить padded curl-запрос: {error}")),
+        Err(_) => Ok((
+            None,
+            Some(elapsed_ms),
+            "Тайм-аут padded HEAD-проверки".into(),
+        )),
+    }
+}
+
+async fn probe_mode(
+    host: &str,
+    address: Ipv4Addr,
+    mode: &TraceProbeMode,
+    cancel: &AtomicBool,
+) -> Result<(Option<u16>, Option<u64>, String), String> {
+    match mode {
+        TraceProbeMode::PaddedHead => probe_padded_head(host, address, cancel).await,
+        TraceProbeMode::Transfer(path) => {
+            let mut attempts = Vec::with_capacity(2);
+            let mut expected_bytes = None;
+            for _ in 0..2 {
+                if cancel.load(Ordering::Acquire) {
+                    return Err("Проверка передачи отменена".into());
+                }
+                let parsed = crate::transfer_diagnostic::probe_transfer_at_path(
+                    host, address, path, false, cancel,
+                )
+                .await?;
+                expected_bytes = parsed.expected_bytes.or(expected_bytes);
+                attempts.push(parsed.attempt);
+            }
+            let diagnosis =
+                crate::transfer_diagnostic::classify_transfer(&attempts, expected_bytes);
+            let min = diagnosis.min_bytes.unwrap_or_default();
+            let max = diagnosis.max_bytes.unwrap_or_default();
+            let bytes = if min == max {
+                format!("{min} байт")
+            } else {
+                format!("{min}–{max} байт")
+            };
+            let reason = format!(
+                "{} · получено {bytes} за {} запроса",
+                diagnosis.summary,
+                attempts.len()
+            );
+            Ok((
+                crate::transfer_diagnostic::successful_http_response(&attempts).then_some(200),
+                Some(attempts.iter().map(|attempt| attempt.elapsed_ms).sum()),
+                reason,
+            ))
+        }
+        TraceProbeMode::Http(proto) => probe(host, address, proto).await,
+    }
+}
+
+enum TraceProbeMode {
+    Http(String),
+    PaddedHead,
+    Transfer(String),
+}
+
 pub async fn run(
     host: String,
     proto: &str,
     args: Vec<String>,
     binary: String,
     cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::Http(proto.into()),
+        None,
+        args,
+        binary,
+        cancel,
+        None,
+    )
+    .await
+}
+
+/// Runs only the current-route candidate probe using the result of a separate
+/// direct baseline. This avoids repeating the bypass request for every
+/// candidate/repeat in the strategy picker.
+pub async fn run_candidate(
+    host: String,
+    proto: &str,
+    args: Vec<String>,
+    binary: String,
+    baseline_ok: bool,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::Http(proto.into()),
+        None,
+        args,
+        binary,
+        cancel,
+        Some(baseline_ok),
+    )
+    .await
+}
+
+/// Executes the normal isolated nfqws2 test flow against a pinned public
+/// address and evaluates it with the 12-request padded HEAD probe.
+pub async fn run_padded_target(
+    host: String,
+    address: Ipv4Addr,
+    args: Vec<String>,
+    binary: String,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::PaddedHead,
+        Some(address),
+        args,
+        binary,
+        cancel,
+        None,
+    )
+    .await
+}
+
+/// Uses the same bounded transfer-volume probe before and after the isolated
+/// nfqws2 process is installed. The path is validated by the transfer probe.
+pub async fn run_transfer_target(
+    host: String,
+    address: Ipv4Addr,
+    path: String,
+    args: Vec<String>,
+    binary: String,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::Transfer(path),
+        Some(address),
+        args,
+        binary,
+        cancel,
+        None,
+    )
+    .await
+}
+
+async fn run_inner(
+    host: String,
+    mode: TraceProbeMode,
+    pinned_address: Option<Ipv4Addr>,
+    args: Vec<String>,
+    binary: String,
+    cancel: Arc<AtomicBool>,
+    known_baseline: Option<bool>,
 ) -> TraceReport {
     let mut report = TraceReport {
         host: host.clone(),
@@ -935,7 +1134,10 @@ pub async fn run(
         trace_warnings: Vec::new(),
         summary: String::new(),
     };
-    let port = if proto == "http" { 80 } else { 443 };
+    let port = match &mode {
+        TraceProbeMode::Http(proto) if proto == "http" => 80,
+        _ => 443,
+    };
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -949,14 +1151,18 @@ pub async fn run(
         report.summary = "Трассировка остановлена до начала проверки".into();
         return report;
     }
-    let resolved = match timeout(Duration::from_secs(5), lookup_host((host.as_str(), port))).await {
-        Ok(Ok(values)) => values
-            .filter_map(|socket| match socket.ip() {
-                std::net::IpAddr::V4(ip) if public_v4(ip) => Some(ip),
-                _ => None,
-            })
-            .next(),
-        _ => None,
+    let resolved = if let Some(address) = pinned_address {
+        public_v4(address).then_some(address)
+    } else {
+        match timeout(Duration::from_secs(5), lookup_host((host.as_str(), port))).await {
+            Ok(Ok(values)) => values
+                .filter_map(|socket| match socket.ip() {
+                    std::net::IpAddr::V4(ip) if public_v4(ip) => Some(ip),
+                    _ => None,
+                })
+                .next(),
+            _ => None,
+        }
     };
     let Some(address) = resolved else {
         report.without_nfqws2 =
@@ -993,42 +1199,52 @@ pub async fn run(
     {
         policy_mark = policy_route_mark(&String::from_utf8_lossy(&output));
     }
-    let (base_code, base_ms, base_reason) =
-        match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
-            Ok(rules) => {
-                if cancel.load(Ordering::Acquire) {
+    if let Some(baseline_ok) = known_baseline {
+        report.without_nfqws2 = TracePhase {
+            state: if baseline_ok { "complete" } else { "error" }.into(),
+            ok: Some(baseline_ok),
+            code: None,
+            duration_ms: None,
+            reason: "Прямой базовый запрос выполнен отдельным этапом подбора".into(),
+        };
+    } else {
+        let (base_code, base_ms, base_reason) =
+            match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
+                Ok(rules) => {
+                    if cancel.load(Ordering::Acquire) {
+                        let cleanup = remove_rules(&rules).await;
+                        report.without_nfqws2 = TracePhase::unavailable(match cleanup {
+                            Ok(()) => "Остановлено до запроса; временные правила удалены".into(),
+                            Err(error) => {
+                                format!("Остановлено; очистка правил не подтверждена: {error}")
+                            }
+                        });
+                        report.summary = "Трассировка остановлена".into();
+                        return report;
+                    }
+                    let result = probe_mode(&host, address, &mode, &cancel).await;
                     let cleanup = remove_rules(&rules).await;
-                    report.without_nfqws2 = TracePhase::unavailable(match cleanup {
-                        Ok(()) => "Остановлено до запроса; временные правила удалены".into(),
-                        Err(error) => {
-                            format!("Остановлено; очистка правил не подтверждена: {error}")
-                        }
-                    });
-                    report.summary = "Трассировка остановлена".into();
+                    match (result, cleanup) {
+                        (Ok(value), Ok(())) => value,
+                        (Err(e), Ok(())) => (None, None, e),
+                        (_, Err(e)) => (
+                            None,
+                            None,
+                            format!("Не удалось очистить временные правила: {e}"),
+                        ),
+                    }
+                }
+                Err(error) => {
+                    report.without_nfqws2 = TracePhase::unavailable(format!(
+                        "Не удалось изолировать базовый запрос: {error}"
+                    ));
+                    report.with_nfqws2 = TracePhase::unavailable("Тестовая очередь не запускалась");
+                    report.summary = "Проверка не завершена".into();
                     return report;
                 }
-                let result = probe(&host, address, proto).await;
-                let cleanup = remove_rules(&rules).await;
-                match (result, cleanup) {
-                    (Ok(value), Ok(())) => value,
-                    (Err(e), Ok(())) => (None, None, e),
-                    (_, Err(e)) => (
-                        None,
-                        None,
-                        format!("Не удалось очистить временные правила: {e}"),
-                    ),
-                }
-            }
-            Err(error) => {
-                report.without_nfqws2 = TracePhase::unavailable(format!(
-                    "Не удалось изолировать базовый запрос: {error}"
-                ));
-                report.with_nfqws2 = TracePhase::unavailable("Тестовая очередь не запускалась");
-                report.summary = "Проверка не завершена".into();
-                return report;
-            }
-        };
-    report.without_nfqws2 = phase_from_http(base_code, base_ms, base_reason);
+            };
+        report.without_nfqws2 = phase_from_http(base_code, base_ms, base_reason);
+    }
     if report
         .without_nfqws2
         .reason
@@ -1166,7 +1382,7 @@ pub async fn run(
             tokio::time::sleep(Duration::from_millis(350)).await;
             let started = std::time::Instant::now();
             let result = match child.try_wait() {
-                Ok(None) => probe(&host, address, proto).await,
+                Ok(None) => probe_mode(&host, address, &mode, &cancel).await,
                 Ok(Some(status)) => Err(format!(
                     "Тестовый nfqws2 завершился до запроса (код {})",
                     status.code().unwrap_or(-1)

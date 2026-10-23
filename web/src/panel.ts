@@ -1,9 +1,10 @@
 import { diagnosisRows } from './diagnosis-layout';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
+import { summarizeFreezeScan } from './freeze-summary';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type TransferDiagnosticOperation } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -22,8 +23,8 @@ let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
-let transferDiagnosticRunning = false;
-let activeTransferDiagnosticId: string | null = null;
+let freezeScanRunning = false;
+let activeFreezeScanId: string | null = null;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
@@ -730,8 +731,8 @@ async function stopSiteTrace() {
 }
 
 const STRATEGY_PICK_STORAGE = 'nfqws2-ui-strategy-pick-id';
-const TRANSFER_DIAGNOSTIC_STORAGE = 'nfqws2-ui-transfer-diagnostic-id';
 function renderStrategyPick(operation: StrategyPickOperation) {
+  localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
   setText('#scanProgressLabel', operation.current ? `${operation.done}/${operation.total} · ${operation.current}` : operation.message);
   const bar = $('#scanProgressBar');
   if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(100 * operation.done / operation.total) : 0}%`;
@@ -742,13 +743,15 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     const empty = document.createElement('p'); empty.className = 'ui-card rounded-xl p-4 text-sm font-medium text-slate-300';
     empty.textContent = operation.state === 'site_unblocked'
       ? 'Прямое соединение отвечает; стратегии проверять не требуется.'
+      : operation.state === 'no_match' && operation.total >= 1000
+        ? `Полный перебор завершён: подтверждённых стратегий нет. ${operation.message}`
       : 'Для этой операции результатов стратегий нет.';
     container.append(empty);
     return;
   }
-  for (const result of operation.results) {
+  operation.results.forEach((result, index) => {
     const card = document.createElement('article');
-    card.className = 'ui-card rounded-xl p-4 space-y-2';
+    card.className = 'ui-card strategy-result-enter rounded-xl p-4 space-y-2';
     const heading = document.createElement('h3');
     heading.className = `font-semibold ${result.confirmed ? 'text-emerald-200' : 'text-slate-200'}`;
     heading.textContent = `${result.confirmed ? 'Подтверждена' : 'Не подтверждена'} · ${result.candidate.name}`;
@@ -757,7 +760,62 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     summary.textContent = `${result.successes}/${result.attempts} успешных проверок · ${result.candidate.source}`;
     const detail = document.createElement('p'); detail.className = 'text-xs text-slate-400 break-words'; detail.textContent = result.detail;
     const args = document.createElement('code'); args.className = 'block whitespace-pre-wrap break-all rounded-lg bg-[#060a12] p-2 text-xs text-cyan-200'; args.textContent = result.candidate.steps.join('\n');
-    card.append(heading, summary, detail, args); container.append(card);
+    card.append(heading, summary, detail, args);
+    if (operation.state === 'complete' && result.confirmed) {
+      const preview = document.createElement('button');
+      preview.type = 'button';
+      preview.className = 'rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 transition hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
+      preview.dataset.actionClick = 'previewStrategyPick';
+      preview.dataset.arg = String(index);
+      preview.textContent = 'Предпросмотр профиля';
+      card.append(preview);
+    }
+    container.append(card);
+  });
+}
+
+function renderStrategyPickPreview(preview: StrategyPickPreview) {
+  const panel = $('#autotunePreviewPanel');
+  const summary = $('#autotunePreviewSummary');
+  const diff = $('#autotunePreviewDiff');
+  if (!panel || !summary || !diff) return;
+  panel.classList.remove('hidden');
+  summary.textContent = `${preview.host} · ${preview.protocol.toUpperCase()} · ${preview.candidate.name}. ${preview.summary} Revision: ${preview.originalRevision.slice(0, 12)}.`;
+  diff.replaceChildren();
+  const before = preview.originalContent.split(/\r?\n/);
+  const after = preview.proposedContent.split(/\r?\n/);
+  const maxLines = Math.max(before.length, after.length);
+  for (let index = 0; index < maxLines; index += 1) {
+    if (before[index] === after[index]) continue;
+    const row = document.createElement('div');
+    row.className = 'grid gap-1 border-b border-slate-800 py-2 last:border-0 sm:grid-cols-2';
+    const oldLine = document.createElement('code');
+    oldLine.className = 'whitespace-pre-wrap break-all text-rose-200';
+    oldLine.textContent = before[index] === undefined ? '− (нет строки)' : `− ${before[index]}`;
+    const newLine = document.createElement('code');
+    newLine.className = 'whitespace-pre-wrap break-all text-emerald-200';
+    newLine.textContent = after[index] === undefined ? '+ (удалено)' : `+ ${after[index]}`;
+    row.append(oldLine, newLine);
+    diff.append(row);
+  }
+  if (!diff.childElementCount) diff.textContent = 'Изменений нет.';
+}
+
+async function previewStrategyPick(candidateIndex: string) {
+  const operationId = activeStrategyPickId ?? localStorage.getItem(STRATEGY_PICK_STORAGE);
+  const index = Number(candidateIndex);
+  if (!operationId || !Number.isInteger(index) || index < 0) return toast('Результат подбора не выбран.', 'error');
+  const panel = $('#autotunePreviewPanel');
+  panel?.classList.remove('hidden');
+  setText('#autotunePreviewSummary', 'Проверяется подтверждённый результат и текущая конфигурация…');
+  const diff = $('#autotunePreviewDiff');
+  if (diff) diff.textContent = '';
+  try {
+    const preview = await nfqwsDiagnostics.strategyPreview(operationId, index);
+    renderStrategyPickPreview(preview);
+  } catch (error) {
+    panel?.classList.add('hidden');
+    toast(error instanceof Error ? error.message : 'Предпросмотр стратегии недоступен.', 'error');
   }
 }
 
@@ -840,13 +898,21 @@ async function pollStrategyPick(id: string) {
 
 async function startStrategyPick() {
   if (strategyPickRunning) return;
-  const input = $('#scanCustomHost'); const proto = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect');
+  const input = $('#scanCustomHost'); const proto = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect'); const repeatsInput = $('#strategyRepeatsSelect'); const customInput = $('#strategyCustomSteps');
   if (!(input instanceof HTMLInputElement) || !input.value.trim()) return toast('Введите домен для подбора.', 'error');
   const protocol = proto instanceof HTMLSelectElement && ['http', 'https'].includes(proto.value) ? proto.value as 'http' | 'https' : 'https';
-  const selectedMode = mode instanceof HTMLSelectElement && mode.value === 'extended' ? 'extended' : 'quick';
+  const selectedMode = mode instanceof HTMLSelectElement && ['extended', 'full', 'custom'].includes(mode.value) ? mode.value as 'extended' | 'full' | 'custom' : 'quick';
+  const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
+  const stopAfterFirst = ($('#strategyStopAfterFirst') as HTMLInputElement | null)?.checked ?? false;
+  const includeCommunity = ($('#strategyIncludeCommunity') as HTMLInputElement | null)?.checked ?? false;
+  const includeOtherHistory = ($('#strategyIncludeOtherHistory') as HTMLInputElement | null)?.checked ?? false;
+  if (!Number.isInteger(repeats) || repeats < 2 || repeats > 5) return toast('Число повторов должно быть от 2 до 5.', 'error');
+  const customSteps = customInput instanceof HTMLTextAreaElement ? customInput.value.split(/\r?\n/).map((step) => step.trim()).filter(Boolean) : [];
+  if (selectedMode === 'custom' && customSteps.length === 0) return toast('Добавьте хотя бы один параметр --lua-desync=…', 'error');
   const container = $('#autotuneStrategiesList'); container?.replaceChildren();
+  $('#autotunePreviewPanel')?.classList.add('hidden');
   try {
-    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode);
+    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeCommunity, includeOtherHistory);
     activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
     await pollStrategyPick(operation.id);
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить автоподбор', 'error'); }
@@ -860,60 +926,105 @@ async function cancelStrategyPick() {
   finally { if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.textContent = 'Остановить'; } }
 }
 
-function renderTransferDiagnostic(operation: TransferDiagnosticOperation) {
-  const status = $('#transferDiagnosticStatus');
-  if (status) { status.textContent = operation.message; status.classList.remove('hidden'); }
-  const container = $('#transferDiagnosticResults');
-  if (!container || !operation.result) return;
-  container.replaceChildren();
-  const result = operation.result;
-  for (const [label, side] of [['Напрямую, мимо nfqws2', result.direct], ['Через текущий маршрут', result.current]] as const) {
-    const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-3';
-    const title = document.createElement('h3'); title.className = 'text-base font-bold text-white'; title.textContent = label;
-    const summary = document.createElement('p'); summary.className = `text-sm font-semibold ${side.diagnosis.repeatableBoundaryStall ? 'text-amber-200' : side.diagnosis.classification === 'complete' ? 'text-emerald-200' : 'text-slate-200'}`; summary.textContent = side.diagnosis.summary;
-    const metrics = document.createElement('p'); metrics.className = 'text-sm font-medium text-slate-300';
-    metrics.textContent = `Получено: ${side.diagnosis.minBytes ?? 0}–${side.diagnosis.maxBytes ?? 0} байт · ${side.attempts.length} запроса · IP ${result.address}`;
-    const list = document.createElement('ul'); list.className = 'space-y-1 text-xs font-medium text-slate-300';
-    for (const [index, attempt] of side.attempts.entries()) { const row = document.createElement('li'); row.textContent = `Попытка ${index + 1}: ${attempt.bytesReceived} байт · HTTP ${attempt.httpStatus ?? '—'} · ${attempt.elapsedMs} мс · первый байт ${attempt.firstByteMs ?? '—'} мс${attempt.transportError ? ` · ${attempt.transportError}` : ''}`; list.append(row); }
-    card.append(title, summary, metrics, list); container.append(card);
-  }
+function freezeMeasurementLabel(measurement: FreezeScanOperation['results'][number]['current']) {
+  if (measurement.ok) return `ответ получен · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'PossibleFreeze') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'PossibleUploadStall') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'TimeoutBeforeResponse' || measurement.classification === 'TimeoutBeforeBody') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'ServerDoesNotKeepConnection') return 'сервер не удерживает соединение';
+  if (measurement.classification === 'ConnectFailure') return 'TCP-соединение не установлено';
+  if (measurement.classification === 'TlsFailure') return 'ошибка TLS';
+  if (measurement.classification === 'Reset') return 'соединение сброшено';
+  if (measurement.classification === 'dns_failure') return 'DNS не разрешил адрес';
+  return measurement.reason || 'результат не определён';
 }
 
-async function pollTransferDiagnostic(id: string) {
-  activeTransferDiagnosticId = id; transferDiagnosticRunning = true;
-  const input = $('#transferDomainInput'); const start = $('[data-action-click="runTransferDiagnostic"]'); const stop = $('#transferDiagnosticCancel');
+function renderFreezeScan(operation: FreezeScanOperation) {
+  const status = $('#freezeScanStatus');
+  if (status) {
+    status.textContent = `${operation.message}${operation.current ? ` · сейчас: ${operation.current}` : ''} · ${operation.done}/${operation.total}`;
+    status.setAttribute('aria-busy', String(['queued', 'running', 'stopping'].includes(operation.state)));
+    status.classList.remove('hidden');
+  }
+  const summary = $('#freezeScanSummary');
+  const summaryValue = summarizeFreezeScan(operation);
+  if (summary) {
+    if (summaryValue) {
+      summary.textContent = summaryValue.text;
+      summary.className = `rounded-xl border px-4 py-3 text-sm font-bold leading-relaxed ${summaryValue.tone === 'warning' ? 'border-amber-400/25 bg-amber-500/15 text-amber-200' : summaryValue.tone === 'success' ? 'border-emerald-400/25 bg-emerald-500/15 text-emerald-200' : summaryValue.tone === 'error' ? 'border-rose-400/25 bg-rose-500/15 text-rose-200' : 'border-slate-600 bg-slate-800/70 text-slate-200'}`;
+    } else {
+      summary.classList.add('hidden');
+    }
+  }
+  const container = $('#freezeScanResults');
+  if (!container) return;
+  container.replaceChildren();
+  if (!operation.results.length) { container.classList.add('hidden'); return; }
+  container.classList.remove('hidden');
+  const table = document.createElement('table'); table.className = 'freeze-scan-table min-w-[760px] w-full text-left text-sm';
+  const head = document.createElement('thead'); head.className = 'bg-slate-900/80 text-xs uppercase text-slate-300';
+  const headerRow = document.createElement('tr');
+  const labels = ['Сеть / имя проверки', 'Проверенный IP / ASN', 'Напрямую', 'Текущий маршрут', 'Итог'];
+  for (const title of labels) { const cell = document.createElement('th'); cell.className = 'px-3 py-3 font-bold'; cell.textContent = title; headerRow.append(cell); }
+  head.append(headerRow); table.append(head);
+  const body = document.createElement('tbody'); body.className = 'divide-y divide-slate-800 text-slate-200';
+  for (const result of operation.results) {
+    const row = document.createElement('tr'); row.className = 'align-top hover:bg-slate-900/50';
+    const recentAttempts = result.candidateAttempts.slice(-3).map((attempt) => `${attempt.sni} · ${attempt.successes}/${attempt.attempts}${attempt.reason ? ` · ${attempt.reason}` : ''}`).join('\n');
+    const cells = [
+      `${result.label}\nИмя / SNI: ${result.host}${result.path === '/' ? '' : result.path}`,
+      `${result.address ?? 'адрес не найден'}\n${result.asn.state === 'verified' ? `AS${result.asn.asn} · подтверждён` : result.asn.state === 'changed' ? `ASN изменился: ожидался AS${result.asn.expected}, сейчас AS${result.asn.actual}` : 'ASN не подтверждён'}`,
+      freezeMeasurementLabel(result.direct),
+      freezeMeasurementLabel(result.current),
+      result.foundStrategy ? `Найдено имя ${result.foundStrategy.sni} · ${result.foundStrategy.successes}/${result.foundStrategy.attempts} успешных${result.foundStrategy.reusedFrom ? ` · совпадающий ASN, найдено на ${result.foundStrategy.reusedFrom}` : ''}\n${result.foundStrategy.step}${recentAttempts ? `\nПредыдущие проверки:\n${recentAttempts}` : ''}` : result.freezeDetected ? `Возможный обрыв · проверено вариантов: ${result.triedCandidates}${result.triedCandidates ? ', подтверждённый вариант не найден' : ''}${recentAttempts ? `\nПоследние проверки:\n${recentAttempts}` : ''}` : result.direct.ok && result.current.ok ? 'Обрыв не обнаружен' : 'Результат не подтверждает обрыв 16–20 КБ',
+    ];
+    cells.forEach((value, index) => { const cell = document.createElement('td'); cell.dataset.label = labels[index]; cell.className = `whitespace-pre-line px-3 py-3 ${index === 4 && result.foundStrategy ? 'font-bold text-emerald-200' : index === 4 && result.freezeDetected ? 'font-bold text-amber-100' : 'font-semibold text-white'}`; cell.textContent = value; row.append(cell); });
+    body.append(row);
+  }
+  table.append(body); container.append(table);
+}
+
+async function pollFreezeScan(id: string) {
+  activeFreezeScanId = id; freezeScanRunning = true;
+  const input = $('#freezeScanHostsInput'); const start = $('[data-action-click="runFreezeScan"]'); const stop = $('#freezeScanCancel');
   if (input instanceof HTMLInputElement) input.disabled = true;
   if (start instanceof HTMLButtonElement) start.disabled = true;
   stop?.classList.remove('hidden');
   try {
-    let current = await nfqwsDiagnostics.transferStatus(id); renderTransferDiagnostic(current);
-    for (let index = 0; index < 90 && ['queued', 'running', 'stopping'].includes(current.state); index += 1) {
+    let current = await nfqwsDiagnostics.freezeScanStatus(id); renderFreezeScan(current);
+    for (let index = 0; index < 920 && ['queued', 'running', 'stopping'].includes(current.state); index += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
-      try { current = await nfqwsDiagnostics.transferStatus(id); renderTransferDiagnostic(current); }
-      catch { setText('#transferDiagnosticStatus', 'Связь с роутером восстанавливается…'); }
+      try { current = await nfqwsDiagnostics.freezeScanStatus(id); renderFreezeScan(current); }
+      catch { setText('#freezeScanStatus', 'Связь с роутером восстанавливается…'); }
     }
-    renderTransferDiagnostic(current);
-  } catch (error) { setText('#transferDiagnosticStatus', error instanceof Error ? error.message : 'Статус диагностики недоступен'); }
+    renderFreezeScan(current);
+  } catch (error) { setText('#freezeScanStatus', error instanceof Error ? error.message : 'Статус проверки сетей недоступен'); }
   finally {
-    transferDiagnosticRunning = false; activeTransferDiagnosticId = null;
+    freezeScanRunning = false; activeFreezeScanId = null;
     if (input instanceof HTMLInputElement) input.disabled = false;
     if (start instanceof HTMLButtonElement) start.disabled = false;
     stop?.classList.add('hidden');
   }
 }
 
-async function startTransferDiagnostic() {
-  if (transferDiagnosticRunning) return;
-  const input = $('#transferDomainInput'); if (!(input instanceof HTMLInputElement) || !input.value.trim()) return toast('Введите домен для проверки передачи.', 'error');
-  $('#transferDiagnosticResults')?.replaceChildren();
-  try { const operation = await nfqwsDiagnostics.transferStart(input.value.trim()); localStorage.setItem(TRANSFER_DIAGNOSTIC_STORAGE, operation.id); await pollTransferDiagnostic(operation.id); }
-  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить диагностику передачи', 'error'); }
+async function startFreezeScan() {
+  if (freezeScanRunning) return;
+  const input = $('#freezeScanHostsInput');
+  if (!(input instanceof HTMLInputElement)) return;
+  const extraHosts = input.value.split(',').map((host) => host.trim()).filter(Boolean);
+  if (extraHosts.length > 20) return toast('Можно добавить не более 20 своих доменов.', 'error');
+  $('#freezeScanResults')?.replaceChildren();
+  $('#freezeScanSummary')?.classList.add('hidden');
+  try { const operation = await nfqwsDiagnostics.freezeScanStart(extraHosts); localStorage.setItem('nfqws2-ui-freeze-scan', operation.id); await pollFreezeScan(operation.id); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить проверку сетей', 'error'); }
 }
 
-async function cancelTransferDiagnostic() {
-  if (!activeTransferDiagnosticId) return;
-  try { const operation = await nfqwsDiagnostics.transferCancel(activeTransferDiagnosticId); setText('#transferDiagnosticStatus', operation.message); }
-  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось остановить диагностику передачи', 'error'); }
+async function cancelFreezeScan() {
+  if (!activeFreezeScanId) return;
+  const stop = $('#freezeScanCancel'); if (stop instanceof HTMLButtonElement) { stop.disabled = true; stop.textContent = 'Останавливаю…'; }
+  try { const operation = await nfqwsDiagnostics.freezeScanCancel(activeFreezeScanId); setText('#freezeScanStatus', operation.message); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось остановить проверку сетей', 'error'); }
+  finally { if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.textContent = 'Остановить'; } }
 }
 
 export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain','findTelegramChatId'] as const;
@@ -1039,6 +1150,21 @@ async function installSelectedRelease() {
   }
 }
 
+function updateStrategyMode(mode: string) {
+  $('#strategyCustomInputPanel')?.classList.toggle('hidden', mode !== 'custom');
+  const help = $('#strategyModeHelp');
+  if (!help) return;
+  help.textContent = ({
+    quick: 'Проверяются текущие стратегии и небольшой базовый набор.',
+    extended: 'Расширенный каталог blockcheck2: только совместимые с установленным nfqws2 варианты, проверка по одному.',
+    full: 'Полный каталог blockcheck2 — около 3 000 вариантов. Проверка идёт по одному, занимает дольше; её можно остановить в любой момент.',
+    custom: 'Будет проверена только ваша стратегия; backend заранее сверит Lua-функции и blob-файлы.',
+  } as Record<string, string>)[mode] ?? 'Выберите режим тестирования.';
+  help.classList.remove('mode-help-enter');
+  void help.offsetWidth;
+  help.classList.add('mode-help-enter');
+}
+
 function bindPrototypeActions() {
   const showDiff = () => {
     if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
@@ -1064,8 +1190,10 @@ function bindPrototypeActions() {
     stopSiteTrace: () => void stopSiteTrace(),
     startStrategyPick: () => void startStrategyPick(),
     cancelStrategyPick: () => void cancelStrategyPick(),
-    runTransferDiagnostic: () => void startTransferDiagnostic(),
-    cancelTransferDiagnostic: () => void cancelTransferDiagnostic(),
+    toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
+    previewStrategyPick: (index: string) => void previewStrategyPick(index),
+    runFreezeScan: () => void startFreezeScan(),
+    cancelFreezeScan: () => void cancelFreezeScan(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
@@ -1146,12 +1274,14 @@ function bindPrototypeActions() {
 function boot() {
   bindPrototypeActions();
   document.documentElement.classList.add('dark');
+  const initialStrategyMode = ($('#strategyModeSelect') as HTMLSelectElement | null)?.value ?? 'quick';
+  updateStrategyMode(initialStrategyMode);
   showPendingUpdateNotice();
   showRoute('conf');
   const savedPick = localStorage.getItem(STRATEGY_PICK_STORAGE);
   if (savedPick) void pollStrategyPick(savedPick);
-  const savedTransfer = localStorage.getItem(TRANSFER_DIAGNOSTIC_STORAGE);
-  if (savedTransfer) void pollTransferDiagnostic(savedTransfer);
+  const savedFreezeScan = localStorage.getItem('nfqws2-ui-freeze-scan');
+  if (savedFreezeScan) void pollFreezeScan(savedFreezeScan);
     void loadStrategyPickHistory();
   const applyButton = $('[data-action-click="applyConfigAndRestart"]');
   if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;

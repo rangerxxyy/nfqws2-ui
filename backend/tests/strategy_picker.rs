@@ -1,6 +1,7 @@
 use nfqws2_ui::strategy_picker::{
-    StrategyMode, StrategyProbeResult, StrategyProtocol, build_plan, candidate_argv,
-    configured_candidates, parse_lua_functions, run_candidates, validate_candidate,
+    StrategyCandidate, StrategyMode, StrategyProbeResult, StrategyProtocol, build_plan,
+    candidate_argv, configured_candidates, insert_reusable_candidates, parse_lua_functions,
+    run_candidates, run_candidates_with_compaction, validate_candidate,
 };
 use std::collections::HashSet;
 
@@ -99,7 +100,12 @@ fn standard_candidate_catalog_contains_actual_http_https_and_quic_families() {
 
 #[test]
 fn extended_mode_adds_only_candidates_supported_by_the_installed_function_and_blob_catalog() {
-    let functions = HashSet::from(["multisplit".into(), "fake".into(), "hostfakesplit".into()]);
+    let functions = HashSet::from([
+        "multisplit".into(),
+        "multidisorder".into(),
+        "fake".into(),
+        "hostfakesplit".into(),
+    ]);
     let blobs = ["fake_default_tls".into()];
     let quick = build_plan(
         StrategyProtocol::Https,
@@ -123,10 +129,240 @@ fn extended_mode_adds_only_candidates_supported_by_the_installed_function_and_bl
             .any(|item| item.name == "fake default TLS tcp_md5")
     );
     assert!(
-        !extended
+        extended
             .candidates
             .iter()
             .any(|item| item.name.contains("multidisorder"))
+    );
+}
+
+#[test]
+fn extended_catalog_ports_blockcheck2_candidate_families_and_deduplicates_them() {
+    let functions = HashSet::from([
+        "fake".into(),
+        "multisplit".into(),
+        "multidisorder".into(),
+        "hostfakesplit".into(),
+        "fakedsplit".into(),
+        "fakeddisorder".into(),
+        "tcpseg".into(),
+        "drop".into(),
+    ]);
+    let plan = build_plan(
+        StrategyProtocol::Https,
+        StrategyMode::Extended,
+        &[],
+        &functions,
+        &["fake_default_tls".into()],
+    );
+    let unique = plan
+        .candidates
+        .iter()
+        .map(|candidate| candidate.steps.clone())
+        .collect::<HashSet<_>>();
+    assert!(
+        plan.candidates.len() >= 270,
+        "expected extended TLS catalog candidates, got {}",
+        plan.candidates.len()
+    );
+    assert_eq!(
+        unique.len(),
+        plan.candidates.len(),
+        "candidate steps must be deduplicated"
+    );
+    assert!(
+        plan.candidates
+            .iter()
+            .any(|candidate| candidate.source == "Каталог zapret2 (расширенный)")
+    );
+    assert!(plan.candidates.iter().any(|candidate| {
+        candidate
+            .steps
+            .iter()
+            .any(|step| step.contains("hostfakesplit"))
+    }));
+    assert!(plan.candidates.iter().any(|candidate| {
+        candidate
+            .steps
+            .iter()
+            .any(|step| step.contains("ip_autottl"))
+    }));
+}
+
+#[test]
+fn full_catalog_ports_the_additional_blockcheck2_axes() {
+    let functions = HashSet::from([
+        "fake".into(),
+        "multisplit".into(),
+        "multidisorder".into(),
+        "hostfakesplit".into(),
+        "fakedsplit".into(),
+        "fakeddisorder".into(),
+        "tcpseg".into(),
+        "drop".into(),
+    ]);
+    let plan = build_plan(
+        StrategyProtocol::Https,
+        StrategyMode::Full,
+        &[],
+        &functions,
+        &["fake_default_tls".into()],
+    );
+    assert!(
+        (3_100..=3_200).contains(&plan.candidates.len()),
+        "full candidate count: {}",
+        plan.candidates.len()
+    );
+    assert!(plan.candidates.iter().any(|candidate| {
+        candidate
+            .steps
+            .iter()
+            .any(|step| step.contains("ip_ttl=12"))
+    }));
+    assert!(plan.candidates.iter().any(|candidate| {
+        candidate
+            .steps
+            .iter()
+            .any(|step| step.contains("disorder_after"))
+    }));
+    assert!(plan.candidates.iter().any(|candidate| {
+        candidate
+            .steps
+            .iter()
+            .any(|step| step.contains("fakedsplit"))
+    }));
+    assert!(plan.candidates.iter().any(|candidate| {
+        candidate
+            .steps
+            .iter()
+            .any(|step| step.contains("repeats=260"))
+    }));
+    assert_eq!(
+        plan.candidates
+            .iter()
+            .map(|candidate| candidate.steps.clone())
+            .collect::<HashSet<_>>()
+            .len(),
+        plan.candidates.len(),
+        "full catalog should deduplicate candidate step lists"
+    );
+}
+
+#[test]
+fn http_tls_blockcheck_catalog_is_never_mixed_into_quic_plans() {
+    let functions = HashSet::from([
+        "fake".into(),
+        "multisplit".into(),
+        "multidisorder".into(),
+        "hostfakesplit".into(),
+        "fakedsplit".into(),
+        "fakeddisorder".into(),
+        "tcpseg".into(),
+        "drop".into(),
+        "udplen".into(),
+    ]);
+    for mode in [StrategyMode::Extended, StrategyMode::Full] {
+        let plan = build_plan(
+            StrategyProtocol::Quic,
+            mode,
+            &[],
+            &functions,
+            &["fake_default_quic".into(), "fake_default_tls".into()],
+        );
+        assert!(
+            plan.candidates
+                .iter()
+                .all(|candidate| !candidate.source.starts_with("Каталог zapret2"))
+        );
+        assert!(
+            plan.candidates
+                .iter()
+                .all(|candidate| candidate.steps.iter().all(|step| {
+                    !step.contains("fake_default_tls") && !step.contains("multisplit:pos=sniext")
+                }))
+        );
+        assert!(plan.candidates.iter().any(|candidate| {
+            candidate
+                .steps
+                .iter()
+                .any(|step| step.contains("fake_default_quic"))
+        }));
+    }
+}
+
+#[test]
+fn reusable_diagnostic_candidates_are_revalidated_deduplicated_and_run_before_catalog() {
+    let functions = HashSet::from([
+        "fake".into(),
+        "multisplit".into(),
+        "multidisorder".into(),
+        "hostfakesplit".into(),
+    ]);
+    let mut plan = build_plan(
+        StrategyProtocol::Https,
+        StrategyMode::Extended,
+        &[],
+        &functions,
+        &["fake_default_tls".into()],
+    );
+    let candidate = StrategyCandidate {
+        name: "found by freeze scan".into(),
+        source: "Найдено проверкой сетей 16 КБ".into(),
+        steps: vec!["--lua-desync=hostfakesplit:host=ya.ru:repeats=4".into()],
+    };
+    let duplicate = candidate.clone();
+    let invalid = StrategyCandidate {
+        name: "not installed".into(),
+        source: "untrusted fixture".into(),
+        steps: vec!["--lua-desync=unknown:host=ya.ru".into()],
+    };
+    let already_in_catalog = StrategyCandidate {
+        name: "confirmed catalog duplicate".into(),
+        source: "Earlier successful history".into(),
+        steps: vec![
+            "--lua-desync=multidisorder:pos=1,sniext+1,host+1,midsld-2,midsld,midsld+2,endhost-1"
+                .into(),
+        ],
+    };
+    insert_reusable_candidates(
+        &mut plan,
+        [
+            candidate.clone(),
+            duplicate,
+            invalid,
+            already_in_catalog.clone(),
+        ],
+        &functions,
+        &["fake_default_tls".into()],
+    );
+    let index = plan
+        .candidates
+        .iter()
+        .position(|item| item.name == "found by freeze scan")
+        .unwrap();
+    let catalog_index = plan
+        .candidates
+        .iter()
+        .position(|item| item.source == "Каталог zapret2 (расширенный)")
+        .unwrap();
+    assert!(index < catalog_index);
+    let promoted_index = plan
+        .candidates
+        .iter()
+        .position(|item| item.name == "confirmed catalog duplicate")
+        .unwrap();
+    assert!(promoted_index < catalog_index);
+    assert_eq!(
+        plan.candidates
+            .iter()
+            .filter(|item| item.steps == candidate.steps)
+            .count(),
+        1
+    );
+    assert!(
+        plan.candidates
+            .iter()
+            .all(|item| !item.name.contains("not installed"))
     );
 }
 
@@ -275,6 +511,8 @@ async fn strategy_is_confirmed_only_after_two_real_probe_successes() {
     let result = run_candidates(
         plan,
         cancel,
+        2,
+        false,
         |_, _| {
             calls += 1;
             std::future::ready(StrategyProbeResult {
@@ -306,6 +544,8 @@ async fn strategy_picker_stops_before_any_candidate_when_direct_site_is_open() {
     let result = run_candidates(
         plan,
         cancel,
+        2,
+        false,
         |_, _| {
             calls += 1;
             std::future::ready(StrategyProbeResult {
@@ -323,6 +563,41 @@ async fn strategy_picker_stops_before_any_candidate_when_direct_site_is_open() {
 }
 
 #[tokio::test]
+async fn automatic_mode_stops_after_the_first_candidate_passes_every_repeat() {
+    let mut plan = build_plan(
+        StrategyProtocol::Https,
+        StrategyMode::Quick,
+        &[],
+        &HashSet::from(["multisplit".into()]),
+        &[],
+    );
+    plan.candidates.truncate(2);
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let runner_calls = calls.clone();
+    let result = run_candidates(
+        plan,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        2,
+        true,
+        move |_, _| {
+            runner_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::future::ready(StrategyProbeResult {
+                baseline_ok: Some(false),
+                candidate_ok: Some(true),
+                detail: "HTTP 200".into(),
+            })
+        },
+        |_, _, _| {},
+    )
+    .await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(result.checked, 1);
+    assert_eq!(result.results.len(), 1);
+    assert!(result.results[0].confirmed);
+    assert!(result.message.contains("Автоматический подбор остановлен"));
+}
+
+#[tokio::test]
 async fn inconclusive_network_probe_ends_as_persistable_failure() {
     let mut plan = build_plan(
         StrategyProtocol::Https,
@@ -335,6 +610,8 @@ async fn inconclusive_network_probe_ends_as_persistable_failure() {
     let result = run_candidates(
         plan,
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        2,
+        false,
         |_, _| {
             std::future::ready(StrategyProbeResult {
                 baseline_ok: None,
@@ -367,6 +644,8 @@ async fn cancellation_between_repeats_does_not_confirm_a_partial_success() {
     let result = run_candidates(
         plan,
         cancel,
+        2,
+        false,
         move |_, _| {
             runner_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             runner_cancel.store(true, std::sync::atomic::Ordering::Release);
@@ -382,6 +661,39 @@ async fn cancellation_between_repeats_does_not_confirm_a_partial_success() {
     assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert_eq!(result.state, "cancelled");
     assert!(result.results.is_empty());
+}
+
+#[tokio::test]
+async fn full_catalog_run_compacts_negative_rows_and_reports_their_count() {
+    let functions = HashSet::from(["multisplit".into()]);
+    let mut plan = build_plan(
+        StrategyProtocol::Https,
+        StrategyMode::Quick,
+        &[],
+        &functions,
+        &[],
+    );
+    plan.candidates.truncate(3);
+    let result = run_candidates_with_compaction(
+        plan,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        2,
+        false,
+        true,
+        |_, _| {
+            std::future::ready(StrategyProbeResult {
+                baseline_ok: Some(false),
+                candidate_ok: Some(false),
+                detail: "timeout".into(),
+            })
+        },
+        |_, _, _| {},
+    )
+    .await;
+    assert_eq!(result.checked, 3);
+    assert_eq!(result.failures, 3);
+    assert!(result.results.is_empty());
+    assert!(result.message.contains("без успешного ответа: 3"));
 }
 
 #[test]

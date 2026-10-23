@@ -1030,7 +1030,7 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"grid grid-cols-1 md:grid-cols-4 gap-4 mt-5"}>
+            <div className={"grid grid-cols-1 md:grid-cols-5 gap-4 mt-5"}>
               {"\n            "}
               <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
                 {"\n              "}
@@ -1043,6 +1043,26 @@ export default function App() {
                 </select>
                 <p className={"mt-2 text-[11px] leading-4 text-slate-400"}>{"QUIC Initial проверяется в разделе «Проверка сайта»; перебор QUIC-стратегий пока не подключён."}</p>
                 {"\n            "}
+              </div>
+
+              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
+                <label htmlFor={"strategyRepeatsSelect"} className={"block text-xs font-mono text-slate-400"}>Повторов</label>
+                <select id={"strategyRepeatsSelect"} defaultValue={"3"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                  <option value={"2"}>2 повтора</option><option value={"3"}>3 повтора</option><option value={"4"}>4 повтора</option><option value={"5"}>5 повторов</option>
+                </select>
+                <label htmlFor={"strategyStopAfterFirst"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-300"}>
+                  <input id={"strategyStopAfterFirst"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
+                  <span>Автоматически остановиться на первой подтверждённой стратегии</span>
+                </label>
+                <label htmlFor={"strategyIncludeOtherHistory"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                  <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
+                  <span>Проверять подтверждённые стратегии с других сайтов</span>
+                </label>
+                <label htmlFor={"strategyIncludeCommunity"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                  <input id={"strategyIncludeCommunity"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
+                  <span>Стратегии сообщества для ASN провайдера</span>
+                </label>
+                <p className={"mt-1 ml-5 text-[11px] leading-4 text-slate-400"}>Совместимые варианты будут загружены из каталога и проверены отдельными реальными запросами.</p>
               </div>
               {"\n\n            "}
               <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
@@ -1061,12 +1081,18 @@ export default function App() {
                   {"Режим тестирования"}
                 </label>
                 {"\n              "}
-                <select id={"strategyModeSelect"} defaultValue={"quick"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  <option value={"quick"}>Быстрый · текущие + базовые</option><option value={"extended"}>Расширенный · стандартный набор</option>
+                <select id={"strategyModeSelect"} data-action-change={"toggleStrategyCustomInput"} data-value-source={"value"} defaultValue={"quick"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                  <option value={"quick"}>Быстрый · текущие + базовые</option><option value={"extended"}>Расширенный · каталог blockcheck2</option><option value={"full"}>Полный · каталог blockcheck2 (~3 000)</option><option value={"custom"}>Своя стратегия</option>
                 </select>
+                <p id={"strategyModeHelp"} aria-live={"polite"} className={"strategy-mode-help mt-2 text-[11px] font-medium leading-4 text-slate-300"}>Проверяются текущие стратегии и небольшой базовый набор.</p>
                 {"\n            "}
               </div>
               {"\n\n            "}
+              <div id={"strategyCustomInputPanel"} className={"hidden bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5 md:col-span-2"}>
+                <label htmlFor={"strategyCustomSteps"} className={"block text-xs font-mono text-slate-400"}>Свои параметры · для режима «Своя стратегия»</label>
+                <textarea id={"strategyCustomSteps"} rows={2} spellCheck={false} placeholder={"по одному аргументу на строку, например:\n--lua-desync=multisplit:pos=1,midsld"} className={"mt-1.5 w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
+                <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>Разрешены только параметры Lua desync, которые поддерживает установленный nfqws2. Backend проверит их до изолированного теста.</p>
+              </div>
               <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5 flex flex-col justify-between"}>
                 {"\n              "}
                 <div className={"flex items-center justify-between text-xs font-mono"}>
@@ -1097,6 +1123,14 @@ export default function App() {
           <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5"}>
             {"\n          "}
             <div className={"xl:col-span-8 space-y-3"} id={"autotuneStrategiesList"}></div>
+            <section id={"autotunePreviewPanel"} className={"hidden xl:col-span-8 ui-card rounded-2xl p-4 space-y-3"} aria-live={"polite"}>
+              <div>
+                <h3 className={"text-sm font-bold text-white"}>Предпросмотр применения</h3>
+                <p id={"autotunePreviewSummary"} className={"mt-1 text-sm font-medium text-slate-300"}></p>
+              </div>
+              <div id={"autotunePreviewDiff"} className={"max-h-96 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
+              <p className={"text-xs font-medium text-slate-400"}>Это только просмотр. Конфигурация и служба не изменены.</p>
+            </section>
             {"\n\n          "}
             <div className={"xl:col-span-4 ui-card rounded-2xl p-5 flex flex-col min-h-[220px] xl:h-[540px]"}>
               {"\n            "}
@@ -1131,15 +1165,23 @@ export default function App() {
         {"\n      "}
         <section id={"tabContent-diagnostic16k"} className={"hidden view-animate space-y-5"}>
           <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
-            <div><h2 className={"text-lg font-bold text-white"}>Диагностика передачи данных</h2><p className={"mt-1 text-sm font-medium text-slate-300"}>Два ограниченных HTTPS-запроса напрямую и через текущий маршрут. Повторяемый тайм-аут около 16–20 КБ отмечается как возможный обрыв, а не доказательство DPI.</p></div>
-            <div className={"flex flex-col sm:flex-row gap-3"}>
-              <input id={"transferDomainInput"} type={"text"} placeholder={"example.com"} autoCapitalize={"none"} spellCheck={false} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white"} />
-              <button data-action-click={"runTransferDiagnostic"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Проверить передачу</button>
-              <button id={"transferDiagnosticCancel"} data-action-click={"cancelTransferDiagnostic"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>Остановить</button>
+            <div>
+              <h2 className={"text-lg font-bold text-white"}>Обрыв на 16 КБ</h2>
+              <p className={"mt-1 text-sm font-semibold leading-relaxed text-slate-200"}>Один последовательный тест проверяет ваши сайты и опорные сети напрямую, затем через изолированный тест nfqws2. Для подтверждённых зависаний панель подбирает fake-SNI и проверяет найденный вариант три раза. Основная служба и трафик домашних устройств не меняются.</p>
             </div>
-            <p id={"transferDiagnosticStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
+            <div className={"flex flex-col sm:flex-row sm:items-end gap-3"}>
+              <label htmlFor={"freezeScanHostsInput"} className={"min-w-0 flex-1 space-y-2 text-sm font-semibold text-slate-200"}>
+                <span>Свои сайты <span className={"font-medium text-slate-400"}>(необязательно)</span></span>
+                <input id={"freezeScanHostsInput"} type={"text"} placeholder={"example.com, video.example"} autoCapitalize={"none"} spellCheck={false} className={"w-full bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white placeholder:text-slate-500"} />
+              </label>
+              <button data-action-click={"runFreezeScan"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Запустить пробу</button>
+              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>Остановить</button>
+            </div>
+            <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
+            <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-4 py-3 text-sm font-bold leading-relaxed"} role={"status"} aria-live={"polite"}></p>
+            <div id={"freezeScanResults"} className={"hidden overflow-x-auto rounded-xl border border-slate-800"}></div>
+            <p className={"text-xs font-semibold leading-relaxed text-slate-300"}>Проверки идут по очереди с ограничением времени. Причина сбоя отмечается как возможный обрыв, а не как доказательство DPI. Результаты и прогресс сохраняются при перезагрузке страницы.</p>
           </div>
-          <div id={"transferDiagnosticResults"} className={"grid grid-cols-1 lg:grid-cols-2 gap-4"}></div>
         </section>
         <section id={"tabContent-monitor"} className={"hidden view-animate space-y-5"}>
           {"\n        "}
