@@ -313,7 +313,7 @@ export default function App() {
                 <span className={"flex items-center gap-3"}><span className={"text-blue-400"}>⌁</span><span>Трассировка</span></span>
                 <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300"}>--debug</span>
               </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["autotune"])} id={"navBtn-autotune"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["autotune"])} id={"navBtn-autotune"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 {"\n              "}
                 <div className={"flex items-center gap-3"}>
                   {"\n                "}
@@ -328,9 +328,13 @@ export default function App() {
                 </div>
                 {"\n              "}
                 <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300"}>
-                  {"Q:—"}
+                  {"TCP"}
                 </span>
                 {"\n            "}
+              </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["diagnostic16k"])} id={"navBtn-diagnostic16k"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>↔</span><span>Диагностика 16 КБ</span></span>
+                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"}>HTTPS</span>
               </button>
               {"\n\n            "}
               {"\n            "}
@@ -1002,35 +1006,24 @@ export default function App() {
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <p className={"text-xs sm:text-sm text-slate-400 mt-1"}>
-                    {"\n                Автоподбор и отдельная тестовая очередь не подключены к backend; запуск и проверка трафика недоступны.\n              "}
+                <p className={"text-xs sm:text-sm text-slate-300 mt-1"}>
+                    {"Проверяет реальные запросы отдельным экземпляром nfqws2 и временными правилами только для тестовых соединений. Основной конфиг автоматически не меняется."}
                 </p>
                 {"\n            "}
               </div>
               {"\n\n            "}
               <div className={"flex flex-wrap items-center gap-3"}>
                 {"\n              "}
-                <label className={"flex items-center gap-2 text-xs font-medium text-slate-300 bg-[#060a12] px-3.5 py-2 rounded-xl border border-slate-800 cursor-pointer"}>
-                  {"\n                "}
-                  <input id={"autoApplyPickToggle"} type={"checkbox"} defaultChecked={false} className={"rounded bg-slate-900 border-slate-700 text-blue-500 focus:ring-0"} />
-                  {"\n                "}
-                  <span>
-                    {"Применять самому (с авто-откатом)"}
-                  </span>
-                  {"\n              "}
-                </label>
-                {"\n              "}
-                <button id={"startScanBtn"} data-action-click={"startStrategyAutoScan"} className={"px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all active:scale-95"}>
+                <button id={"startScanBtn"} data-action-click={"startStrategyPick"} className={"px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all active:scale-95"}>
                   {"\n                "}
                   <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                     <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2.2"} d={"M13 10V3L4 14h7v7l9-11h-7z"}></path>
                   </svg>
                   {"\n                "}
-                  <span id={"scanBtnText"}>
-                    {"Запустить авто-подбор"}
-                  </span>
+                  <span id={"scanBtnText"}>Подобрать стратегию</span>
                   {"\n              "}
                 </button>
+                <button id={"strategyPickCancel"} data-action-click={"cancelStrategyPick"} className={"hidden px-4 py-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 text-sm font-semibold"}>Остановить</button>
                 {"\n            "}
               </div>
               {"\n          "}
@@ -1042,22 +1035,23 @@ export default function App() {
               <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Целевой ресурс"}
+                  {"Транспорт"}
                 </label>
                 {"\n              "}
-                <select defaultValue={""} data-action-change={"syncCustomHostInput"} data-args={JSON.stringify([{"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  <option value={""} disabled>Хосты не загружены из backend</option>
+                <select id={"strategyProtocolSelect"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                  <option value={"https"}>HTTPS · TCP 443</option><option value={"http"}>HTTP · TCP 80</option>
                 </select>
+                <p className={"mt-2 text-[11px] leading-4 text-slate-400"}>{"QUIC Initial проверяется в разделе «Проверка сайта»; перебор QUIC-стратегий пока не подключён."}</p>
                 {"\n            "}
               </div>
               {"\n\n            "}
               <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Проверяемый SNI хост"}
+                  {"Домен для проверки"}
                 </label>
                 {"\n              "}
-              <input id={"scanCustomHost"} type={"text"} placeholder={"Хост не задан"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
+              <input id={"scanCustomHost"} type={"text"} placeholder={"example.com"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
                 {"\n            "}
               </div>
               {"\n\n            "}
@@ -1067,8 +1061,8 @@ export default function App() {
                   {"Режим тестирования"}
                 </label>
                 {"\n              "}
-                <select defaultValue={""} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  <option value={""} disabled>Режим не загружен из backend</option>
+                <select id={"strategyModeSelect"} defaultValue={"quick"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                  <option value={"quick"}>Быстрый · текущие + базовые</option><option value={"extended"}>Расширенный · стандартный набор</option>
                 </select>
                 {"\n            "}
               </div>
@@ -1082,7 +1076,7 @@ export default function App() {
                   </span>
                   {"\n                "}
                   <span id={"scanProgressLabel"} className={"text-blue-400 font-bold"}>
-                    {"Backend не подключён"}
+                    {"Готов к проверке"}
                   </span>
                   {"\n              "}
                 </div>
@@ -1104,16 +1098,16 @@ export default function App() {
             {"\n          "}
             <div className={"xl:col-span-8 space-y-3"} id={"autotuneStrategiesList"}></div>
             {"\n\n          "}
-            <div className={"xl:col-span-4 ui-card rounded-2xl p-5 flex flex-col h-[540px]"}>
+            <div className={"xl:col-span-4 ui-card rounded-2xl p-5 flex flex-col min-h-[220px] xl:h-[540px]"}>
               {"\n            "}
               <div className={"pb-3 border-b border-slate-800 flex items-center justify-between"}>
                 {"\n              "}
                 <span className={"text-sm font-bold text-white font-mono"}>
-                  {"Журнал автоподбора"}
+                  {"История последних подборов"}
                 </span>
                 {"\n              "}
                 <span className={"text-xs font-mono text-amber-400"}>
-                  {"picks.json"}
+                  {"до 12 задач"}
                 </span>
                 {"\n            "}
               </div>
@@ -1121,7 +1115,7 @@ export default function App() {
               <div id={"autotuneConsoleBox"} className={"flex-1 overflow-y-auto font-mono text-xs space-y-2 mt-3 pr-1 text-slate-300 leading-relaxed"}>
                 {"\n              "}
                 <div className={"text-slate-500"}>
-                  {"Backend пока не предоставляет API тестовой очереди. Результатов проверки нет."}
+                  {"История появится после завершённых проверок. Выберите запись, чтобы открыть её результаты."}
                 </div>
                 {"\n            "}
               </div>
@@ -1135,6 +1129,18 @@ export default function App() {
         {"\n      "}
         {"\n      "}
         {"\n      "}
+        <section id={"tabContent-diagnostic16k"} className={"hidden view-animate space-y-5"}>
+          <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
+            <div><h2 className={"text-lg font-bold text-white"}>Диагностика передачи данных</h2><p className={"mt-1 text-sm font-medium text-slate-300"}>Два ограниченных HTTPS-запроса напрямую и через текущий маршрут. Повторяемый тайм-аут около 16–20 КБ отмечается как возможный обрыв, а не доказательство DPI.</p></div>
+            <div className={"flex flex-col sm:flex-row gap-3"}>
+              <input id={"transferDomainInput"} type={"text"} placeholder={"example.com"} autoCapitalize={"none"} spellCheck={false} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white"} />
+              <button data-action-click={"runTransferDiagnostic"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Проверить передачу</button>
+              <button id={"transferDiagnosticCancel"} data-action-click={"cancelTransferDiagnostic"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>Остановить</button>
+            </div>
+            <p id={"transferDiagnosticStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
+          </div>
+          <div id={"transferDiagnosticResults"} className={"grid grid-cols-1 lg:grid-cols-2 gap-4"}></div>
+        </section>
         <section id={"tabContent-monitor"} className={"hidden view-animate space-y-5"}>
           {"\n        "}
           <div className={"grid grid-cols-1 lg:grid-cols-12 gap-5"}>

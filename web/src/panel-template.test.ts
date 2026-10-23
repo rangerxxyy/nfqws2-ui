@@ -102,6 +102,47 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.mobile-list-editor');
   });
 
+  it('keeps new diagnostic inputs and result panels usable on a phone', () => {
+    const picker = template.slice(template.indexOf('id="tabContent-autotune"'), template.indexOf('id="tabContent-monitor"'));
+    const transfer = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-monitor"'));
+    expect(picker).toContain('flex flex-col lg:flex-row');
+    expect(picker).toContain('grid grid-cols-1 md:grid-cols-4');
+    expect(picker).toContain('min-h-[220px] xl:h-[540px]');
+    expect(transfer).toContain('flex flex-col sm:flex-row');
+    expect(transfer).toContain('min-w-0 flex-1');
+    expect(transfer).toContain('grid grid-cols-1 lg:grid-cols-2');
+  });
+
+  it('keeps long strategy jobs cancellable until the backend reports a terminal state', () => {
+    expect(panelSource).not.toContain('attempt < 600');
+    expect(panelSource).toContain("while (['queued', 'running', 'stopping'].includes(current.state))");
+    expect(panelSource).toContain('consecutiveFailures >= 10');
+    expect(panelSource).toContain('localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id)');
+  });
+
+  it('retains completed diagnostic operation IDs so the latest results restore after reload', () => {
+    expect(panelSource).not.toContain('localStorage.removeItem(STRATEGY_PICK_STORAGE)');
+    expect(panelSource).not.toContain('localStorage.removeItem(TRANSFER_DIAGNOSTIC_STORAGE)');
+    expect(panelSource).toContain('const savedPick = localStorage.getItem(STRATEGY_PICK_STORAGE)');
+    expect(panelSource).toContain('const savedTransfer = localStorage.getItem(TRANSFER_DIAGNOSTIC_STORAGE)');
+  });
+
+  it('shows persisted strategy history and can reopen a saved result', () => {
+    expect(template).toContain('История последних подборов');
+    expect(template).toContain('id="autotuneConsoleBox"');
+    expect(panelSource).toContain('nfqwsDiagnostics.strategyHistory()');
+    expect(panelSource).toContain('Открыть результаты подбора для');
+    expect(panelSource).toContain('if (strategyPickRunning) return;');
+    expect(backendSource).toContain('/api/nfqws2/strategies/pick/history');
+  });
+
+  it('clears stale candidate cards when a selected operation has no candidate results', () => {
+    const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('async function loadStrategyPickHistory'));
+    expect(renderer).toContain('container.replaceChildren()');
+    expect(renderer).toContain('if (!operation.results.length)');
+    expect(renderer).not.toContain('if (!container || !operation.results.length) return');
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');
@@ -109,11 +150,15 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('showDiagnosisProgress');
   });
 
-  it('hides unfinished sections and prevents opening them through tab actions', () => {
-    for (const route of ['autotune', 'monitor', 'community']) {
+  it('exposes only backend-connected new diagnostics and keeps unfinished sections unavailable', () => {
+    for (const route of ['monitor', 'community']) {
       expect(template).toMatch(new RegExp(`id="navBtn-${route}" class="[^"]*hidden`));
       expect(template).toMatch(new RegExp(`id="tabContent-${route}" class="hidden`));
     }
+    expect(template).toMatch(/id="navBtn-autotune" class="(?![^"]*hidden)[^"]*side-nav-btn/);
+    expect(template).toContain('data-action-click="startStrategyPick"');
+    expect(template).toContain('id="tabContent-diagnostic16k"');
+    expect(template).toContain('data-action-click="runTransferDiagnostic"');
     expect(panelSource).toContain('UNAVAILABLE_PANEL_ROUTES');
   });
 
@@ -329,6 +374,12 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('nfqwsDiagnostics.traceStatus');
     expect(panelSource).toContain('nfqwsDiagnostics.traceStop');
     expect(panelSource).toContain('stopSiteTrace:');
+  });
+
+  it('does not advertise QUIC strategy picking until a real isolated QUIC runner exists', () => {
+    expect(template).not.toContain('<option value="quic">QUIC · UDP 443</option>');
+    expect(template).toContain('перебор QUIC-стратегий пока не подключён');
+    expect(backendSource).toContain('Перебор стратегий QUIC пока не поддерживается');
   });
 
   it('has no duplicate action attributes and every template action is wired', () => {

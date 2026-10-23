@@ -3,13 +3,13 @@ import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type TransferDiagnosticOperation } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'monitor' | 'community';
-export const UNAVAILABLE_PANEL_ROUTES = ['autotune', 'monitor', 'community'] as const;
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community';
+export const UNAVAILABLE_PANEL_ROUTES = ['monitor', 'community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let discoveredNetworkInterfaces: string[] = [];
@@ -20,6 +20,10 @@ let statusPolling = false;
 let diagnosisRunning = false;
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
+let strategyPickRunning = false;
+let activeStrategyPickId: string | null = null;
+let transferDiagnosticRunning = false;
+let activeTransferDiagnosticId: string | null = null;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
@@ -725,6 +729,193 @@ async function stopSiteTrace() {
   }
 }
 
+const STRATEGY_PICK_STORAGE = 'nfqws2-ui-strategy-pick-id';
+const TRANSFER_DIAGNOSTIC_STORAGE = 'nfqws2-ui-transfer-diagnostic-id';
+function renderStrategyPick(operation: StrategyPickOperation) {
+  setText('#scanProgressLabel', operation.current ? `${operation.done}/${operation.total} · ${operation.current}` : operation.message);
+  const bar = $('#scanProgressBar');
+  if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(100 * operation.done / operation.total) : 0}%`;
+  const container = $('#autotuneStrategiesList');
+  if (!container) return;
+  container.replaceChildren();
+  if (!operation.results.length) {
+    const empty = document.createElement('p'); empty.className = 'ui-card rounded-xl p-4 text-sm font-medium text-slate-300';
+    empty.textContent = operation.state === 'site_unblocked'
+      ? 'Прямое соединение отвечает; стратегии проверять не требуется.'
+      : 'Для этой операции результатов стратегий нет.';
+    container.append(empty);
+    return;
+  }
+  for (const result of operation.results) {
+    const card = document.createElement('article');
+    card.className = 'ui-card rounded-xl p-4 space-y-2';
+    const heading = document.createElement('h3');
+    heading.className = `font-semibold ${result.confirmed ? 'text-emerald-200' : 'text-slate-200'}`;
+    heading.textContent = `${result.confirmed ? 'Подтверждена' : 'Не подтверждена'} · ${result.candidate.name}`;
+    const summary = document.createElement('p');
+    summary.className = 'text-sm font-medium text-slate-300';
+    summary.textContent = `${result.successes}/${result.attempts} успешных проверок · ${result.candidate.source}`;
+    const detail = document.createElement('p'); detail.className = 'text-xs text-slate-400 break-words'; detail.textContent = result.detail;
+    const args = document.createElement('code'); args.className = 'block whitespace-pre-wrap break-all rounded-lg bg-[#060a12] p-2 text-xs text-cyan-200'; args.textContent = result.candidate.steps.join('\n');
+    card.append(heading, summary, detail, args); container.append(card);
+  }
+}
+
+async function loadStrategyPickHistory() {
+  const container = $('#autotuneConsoleBox');
+  if (!container) return;
+  try {
+    const history = await nfqwsDiagnostics.strategyHistory();
+    container.replaceChildren();
+    if (!history.length) {
+      const empty = document.createElement('p'); empty.className = 'text-slate-400'; empty.textContent = 'Завершённых подборов пока нет.'; container.append(empty);
+      return;
+    }
+    for (const operation of history) {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'w-full rounded-lg border border-slate-800 bg-[#060a12] p-3 text-left hover:border-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400';
+      button.setAttribute('aria-label', `Открыть результаты подбора для ${operation.host}`);
+      const title = document.createElement('span'); title.className = 'block truncate font-semibold text-slate-200'; title.textContent = operation.host;
+      const result = operation.results.filter((item) => item.confirmed).length;
+      const state = document.createElement('span'); state.className = `mt-1 block text-[11px] ${result ? 'text-emerald-300' : 'text-slate-400'}`;
+      state.textContent = `${result} подтверждено · ${operation.done}/${operation.total} · ${new Date(operation.updatedAt * 1000).toLocaleString()}`;
+      button.append(title, state);
+      button.addEventListener('click', () => {
+        if (strategyPickRunning) return;
+        const input = $('#scanCustomHost');
+        if (input instanceof HTMLInputElement) input.value = operation.host;
+        localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
+        showRoute('autotune');
+        renderStrategyPick(operation);
+        setText('#scanProgressLabel', operation.message);
+      });
+      container.append(button);
+    }
+  } catch (error) {
+    container.replaceChildren();
+    const message = document.createElement('p'); message.className = 'text-xs text-amber-300';
+    message.textContent = error instanceof Error ? `История недоступна: ${error.message}` : 'История подборов недоступна';
+    container.append(message);
+  }
+}
+
+async function pollStrategyPick(id: string) {
+  activeStrategyPickId = id; strategyPickRunning = true;
+  const input = $('#scanCustomHost'); const start = $('#startScanBtn'); const stop = $('#strategyPickCancel');
+  if (input instanceof HTMLInputElement) input.disabled = true;
+  if (start instanceof HTMLButtonElement) { start.disabled = true; start.textContent = 'Подбор…'; }
+  stop?.classList.remove('hidden');
+  try {
+    let current = await nfqwsDiagnostics.strategyStatus(id);
+    let consecutiveFailures = 0;
+    renderStrategyPick(current);
+    while (['queued', 'running', 'stopping'].includes(current.state)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      try {
+        current = await nfqwsDiagnostics.strategyStatus(id);
+        consecutiveFailures = 0;
+        renderStrategyPick(current);
+      } catch (error) {
+        consecutiveFailures += 1;
+        setText('#scanProgressLabel', `${current.message} · переподключение…`);
+        if (consecutiveFailures >= 10) throw error;
+      }
+    }
+    renderStrategyPick(current);
+    setText('#scanProgressLabel', current.message);
+    if (['complete', 'no_match', 'site_unblocked', 'cancelled', 'failed'].includes(current.state)) {
+      void loadStrategyPickHistory();
+      if (current.state === 'failed') toast(current.message, 'error');
+      else toast(current.message, current.state === 'complete' ? 'success' : 'error');
+    }
+  } catch (error) {
+    setText('#scanProgressLabel', error instanceof Error ? error.message : 'Статус автоподбора пока недоступен');
+  } finally {
+    strategyPickRunning = false; activeStrategyPickId = null;
+    if (input instanceof HTMLInputElement) input.disabled = false;
+    if (start instanceof HTMLButtonElement) { start.disabled = false; start.textContent = 'Подобрать стратегию'; }
+    stop?.classList.add('hidden');
+  }
+}
+
+async function startStrategyPick() {
+  if (strategyPickRunning) return;
+  const input = $('#scanCustomHost'); const proto = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect');
+  if (!(input instanceof HTMLInputElement) || !input.value.trim()) return toast('Введите домен для подбора.', 'error');
+  const protocol = proto instanceof HTMLSelectElement && ['http', 'https'].includes(proto.value) ? proto.value as 'http' | 'https' : 'https';
+  const selectedMode = mode instanceof HTMLSelectElement && mode.value === 'extended' ? 'extended' : 'quick';
+  const container = $('#autotuneStrategiesList'); container?.replaceChildren();
+  try {
+    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode);
+    activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
+    await pollStrategyPick(operation.id);
+  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить автоподбор', 'error'); }
+}
+
+async function cancelStrategyPick() {
+  if (!activeStrategyPickId) return;
+  const stop = $('#strategyPickCancel'); if (stop instanceof HTMLButtonElement) { stop.disabled = true; stop.textContent = 'Останавливаю…'; }
+  try { const operation = await nfqwsDiagnostics.strategyCancel(activeStrategyPickId); setText('#scanProgressLabel', operation.message); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось остановить автоподбор', 'error'); }
+  finally { if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.textContent = 'Остановить'; } }
+}
+
+function renderTransferDiagnostic(operation: TransferDiagnosticOperation) {
+  const status = $('#transferDiagnosticStatus');
+  if (status) { status.textContent = operation.message; status.classList.remove('hidden'); }
+  const container = $('#transferDiagnosticResults');
+  if (!container || !operation.result) return;
+  container.replaceChildren();
+  const result = operation.result;
+  for (const [label, side] of [['Напрямую, мимо nfqws2', result.direct], ['Через текущий маршрут', result.current]] as const) {
+    const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-3';
+    const title = document.createElement('h3'); title.className = 'text-base font-bold text-white'; title.textContent = label;
+    const summary = document.createElement('p'); summary.className = `text-sm font-semibold ${side.diagnosis.repeatableBoundaryStall ? 'text-amber-200' : side.diagnosis.classification === 'complete' ? 'text-emerald-200' : 'text-slate-200'}`; summary.textContent = side.diagnosis.summary;
+    const metrics = document.createElement('p'); metrics.className = 'text-sm font-medium text-slate-300';
+    metrics.textContent = `Получено: ${side.diagnosis.minBytes ?? 0}–${side.diagnosis.maxBytes ?? 0} байт · ${side.attempts.length} запроса · IP ${result.address}`;
+    const list = document.createElement('ul'); list.className = 'space-y-1 text-xs font-medium text-slate-300';
+    for (const [index, attempt] of side.attempts.entries()) { const row = document.createElement('li'); row.textContent = `Попытка ${index + 1}: ${attempt.bytesReceived} байт · HTTP ${attempt.httpStatus ?? '—'} · ${attempt.elapsedMs} мс · первый байт ${attempt.firstByteMs ?? '—'} мс${attempt.transportError ? ` · ${attempt.transportError}` : ''}`; list.append(row); }
+    card.append(title, summary, metrics, list); container.append(card);
+  }
+}
+
+async function pollTransferDiagnostic(id: string) {
+  activeTransferDiagnosticId = id; transferDiagnosticRunning = true;
+  const input = $('#transferDomainInput'); const start = $('[data-action-click="runTransferDiagnostic"]'); const stop = $('#transferDiagnosticCancel');
+  if (input instanceof HTMLInputElement) input.disabled = true;
+  if (start instanceof HTMLButtonElement) start.disabled = true;
+  stop?.classList.remove('hidden');
+  try {
+    let current = await nfqwsDiagnostics.transferStatus(id); renderTransferDiagnostic(current);
+    for (let index = 0; index < 90 && ['queued', 'running', 'stopping'].includes(current.state); index += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      try { current = await nfqwsDiagnostics.transferStatus(id); renderTransferDiagnostic(current); }
+      catch { setText('#transferDiagnosticStatus', 'Связь с роутером восстанавливается…'); }
+    }
+    renderTransferDiagnostic(current);
+  } catch (error) { setText('#transferDiagnosticStatus', error instanceof Error ? error.message : 'Статус диагностики недоступен'); }
+  finally {
+    transferDiagnosticRunning = false; activeTransferDiagnosticId = null;
+    if (input instanceof HTMLInputElement) input.disabled = false;
+    if (start instanceof HTMLButtonElement) start.disabled = false;
+    stop?.classList.add('hidden');
+  }
+}
+
+async function startTransferDiagnostic() {
+  if (transferDiagnosticRunning) return;
+  const input = $('#transferDomainInput'); if (!(input instanceof HTMLInputElement) || !input.value.trim()) return toast('Введите домен для проверки передачи.', 'error');
+  $('#transferDiagnosticResults')?.replaceChildren();
+  try { const operation = await nfqwsDiagnostics.transferStart(input.value.trim()); localStorage.setItem(TRANSFER_DIAGNOSTIC_STORAGE, operation.id); await pollTransferDiagnostic(operation.id); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить диагностику передачи', 'error'); }
+}
+
+async function cancelTransferDiagnostic() {
+  if (!activeTransferDiagnosticId) return;
+  try { const operation = await nfqwsDiagnostics.transferCancel(activeTransferDiagnosticId); setText('#transferDiagnosticStatus', operation.message); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось остановить диагностику передачи', 'error'); }
+}
+
 export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain','findTelegramChatId'] as const;
 
 function renderReleaseNotes(target: HTMLElement, notes: string) {
@@ -871,6 +1062,10 @@ function bindPrototypeActions() {
     runSiteDiagnosis: () => void runSiteDiagnosis(),
     runSiteTrace: () => void runSiteTrace(),
     stopSiteTrace: () => void stopSiteTrace(),
+    startStrategyPick: () => void startStrategyPick(),
+    cancelStrategyPick: () => void cancelStrategyPick(),
+    runTransferDiagnostic: () => void startTransferDiagnostic(),
+    cancelTransferDiagnostic: () => void cancelTransferDiagnostic(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
@@ -953,6 +1148,11 @@ function boot() {
   document.documentElement.classList.add('dark');
   showPendingUpdateNotice();
   showRoute('conf');
+  const savedPick = localStorage.getItem(STRATEGY_PICK_STORAGE);
+  if (savedPick) void pollStrategyPick(savedPick);
+  const savedTransfer = localStorage.getItem(TRANSFER_DIAGNOSTIC_STORAGE);
+  if (savedTransfer) void pollTransferDiagnostic(savedTransfer);
+    void loadStrategyPickHistory();
   const applyButton = $('[data-action-click="applyConfigAndRestart"]');
   if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   $('#nfqwsConfTextarea')?.addEventListener('input', () => {

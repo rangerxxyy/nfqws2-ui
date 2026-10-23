@@ -21,6 +21,42 @@ describe('API client used by the source-based panel', () => {
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('POST');
   });
 
+  it('starts and polls a persisted isolated strategy-pick operation', async () => {
+    const queued = { id: '0123456789abcdef0123456789abcdef', host: 'example.com', protocol: 'https', state: 'queued', stage: 'queued', current: null, done: 0, total: 3, results: [], message: 'queued', updatedAt: 100 } as const;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(queued), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'running', stage: 'testing', current: 'multisplit' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const started = await nfqwsDiagnostics.strategyStart('example.com', 'https', 'quick');
+    expect(await nfqwsDiagnostics.strategyStatus(started.id)).toMatchObject({ state: 'running', current: 'multisplit' });
+    expect(await nfqwsDiagnostics.strategyCancel(started.id)).toMatchObject({ state: 'stopping' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'quick' });
+  });
+
+  it('loads persisted strategy-pick history from Rust', async () => {
+    const history = [{ id: '0123456789abcdef0123456789abcdef', host: 'example.com', protocol: 'https', state: 'complete', stage: 'complete', current: null, done: 2, total: 2, results: [], message: 'complete', updatedAt: 100 }];
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(history), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsDiagnostics.strategyHistory()).toEqual(history);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/history');
+  });
+
+  it('starts and polls the bounded byte-transfer diagnostic', async () => {
+    const queued = { id: '0123456789abcdef0123456789abcdef', host: 'example.com', state: 'queued', stage: 'queued', attempt: 0, message: 'queued', result: null, updatedAt: 100 } as const;
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(queued), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'running', stage: 'direct', attempt: 1 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const started = await nfqwsDiagnostics.transferStart('example.com');
+    expect(await nfqwsDiagnostics.transferStatus(started.id)).toMatchObject({ state: 'running', attempt: 1 });
+    expect(await nfqwsDiagnostics.transferCancel(started.id)).toMatchObject({ state: 'stopping' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/transfer');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com' });
+  });
+
   it('requests router-side website diagnostics and returns the real stage results', async () => {
     const report = { host: 'example.com', addresses: ['1.1.1.1'], steps: [{id:'https',status:'error',detail:'TLS timeout',durationMs:8000,httpCode:null}], summary: 'Не удалось проверить HTTPS', limitations: [] };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(report), {status:200}));

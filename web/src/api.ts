@@ -12,6 +12,12 @@ export type SiteDiagnosticReport = { host: string; addresses: string[]; steps: S
 export type SiteTracePhase = { state: 'complete' | 'error' | 'unavailable'; ok: boolean | null; code: number | null; durationMs: number | null; reason: string };
 export type SiteTraceReport = { host: string; address: string | null; withoutNfqws2: SiteTracePhase; withNfqws2: SiteTracePhase; traceLines: string[]; traceTruncated: boolean; traceHostname: string | null; traceProfile: string | null; traceActions: string[]; traceWarnings: string[]; summary: string };
 export type SiteTraceOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; message: string; report: SiteTraceReport | null; updatedAt: number };
+export type StrategyPickResult = { candidate: { name: string; source: string; steps: string[] }; attempts: number; successes: number; confirmed: boolean; detail: string };
+export type StrategyPickOperation = { id: string; host: string; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; message: string; updatedAt: number };
+export type TransferAttempt = { bytesReceived: number; sampleBytes: number; httpStatus: number | null; elapsedMs: number; firstByteMs: number | null; transportError: string | null };
+export type TransferSideResult = { attempts: TransferAttempt[]; diagnosis: { classification: string; attempts: number; minBytes: number | null; maxBytes: number | null; repeatableBoundaryStall: boolean; summary: string; limitations: string[] } };
+export type TransferComparison = { host: string; address: string; direct: TransferSideResult; current: TransferSideResult };
+export type TransferDiagnosticOperation = { id: string; host: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; attempt: number; message: string; result: TransferComparison | null; updatedAt: number };
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
 export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = 'user.list' | 'auto.list' | 'exclude.list' | 'ipset.list' | 'ipset_exclude.list';
@@ -117,6 +123,13 @@ export const nfqwsDiagnostics = {
   }),
   traceStatus: (id: string) => api<SiteTraceOperation>(`/api/nfqws2/diagnostics/trace/operations/${encodeURIComponent(id)}`),
   traceStop: (id: string) => api<SiteTraceOperation>(`/api/nfqws2/diagnostics/trace/operations/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
+  transferStart: (host: string) => api<TransferDiagnosticOperation>('/api/nfqws2/diagnostics/transfer', { method: 'POST', body: JSON.stringify({ host }) }),
+  transferStatus: (id: string) => api<TransferDiagnosticOperation>(`/api/nfqws2/diagnostics/transfer/operations/${encodeURIComponent(id)}`),
+  transferCancel: (id: string) => api<TransferDiagnosticOperation>(`/api/nfqws2/diagnostics/transfer/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended') => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode }) }),
+  strategyStatus: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}`),
+  strategyCancel: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  strategyHistory: () => api<StrategyPickOperation[]>('/api/nfqws2/strategies/pick/history'),
 };
 
 export const nfqwsUpdates = {

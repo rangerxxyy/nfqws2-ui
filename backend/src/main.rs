@@ -10,6 +10,8 @@ use axum::{
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::site_trace;
+use nfqws2_ui::strategy_picker::{self, StrategyMode, StrategyProtocol};
+use nfqws2_ui::transfer_diagnostic;
 use nfqws2_ui::{
     ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
     network_interface_names, parse_meminfo_kb, process_matches, service_action, service_action_at,
@@ -18,8 +20,9 @@ use nfqws2_ui::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::Future,
+    io::Read as StdRead,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
@@ -75,6 +78,8 @@ struct AppState {
     site_diagnostic_lock: Arc<Mutex<()>>,
     site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     site_trace_runner: Arc<SiteTraceRunner>,
+    strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,8 +93,54 @@ struct SiteTraceOperation {
     updated_at: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategyPickOperation {
+    id: String,
+    host: String,
+    protocol: String,
+    state: String,
+    stage: String,
+    current: Option<String>,
+    done: usize,
+    total: usize,
+    results: Vec<strategy_picker::StrategyCandidateResult>,
+    message: String,
+    updated_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategyPickRequest {
+    host: String,
+    protocol: Option<String>,
+    mode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferDiagnosticOperation {
+    id: String,
+    host: String,
+    state: String,
+    stage: String,
+    attempt: usize,
+    message: String,
+    result: Option<transfer_diagnostic::TransferComparison>,
+    updated_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferDiagnosticRequest {
+    host: String,
+}
+
 const MAX_SITE_TRACE_STATE_BYTES: usize = 512 * 1024;
 const MAX_SITE_TRACE_OPERATIONS: usize = 12;
+const MAX_STRATEGY_PICK_STATE_BYTES: usize = 512 * 1024;
+const MAX_STRATEGY_PICK_OPERATIONS: usize = 12;
+const MAX_TRANSFER_DIAGNOSTIC_STATE_BYTES: usize = 128 * 1024;
 
 type SiteTraceRunner = dyn Fn(
         String,
@@ -228,6 +279,218 @@ async fn prune_site_trace_operations(directory: &Path) {
     for (path, _) in completed.into_iter().take(remove_count) {
         let _ = tokio::fs::remove_file(path).await;
     }
+}
+
+fn strategy_pick_operation_path(directory: &Path, id: &str) -> PathBuf {
+    directory.join(format!("{id}.json"))
+}
+
+fn write_strategy_pick_operation_sync(
+    directory: &Path,
+    operation: &StrategyPickOperation,
+) -> Result<(), String> {
+    if !valid_site_trace_id(&operation.id) {
+        return Err("Недопустимый идентификатор автоподбора".into());
+    }
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec(operation).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_STRATEGY_PICK_STATE_BYTES {
+        return Err("Состояние автоподбора превышает ограничение размера".into());
+    }
+    let destination = strategy_pick_operation_path(directory, &operation.id);
+    let temporary = directory.join(format!("{}.{}.tmp", operation.id, new_update_id()));
+    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    if destination.exists() {
+        std::fs::remove_file(&destination).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = std::fs::rename(&temporary, &destination) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+async fn read_strategy_pick_operation(
+    directory: &Path,
+    id: &str,
+) -> Result<Option<StrategyPickOperation>, String> {
+    if !valid_site_trace_id(id) {
+        return Ok(None);
+    }
+    let file = match tokio::fs::File::open(strategy_pick_operation_path(directory, id)).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Не удалось прочитать статус автоподбора: {error}")),
+    };
+    let mut bytes = Vec::new();
+    file.take((MAX_STRATEGY_PICK_STATE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_STRATEGY_PICK_STATE_BYTES {
+        return Err("Сохранённое состояние автоподбора превышает лимит".into());
+    }
+    let operation: StrategyPickOperation = serde_json::from_slice(&bytes)
+        .map_err(|_| "Повреждено состояние автоподбора".to_string())?;
+    if operation.id != id
+        || !matches!(
+            operation.state.as_str(),
+            "queued"
+                | "running"
+                | "stopping"
+                | "complete"
+                | "no_match"
+                | "site_unblocked"
+                | "cancelled"
+                | "failed"
+        )
+        || operation.results.len() > strategy_picker::MAX_CANDIDATES
+    {
+        return Err("Недопустимое состояние автоподбора".into());
+    }
+    Ok(Some(operation))
+}
+
+fn prune_finished_json_operations(directory: &Path, limit: usize) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let mut finished = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let metadata = match entry.metadata() {
+            Ok(metadata) if metadata.len() <= MAX_STRATEGY_PICK_STATE_BYTES as u64 => metadata,
+            _ => {
+                let _ = std::fs::remove_file(path);
+                continue;
+            }
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            let _ = std::fs::remove_file(path);
+            continue;
+        };
+        let Some(state) = value.get("state").and_then(serde_json::Value::as_str) else {
+            let _ = std::fs::remove_file(path);
+            continue;
+        };
+        if matches!(state, "queued" | "running" | "stopping") {
+            continue;
+        }
+        if !matches!(
+            state,
+            "complete" | "no_match" | "site_unblocked" | "cancelled" | "failed"
+        ) {
+            let _ = std::fs::remove_file(path);
+            continue;
+        }
+        finished.push((path, metadata.modified().ok()));
+    }
+    if finished.len() <= limit {
+        return;
+    }
+    finished.sort_by_key(|(_, modified)| *modified);
+    let remove_count = finished.len().saturating_sub(limit);
+    for (path, _) in finished.into_iter().take(remove_count) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn active_lua_functions(args: &[String], lua_dir: &Path) -> HashSet<String> {
+    let mut functions = HashSet::new();
+    for (index, argument) in args.iter().enumerate() {
+        let value = if let Some(value) = argument.strip_prefix("--lua-init=") {
+            value
+        } else if argument == "--lua-init" {
+            let Some(value) = args.get(index + 1).map(String::as_str) else {
+                continue;
+            };
+            value
+        } else {
+            continue;
+        };
+        let value = value.strip_prefix('@').unwrap_or(value);
+        if value.is_empty() || value.len() > 4096 || value.contains(['\n', '\r', '\0']) {
+            continue;
+        }
+        let requested = PathBuf::from(value);
+        let mut candidates = vec![requested.clone()];
+        if !requested.is_absolute() {
+            candidates.push(lua_dir.join(&requested));
+        }
+        if requested
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("lua")
+        {
+            let mut gz = requested.clone();
+            gz.set_extension("lua.gz");
+            candidates.push(gz.clone());
+            if !gz.is_absolute() {
+                candidates.push(lua_dir.join(gz.file_name().unwrap_or_default()));
+            }
+        }
+        let Some(path) = candidates.into_iter().find(|path| path.is_file()) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if bytes.len() > 4 * 1024 * 1024 {
+            continue;
+        }
+        let decoded = if path.extension().and_then(|extension| extension.to_str()) == Some("gz") {
+            let mut output = Vec::new();
+            if flate2::read::GzDecoder::new(bytes.as_slice())
+                .take((4 * 1024 * 1024 + 1) as u64)
+                .read_to_end(&mut output)
+                .is_err()
+                || output.len() > 4 * 1024 * 1024
+            {
+                continue;
+            }
+            output
+        } else {
+            bytes
+        };
+        functions.extend(strategy_picker::parse_lua_functions(
+            &String::from_utf8_lossy(&decoded),
+        ));
+    }
+    functions
+}
+
+fn active_blob_names(args: &[String]) -> Vec<String> {
+    let mut names = vec![
+        "fake_default_tls".into(),
+        "fake_default_http".into(),
+        "fake_default_quic".into(),
+    ];
+    for (index, argument) in args.iter().enumerate() {
+        let value = argument.strip_prefix("--blob=").or_else(|| {
+            (argument == "--blob")
+                .then(|| args.get(index + 1).map(String::as_str))
+                .flatten()
+        });
+        if let Some(value) = value
+            && let Some((name, _)) = value.split_once(':')
+            && name.len() <= 128
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_-./".contains(&byte))
+        {
+            names.push(name.to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 #[derive(Serialize)]
@@ -1975,6 +2238,10 @@ async fn trace_site(
     if let Err(io_error) = tokio::fs::create_dir_all(&operation_dir).await {
         return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
     }
+    prune_finished_json_operations(
+        &operation_dir,
+        MAX_STRATEGY_PICK_OPERATIONS.saturating_sub(1),
+    );
     #[cfg(unix)]
     if let Ok(metadata) = tokio::fs::metadata(&operation_dir).await {
         use std::os::unix::fs::PermissionsExt;
@@ -2048,6 +2315,574 @@ async fn trace_site(
         let _ = write_site_trace_operation(&operation_dir, &running).await;
         task_state.site_trace_controls.lock().await.remove(&task_id);
     });
+    (StatusCode::ACCEPTED, Json(operation)).into_response()
+}
+
+async fn start_strategy_pick(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<StrategyPickRequest>,
+) -> Response {
+    let host = match site_diagnostics::normalize_host(&request.host) {
+        Ok(host) => host,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let protocol = match request.protocol.as_deref().unwrap_or("https") {
+        "http" => StrategyProtocol::Http,
+        "https" => StrategyProtocol::Https,
+        "quic" => {
+            return error(
+                StatusCode::NOT_IMPLEMENTED,
+                "Перебор стратегий QUIC пока не поддерживается: доступна только отдельная проверка QUIC Initial, без проверки через тестовый nfqws2",
+            );
+        }
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Протокол должен быть http, https или quic",
+            );
+        }
+    };
+    let mode = match request.mode.as_deref().unwrap_or("quick") {
+        "quick" => StrategyMode::Quick,
+        "extended" => StrategyMode::Extended,
+        "full" => {
+            return error(
+                StatusCode::NOT_IMPLEMENTED,
+                "Полный каталог ещё не перенесён; доступен расширенный последовательный подбор",
+            );
+        }
+        "custom" => {
+            return error(
+                StatusCode::NOT_IMPLEMENTED,
+                "Проверка собственных стратегий пока не подключена",
+            );
+        }
+        _ => return error(StatusCode::BAD_REQUEST, "Неизвестный режим подбора"),
+    };
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Сейчас выполняется другая сетевая диагностика или трассировка",
+        );
+    };
+    let Some((_, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Подбор остановлен: не найден однозначно работающий nfqws2",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let functions = active_lua_functions(&active_args, &paths.lua_dir);
+    if functions.is_empty() {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Не удалось прочитать Lua-функции, подключённые к работающему nfqws2",
+        );
+    }
+    let configured = strategy_picker::configured_candidates(&active_args, protocol);
+    let blobs = active_blob_names(&active_args);
+    let plan = strategy_picker::build_plan(protocol, mode, &configured, &functions, &blobs);
+    if plan.candidates.is_empty() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Нет совместимых стратегий для выбранного протокола в активном конфиге и подключённых Lua-файлах",
+        );
+    }
+    let operation_dir = state.data_dir.join("strategy-pick-operations");
+    if let Err(io_error) = tokio::fs::create_dir_all(&operation_dir).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    prune_finished_json_operations(
+        &operation_dir,
+        MAX_STRATEGY_PICK_OPERATIONS.saturating_sub(1),
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(io_error) =
+            tokio::fs::set_permissions(&operation_dir, std::fs::Permissions::from_mode(0o700)).await
+        {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось защитить каталог автоподбора: {io_error}"),
+            );
+        }
+    }
+    let id = new_update_id();
+    let control = Arc::new(AtomicBool::new(false));
+    let mut operation = StrategyPickOperation {
+        id: id.clone(),
+        host: host.clone(),
+        protocol: match protocol {
+            StrategyProtocol::Http => "http",
+            StrategyProtocol::Https => "https",
+            StrategyProtocol::Quic => "quic",
+        }
+        .into(),
+        state: "queued".into(),
+        stage: "queued".into(),
+        current: None,
+        done: 0,
+        total: plan.candidates.len(),
+        results: Vec::new(),
+        message: "Подбор поставлен в очередь; основной конфиг не изменяется".into(),
+        updated_at: now_unix_seconds(),
+    };
+    if let Err(message) = write_strategy_pick_operation_sync(&operation_dir, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    let accepted_operation = operation.clone();
+    state
+        .strategy_pick_controls
+        .lock()
+        .await
+        .insert(id.clone(), control.clone());
+    let task_state = state.clone();
+    let task_id = id.clone();
+    let task_host = host.clone();
+    let task_proto = operation.protocol.clone();
+    let binary = paths.binary.to_string_lossy().into_owned();
+    let active_args_for_task = active_args.clone();
+    let functions_for_task = functions.clone();
+    let blobs_for_task = blobs.clone();
+    let runner = state.site_trace_runner.clone();
+    let probe_cancel = control.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let operation_dir = task_state.data_dir.join("strategy-pick-operations");
+        operation.state = "running".into();
+        operation.stage = "baseline_and_pick".into();
+        operation.message = "Проверяются реальные запросы через отдельный тестовый nfqws2".into();
+        operation.updated_at = now_unix_seconds();
+        let shared = Arc::new(std::sync::Mutex::new(operation));
+        if let Ok(current) = shared.lock() {
+            let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
+        }
+        let progress_state = shared.clone();
+        let progress_dir = operation_dir.clone();
+        let plan_result = strategy_picker::run_candidates(
+            plan,
+            control.clone(),
+            move |candidate, _repeat| {
+                let steps = candidate.steps.clone();
+                let candidate_argv = strategy_picker::candidate_argv(
+                    &active_args_for_task,
+                    protocol,
+                    &steps,
+                    &functions_for_task,
+                    &blobs_for_task,
+                );
+                let host = task_host.clone();
+                let proto = task_proto.clone();
+                let binary = binary.clone();
+                let runner = runner.clone();
+                let cancel = probe_cancel.clone();
+                async move {
+                    let args = match candidate_argv {
+                        Ok(args) => args,
+                        Err(message) => {
+                            return strategy_picker::StrategyProbeResult {
+                                baseline_ok: None,
+                                candidate_ok: None,
+                                detail: message,
+                            };
+                        }
+                    };
+                    let report = runner(host, proto, args, binary, cancel).await;
+                    let direct = report.without_nfqws2.ok;
+                    let candidate = (report.with_nfqws2.state == "complete")
+                        .then_some(report.with_nfqws2.ok)
+                        .flatten();
+                    let detail = format!("{}; {}", report.summary, report.with_nfqws2.reason);
+                    strategy_picker::StrategyProbeResult {
+                        baseline_ok: direct,
+                        candidate_ok: candidate,
+                        detail,
+                    }
+                }
+            },
+            move |done, total, current| {
+                if let Ok(mut operation) = progress_state.lock() {
+                    operation.current = Some(current.to_owned());
+                    operation.done = done;
+                    operation.total = total;
+                    operation.stage = "testing".into();
+                    operation.message = format!("Проверяется стратегия: {current}");
+                    operation.updated_at = now_unix_seconds();
+                    let _ = write_strategy_pick_operation_sync(&progress_dir, &operation);
+                }
+            },
+        )
+        .await;
+        if let Ok(mut operation) = shared.lock() {
+            operation.state = plan_result.state;
+            operation.stage = operation.state.clone();
+            operation.done = plan_result.checked;
+            operation.total = plan_result.total;
+            operation.results = plan_result.results;
+            operation.current = None;
+            operation.message = plan_result.message;
+            operation.updated_at = now_unix_seconds();
+            let _ = write_strategy_pick_operation_sync(&operation_dir, &operation);
+        }
+        task_state
+            .strategy_pick_controls
+            .lock()
+            .await
+            .remove(&task_id);
+    });
+    (StatusCode::ACCEPTED, Json(accepted_operation)).into_response()
+}
+
+async fn get_strategy_pick_operation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let directory = state.data_dir.join("strategy-pick-operations");
+    match read_strategy_pick_operation(&directory, &id).await {
+        Ok(Some(mut operation)) => {
+            if matches!(operation.state.as_str(), "queued" | "running" | "stopping")
+                && !state.strategy_pick_controls.lock().await.contains_key(&id)
+            {
+                operation.state = "failed".into();
+                operation.stage = "interrupted".into();
+                operation.current = None;
+                operation.message =
+                    "Фоновая задача прервалась при перезапуске backend; запустите новую проверку"
+                        .into();
+                operation.updated_at = now_unix_seconds();
+                let _ = write_strategy_pick_operation_sync(&directory, &operation);
+            }
+            Json(operation).into_response()
+        }
+        Ok(None) => error(StatusCode::NOT_FOUND, "Операция автоподбора не найдена"),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn get_strategy_pick_history(State(state): State<Arc<AppState>>) -> Response {
+    let directory = state.data_dir.join("strategy-pick-operations");
+    if !directory.exists() {
+        return Json(Vec::<StrategyPickOperation>::new()).into_response();
+    }
+    prune_finished_json_operations(&directory, MAX_STRATEGY_PICK_OPERATIONS.saturating_sub(1));
+    let entries = match tokio::fs::read_dir(&directory).await {
+        Ok(entries) => entries,
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    let mut operations = Vec::new();
+    let mut entries = entries;
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(io_error) => {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+            }
+        };
+        if entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("json")
+        {
+            continue;
+        }
+        let Some(id) = entry
+            .path()
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Ok(Some(operation)) = read_strategy_pick_operation(&directory, &id).await else {
+            continue;
+        };
+        if matches!(
+            operation.state.as_str(),
+            "complete" | "no_match" | "site_unblocked" | "cancelled" | "failed"
+        ) {
+            operations.push(operation);
+        }
+    }
+    operations.sort_by_key(|operation| std::cmp::Reverse(operation.updated_at));
+    operations.truncate(MAX_STRATEGY_PICK_OPERATIONS);
+    Json(operations).into_response()
+}
+
+async fn stop_strategy_pick_operation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let directory = state.data_dir.join("strategy-pick-operations");
+    let Some(mut operation) = (match read_strategy_pick_operation(&directory, &id).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }) else {
+        return error(StatusCode::NOT_FOUND, "Операция автоподбора не найдена");
+    };
+    if !matches!(operation.state.as_str(), "queued" | "running" | "stopping") {
+        return Json(operation).into_response();
+    }
+    let controls = state.strategy_pick_controls.lock().await;
+    let Some(control) = controls.get(&id) else {
+        return error(StatusCode::CONFLICT, "Операция уже завершается");
+    };
+    control.store(true, Ordering::Release);
+    operation.state = "stopping".into();
+    operation.stage = "cleanup".into();
+    operation.message =
+        "Остановка запрошена; тестовый процесс и временные правила завершаются".into();
+    operation.updated_at = now_unix_seconds();
+    drop(controls);
+    if let Err(message) = write_strategy_pick_operation_sync(&directory, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    (StatusCode::ACCEPTED, Json(operation)).into_response()
+}
+
+fn transfer_operation_path(directory: &Path, id: &str) -> PathBuf {
+    directory.join(format!("{id}.json"))
+}
+
+fn write_transfer_operation(
+    directory: &Path,
+    operation: &TransferDiagnosticOperation,
+) -> Result<(), String> {
+    if !valid_site_trace_id(&operation.id) {
+        return Err("Недопустимый идентификатор диагностики передачи".into());
+    }
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec(operation).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_TRANSFER_DIAGNOSTIC_STATE_BYTES {
+        return Err("Состояние диагностики передачи превышает ограничение размера".into());
+    }
+    let destination = transfer_operation_path(directory, &operation.id);
+    let temporary = directory.join(format!("{}.{}.tmp", operation.id, new_update_id()));
+    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    if destination.exists() {
+        std::fs::remove_file(&destination).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = std::fs::rename(&temporary, &destination) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+async fn read_transfer_operation(
+    directory: &Path,
+    id: &str,
+) -> Result<Option<TransferDiagnosticOperation>, String> {
+    if !valid_site_trace_id(id) {
+        return Ok(None);
+    }
+    let file = match tokio::fs::File::open(transfer_operation_path(directory, id)).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Не удалось прочитать статус диагностики: {error}")),
+    };
+    let mut bytes = Vec::new();
+    file.take((MAX_TRANSFER_DIAGNOSTIC_STATE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_TRANSFER_DIAGNOSTIC_STATE_BYTES {
+        return Err("Сохранённое состояние диагностики превышает лимит".into());
+    }
+    let operation: TransferDiagnosticOperation = serde_json::from_slice(&bytes)
+        .map_err(|_| "Повреждено состояние диагностики передачи".to_string())?;
+    if operation.id != id
+        || !matches!(
+            operation.state.as_str(),
+            "queued" | "running" | "stopping" | "complete" | "cancelled" | "failed"
+        )
+        || operation.attempt > 2
+    {
+        return Err("Недопустимое состояние диагностики передачи".into());
+    }
+    Ok(Some(operation))
+}
+
+async fn start_transfer_diagnostic(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<TransferDiagnosticRequest>,
+) -> Response {
+    let host = match site_diagnostics::normalize_host(&request.host) {
+        Ok(host) => host,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Сейчас выполняется другая сетевая диагностика или трассировка",
+        );
+    };
+    let directory = state.data_dir.join("transfer-diagnostic-operations");
+    if let Err(io_error) = tokio::fs::create_dir_all(&directory).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    prune_finished_json_operations(&directory, 11);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(io_error) =
+            tokio::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).await
+        {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось защитить каталог результатов: {io_error}"),
+            );
+        }
+    }
+    let id = new_update_id();
+    let control = Arc::new(AtomicBool::new(false));
+    let mut operation = TransferDiagnosticOperation {
+        id: id.clone(),
+        host: host.clone(),
+        state: "queued".into(),
+        stage: "queued".into(),
+        attempt: 0,
+        message: "Диагностика поставлена в очередь".into(),
+        result: None,
+        updated_at: now_unix_seconds(),
+    };
+    if let Err(message) = write_transfer_operation(&directory, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    let accepted = operation.clone();
+    state
+        .transfer_diagnostic_controls
+        .lock()
+        .await
+        .insert(id.clone(), control.clone());
+    let task_state = state.clone();
+    let task_id = id;
+    tokio::spawn(async move {
+        let _guard = guard;
+        let directory = task_state.data_dir.join("transfer-diagnostic-operations");
+        operation.state = "running".into();
+        operation.stage = "direct".into();
+        operation.message =
+            "Сначала дважды измеряется прямое HTTPS-соединение, затем текущий маршрут".into();
+        operation.updated_at = now_unix_seconds();
+        let shared = Arc::new(std::sync::Mutex::new(operation));
+        if let Ok(current) = shared.lock() {
+            let _ = write_transfer_operation(&directory, &current);
+        }
+        let progress = shared.clone();
+        let progress_directory = directory.clone();
+        let cancel = control.clone();
+        let result = transfer_diagnostic::compare_transfer(host, control, move |stage, attempt| {
+            if let Ok(mut operation) = progress.lock() {
+                operation.stage = stage.into();
+                operation.attempt = attempt;
+                operation.message = if stage == "direct" {
+                    "Проверяется прямое соединение"
+                } else {
+                    "Проверяется соединение через текущую конфигурацию"
+                }
+                .into();
+                operation.updated_at = now_unix_seconds();
+                let _ = write_transfer_operation(&progress_directory, &operation);
+            }
+        })
+        .await;
+        if let Ok(mut operation) = shared.lock() {
+            operation.updated_at = now_unix_seconds();
+            match result {
+                Ok(result) => {
+                    operation.state = "complete".into();
+                    operation.stage = "complete".into();
+                    operation.message = "Измерения завершены; причина сетевого поведения не устанавливается автоматически".into();
+                    operation.result = Some(result);
+                }
+                Err(message) if cancel.load(Ordering::Acquire) || message.contains("отмен") => {
+                    operation.state = "cancelled".into();
+                    operation.stage = "cleanup".into();
+                    operation.message = "Проверка отменена; временные правила очищены".into();
+                }
+                Err(message) => {
+                    operation.state = "failed".into();
+                    operation.stage = "failed".into();
+                    operation.message = message;
+                }
+            }
+            let _ = write_transfer_operation(&directory, &operation);
+        }
+        task_state
+            .transfer_diagnostic_controls
+            .lock()
+            .await
+            .remove(&task_id);
+    });
+    (StatusCode::ACCEPTED, Json(accepted)).into_response()
+}
+
+async fn get_transfer_diagnostic_operation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let directory = state.data_dir.join("transfer-diagnostic-operations");
+    match read_transfer_operation(&directory, &id).await {
+        Ok(Some(mut operation)) => {
+            if matches!(operation.state.as_str(), "queued" | "running" | "stopping")
+                && !state
+                    .transfer_diagnostic_controls
+                    .lock()
+                    .await
+                    .contains_key(&id)
+            {
+                operation.state = "failed".into();
+                operation.stage = "interrupted".into();
+                operation.message =
+                    "Фоновая задача прервалась при перезапуске backend; повторите диагностику"
+                        .into();
+                operation.updated_at = now_unix_seconds();
+                let _ = write_transfer_operation(&directory, &operation);
+            }
+            Json(operation).into_response()
+        }
+        Ok(None) => error(StatusCode::NOT_FOUND, "Операция диагностики не найдена"),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn cancel_transfer_diagnostic(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let directory = state.data_dir.join("transfer-diagnostic-operations");
+    let Some(mut operation) = (match read_transfer_operation(&directory, &id).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }) else {
+        return error(StatusCode::NOT_FOUND, "Операция диагностики не найдена");
+    };
+    if !matches!(operation.state.as_str(), "queued" | "running" | "stopping") {
+        return Json(operation).into_response();
+    }
+    let controls = state.transfer_diagnostic_controls.lock().await;
+    let Some(control) = controls.get(&id) else {
+        return error(StatusCode::CONFLICT, "Операция уже завершается");
+    };
+    control.store(true, Ordering::Release);
+    operation.state = "stopping".into();
+    operation.stage = "cleanup".into();
+    operation.message =
+        "Остановка запрошена; активный запрос завершится в пределах тайм-аута".into();
+    operation.updated_at = now_unix_seconds();
+    drop(controls);
+    if let Err(message) = write_transfer_operation(&directory, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
     (StatusCode::ACCEPTED, Json(operation)).into_response()
 }
 
@@ -3080,7 +3915,32 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/preview", post(preview_config))
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
+        .route(
+            "/api/nfqws2/diagnostics/transfer",
+            post(start_transfer_diagnostic),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/transfer/operations/{id}",
+            get(get_transfer_diagnostic_operation),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/transfer/operations/{id}/cancel",
+            post(cancel_transfer_diagnostic),
+        )
         .route("/api/nfqws2/diagnostics/trace", post(trace_site))
+        .route("/api/nfqws2/strategies/pick", post(start_strategy_pick))
+        .route(
+            "/api/nfqws2/strategies/pick/history",
+            get(get_strategy_pick_history),
+        )
+        .route(
+            "/api/nfqws2/strategies/pick/operations/{id}",
+            get(get_strategy_pick_operation),
+        )
+        .route(
+            "/api/nfqws2/strategies/pick/operations/{id}/cancel",
+            post(stop_strategy_pick_operation),
+        )
         .route(
             "/api/nfqws2/diagnostics/trace/operations/{id}",
             get(get_site_trace_operation),
@@ -3158,6 +4018,8 @@ async fn main() {
         site_diagnostic_lock: Arc::new(Mutex::new(())),
         site_trace_controls: Mutex::new(HashMap::new()),
         site_trace_runner: Arc::new(router_site_trace_runner),
+        strategy_pick_controls: Mutex::new(HashMap::new()),
+        transfer_diagnostic_controls: Mutex::new(HashMap::new()),
     });
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
@@ -3220,6 +4082,8 @@ mod tests {
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: Arc::new(router_site_trace_runner),
+            strategy_pick_controls: Mutex::new(HashMap::new()),
+            transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         })
     }
 
@@ -3237,7 +4101,61 @@ mod tests {
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: runner,
+            strategy_pick_controls: Mutex::new(HashMap::new()),
+            transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         })
+    }
+
+    #[test]
+    fn operation_pruning_keeps_running_jobs_and_bounds_completed_history() {
+        let dir = tempfile::tempdir().unwrap();
+        for (index, state) in ["complete", "no_match", "cancelled", "failed", "running"]
+            .into_iter()
+            .enumerate()
+        {
+            std::fs::write(
+                dir.path().join(format!("{index:032x}.json")),
+                serde_json::json!({"state": state}).to_string(),
+            )
+            .unwrap();
+        }
+        std::fs::write(dir.path().join("corrupt.json"), "{").unwrap();
+        std::fs::write(
+            dir.path().join("oversized.json"),
+            vec![b' '; MAX_STRATEGY_PICK_STATE_BYTES + 1],
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("unknown.json"),
+            serde_json::json!({"state": "unexpected"}).to_string(),
+        )
+        .unwrap();
+
+        prune_finished_json_operations(dir.path(), 2);
+
+        let remaining = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| {
+                let bytes = std::fs::read(entry.path()).unwrap();
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()["state"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(remaining.len(), 3);
+        assert_eq!(
+            remaining.iter().filter(|state| *state == "running").count(),
+            1
+        );
+        assert_eq!(
+            remaining.iter().filter(|state| *state != "running").count(),
+            2
+        );
+        assert!(!dir.path().join("corrupt.json").exists());
+        assert!(!dir.path().join("oversized.json").exists());
+        assert!(!dir.path().join("unknown.json").exists());
     }
 
     async fn body_json(response: Response) -> serde_json::Value {
@@ -3794,6 +4712,30 @@ mod tests {
         assert!(!references[3].exists);
     }
 
+    #[test]
+    fn active_module_catalog_handles_separate_lua_and_blob_arguments() {
+        use flate2::{Compression, write::GzEncoder};
+
+        let dir = tempfile::tempdir().unwrap();
+        let lua_dir = dir.path().join("lua");
+        std::fs::create_dir_all(&lua_dir).unwrap();
+        let lua_path = lua_dir.join("custom.lua.gz");
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        std::io::Write::write_all(&mut encoder, b"function custom_fake(ctx, desync)\n").unwrap();
+        std::fs::write(&lua_path, encoder.finish().unwrap()).unwrap();
+        let args = vec![
+            "nfqws2".into(),
+            "--lua-init".into(),
+            "@custom.lua".into(),
+            "--blob".into(),
+            "tls_clienthello:@/opt/share/tls.bin".into(),
+        ];
+        let functions = active_lua_functions(&args, &lua_dir);
+        let blobs = active_blob_names(&args);
+        assert!(functions.contains("custom_fake"));
+        assert!(blobs.contains(&"tls_clienthello".into()));
+    }
+
     #[tokio::test]
     async fn create_backup_endpoint_snapshots_the_config_without_rewriting_it() {
         let dir = tempfile::tempdir().unwrap();
@@ -4003,6 +4945,321 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert!(body_json(response).await["error"].is_string());
         }
+    }
+
+    #[tokio::test]
+    async fn transfer_diagnostic_rejects_invalid_targets_and_unknown_operations() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let app = api_router(test_state(data.clone()), dir.path().join("web"));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/transfer")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"127.0.0.1"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!data.join("transfer-diagnostic-operations").exists());
+        for uri in [
+            "/api/nfqws2/diagnostics/transfer/operations/0123456789abcdef0123456789abcdef",
+            "/api/nfqws2/diagnostics/transfer/operations/0123456789abcdef0123456789abcdef/cancel",
+        ] {
+            let method = if uri.ends_with("/cancel") {
+                "POST"
+            } else {
+                "GET"
+            };
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+    }
+
+    #[tokio::test]
+    async fn strategy_pick_cancel_persists_stopping_and_signals_owned_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let operation_dir = data.join("strategy-pick-operations");
+        let id = "0123456789abcdef0123456789abcdef";
+        let operation = StrategyPickOperation {
+            id: id.into(),
+            host: "example.com".into(),
+            protocol: "https".into(),
+            state: "running".into(),
+            stage: "testing".into(),
+            current: Some("multisplit".into()),
+            done: 0,
+            total: 1,
+            results: Vec::new(),
+            message: "running".into(),
+            updated_at: now_unix_seconds(),
+        };
+        write_strategy_pick_operation_sync(&operation_dir, &operation).unwrap();
+        let state = test_state(data);
+        let cancel = Arc::new(AtomicBool::new(false));
+        state
+            .strategy_pick_controls
+            .lock()
+            .await
+            .insert(id.into(), cancel.clone());
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/nfqws2/strategies/pick/operations/{id}/cancel"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert!(cancel.load(Ordering::Acquire));
+        let saved = read_strategy_pick_operation(&operation_dir, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.state, "stopping");
+        assert_eq!(saved.stage, "cleanup");
+    }
+
+    #[tokio::test]
+    async fn transfer_diagnostic_cancel_persists_stopping_and_signals_owned_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let operation_dir = data.join("transfer-diagnostic-operations");
+        let id = "abcdef0123456789abcdef0123456789";
+        write_transfer_operation(
+            &operation_dir,
+            &TransferDiagnosticOperation {
+                id: id.into(),
+                host: "example.com".into(),
+                state: "running".into(),
+                stage: "direct".into(),
+                attempt: 1,
+                message: "running".into(),
+                result: None,
+                updated_at: now_unix_seconds(),
+            },
+        )
+        .unwrap();
+        let state = test_state(data);
+        let cancel = Arc::new(AtomicBool::new(false));
+        state
+            .transfer_diagnostic_controls
+            .lock()
+            .await
+            .insert(id.into(), cancel.clone());
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!(
+                        "/api/nfqws2/diagnostics/transfer/operations/{id}/cancel"
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert!(cancel.load(Ordering::Acquire));
+        let saved = read_transfer_operation(&operation_dir, id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.state, "stopping");
+        assert_eq!(saved.stage, "cleanup");
+    }
+
+    #[tokio::test]
+    async fn strategy_pick_history_returns_bounded_terminal_operations_newest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let operation_dir = data.join("strategy-pick-operations");
+        for (index, state, host, updated_at) in [
+            (1, "complete", "older.example", 10),
+            (2, "no_match", "newer.example", 20),
+            (3, "running", "active.example", 30),
+        ] {
+            write_strategy_pick_operation_sync(
+                &operation_dir,
+                &StrategyPickOperation {
+                    id: format!("{index:032x}"),
+                    host: host.into(),
+                    protocol: "https".into(),
+                    state: state.into(),
+                    stage: state.into(),
+                    current: None,
+                    done: 0,
+                    total: 1,
+                    results: Vec::new(),
+                    message: state.into(),
+                    updated_at,
+                },
+            )
+            .unwrap();
+        }
+        let app = api_router(test_state(data), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/strategies/pick/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let history = body_json(response).await;
+        assert_eq!(history.as_array().unwrap().len(), 2);
+        assert_eq!(history[0]["host"], "newer.example");
+        assert_eq!(history[1]["host"], "older.example");
+    }
+
+    #[tokio::test]
+    async fn strategy_picker_refuses_to_schedule_without_a_verified_live_nfqws2_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let app = api_router(test_state(data.clone()), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/strategies/pick")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"example.com","protocol":"https","mode":"quick"})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(!data.join("strategy-pick-operations").exists());
+    }
+
+    #[tokio::test]
+    async fn unsupported_modes_and_quic_strategy_runs_are_reported_as_unimplemented() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let app = api_router(test_state(data.clone()), dir.path().join("web"));
+        for mode in ["full", "custom"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/nfqws2/strategies/pick")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"host":"example.com","mode":mode}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        }
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/strategies/pick")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"example.com","protocol":"quic"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert!(!data.join("strategy-pick-operations").exists());
+    }
+
+    #[tokio::test]
+    async fn transfer_diagnostic_refuses_to_run_while_another_site_operation_owns_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let state = test_state(data.clone());
+        let _guard = state.site_diagnostic_lock.clone().lock_owned().await;
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/transfer")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"example.com"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(!data.join("transfer-diagnostic-operations").exists());
+    }
+
+    #[tokio::test]
+    async fn persisted_running_transfer_is_marked_interrupted_after_backend_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let directory = data.join("transfer-diagnostic-operations");
+        let id = "0123456789abcdef0123456789abcdef";
+        write_transfer_operation(
+            &directory,
+            &TransferDiagnosticOperation {
+                id: id.into(),
+                host: "example.com".into(),
+                state: "running".into(),
+                stage: "direct".into(),
+                attempt: 1,
+                message: "Проверяется".into(),
+                result: None,
+                updated_at: 123,
+            },
+        )
+        .unwrap();
+        let app = api_router(test_state(data), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/nfqws2/diagnostics/transfer/operations/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        assert_eq!(body["state"], "failed");
+        assert_eq!(body["stage"], "interrupted");
     }
 
     #[tokio::test]
