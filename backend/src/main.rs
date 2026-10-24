@@ -76,12 +76,35 @@ struct AppState {
     config_write_lock: Mutex<()>,
     config_override: Option<PathBuf>,
     update_lock: Mutex<()>,
+    ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
     site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     site_trace_runner: Arc<SiteTraceRunner>,
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     freeze_scan_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UiUpdateStatus {
+    current_version: String,
+    latest_version: Option<String>,
+    update_available: bool,
+    release_url: Option<String>,
+    checked_at: Option<u64>,
+}
+
+impl Default for UiUpdateStatus {
+    fn default() -> Self {
+        Self {
+            current_version: env!("CARGO_PKG_VERSION").into(),
+            latest_version: None,
+            update_available: false,
+            release_url: None,
+            checked_at: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1624,6 +1647,72 @@ fn eligible_panel_releases(json: &str) -> Result<Vec<PanelRelease>, String> {
         .collect())
 }
 
+fn numeric_release_version(version: &str) -> Option<(u64, u64, u64)> {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    parts.next().is_none().then_some((major, minor, patch))
+}
+
+fn ui_update_status(
+    current_version: &str,
+    releases: &[PanelRelease],
+    checked_at: u64,
+) -> UiUpdateStatus {
+    let current = numeric_release_version(current_version);
+    let latest = releases
+        .iter()
+        .filter_map(|release| {
+            numeric_release_version(&release.tag).map(|version| (version, release))
+        })
+        .max_by_key(|(version, _)| *version);
+    let latest_version = latest.map(|(_, release)| release.tag.clone());
+    let update_available = match (current, latest) {
+        (Some(current), Some((latest, _))) => latest > current,
+        _ => false,
+    };
+    let release_url = if update_available {
+        latest_version
+            .as_ref()
+            .map(|tag| format!("https://github.com/rangerxxyy/nfqws2-ui/releases/tag/{tag}"))
+    } else {
+        None
+    };
+    UiUpdateStatus {
+        current_version: current_version.trim_start_matches('v').to_owned(),
+        latest_version,
+        update_available,
+        release_url,
+        checked_at: Some(checked_at),
+    }
+}
+
+fn start_ui_update_checker(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        loop {
+            let retry_after = match fetch_github_releases().await {
+                Ok(releases) => {
+                    if let Ok(mut status) = state.ui_update_status.write() {
+                        *status = ui_update_status(
+                            env!("CARGO_PKG_VERSION"),
+                            &releases,
+                            now_unix_seconds(),
+                        );
+                    }
+                    std::time::Duration::from_secs(4 * 60 * 60)
+                }
+                Err(error) => {
+                    tracing::warn!("Background UI update check failed: {error}");
+                    std::time::Duration::from_secs(15 * 60)
+                }
+            };
+            tokio::time::sleep(retry_after).await;
+        }
+    });
+}
+
 fn eligible_core_releases(json: &str, architecture: &str) -> Result<Vec<CoreRelease>, String> {
     if json.len() > MAX_RELEASE_RESPONSE_BYTES {
         return Err("Ответ GitHub Releases превысил лимит".into());
@@ -1962,6 +2051,16 @@ async fn get_github_releases() -> Response {
     match fetch_github_releases().await {
         Ok(releases) => Json(serde_json::json!({ "releases": releases })).into_response(),
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn get_ui_update_status(State(state): State<Arc<AppState>>) -> Response {
+    match state.ui_update_status.read() {
+        Ok(status) => Json(status.clone()).into_response(),
+        Err(_) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Статус обновления UI недоступен",
+        ),
     }
 }
 
@@ -5370,6 +5469,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/backups/{id}/restore", post(restore_backup))
         .route("/api/logs", get(get_logs))
         .route("/api/updates/releases", get(get_github_releases))
+        .route("/api/updates/status", get(get_ui_update_status))
         .route("/api/updates/install", post(post_update_install))
         .route("/api/nfqws2/updates/releases", get(get_core_releases))
         .route(
@@ -5429,6 +5529,7 @@ async fn main() {
         config_write_lock: Mutex::new(()),
         config_override: None,
         update_lock: Mutex::new(()),
+        ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
         site_trace_controls: Mutex::new(HashMap::new()),
         site_trace_runner: Arc::new(router_site_trace_runner),
@@ -5436,6 +5537,7 @@ async fn main() {
         transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         freeze_scan_controls: Mutex::new(HashMap::new()),
     });
+    start_ui_update_checker(state.clone());
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/opt/share/nfqws2-ui/current/public"));
@@ -5479,6 +5581,55 @@ mod tests {
     };
     use tower::ServiceExt;
 
+    #[test]
+    fn ui_update_status_selects_newest_semver_and_only_announces_newer_version() {
+        let releases = vec![
+            PanelRelease {
+                tag: "v0.3.8".into(),
+                published_at: None,
+                notes: String::new(),
+            },
+            PanelRelease {
+                tag: "v0.3.10".into(),
+                published_at: None,
+                notes: String::new(),
+            },
+            PanelRelease {
+                tag: "v0.3.9".into(),
+                published_at: None,
+                notes: String::new(),
+            },
+        ];
+        let update = ui_update_status("0.3.9", &releases, 123);
+        assert_eq!(update.latest_version.as_deref(), Some("v0.3.10"));
+        assert!(update.update_available);
+        assert_eq!(update.checked_at, Some(123));
+        assert_eq!(
+            update.release_url.as_deref(),
+            Some("https://github.com/rangerxxyy/nfqws2-ui/releases/tag/v0.3.10")
+        );
+
+        let current = ui_update_status("0.3.10", &releases, 456);
+        assert!(!current.update_available);
+        let newer_current = ui_update_status("0.3.11", &releases, 789);
+        assert!(!newer_current.update_available);
+    }
+
+    #[test]
+    fn ui_update_status_uses_only_releases_with_the_existing_arm64_package_gate() {
+        let json = r#"[
+          {"tag_name":"v0.3.11","draft":false,"prerelease":false,"assets":[]},
+          {"tag_name":"v0.3.10","draft":false,"prerelease":false,"assets":[
+            {"name":"nfqws2-ui-v0.3.10-aarch64-unknown-linux-musl.tar.gz"},
+            {"name":"nfqws2-ui-v0.3.10-aarch64-unknown-linux-musl.tar.gz.sha256"}
+          ]}
+        ]"#;
+        let eligible = eligible_panel_releases(json).unwrap();
+        let status = ui_update_status("0.3.9", &eligible, 123);
+        assert_eq!(status.latest_version.as_deref(), Some("v0.3.10"));
+        assert!(status.update_available);
+    }
+
     fn test_state(data_dir: PathBuf) -> Arc<AppState> {
         test_state_with_config(data_dir, None)
     }
@@ -5494,6 +5645,7 @@ mod tests {
             config_write_lock: Mutex::new(()),
             config_override,
             update_lock: Mutex::new(()),
+            ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: Arc::new(router_site_trace_runner),
@@ -5614,6 +5766,7 @@ mod tests {
             config_write_lock: Mutex::new(()),
             config_override: None,
             update_lock: Mutex::new(()),
+            ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: runner,
@@ -6059,6 +6212,37 @@ mod tests {
             response.headers().get("x-content-type-options").unwrap(),
             "nosniff"
         );
+    }
+
+    #[tokio::test]
+    async fn ui_update_status_is_readable_without_triggering_an_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path().join("data"));
+        *state.ui_update_status.write().unwrap() = UiUpdateStatus {
+            current_version: "0.3.4".into(),
+            latest_version: Some("v0.3.5".into()),
+            update_available: true,
+            release_url: Some("https://github.com/rangerxxyy/nfqws2-ui/releases/tag/v0.3.5".into()),
+            checked_at: Some(123),
+        };
+        let app = api_router(state, dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/updates/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), MAX_CONFIG_BYTES)
+            .await
+            .unwrap();
+        let payload: UiUpdateStatus = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(payload.latest_version.as_deref(), Some("v0.3.5"));
+        assert!(payload.update_available);
+        assert_eq!(payload.checked_at, Some(123));
     }
 
     #[tokio::test]
