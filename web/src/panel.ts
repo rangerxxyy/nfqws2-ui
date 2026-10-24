@@ -1307,7 +1307,7 @@ async function loadStrategyPickHistory() {
   }
 }
 
-async function pollStrategyPick(id: string) {
+async function pollStrategyPick(id: string, notifyOnCompletion = true) {
   activeStrategyPickId = id; strategyPickRunning = true;
   const input = $('#scanCustomHost'); const start = $('#startScanBtn'); const stop = $('#strategyPickCancel');
   if (input instanceof HTMLInputElement) input.disabled = true;
@@ -1332,9 +1332,12 @@ async function pollStrategyPick(id: string) {
     renderStrategyPick(current);
     setText('#scanProgressLabel', current.message);
     if (['complete', 'partial', 'no_match', 'site_unblocked', 'cancelled', 'failed'].includes(current.state)) {
+      if (localStorage.getItem(STRATEGY_PICK_STORAGE) === id) localStorage.removeItem(STRATEGY_PICK_STORAGE);
       void loadStrategyPickHistory();
-      if (current.state === 'failed') toast(current.message, 'error');
-      else toast(current.message, ['complete', 'partial'].includes(current.state) ? 'success' : 'error');
+      if (notifyOnCompletion) {
+        if (current.state === 'failed') toast(current.message, 'error');
+        else toast(current.message, ['complete', 'partial'].includes(current.state) ? 'success' : 'error');
+      }
     }
   } catch (error) {
     setText('#scanProgressLabel', error instanceof Error ? error.message : 'Статус автоподбора пока недоступен');
@@ -1842,7 +1845,7 @@ function boot() {
   showPendingUpdateNotice();
   showRoute('conf');
   const savedPick = localStorage.getItem(STRATEGY_PICK_STORAGE);
-  if (savedPick) void pollStrategyPick(savedPick);
+  if (savedPick) void pollStrategyPick(savedPick, false);
   const savedFreezeScan = localStorage.getItem('nfqws2-ui-freeze-scan');
   if (savedFreezeScan) void pollFreezeScan(savedFreezeScan);
     void loadStrategyPickHistory();

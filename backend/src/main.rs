@@ -4322,7 +4322,8 @@ async fn start_strategy_pick(
         let operation_dir = task_state.data_dir.join("strategy-pick-operations");
         operation.state = "running".into();
         operation.stage = "baseline".into();
-        operation.message = "Сначала выполняется один прямой запрос; если он не откроет сайт, начнётся перебор стратегий".into();
+        operation.message =
+            "Сначала выполняется прямой запрос, затем проверяются выбранные стратегии".into();
         operation.updated_at = now_unix_seconds();
         let shared = Arc::new(std::sync::Mutex::new(operation));
         if let Ok(current) = shared.lock() {

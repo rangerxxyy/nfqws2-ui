@@ -530,7 +530,7 @@ async fn strategy_is_confirmed_only_after_two_real_probe_successes() {
 }
 
 #[tokio::test]
-async fn strategy_picker_stops_before_any_candidate_when_direct_site_is_open() {
+async fn strategy_picker_tests_candidates_even_when_direct_site_is_open() {
     let mut plan = build_plan(
         StrategyProtocol::Https,
         StrategyMode::Quick,
@@ -558,8 +558,9 @@ async fn strategy_picker_stops_before_any_candidate_when_direct_site_is_open() {
     )
     .await;
     assert_eq!(calls, 1);
-    assert_eq!(result.state, "site_unblocked");
-    assert!(result.results.is_empty());
+    assert_eq!(result.state, "complete");
+    assert_eq!(result.results.len(), 1);
+    assert!(result.results[0].confirmed);
 }
 
 #[tokio::test]

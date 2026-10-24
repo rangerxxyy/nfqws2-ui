@@ -387,45 +387,6 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div className={"p-3.5 border-t border-slate-800/80 bg-[#070b14] space-y-2.5"}>
-          {"\n        "}
-          <div className={"flex items-center justify-between text-xs"}>
-            {"\n          "}
-            <span className={"text-slate-400"}>
-              {"Провайдер (ASN):"}
-            </span>
-            {"\n          "}
-            <span className={"font-mono font-semibold text-slate-200"}>
-              {"Не обнаружен"}
-            </span>
-            {"\n        "}
-          </div>
-          {"\n        "}
-          <div className={"flex items-center justify-between text-xs"}>
-            {"\n          "}
-            <span className={"text-slate-400"}>
-              {"Конфликты служб:"}
-            </span>
-            {"\n          "}
-            <span className={"font-mono font-semibold text-slate-400"}>
-              {"Не проверено"}
-            </span>
-            {"\n        "}
-          </div>
-          {"\n        "}
-          <div className={"flex items-center justify-between text-[11px] font-mono text-slate-500 pt-1 border-t border-slate-800/70"}>
-            {"\n          "}
-            <span>
-              {"Устройство не обнаружено"}
-            </span>
-            {"\n          "}
-            <span>
-              {"uhttpd :90"}
-            </span>
-            {"\n        "}
-          </div>
-          {"\n      "}
-        </div>
         {"\n\n    "}
       </aside>
       {"\n\n    "}
@@ -1201,7 +1162,7 @@ export default function App() {
           <section id={"monitorSection-sites"} className={"ui-card rounded-2xl p-5 sm:p-6 space-y-5"}>
             <div className={"flex flex-wrap items-center justify-between gap-3"}><div><h2 className={"text-lg font-bold text-white"}>Сайты</h2><p className={"mt-1 text-sm text-slate-400"}>Проверки идут с роутера через основной nfqws2. История последних 96 проверок хранится на роутере.</p></div><div className={"flex flex-wrap items-center gap-2"}><label className={"flex items-center gap-2 text-sm text-slate-200"}><input id={"monitoringEnabled"} type={"checkbox"} defaultChecked className={"accent-blue-500"} /> включён</label><select id={"monitoringInterval"} data-action-change={"toggleMonitoringCustom"} data-args={JSON.stringify([{source:"self"}])} className={"rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"}><option value={"30"}>каждые 30 мин</option><option value={"60"}>каждый 1 час</option><option value={"120"}>каждые 2 часа</option><option value={"custom"}>своё время…</option></select><span id={"monitoringCustom"} className={"hidden items-center gap-1 text-sm text-slate-300"}><input id={"monitoringHours"} type={"number"} min={"0"} max={"24"} defaultValue={"0"} className={"w-16 rounded border border-slate-700 bg-slate-950 px-2 py-1"} /> ч <input id={"monitoringMinutes"} type={"number"} min={"1"} max={"59"} defaultValue={"30"} className={"w-16 rounded border border-slate-700 bg-slate-950 px-2 py-1"} /> мин</span><button data-action-click={"saveMonitoringSettings"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"}>Сохранить</button><button data-action-click={"runMonitoring"} title={"Проверить все сайты сейчас"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"}>⟳ Проверить все сейчас</button></div></div>
             <p id={"monitoringStatus"} className={"text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Планировщик проверяет сайты автоматически.</p>
-            <div className={"flex gap-2"}><input id={"monitorHostInput"} type={"text"} placeholder={"добавить сайт, например rutracker.org"} aria-label={"Домен для мониторинга"} className={"min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#060a12] px-3.5 py-2.5 font-mono text-sm text-white placeholder:text-slate-500"} /><button data-action-click={"addMonitoringSite"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500"}>＋ Добавить</button></div>
+            <div className={"flex gap-2"}><input id={"monitorHostInput"} name={"monitor-site-host"} type={"text"} autoComplete={"off"} autoCapitalize={"none"} spellCheck={false} inputMode={"url"} placeholder={"добавить сайт, например rutracker.org"} aria-label={"Домен для мониторинга"} className={"min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#060a12] px-3.5 py-2.5 font-mono text-sm text-white placeholder:text-slate-500"} /><button data-action-click={"addMonitoringSite"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500"}>＋ Добавить</button></div>
             <div id={"monitorSites"} className={"grid gap-x-10 gap-y-1 md:grid-cols-2"}></div>
           </section>
           <section id={"monitorSection-telegram"} className={"hidden ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>

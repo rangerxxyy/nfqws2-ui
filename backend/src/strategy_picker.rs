@@ -2107,9 +2107,9 @@ where
                 for probe in probes {
                     attempts += 1;
                     detail = probe.detail;
-                    match (probe.baseline_ok, probe.candidate_ok) {
-                        (Some(false), Some(true)) => successes += 1,
-                        (Some(false), Some(false)) => break,
+                    match probe.candidate_ok {
+                        Some(true) => successes += 1,
+                        Some(false) => break,
                         _ => break,
                     }
                     if cancel.load(Ordering::Acquire) || std::time::Instant::now() >= deadline {
@@ -2252,15 +2252,9 @@ where
         for probe in probes {
             attempts += 1;
             detail = probe.detail;
-            match (probe.baseline_ok, probe.candidate_ok) {
-                (Some(true), _) => {
-                    result.state = "site_unblocked".into();
-                    result.message =
-                        "Прямой запрос открыл сайт; подбор стратегии не требуется".into();
-                    return result;
-                }
-                (Some(false), Some(true)) => successes += 1,
-                (Some(false), Some(false)) => break,
+            match probe.candidate_ok {
+                Some(true) => successes += 1,
+                Some(false) => break,
                 _ if cancel.load(std::sync::atomic::Ordering::Acquire) => {
                     result.results.push(StrategyCandidateResult {
                         candidate: candidate.clone(),
@@ -2530,15 +2524,9 @@ where
         let mut positives = Vec::new();
         for probe in probes {
             let candidate = batch[probe.candidate_index].clone();
-            match (probe.probe.baseline_ok, probe.probe.candidate_ok) {
-                (Some(true), _) => {
-                    result.state = "site_unblocked".into();
-                    result.message =
-                        "Прямой запрос открыл сайт; подбор стратегии не требуется".into();
-                    return result;
-                }
-                (Some(false), Some(true)) => positives.push((probe.elapsed_ms, candidate)),
-                (Some(false), Some(false)) => {
+            match probe.probe.candidate_ok {
+                Some(true) => positives.push((probe.elapsed_ms, candidate)),
+                Some(false) => {
                     result.failures += 1;
                     result.checked += 1;
                 }
