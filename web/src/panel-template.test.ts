@@ -11,6 +11,21 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel without authentication', () => {
+  it('opens the full configuration editor first and separates configuration settings', () => {
+    expect(template).toContain('id="configTabEditor"');
+    expect(template).toContain('aria-pressed="true"');
+    expect(template).toContain('id="configTabSettings"');
+    expect(template).toContain('id="configEditorPanel"');
+    expect(template).toContain('id="configSettingsPanel"');
+    expect(template).toMatch(/id="configEditorPanel" class="[^"]*config-panel-enter/);
+    expect(template).toMatch(/id="configSettingsPanel" class="[^"]*hidden/);
+    expect(template.indexOf('data-action-click="applyConfigAndRestart"')).toBeLessThan(template.indexOf('id="configSettingsPanel"'));
+    expect(panelSource).toContain('switchConfigSection:');
+    expect(panelSource).toContain("activePanel.classList.remove('hidden')");
+    expect(panelSource).toContain("button.setAttribute('aria-pressed', String(selected))");
+    expect(panelStyles).toContain('.config-subtab-active');
+  });
+
   it('exposes the full blockcheck2 catalog mode and submits it to the Rust API', () => {
     expect(template).toContain('value="full"');
     expect(template).toContain('каталог blockcheck2 (~3 000)');

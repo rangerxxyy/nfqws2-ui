@@ -2,9 +2,11 @@
 
 > **For agentic workers:** Use the established inline workflow, one testable step at a time.
 
-**Goal:** Apply a domain's own 3/3 confirmed strategy while the rest of the 16 KB scan continues.
+**Goal:** Apply a domain's own 3/3 confirmed strategy while the rest of the 16 KB scan continues, and separate the full configuration editor from structured configuration settings.
 
 **Architecture:** Persisted per-domain results become apply-eligible while the operation is running. The scan accepts a pause request only at a completed target boundary, yields the shared diagnostic lock, and resumes after the existing transactional apply succeeds or fails.
+
+The configuration screen uses two in-page sections. The full-text editor is visible on initial load; existing quick settings and diagnostics are grouped under “Настройки конфигурации”.
 
 **Tech Stack:** Rust/Tokio, TypeScript, Vitest, Cargo tests.
 
@@ -55,7 +57,16 @@
 - [ ] Show the row action for the eligible persisted row; preserve in-flight, duplicate-click, and status feedback behavior.
 - [ ] Run full web tests and typecheck.
 
-### Task 4: Full verification and release
+### Task 4: Configuration editor and settings sections
+
+**Files:** Modify `web/src/App.tsx`, `web/src/panel.ts`, `web/src/panel.css`, and template tests.
+
+- [ ] Add a failing UI test for the full configuration being selected on initial load and for the separate settings section.
+- [ ] Add clear keyboard-accessible section controls with compact active styling and a short reduced-motion-aware transition.
+- [ ] Move existing settings cards into the second section without dropping any controls or runtime information.
+- [ ] Verify section switching, default state, typecheck, and production rendering.
+
+### Task 5: Full verification and release
 
 - [ ] Run `cargo fmt --all -- --check`, full `cargo test --locked --offline`, `cargo clippy --locked --offline --all-targets -- -D warnings`, full `pnpm test`, `pnpm typecheck`, `pnpm build`, and `git diff --check`.
 - [ ] Review diff for lock release on every branch and ensure no router probe is started or interrupted.

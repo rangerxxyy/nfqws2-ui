@@ -309,6 +309,24 @@ async function loadConfig() {
     syncConfigLines();
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
 }
+function switchConfigSection(section: 'editor' | 'settings') {
+  const activeId = section === 'editor' ? 'configEditorPanel' : 'configSettingsPanel';
+  const inactiveId = section === 'editor' ? 'configSettingsPanel' : 'configEditorPanel';
+  const activePanel = document.getElementById(activeId);
+  const inactivePanel = document.getElementById(inactiveId);
+  if (!activePanel || !inactivePanel) return;
+  activePanel.classList.remove('hidden');
+  inactivePanel.classList.add('hidden');
+  activePanel.classList.remove('config-panel-enter');
+  void activePanel.offsetWidth;
+  activePanel.classList.add('config-panel-enter');
+  for (const [id, selected] of [['configTabEditor', section === 'editor'], ['configTabSettings', section === 'settings']] as const) {
+    const button = document.getElementById(id);
+    if (!button) continue;
+    button.setAttribute('aria-pressed', String(selected));
+    button.classList.toggle('config-subtab-active', selected);
+  }
+}
 async function loadRuntimeProfiles() {
   const host = $('#nfqwsRuntimeProfiles');
   if (!host) return;
@@ -1453,6 +1471,7 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
+    switchConfigSection: (section: 'editor' | 'settings') => switchConfigSection(section),
     runSiteDiagnosis: () => void runSiteDiagnosis(),
     runSiteTrace: () => void runSiteTrace(),
     stopSiteTrace: () => void stopSiteTrace(),
