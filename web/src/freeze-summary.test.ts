@@ -12,7 +12,7 @@ describe('summarizeFreezeScan', () => {
       state: 'complete',
       message: 'Проверка завершена',
       results: [result(true, true), result(true, false), result(false, false)],
-    })).toEqual({ tone: 'warning', text: 'Обрыв есть в 2 сетях из 3. Для 1 сети имя прошло три проверки; найденный вариант показан в таблице.' });
+    })).toEqual({ tone: 'warning', text: 'Возможный обрыв в 2 сетях из 3. Для 1 сети имя прошло три проверки; найденный вариант показан в таблице.' });
   });
 
   it('does not describe a partial scan as a completed diagnosis', () => {

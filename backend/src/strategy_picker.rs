@@ -977,6 +977,76 @@ pub fn candidate_argv(
     Ok(args)
 }
 
+/// Build one nfqws2 process with a disjoint profile for each isolated mark
+/// lane. Callers must bind every lane mark to its own source-port range and
+/// serially confirm any batch-positive candidate before presenting it as usable.
+pub fn candidate_batch_argv(
+    active_args: &[String],
+    protocol: StrategyProtocol,
+    candidates: &[(Vec<String>, u32, u32)],
+    available_functions: &HashSet<String>,
+    available_blobs: &[String],
+) -> Result<Vec<String>, String> {
+    if candidates.is_empty() || candidates.len() > crate::probe_lanes::MAX_BATCH_LANES {
+        return Err("Размер пакета стратегий вне безопасного диапазона".into());
+    }
+    if protocol == StrategyProtocol::Quic {
+        return Err("Пакетная проверка QUIC не поддерживается".into());
+    }
+    let common_mask = candidates[0].2;
+    let mut marks = HashSet::new();
+    for (_, mark, mask) in candidates {
+        if *mask == 0 || *mask != common_mask || *mark == 0 || *mark & !*mask != 0 {
+            return Err("Метки профилей должны иметь общую маску и быть внутри неё".into());
+        }
+        if !marks.insert(*mark) {
+            return Err("Метки профилей должны быть уникальными".into());
+        }
+    }
+
+    let mut profiles = Vec::with_capacity(candidates.len());
+    for (steps, mark, mask) in candidates {
+        let argv = candidate_argv(
+            active_args,
+            protocol,
+            steps,
+            available_functions,
+            available_blobs,
+        )?;
+        let profile_start = argv
+            .iter()
+            .position(|arg| {
+                ["--filter-tcp", "--filter-udp", "--filter-l7", "--payload"]
+                    .iter()
+                    .any(|prefix| arg == *prefix || arg.starts_with(&format!("{prefix}=")))
+            })
+            .ok_or_else(|| "Не удалось отделить профиль от глобальных параметров".to_owned())?;
+        profiles.push((
+            argv[..profile_start].to_vec(),
+            argv[profile_start..].to_vec(),
+            *mark,
+            *mask,
+        ));
+    }
+    let prefix = profiles[0].0.clone();
+    if profiles
+        .iter()
+        .any(|(candidate_prefix, ..)| candidate_prefix != &prefix)
+    {
+        return Err("Общие параметры тестовых профилей расходятся".into());
+    }
+
+    let mut result = prefix;
+    for (index, (_, mut profile, mark, mask)) in profiles.into_iter().enumerate() {
+        if index > 0 {
+            result.push("--new".into());
+        }
+        result.push(format!("--filter-mark=0x{mark:08x}/0x{mask:08x}"));
+        result.append(&mut profile);
+    }
+    Ok(result)
+}
+
 /// Construct one domain-scoped profile for an explicitly selected, locally
 /// validated HTTP/HTTPS candidate. QUIC application needs its own real runner.
 pub fn build_domain_profile(
@@ -1108,9 +1178,110 @@ mod application_tests {
 }
 
 #[cfg(test)]
+mod batch_argv_tests {
+    use super::{StrategyProtocol, candidate_batch_argv};
+    use std::collections::HashSet;
+
+    #[test]
+    fn builds_distinct_http_profiles_and_keeps_only_shared_global_options() {
+        let active = vec![
+            "nfqws2".into(),
+            "--qnum=300".into(),
+            "--blob=tls_clienthello,/opt/blobs/tls.bin".into(),
+            "--new".into(),
+            "--filter-tcp=80".into(),
+            "--filter-l7=http".into(),
+            "--lua-desync=old:pos=1".into(),
+        ];
+        let candidates = vec![
+            (vec!["--lua-desync=multisplit:pos=1".into()], 1, 3),
+            (vec!["--lua-desync=multisplit:pos=2".into()], 2, 3),
+        ];
+        let argv = candidate_batch_argv(
+            &active,
+            StrategyProtocol::Https,
+            &candidates,
+            &HashSet::from(["multisplit".into()]),
+            &[],
+        )
+        .unwrap();
+
+        assert!(!argv.iter().any(|arg| arg.contains("qnum")));
+        assert!(!argv.iter().any(|arg| arg.contains("old:pos")));
+        assert_eq!(
+            argv.iter().filter(|arg| arg.starts_with("--blob=")).count(),
+            1
+        );
+        assert_eq!(argv.iter().filter(|arg| *arg == "--new").count(), 1);
+        assert_eq!(
+            argv.iter()
+                .filter(|arg| arg.starts_with("--filter-mark="))
+                .count(),
+            2
+        );
+        assert!(
+            argv.iter()
+                .any(|arg| arg == "--filter-mark=0x00000001/0x00000003")
+        );
+        assert!(
+            argv.iter()
+                .any(|arg| arg == "--filter-mark=0x00000002/0x00000003")
+        );
+        assert_eq!(
+            argv.iter().filter(|arg| *arg == "--filter-tcp=443").count(),
+            2
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_marks_quic_and_unbounded_batches() {
+        let active = vec!["nfqws2".into(), "--qnum=300".into()];
+        let steps = vec!["--lua-desync=multisplit:pos=1".into()];
+        let duplicate = vec![(steps.clone(), 1, 3), (steps.clone(), 1, 3)];
+        assert!(
+            candidate_batch_argv(
+                &active,
+                StrategyProtocol::Https,
+                &duplicate,
+                &HashSet::from(["multisplit".into()]),
+                &[],
+            )
+            .is_err()
+        );
+        let too_many = vec![
+            (steps.clone(), 1, 7),
+            (steps.clone(), 2, 7),
+            (steps.clone(), 3, 7),
+            (steps.clone(), 4, 7),
+        ];
+        assert!(
+            candidate_batch_argv(
+                &active,
+                StrategyProtocol::Https,
+                &too_many,
+                &HashSet::from(["multisplit".into()]),
+                &[],
+            )
+            .is_err()
+        );
+        assert!(
+            candidate_batch_argv(
+                &active,
+                StrategyProtocol::Quic,
+                &[(steps, 1, 1)],
+                &HashSet::from(["multisplit".into()]),
+                &[],
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
 mod repeat_tests {
     use super::{
-        StrategyCandidate, StrategyPlan, StrategyProbeResult, StrategyProtocol, run_candidates,
+        FullBatchOptions, StrategyBatchProbeResult, StrategyCandidate, StrategyPlan,
+        StrategyProbeResult, StrategyProtocol, run_candidates, run_full_candidates_with_batches,
     };
     use std::sync::{
         Arc,
@@ -1200,6 +1371,146 @@ mod repeat_tests {
         assert_eq!(result.results[0].attempts, 1);
         assert_eq!(result.results[0].successes, 1);
         assert!(!result.results[0].confirmed);
+    }
+
+    #[tokio::test]
+    async fn full_mode_batches_catalog_candidates_then_serially_confirms_hits_by_latency() {
+        let plan = StrategyPlan {
+            protocol: StrategyProtocol::Https,
+            candidates: vec![
+                StrategyCandidate {
+                    name: "priority".into(),
+                    source: "Текущий профиль".into(),
+                    steps: vec!["--lua-desync=split:pos=1".into()],
+                },
+                StrategyCandidate {
+                    name: "slow hit".into(),
+                    source: "Каталог zapret2 (полный)".into(),
+                    steps: vec!["--lua-desync=split:pos=2".into()],
+                },
+                StrategyCandidate {
+                    name: "fast hit".into(),
+                    source: "Каталог zapret2 (полный)".into(),
+                    steps: vec!["--lua-desync=split:pos=3".into()],
+                },
+            ],
+        };
+        let confirmed_order = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let output = run_full_candidates_with_batches(
+            plan,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            FullBatchOptions {
+                repeats: 2,
+                stop_after_first_confirmed: false,
+                max_batch_size: 3,
+            },
+            |candidates| async move {
+                Ok(candidates
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, candidate)| {
+                        let latency = if candidate.name == "fast hit" { 10 } else { 20 };
+                        StrategyBatchProbeResult {
+                            candidate_index: index,
+                            elapsed_ms: latency,
+                            probe: StrategyProbeResult {
+                                baseline_ok: Some(false),
+                                candidate_ok: Some(true),
+                                detail: "batch response".into(),
+                            },
+                        }
+                    })
+                    .collect())
+            },
+            {
+                let confirmed_order = confirmed_order.clone();
+                move |candidate: &StrategyCandidate, repeats| {
+                    confirmed_order.lock().unwrap().push(candidate.name.clone());
+                    let outcomes = if candidate.name == "slow hit" {
+                        vec![true, false]
+                    } else {
+                        vec![true; repeats]
+                    };
+                    async move {
+                        outcomes
+                            .into_iter()
+                            .map(|success| StrategyProbeResult {
+                                baseline_ok: Some(false),
+                                candidate_ok: Some(success),
+                                detail: "serial confirmation".into(),
+                            })
+                            .collect::<Vec<_>>()
+                    }
+                }
+            },
+            |_, _, _| {},
+        )
+        .await;
+
+        assert_eq!(
+            *confirmed_order.lock().unwrap(),
+            vec!["priority", "fast hit", "slow hit"]
+        );
+        assert!(
+            output
+                .results
+                .iter()
+                .any(|row| row.candidate.name == "fast hit" && row.confirmed)
+        );
+        assert!(
+            output
+                .results
+                .iter()
+                .any(|row| row.candidate.name == "slow hit" && !row.confirmed)
+        );
+        assert_eq!(output.state, "complete");
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_preliminary_batch_hits_never_confirms_them() {
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let batch_cancel = cancel.clone();
+        let plan = StrategyPlan {
+            protocol: StrategyProtocol::Https,
+            candidates: vec![StrategyCandidate {
+                name: "catalog hit".into(),
+                source: "Каталог zapret2 (полный)".into(),
+                steps: vec!["--lua-desync=split:pos=2".into()],
+            }],
+        };
+        let output = run_full_candidates_with_batches(
+            plan,
+            cancel,
+            FullBatchOptions {
+                repeats: 3,
+                stop_after_first_confirmed: false,
+                max_batch_size: 3,
+            },
+            move |candidates| {
+                batch_cancel.store(true, Ordering::Release);
+                async move {
+                    Ok(candidates
+                        .into_iter()
+                        .enumerate()
+                        .map(|(candidate_index, _candidate)| StrategyBatchProbeResult {
+                            candidate_index,
+                            elapsed_ms: 1,
+                            probe: StrategyProbeResult {
+                                baseline_ok: Some(false),
+                                candidate_ok: Some(true),
+                                detail: "preliminary only".into(),
+                            },
+                        })
+                        .collect())
+                }
+            },
+            |_: &StrategyCandidate, _: usize| async { Vec::<StrategyProbeResult>::new() },
+            |_, _, _| {},
+        )
+        .await;
+
+        assert_eq!(output.state, "cancelled");
+        assert!(output.results.iter().all(|row| !row.confirmed));
     }
 }
 
@@ -1487,6 +1798,14 @@ pub struct StrategyProbeResult {
     pub baseline_ok: Option<bool>,
     pub candidate_ok: Option<bool>,
     pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyBatchProbeResult {
+    /// Index in the owned candidate slice passed to the batch callback.
+    pub candidate_index: usize,
+    pub elapsed_ms: u64,
+    pub probe: StrategyProbeResult,
 }
 
 /// Normalize one-result test runners and real batched runners to a bounded
@@ -1946,6 +2265,268 @@ where
             result.failures, result.omitted_results
         ));
     }
+    result
+}
+
+/// Full mode keeps the high-priority candidates sequential, batches only the
+/// generated catalog, then serially confirms batch-positive candidates in
+/// observed-latency order. Batch outcomes are never considered confirmation.
+#[derive(Debug, Clone, Copy)]
+pub struct FullBatchOptions {
+    pub repeats: usize,
+    pub stop_after_first_confirmed: bool,
+    pub max_batch_size: usize,
+}
+
+pub async fn run_full_candidates_with_batches<B, BFut, S, SFut, P>(
+    plan: StrategyPlan,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    options: FullBatchOptions,
+    mut batch_runner: B,
+    mut serial_runner: S,
+    mut progress: P,
+) -> StrategyRunResult
+where
+    B: FnMut(Vec<StrategyCandidate>) -> BFut,
+    BFut: std::future::Future<Output = Result<Vec<StrategyBatchProbeResult>, String>>,
+    S: FnMut(&StrategyCandidate, usize) -> SFut,
+    SFut: std::future::Future,
+    SFut::Output: IntoProbeBatch,
+    P: FnMut(usize, usize, &str),
+{
+    let FullBatchOptions {
+        repeats,
+        stop_after_first_confirmed,
+        max_batch_size,
+    } = options;
+    let total = plan.candidates.len();
+    let split = plan
+        .candidates
+        .iter()
+        .position(|candidate| candidate.source.starts_with("Каталог zapret2"))
+        .unwrap_or(total);
+    let prefix = plan.candidates[..split].to_vec();
+    let catalog = plan.candidates[split..].to_vec();
+    let mut result = StrategyRunResult {
+        state: "running".into(),
+        checked: 0,
+        total,
+        results: Vec::new(),
+        refinement_bases: Vec::new(),
+        failures: 0,
+        omitted_results: 0,
+        message: "Подготовка кандидатов".into(),
+    };
+
+    if !prefix.is_empty() {
+        let prefix_result = run_candidates_with_compaction(
+            StrategyPlan {
+                protocol: plan.protocol,
+                candidates: prefix,
+            },
+            cancel.clone(),
+            repeats,
+            stop_after_first_confirmed,
+            true,
+            &mut serial_runner,
+            |done, _, current| progress(done, total, current),
+        )
+        .await;
+        result.checked = prefix_result.checked;
+        result.results = prefix_result.results;
+        result.refinement_bases = prefix_result.refinement_bases;
+        result.failures = prefix_result.failures;
+        result.omitted_results = prefix_result.omitted_results;
+        result.state = prefix_result.state;
+        result.message = prefix_result.message;
+        if matches!(
+            result.state.as_str(),
+            "cancelled" | "failed" | "site_unblocked"
+        ) || (stop_after_first_confirmed && result.state == "complete")
+            || catalog.is_empty()
+        {
+            result.total = total;
+            return result;
+        }
+        result.state = "running".into();
+    }
+
+    let batch_size = max_batch_size.clamp(1, crate::probe_lanes::MAX_BATCH_LANES);
+    let mut cursor = 0;
+    while cursor < catalog.len() {
+        if cancel.load(std::sync::atomic::Ordering::Acquire) {
+            result.state = "cancelled".into();
+            result.message =
+                "Подбор отменён; пакетные результаты без подтверждения сохранены".into();
+            break;
+        }
+        let end = (cursor + batch_size).min(catalog.len());
+        let batch = catalog[cursor..end].to_vec();
+        for candidate in &batch {
+            progress(
+                result.checked,
+                total,
+                &format!("Пакетная проверка: {}", candidate.name),
+            );
+        }
+        let batch_result = batch_runner(batch.clone()).await;
+        let probes = match batch_result {
+            Ok(probes) if !probes.is_empty() && probes.len() <= batch.len() => probes,
+            Ok(_) => Vec::new(),
+            Err(message) if message.starts_with("CLEANUP_UNCONFIRMED:") => {
+                result.state = "failed".into();
+                result.message = message;
+                return result;
+            }
+            Err(_) => Vec::new(),
+        };
+
+        // If the lane runner cannot form a safe batch (or returns malformed
+        // output), fall back to the exact serial runner for one candidate.
+        if probes.is_empty()
+            || probes
+                .iter()
+                .any(|probe| probe.candidate_index >= batch.len())
+            || (0..probes.len()).any(|index| {
+                probes
+                    .iter()
+                    .filter(|probe| probe.candidate_index == index)
+                    .count()
+                    != 1
+            })
+        {
+            let mut one = run_candidates_with_compaction(
+                StrategyPlan {
+                    protocol: plan.protocol,
+                    candidates: vec![batch[0].clone()],
+                },
+                cancel.clone(),
+                repeats,
+                stop_after_first_confirmed,
+                true,
+                &mut serial_runner,
+                |done, _, current| progress(result.checked + done, total, current),
+            )
+            .await;
+            result.checked += one.checked;
+            result.failures += one.failures;
+            result.omitted_results += one.omitted_results;
+            result.refinement_bases.append(&mut one.refinement_bases);
+            result.results.append(&mut one.results);
+            cursor += 1;
+            if matches!(
+                one.state.as_str(),
+                "cancelled" | "failed" | "site_unblocked"
+            ) || (stop_after_first_confirmed && one.state == "complete")
+            {
+                result.state = one.state;
+                result.message = one.message;
+                break;
+            }
+            continue;
+        }
+
+        let tested = probes.len();
+        let mut positives = Vec::new();
+        for probe in probes {
+            let candidate = batch[probe.candidate_index].clone();
+            match (probe.probe.baseline_ok, probe.probe.candidate_ok) {
+                (Some(true), _) => {
+                    result.state = "site_unblocked".into();
+                    result.message =
+                        "Прямой запрос открыл сайт; подбор стратегии не требуется".into();
+                    return result;
+                }
+                (Some(false), Some(true)) => positives.push((probe.elapsed_ms, candidate)),
+                (Some(false), Some(false)) => {
+                    result.failures += 1;
+                    result.checked += 1;
+                }
+                _ if cancel.load(std::sync::atomic::Ordering::Acquire) => {
+                    result.state = "cancelled".into();
+                    result.message =
+                        "Пакетная проверка отменена; положительные варианты не подтверждены".into();
+                    return result;
+                }
+                _ => {
+                    result.state = "failed".into();
+                    result.message =
+                        "Пакетная сетевая проверка не дала достаточного результата".into();
+                    return result;
+                }
+            }
+        }
+        positives.sort_by_key(|(elapsed, _)| *elapsed);
+        if cancel.load(std::sync::atomic::Ordering::Acquire) {
+            result.state = "cancelled".into();
+            result.message =
+                "Пакетная проверка отменена; положительные варианты не подтверждены".into();
+            return result;
+        }
+        for (_, candidate) in positives {
+            progress(
+                result.checked,
+                total,
+                &format!("Подтверждение: {}", candidate.name),
+            );
+            let mut confirmation = run_candidates_with_compaction(
+                StrategyPlan {
+                    protocol: plan.protocol,
+                    candidates: vec![candidate],
+                },
+                cancel.clone(),
+                repeats,
+                false,
+                true,
+                &mut serial_runner,
+                |done, _, current| progress(result.checked + done, total, current),
+            )
+            .await;
+            result.checked += confirmation.checked;
+            result.failures += confirmation.failures;
+            result.omitted_results += confirmation.omitted_results;
+            result
+                .refinement_bases
+                .append(&mut confirmation.refinement_bases);
+            result.results.append(&mut confirmation.results);
+            if confirmation.state == "cancelled" {
+                result.state = "cancelled".into();
+                result.message = confirmation.message;
+                return result;
+            }
+            if confirmation.state == "failed" || confirmation.state == "site_unblocked" {
+                result.state = confirmation.state;
+                result.message = confirmation.message;
+                return result;
+            }
+            if stop_after_first_confirmed && confirmation.state == "complete" {
+                result.state = "complete".into();
+                result.message = confirmation.message;
+                return result;
+            }
+        }
+        cursor += tested;
+    }
+
+    if result.state == "running" {
+        result.state = if result.results.iter().any(|row| row.confirmed) {
+            "complete"
+        } else {
+            "no_match"
+        }
+        .into();
+        result.message = if result.state == "complete" {
+            format!(
+                "Найдены варианты, подтверждённые {repeats} последовательными сетевыми проверками"
+            )
+        } else {
+            "Подтверждённая стратегия не найдена".into()
+        };
+        result
+            .message
+            .push_str(&format!(" · без успешного ответа: {}", result.failures));
+    }
+    result.total = total;
     result
 }
 

@@ -2,6 +2,7 @@ import { diagnosisRows } from './diagnosis-layout';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
 import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentation';
+import { freezeProgressPresentation } from './freeze-progress';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -854,6 +855,35 @@ async function previewFreezeStrategy(operationId: string, resultIndex: string) {
   }
 }
 
+async function applyFreezeStrategyOneClick(operationId: string, resultIndex: string) {
+  const index = Number(resultIndex);
+  const rowButton = [...document.querySelectorAll<HTMLButtonElement>('[data-action-click="applyFreezeStrategyOneClick"]')]
+    .find((button) => button.dataset.args === JSON.stringify([operationId, resultIndex]));
+  if (!Number.isInteger(index) || index < 0) return toast('Индекс проверенного домена некорректен.', 'error');
+  const editor = $('#nfqwsConfTextarea');
+  if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) {
+    return toast('Сначала примените или отмените черновик конфигурации.', 'error');
+  }
+  if (rowButton) { rowButton.disabled = true; rowButton.textContent = 'Проверяю и применяю…'; }
+  let appliedSuccessfully = false;
+  try {
+    // The explicit row action is the user's approval. The backend still
+    // verifies the persisted 3/3 result, target domain, config revision and
+    // nfqws2 dry-run before writing; its transaction backs up and rolls back.
+    const preview = await nfqwsDiagnostics.freezeStrategyPreview(operationId, index);
+    const applied = await nfqwsDiagnostics.applyStrategy('freezeScan', operationId, index, preview.originalRevision);
+    appliedSuccessfully = true;
+    activeStrategyPreview = null;
+    if (rowButton) { rowButton.textContent = 'Стратегия применена'; rowButton.title = `${preview.host}: профиль добавлен; резервная копия создана`; }
+    toast(`${applied.message} Стратегия добавлена только для ${preview.host}; резервная копия сохранена.`, 'success');
+    try { await loadConfig(); }
+    catch { toast('Стратегия применена, но данные конфигурации на странице не обновились. Перезагрузите панель.', 'error'); }
+  } catch (error) {
+    if (rowButton) { rowButton.disabled = appliedSuccessfully; rowButton.textContent = appliedSuccessfully ? 'Стратегия применена' : 'Применить к сайту'; }
+    toast(error instanceof Error ? error.message : 'Не удалось применить подтверждённую стратегию.', 'error');
+  }
+}
+
 async function applyStrategyPick(source: string, operationId: string, candidateIndex: string, expectedRevision: string) {
   if ((source !== 'strategyPick' && source !== 'freezeScan') || !activeStrategyPreview
     || activeStrategyPreview.source !== source || activeStrategyPreview.operationId !== operationId) {
@@ -997,6 +1027,7 @@ async function cancelStrategyPick() {
 
 function freezeMeasurementLabel(measurement: FreezeScanOperation['results'][number]['current']) {
   if (measurement.ok) return `ответ получен · ${measurement.elapsedMs} мс`;
+  if (measurement.reason.includes('TCP-соединение отдельно устанавливается')) return `тайм-аут · TCP доступен · ${measurement.elapsedMs} мс`;
   if (measurement.classification === 'PossibleFreeze') return `тайм-аут после ответа · ${measurement.elapsedMs} мс`;
   if (measurement.classification === 'PossibleBoundaryStall') return `объёмный тайм-аут · ${measurement.elapsedMs} мс`;
   if (measurement.classification === 'PossibleUploadStall') return `тайм-аут при отправке · ${measurement.elapsedMs} мс`;
@@ -1010,9 +1041,37 @@ function freezeMeasurementLabel(measurement: FreezeScanOperation['results'][numb
 }
 
 function renderFreezeScan(operation: FreezeScanOperation) {
+  const progress = $('#freezeScanProgress');
+  const active = ['queued', 'running', 'stopping'].includes(operation.state);
+  if (progress) {
+    progress.classList.toggle('hidden', !active);
+    if (active) {
+      const view = freezeProgressPresentation(operation);
+      setText('#freezeScanProgressTitle', view.headline);
+      setText('#freezeScanProgressPercent', `${view.percent}%`);
+      setText('#freezeScanProgressDetail', view.detail);
+      const bar = $('#freezeScanProgressBar');
+      if (bar instanceof HTMLElement) bar.style.width = `${view.percent}%`;
+      const steps = $('#freezeScanProgressSteps');
+      if (steps) {
+        steps.replaceChildren();
+        view.steps.forEach((step, index) => {
+          const item = document.createElement('li');
+          item.className = `freeze-progress-step rounded-lg border px-2.5 py-2 text-xs ${step.state}`;
+          item.dataset.state = step.state;
+          const number = document.createElement('span');
+          number.className = 'mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold';
+          number.textContent = step.state === 'complete' ? '✓' : String(index + 1);
+          const label = document.createElement('span');
+          label.textContent = step.label;
+          item.append(number, label);
+          steps.append(item);
+        });
+      }
+    }
+  }
   const status = $('#freezeScanStatus');
   if (status) {
-    const active = ['queued', 'running', 'stopping'].includes(operation.state);
     status.textContent = active
       ? `${operation.stage === 'strategy_search' ? 'Подбор имени' : 'Проверка'} · ${operation.current ?? 'подготовка'} · ${operation.done}/${operation.total}`
       : '';
@@ -1086,10 +1145,10 @@ function renderFreezeScan(operation: FreezeScanOperation) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'mt-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-100 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300';
-        button.dataset.actionClick = 'previewFreezeStrategy';
+        button.dataset.actionClick = 'applyFreezeStrategyOneClick';
         button.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
         button.textContent = 'Применить к сайту';
-        button.title = 'Предпросмотр конфигурации откроется перед применением';
+        button.title = 'Проверенный вариант добавляется только этому домену; при ошибке конфигурация откатывается';
         cell.append(button);
       }
       row.append(cell);
@@ -1313,6 +1372,7 @@ function bindPrototypeActions() {
     toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
     previewFreezeStrategy: (operationId: string, index: string) => void previewFreezeStrategy(operationId, index),
+    applyFreezeStrategyOneClick: (operationId: string, index: string) => void applyFreezeStrategyOneClick(operationId, index),
     applyStrategyPick: (source: string, operationId: string, index: string, revision: string) => void applyStrategyPick(source, operationId, index, revision),
     runFreezeScan: () => void startFreezeScan(),
     cancelFreezeScan: () => void cancelFreezeScan(),

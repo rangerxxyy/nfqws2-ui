@@ -38,6 +38,6 @@ export function summarizeFreezeScan(operation: FreezeScanSummaryInput): FreezeSc
     : ' Подтверждённый вариант не найден.';
   return {
     tone: 'warning',
-    text: `Обрыв есть в ${affected} ${russianCount(affected, 'сети', 'сетях', 'сетях').replace(/^\d+\s/, '')} из ${scanned}.${names}`,
+    text: `Возможный обрыв в ${affected} ${russianCount(affected, 'сети', 'сетях', 'сетях').replace(/^\d+\s/, '')} из ${scanned}.${names}`,
   };
 }

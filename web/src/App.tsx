@@ -1187,6 +1187,17 @@ export default function App() {
               <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>Остановить</button>
             </div>
             <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
+            <div id={"freezeScanProgress"} className={"hidden rounded-xl border border-blue-400/25 bg-blue-500/5 p-4"} role={"status"} aria-live={"polite"}>
+              <div className={"flex items-center justify-between gap-3"}>
+                <strong id={"freezeScanProgressTitle"} className={"text-sm font-bold text-blue-100"}></strong>
+                <span id={"freezeScanProgressPercent"} className={"shrink-0 text-xs font-bold tabular-nums text-blue-200"}></span>
+              </div>
+              <div className={"mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"}>
+                <div id={"freezeScanProgressBar"} className={"h-full rounded-full bg-blue-400 transition-[width] duration-300"}></div>
+              </div>
+              <p id={"freezeScanProgressDetail"} className={"mt-2 text-xs leading-relaxed text-slate-300"}></p>
+              <ol id={"freezeScanProgressSteps"} className={"mt-3 grid gap-2 sm:grid-cols-3"}></ol>
+            </div>
             <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-4 py-3 text-sm font-bold leading-relaxed"} role={"status"} aria-live={"polite"}></p>
             <div id={"freezeScanResults"} className={"hidden overflow-x-auto rounded-xl border border-slate-800"}></div>
             <section id={"freezeApplyPreviewPanel"} className={"hidden rounded-2xl border border-blue-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>

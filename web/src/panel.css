@@ -530,6 +530,11 @@ textarea { line-height: 1.7; tab-size: 4; }
 #tabContent-diagnostic16k .freeze-result-success .freeze-result-badge { border-color: rgb(52 211 153 / 40%); background: rgb(6 78 59 / 42%); color: #a7f3d0; }
 #tabContent-diagnostic16k .freeze-result-warning .freeze-result-badge { border-color: rgb(251 191 36 / 42%); background: rgb(120 53 15 / 44%); color: #fde68a; }
 #tabContent-diagnostic16k .freeze-result-neutral .freeze-result-badge { border-color: rgb(148 163 184 / 30%); background: rgb(51 65 85 / 45%); color: #e2e8f0; }
+#tabContent-diagnostic16k .freeze-progress-step { color: #94a3b8; border-color: rgb(71 85 105 / 55%); background: rgb(15 23 42 / 55%); }
+#tabContent-diagnostic16k .freeze-progress-step[data-state="complete"] { color: #a7f3d0; border-color: rgb(52 211 153 / 25%); background: rgb(6 78 59 / 18%); }
+#tabContent-diagnostic16k .freeze-progress-step[data-state="active"] { color: #dbeafe; border-color: rgb(96 165 250 / 60%); background: rgb(30 64 175 / 24%); animation: freeze-step-glow 1.8s ease-in-out infinite; }
+#tabContent-diagnostic16k .freeze-progress-step[data-state="active"] > span:first-child { color: #fff; border-color: rgb(147 197 253 / 70%); background: rgb(37 99 235 / 55%); }
+@keyframes freeze-step-glow { 50% { box-shadow: 0 0 0 3px rgb(59 130 246 / 10%); } }
 #tabContent-diagnostic16k .freeze-scan-table td {
   color: #f1f5f9;
   font-weight: 600;
@@ -593,6 +598,7 @@ textarea { line-height: 1.7; tab-size: 4; }
   :where(button:not(:disabled)):active, .version-pill:active, #headerServiceControls button:active { transform: none; }
   [data-action-click='restartService']:hover #restartIcon { transform: none; }
   #freezeScanStatus[aria-busy="true"]::before { animation: none; }
+  #tabContent-diagnostic16k .freeze-progress-step[data-state="active"] { animation: none; }
   #tabContent-diagnostic16k .freeze-scan-table tbody tr { animation: none; transition: none; }
   #tabContent-autotune :where(input[type="checkbox"], select, textarea) { transition: none; }
   .strategy-mode-help.mode-help-enter { animation: none; }

@@ -3413,7 +3413,7 @@ async fn start_strategy_pick(
             current.stage = "testing".into();
             current.message = if matches!(mode, Some(StrategyMode::Full)) {
                 format!(
-                    "Проверяется полный каталог blockcheck2 последовательно; отмена доступна в любой момент{}",
+                    "Приоритетные варианты проверяются по очереди, полный каталог — безопасными пакетами с последовательным подтверждением; отмена доступна в любой момент{}",
                     if community_notice.is_empty() {
                         String::new()
                     } else {
@@ -3430,6 +3430,13 @@ async fn start_strategy_pick(
         }
         let progress_state = shared.clone();
         let progress_dir = operation_dir.clone();
+        let batch_active_args = active_args_for_task.clone();
+        let batch_functions = functions_for_task.clone();
+        let batch_blobs = blobs_for_task.clone();
+        let batch_host = task_host.clone();
+        let batch_binary = binary.clone();
+        let batch_cancel = probe_cancel.clone();
+        let batch_protocol = protocol;
         let probe_candidate = move |candidate: &strategy_picker::StrategyCandidate, repeats| {
             let steps = candidate.steps.clone();
             let candidate_argv = strategy_picker::candidate_argv(
@@ -3481,26 +3488,66 @@ async fn start_strategy_pick(
                     .collect::<Vec<_>>()
             }
         };
-        let mut plan_result = strategy_picker::run_candidates_with_compaction(
-            plan,
-            control.clone(),
-            task_repeats,
-            stop_after_first_confirmed,
-            mode == Some(StrategyMode::Full),
-            &probe_candidate,
-            move |done, total, current| {
-                if let Ok(mut operation) = progress_state.lock() {
-                    operation.current = Some(current.to_owned());
-                    operation.done = done;
-                    operation.total = total;
-                    operation.stage = "testing".into();
-                    operation.message = format!("Проверяется стратегия: {current}");
-                    operation.updated_at = now_unix_seconds();
-                    let _ = write_strategy_pick_operation_sync(&progress_dir, &operation);
-                }
-            },
-        )
-        .await;
+        let batch_runner = move |candidates: Vec<strategy_picker::StrategyCandidate>| {
+            let active_args = batch_active_args.clone();
+            let functions = batch_functions.clone();
+            let blobs = batch_blobs.clone();
+            let host = batch_host.clone();
+            let binary = batch_binary.clone();
+            let cancel = batch_cancel.clone();
+            async move {
+                site_trace::run_candidate_batch(
+                    site_trace::CandidateBatchRuntime {
+                        host,
+                        protocol: batch_protocol,
+                        active_args,
+                        binary,
+                        functions,
+                        blobs,
+                        cancel,
+                    },
+                    &candidates,
+                )
+                .await
+            }
+        };
+        let update_progress = move |done, total, current: &str| {
+            if let Ok(mut operation) = progress_state.lock() {
+                operation.current = Some(current.to_owned());
+                operation.done = done;
+                operation.total = total;
+                operation.stage = "testing".into();
+                operation.message = format!("Проверяется стратегия: {current}");
+                operation.updated_at = now_unix_seconds();
+                let _ = write_strategy_pick_operation_sync(&progress_dir, &operation);
+            }
+        };
+        let mut plan_result = if mode == Some(StrategyMode::Full) {
+            strategy_picker::run_full_candidates_with_batches(
+                plan,
+                control.clone(),
+                strategy_picker::FullBatchOptions {
+                    repeats: task_repeats,
+                    stop_after_first_confirmed,
+                    max_batch_size: nfqws2_ui::probe_lanes::MAX_BATCH_LANES,
+                },
+                batch_runner,
+                &probe_candidate,
+                update_progress,
+            )
+            .await
+        } else {
+            strategy_picker::run_candidates_with_compaction(
+                plan,
+                control.clone(),
+                task_repeats,
+                stop_after_first_confirmed,
+                false,
+                &probe_candidate,
+                update_progress,
+            )
+            .await
+        };
         let already_confirmed = plan_result.results.iter().any(|result| result.confirmed);
         if !matches!(
             plan_result.state.as_str(),

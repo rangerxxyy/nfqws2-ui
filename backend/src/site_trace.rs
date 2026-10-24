@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     net::Ipv4Addr,
     path::Path,
     process::Stdio,
@@ -355,6 +356,18 @@ fn fw_args(
     port: u16,
     queue: Option<u16>,
 ) -> Vec<String> {
+    fw_args_for_ports(action, hook, address, direction, port, queue, "40000:40999")
+}
+
+fn fw_args_for_ports(
+    action: &str,
+    hook: &str,
+    address: Ipv4Addr,
+    direction: &str,
+    port: u16,
+    queue: Option<u16>,
+    source_ports: &str,
+) -> Vec<String> {
     let mut args = vec![
         "-w".into(),
         "-t".into(),
@@ -373,7 +386,7 @@ fn fw_args(
             "--dport".into(),
             port.to_string(),
             "--sport".into(),
-            "40000:40999".into(),
+            source_ports.into(),
         ]);
     } else {
         args.extend([
@@ -382,7 +395,7 @@ fn fw_args(
             "--sport".into(),
             port.to_string(),
             "--dport".into(),
-            "40000:40999".into(),
+            source_ports.into(),
         ]);
     }
     if let Some(queue_num) = queue {
@@ -459,6 +472,10 @@ fn trace_hook(direction: &str) -> &'static str {
 }
 
 fn policy_mark_rule(chain: &str, mark: &str) -> Option<Vec<String>> {
+    policy_mark_rule_for_ports(chain, mark, "40000:40999")
+}
+
+fn policy_mark_rule_for_ports(chain: &str, mark: &str, source_ports: &str) -> Option<Vec<String>> {
     if !valid_policy_mark(mark) || !chain.starts_with("N2UM") {
         return None;
     }
@@ -471,12 +488,508 @@ fn policy_mark_rule(chain: &str, mark: &str) -> Option<Vec<String>> {
         "-p".into(),
         "tcp".into(),
         "--sport".into(),
-        "40000:40999".into(),
+        source_ports.into(),
         "-j".into(),
         "MARK".into(),
         "--set-xmark".into(),
         mark.into(),
     ])
+}
+
+fn batch_mark_rule(
+    chain: &str,
+    address: Ipv4Addr,
+    local_source: Ipv4Addr,
+    direction: &str,
+    port: u16,
+    lane: crate::probe_lanes::ProbeLane,
+) -> Vec<String> {
+    let mut rule = vec![
+        "-w".into(),
+        "-t".into(),
+        "mangle".into(),
+        "-A".into(),
+        chain.into(),
+        "-p".into(),
+        "tcp".into(),
+    ];
+    if direction == "out" {
+        rule.extend([
+            "-s".into(),
+            local_source.to_string(),
+            "-d".into(),
+            address.to_string(),
+            "--sport".into(),
+            format!("{}:{}", lane.source_port_start, lane.source_port_end),
+            "--dport".into(),
+            port.to_string(),
+        ]);
+    } else {
+        rule.extend([
+            "-m".into(),
+            "conntrack".into(),
+            "--ctorigsrc".into(),
+            local_source.to_string(),
+            "-s".into(),
+            address.to_string(),
+            "--sport".into(),
+            port.to_string(),
+            "--dport".into(),
+            format!("{}:{}", lane.source_port_start, lane.source_port_end),
+        ]);
+    }
+    rule.extend([
+        "-j".into(),
+        "MARK".into(),
+        "--set-xmark".into(),
+        format!("0x{:08x}/0x{:08x}", lane.mark, lane.mark_mask),
+    ]);
+    rule
+}
+
+fn batch_chain_rules(
+    chain: &str,
+    address: Ipv4Addr,
+    local_source: Ipv4Addr,
+    direction: &str,
+    port: u16,
+    queue: u16,
+    lanes: &[crate::probe_lanes::ProbeLane],
+) -> Result<Vec<Vec<String>>, String> {
+    let first = lanes.first().ok_or("Не заданы дорожки для теста")?;
+    let last = lanes.last().ok_or("Не заданы дорожки для теста")?;
+    if lanes
+        .iter()
+        .enumerate()
+        .any(|(index, lane)| lane.index != index || lane.source_port_start > lane.source_port_end)
+    {
+        return Err("Портовые дорожки имеют неверный порядок или диапазон".into());
+    }
+    let source_ports = format!("{}:{}", first.source_port_start, last.source_port_end);
+    let mut rules = lanes
+        .iter()
+        .map(|lane| batch_mark_rule(chain, address, local_source, direction, port, *lane))
+        .collect::<Vec<_>>();
+    let mut queue_rule = fw_args_for_ports(
+        "-A",
+        chain,
+        address,
+        direction,
+        port,
+        Some(queue),
+        &source_ports,
+    );
+    let conn_direction = if direction == "out" {
+        "original"
+    } else {
+        "reply"
+    };
+    let insert = queue_rule
+        .iter()
+        .position(|part| part == "-j")
+        .unwrap_or(queue_rule.len());
+    queue_rule.splice(
+        insert..insert,
+        [
+            "-m",
+            "connbytes",
+            "--connbytes-dir",
+            conn_direction,
+            "--connbytes-mode",
+            "packets",
+            "--connbytes",
+            "1:15",
+        ]
+        .map(str::to_owned),
+    );
+    rules.push(queue_rule);
+    rules.push(fw_args_for_ports(
+        "-A",
+        chain,
+        address,
+        direction,
+        port,
+        None,
+        &source_ports,
+    ));
+    Ok(rules)
+}
+
+fn parse_fwmark(value: &str) -> Option<(u32, u32)> {
+    let (mark, mask) = value.split_once('/').unwrap_or((value, "0xffffffff"));
+    let parse = |part: &str| {
+        part.strip_prefix("0x")
+            .or_else(|| part.strip_prefix("0X"))
+            .map_or_else(
+                || part.parse::<u32>().ok(),
+                |hex| u32::from_str_radix(hex, 16).ok(),
+            )
+    };
+    Some((parse(mark)?, parse(mask)?))
+}
+
+/// Marks constrained by partial routing rules cannot be used for candidate
+/// IDs. Full-mask entries are exact values and are handled as collisions.
+fn router_mark_constraints(snapshot: &str) -> (u32, Vec<u32>) {
+    let mut reserved_bits = 0_u32;
+    let mut exact_marks = Vec::new();
+    for line in snapshot.lines() {
+        let tokens = line.split_whitespace().collect::<Vec<_>>();
+        let mut index = 0;
+        while index + 1 < tokens.len() {
+            let is_match = matches!(tokens[index], "--mark" | "fwmark");
+            if is_match && let Some((mark, mask)) = parse_fwmark(tokens[index + 1]) {
+                if mask == u32::MAX {
+                    exact_marks.push(mark);
+                } else {
+                    reserved_bits |= mask;
+                }
+            }
+            index += 1;
+        }
+    }
+    (reserved_bits, exact_marks)
+}
+
+fn allocate_router_lanes(
+    count: usize,
+    port_start: u16,
+    port_end: u16,
+    firewall_snapshot: &str,
+) -> Result<Vec<crate::probe_lanes::ProbeLane>, String> {
+    let (mut reserved_bits, exact_marks) = router_mark_constraints(firewall_snapshot);
+    for _ in 0..u32::BITS {
+        let lanes =
+            crate::probe_lanes::allocate_probe_lanes(count, port_start, port_end, reserved_bits)?;
+        let collisions = lanes
+            .iter()
+            .filter(|lane| exact_marks.contains(&lane.mark))
+            .collect::<Vec<_>>();
+        if collisions.is_empty() {
+            return Ok(lanes);
+        }
+        for lane in collisions {
+            reserved_bits |= lane.mark;
+        }
+    }
+    Err("Не удалось выделить fwmark без конфликта с правилами роутера".into())
+}
+
+fn select_batch_port_range(
+    ephemeral_range: Option<(u16, u16)>,
+    lane_count: usize,
+) -> Option<(u16, u16)> {
+    if lane_count == 0 || lane_count > crate::probe_lanes::MAX_BATCH_LANES {
+        return None;
+    }
+    let count = u32::try_from(lane_count)
+        .ok()?
+        .checked_mul(u32::from(crate::probe_lanes::PORTS_PER_LANE))?;
+    let high = u32::from(u16::MAX).checked_sub(count - 1)?;
+    let mut candidates = (32_768_u32..=high)
+        .step_by(count as usize)
+        .chain((1024_u32..32_768_u32).rev().step_by(count as usize));
+    candidates.find_map(|start| {
+        let end = start.checked_add(count - 1)?;
+        let (low, high) = (u16::try_from(start).ok()?, u16::try_from(end).ok()?);
+        let overlaps_ephemeral = ephemeral_range.is_some_and(|(ephemeral_low, ephemeral_high)| {
+            low <= ephemeral_high && ephemeral_low <= high
+        });
+        (!overlaps_ephemeral).then_some((low, high))
+    })
+}
+
+fn batch_resource_budget() -> usize {
+    let meminfo = std::fs::read_to_string("/proc/meminfo").ok();
+    let metric = |key: &str| {
+        meminfo.as_deref()?.lines().find_map(|line| {
+            let (name, rest) = line.split_once(':')?;
+            (name == key)
+                .then(|| rest.split_whitespace().next()?.parse::<u64>().ok())
+                .flatten()
+        })
+    };
+    let load = std::fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|text| text.split_whitespace().next()?.parse::<f64>().ok());
+    let cpus = std::thread::available_parallelism().ok().map(usize::from);
+    crate::probe_lanes::safe_parallel_lane_count(
+        metric("MemTotal"),
+        metric("MemAvailable"),
+        load,
+        cpus,
+    )
+}
+
+fn ephemeral_port_range() -> Option<(u16, u16)> {
+    let contents = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range").ok()?;
+    let mut ports = contents
+        .split_whitespace()
+        .filter_map(|value| value.parse::<u16>().ok());
+    Some((ports.next()?, ports.next()?))
+}
+
+fn batch_debug_path(queue: u16, nonce: u64) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "nfqws2-ui-batch-{}-{queue}-{nonce}.log",
+        std::process::id()
+    ))
+}
+
+async fn prepare_batch_debug_file(path: &Path) -> Result<(), String> {
+    tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .await
+        .map_err(|error| format!("Не удалось подготовить временный журнал: {error}"))?;
+    #[cfg(unix)]
+    {
+        let Some(path_arg) = path.to_str() else {
+            let _ = tokio::fs::remove_file(path).await;
+            return Err("Путь временного журнала не является UTF-8".into());
+        };
+        if !matches!(command("chown", &["nobody", path_arg]).await, Ok((0, _))) {
+            let _ = tokio::fs::remove_file(path).await;
+            return Err("Не удалось назначить временный журнал тестовому пользователю".into());
+        }
+        if let Ok(metadata) = tokio::fs::metadata(path).await {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o600);
+            if tokio::fs::set_permissions(path, permissions).await.is_err() {
+                let _ = tokio::fs::remove_file(path).await;
+                return Err("Не удалось ограничить права временного журнала".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub struct CandidateBatchRuntime {
+    pub host: String,
+    pub protocol: crate::strategy_picker::StrategyProtocol,
+    pub active_args: Vec<String>,
+    pub binary: String,
+    pub functions: HashSet<String>,
+    pub blobs: Vec<String>,
+    pub cancel: Arc<AtomicBool>,
+}
+
+/// Run one full-picker catalog slice in one owned nfqws2 process. It returns
+/// preliminary lane hits only; the caller must use the serial runner to
+/// confirm positives before persisting them as working strategies.
+pub async fn run_candidate_batch(
+    runtime: CandidateBatchRuntime,
+    candidates: &[crate::strategy_picker::StrategyCandidate],
+) -> Result<Vec<crate::strategy_picker::StrategyBatchProbeResult>, String> {
+    let CandidateBatchRuntime {
+        host,
+        protocol,
+        active_args,
+        binary,
+        functions,
+        blobs,
+        cancel,
+    } = runtime;
+    if candidates.len() < 2 || candidates.len() > crate::probe_lanes::MAX_BATCH_LANES {
+        return Err("Для безопасного пакета нужно от 2 до 3 кандидатов".into());
+    }
+    if !matches!(
+        protocol,
+        crate::strategy_picker::StrategyProtocol::Http
+            | crate::strategy_picker::StrategyProtocol::Https
+    ) {
+        return Err("Пакетный runner поддерживает только HTTP/TLS".into());
+    }
+    if cancel.load(Ordering::Acquire) {
+        return Err("Пакетная проверка отменена до запуска".into());
+    }
+    let port = if protocol == crate::strategy_picker::StrategyProtocol::Http {
+        80
+    } else {
+        443
+    };
+    let address = timeout(Duration::from_secs(5), lookup_host((host.as_str(), port)))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .and_then(|values| {
+            values
+                .filter_map(|socket| match socket.ip() {
+                    std::net::IpAddr::V4(ip) if public_v4(ip) => Some(ip),
+                    _ => None,
+                })
+                .next()
+        })
+        .ok_or_else(|| "Пакетный runner не разрешил публичный IPv4".to_owned())?;
+
+    let iptables = program_path("iptables");
+    let firewall_snapshot = command(&iptables, &["-w", "-t", "mangle", "-S"])
+        .await
+        .ok()
+        .filter(|(status, _)| *status == 0)
+        .map(|(_, output)| String::from_utf8_lossy(&output).into_owned())
+        .ok_or_else(|| {
+            "Не удалось прочитать mangle-правила для collision check; пакет отключён".to_owned()
+        })?;
+    let ip_rules = command(&program_path("ip"), &["rule", "show"])
+        .await
+        .ok()
+        .filter(|(status, _)| *status == 0)
+        .map(|(_, output)| String::from_utf8_lossy(&output).into_owned())
+        .ok_or_else(|| "Не удалось прочитать ip rule; пакет отключён".to_owned())?;
+    let mut mark_snapshot = firewall_snapshot.clone();
+    mark_snapshot.push('\n');
+    mark_snapshot.push_str(&ip_rules);
+    let lane_count = batch_resource_budget().min(candidates.len());
+    if lane_count < 2 {
+        return Err("Ресурсный лимит роутера разрешает только последовательную проверку".into());
+    }
+    let (source_port_start, source_port_end) =
+        select_batch_port_range(ephemeral_port_range(), lane_count).ok_or_else(|| {
+            "Не найден безопасный исходный диапазон портов; используйте последовательный режим"
+                .to_owned()
+        })?;
+    let lanes = allocate_router_lanes(
+        lane_count,
+        source_port_start,
+        source_port_end,
+        &mark_snapshot,
+    )?;
+    let policy_mark = policy_route_mark(&firewall_snapshot);
+    let mut queue_snapshot = firewall_snapshot.clone();
+    let queue_status = tokio::fs::read_to_string("/proc/net/netfilter/nfnetlink_queue")
+        .await
+        .map_err(|error| format!("Не удалось проверить NFQUEUE listeners: {error}"))?;
+    append_kernel_queue_listeners(&mut queue_snapshot, &queue_status);
+    let Some(queue) = select_trace_queue(&active_args, &queue_snapshot) else {
+        return Err("Не найдена свободная тестовая NFQUEUE".into());
+    };
+    let port = match protocol {
+        crate::strategy_picker::StrategyProtocol::Http => 80,
+        crate::strategy_picker::StrategyProtocol::Https => 443,
+        crate::strategy_picker::StrategyProtocol::Quic => unreachable!("QUIC checked above"),
+    };
+    let batch_candidates = &candidates[..lane_count];
+    let candidate_profiles = batch_candidates
+        .iter()
+        .zip(&lanes)
+        .map(|(candidate, lane)| (candidate.steps.clone(), lane.mark, lane.mark_mask))
+        .collect::<Vec<_>>();
+    let profile_args = crate::strategy_picker::candidate_batch_argv(
+        &active_args,
+        protocol,
+        &candidate_profiles,
+        &functions,
+        &blobs,
+    )?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let debug_path = batch_debug_path(queue, nonce);
+    prepare_batch_debug_file(&debug_path).await?;
+    let mut traced_argv = vec![binary.clone()];
+    traced_argv.extend(profile_args);
+    let traced_args = trace_argv(&traced_argv, queue, &debug_path);
+    let token = format!(
+        "{:04x}{:010x}",
+        std::process::id() & 0xffff,
+        nonce & 0xffffffffff
+    );
+    let rules =
+        match install_batch_rules(address, port, queue, &token, &lanes, policy_mark.as_deref())
+            .await
+        {
+            Ok(rules) => rules,
+            Err(error) => {
+                let _ = tokio::fs::remove_file(&debug_path).await;
+                if error.contains("очистка") || error.contains("удалить частично")
+                {
+                    return Err(format!("CLEANUP_UNCONFIRMED: {error}"));
+                }
+                return Err(format!("Пакетные правила не установлены: {error}"));
+            }
+        };
+
+    let process_run = async {
+        let mut child = Command::new(&binary)
+            .args(&traced_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|error| format!("nfqws2 batch process не запустился: {error}"))?;
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            return Err(format!(
+                "nfqws2 batch process завершился до probes (код {:?})",
+                status.code()
+            ));
+        }
+        let mut jobs = Vec::new();
+        for lane in &lanes {
+            let host = host.clone();
+            let proto = if protocol == crate::strategy_picker::StrategyProtocol::Http {
+                "http"
+            } else {
+                "https"
+            };
+            let local_ports = format!("{}:{}", lane.source_port_start, lane.source_port_end);
+            let cancel = cancel.clone();
+            jobs.push(async move { probe(&host, address, proto, &local_ports, &cancel).await });
+        }
+        let outcomes = match jobs.len() {
+            2 => {
+                let (one, two) = tokio::join!(jobs.remove(0), jobs.remove(0));
+                vec![one, two]
+            }
+            3 => {
+                let first = jobs.remove(0);
+                let second = jobs.remove(0);
+                let third = jobs.remove(0);
+                let (one, two, three) = tokio::join!(first, second, third);
+                vec![one, two, three]
+            }
+            _ => return Err("Пакетный runner получил меньше двух lanes".into()),
+        };
+        stop_child(&mut child).await;
+        Ok(outcomes)
+    }
+    .await;
+    let cleanup = remove_rules(&rules).await;
+    let debug = tokio::fs::read(&debug_path).await.unwrap_or_default();
+    let _ = tokio::fs::remove_file(&debug_path).await;
+    if let Err(error) = cleanup {
+        return Err(format!(
+            "CLEANUP_UNCONFIRMED: не удалось полностью удалить тестовые правила: {error}"
+        ));
+    }
+    let outcomes = process_run?;
+    if debug.is_empty() {
+        return Err("Пакетные HTTP-ответы получены без подтверждения попадания в тестовую очередь; повторите последовательно".into());
+    }
+    Ok(outcomes
+        .into_iter()
+        .enumerate()
+        .map(|(candidate_index, outcome)| {
+            let (code, elapsed_ms, reason) = match outcome {
+                Ok(values) => values,
+                Err(error) => (None, None, error),
+            };
+            crate::strategy_picker::StrategyBatchProbeResult {
+                candidate_index,
+                elapsed_ms: elapsed_ms.unwrap_or_default(),
+                probe: crate::strategy_picker::StrategyProbeResult {
+                    baseline_ok: Some(false),
+                    candidate_ok: Some(code.is_some()),
+                    detail: reason,
+                },
+            }
+        })
+        .collect())
 }
 
 fn chain_jump(action: &str, hook: &str, chain: &str) -> Vec<String> {
@@ -502,6 +1015,18 @@ fn hook_jump(
     port: u16,
     chain: &str,
 ) -> Vec<String> {
+    hook_jump_for_ports(action, hook, address, direction, port, chain, "40000:40999")
+}
+
+fn hook_jump_for_ports(
+    action: &str,
+    hook: &str,
+    address: Ipv4Addr,
+    direction: &str,
+    port: u16,
+    chain: &str,
+    source_ports: &str,
+) -> Vec<String> {
     let mut args = vec![
         "-w".into(),
         "-t".into(),
@@ -520,7 +1045,7 @@ fn hook_jump(
             "--dport".into(),
             port.to_string(),
             "--sport".into(),
-            "40000:40999".into(),
+            source_ports.into(),
         ]);
     } else {
         args.extend([
@@ -529,7 +1054,7 @@ fn hook_jump(
             "--sport".into(),
             port.to_string(),
             "--dport".into(),
-            "40000:40999".into(),
+            source_ports.into(),
         ]);
     }
     args.extend(["-j".into(), chain.into()]);
@@ -746,6 +1271,199 @@ async fn install_rules_for_transport(
     Ok(cleanup)
 }
 
+async fn install_batch_rules(
+    address: Ipv4Addr,
+    port: u16,
+    queue: u16,
+    token: &str,
+    lanes: &[crate::probe_lanes::ProbeLane],
+    policy_mark: Option<&str>,
+) -> Result<Vec<Vec<String>>, String> {
+    if lanes.is_empty() || lanes.len() > crate::probe_lanes::MAX_BATCH_LANES {
+        return Err("Размер тестового пакета вне безопасного диапазона".into());
+    }
+    let socket = tokio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+        .await
+        .map_err(|error| error.to_string())?;
+    socket
+        .connect((address, port))
+        .await
+        .map_err(|error| error.to_string())?;
+    let source = match socket.local_addr().map_err(|error| error.to_string())?.ip() {
+        std::net::IpAddr::V4(ip) if !ip.is_unspecified() => ip,
+        _ => return Err("Не найден исходящий IPv4 роутера".into()),
+    };
+    let first = lanes.first().ok_or("Не заданы дорожки")?;
+    let last = lanes.last().ok_or("Не заданы дорожки")?;
+    let source_ports = format!("{}:{}", first.source_port_start, last.source_port_end);
+    let mut cleanup = Vec::new();
+    for (chain, direction) in [
+        (trace_chain_name(token, "out"), "out"),
+        (trace_chain_name(token, "in"), "in"),
+    ] {
+        let create = vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-N".into(),
+            chain.clone(),
+        ];
+        if let Err(error) = iptables_owned(&create).await {
+            let cleanup_result = remove_rules(&cleanup).await;
+            return Err(match cleanup_result {
+                Ok(()) => error,
+                Err(cleanup_error) => format!(
+                    "{error}; очистка частично созданных цепочек не подтверждена: {cleanup_error}"
+                ),
+            });
+        }
+        cleanup.push(vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-X".into(),
+            chain.clone(),
+        ]);
+        let rules = match batch_chain_rules(&chain, address, source, direction, port, queue, lanes)
+        {
+            Ok(rules) => rules,
+            Err(error) => {
+                let cleanup_result = remove_rules(&cleanup).await;
+                return Err(match cleanup_result {
+                    Ok(()) => error,
+                    Err(cleanup_error) => format!(
+                        "{error}; очистка частично созданных цепочек не подтверждена: {cleanup_error}"
+                    ),
+                });
+            }
+        };
+        let mut flush_registered = false;
+        for rule in rules {
+            if let Err(error) = iptables_owned(&rule).await {
+                let cleanup_result = remove_rules(&cleanup).await;
+                return Err(match cleanup_result {
+                    Ok(()) => error,
+                    Err(cleanup_error) => format!(
+                        "{error}; очистка частично установленных правил не подтверждена: {cleanup_error}"
+                    ),
+                });
+            }
+            if !flush_registered {
+                cleanup.push(vec![
+                    "-w".into(),
+                    "-t".into(),
+                    "mangle".into(),
+                    "-F".into(),
+                    chain.clone(),
+                ]);
+                flush_registered = true;
+            }
+        }
+    }
+    for (direction, chain) in [
+        ("out", trace_chain_name(token, "out")),
+        ("in", trace_chain_name(token, "in")),
+    ] {
+        let hook = trace_hook(direction);
+        let insert = local_flow_hook(
+            hook_jump_for_ports("-I", hook, address, direction, port, &chain, &source_ports),
+            direction,
+            source,
+        );
+        if let Err(error) = iptables_owned(&insert).await {
+            let cleanup_result = remove_rules(&cleanup).await;
+            return Err(match cleanup_result {
+                Ok(()) => error,
+                Err(cleanup_error) => format!(
+                    "{error}; очистка частично подключённых цепочек не подтверждена: {cleanup_error}"
+                ),
+            });
+        }
+        cleanup.push(local_flow_hook(
+            hook_jump_for_ports("-D", hook, address, direction, port, &chain, &source_ports),
+            direction,
+            source,
+        ));
+    }
+    if let Some(mark) = policy_mark {
+        let chain = format!("N2UM{token}");
+        let create = vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-N".into(),
+            chain.clone(),
+        ];
+        if let Err(error) = iptables_owned(&create).await {
+            let cleanup_result = remove_rules(&cleanup).await;
+            return Err(match cleanup_result {
+                Ok(()) => error,
+                Err(cleanup_error) => format!(
+                    "{error}; очистка частично созданных цепочек не подтверждена: {cleanup_error}"
+                ),
+            });
+        }
+        cleanup.push(vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-X".into(),
+            chain.clone(),
+        ]);
+        let Some(mut rule) = policy_mark_rule_for_ports(&chain, mark, &source_ports) else {
+            return match remove_rules(&cleanup).await {
+                Ok(()) => Err("Маршрутный fwmark не прошёл проверку формата".to_owned()),
+                Err(cleanup_error) => Err(format!(
+                    "Не удалось удалить частично созданные правила после ошибки fwmark: {cleanup_error}"
+                )),
+            };
+        };
+        let jump = rule
+            .iter()
+            .position(|value| value == "-j")
+            .unwrap_or(rule.len());
+        rule.splice(
+            jump..jump,
+            [
+                "-s".into(),
+                source.to_string(),
+                "-d".into(),
+                address.to_string(),
+                "--dport".into(),
+                port.to_string(),
+            ],
+        );
+        if let Err(error) = iptables_owned(&rule).await {
+            let cleanup_result = remove_rules(&cleanup).await;
+            return Err(match cleanup_result {
+                Ok(()) => error,
+                Err(cleanup_error) => format!(
+                    "{error}; очистка частично установленных правил не подтверждена: {cleanup_error}"
+                ),
+            });
+        }
+        cleanup.push(vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-F".into(),
+            chain.clone(),
+        ]);
+        let insert = chain_jump("-I", "OUTPUT", &chain);
+        if let Err(error) = iptables_owned(&insert).await {
+            let cleanup_result = remove_rules(&cleanup).await;
+            return Err(match cleanup_result {
+                Ok(()) => error,
+                Err(cleanup_error) => format!(
+                    "{error}; очистка частично подключённой цепочки не подтверждена: {cleanup_error}"
+                ),
+            });
+        }
+        cleanup.push(chain_jump("-D", "OUTPUT", &chain));
+    }
+    Ok(cleanup)
+}
+
 /// The caller must keep this future alive through cleanup (the API runs the
 /// whole diagnosis in an owned task, including when its HTTP client disconnects).
 pub async fn bypass_probe<T>(
@@ -786,62 +1504,78 @@ async fn remove_rules(rules: &[Vec<String>]) -> Result<(), String> {
     }
 }
 
+fn http_probe_args(host: &str, address: Ipv4Addr, proto: &str, local_ports: &str) -> Vec<String> {
+    let port = if proto == "http" { 80 } else { 443 };
+    vec![
+        "--disable".into(),
+        "--silent".into(),
+        "--show-error".into(),
+        "--insecure".into(),
+        "--noproxy".into(),
+        "*".into(),
+        "--connect-timeout".into(),
+        "4".into(),
+        "--max-time".into(),
+        "8".into(),
+        "--max-filesize".into(),
+        "16384".into(),
+        "--max-redirs".into(),
+        "0".into(),
+        "--local-port".into(),
+        local_ports.into(),
+        "--resolve".into(),
+        format!("{host}:{port}:{address}"),
+        "--output".into(),
+        if cfg!(windows) { "NUL" } else { "/dev/null" }.into(),
+        "--write-out".into(),
+        "\nNFQWS_TRACE|%{http_code}|%{time_total}|%{errormsg}|%{time_connect}|%{time_appconnect}|%{time_starttransfer}".into(),
+        format!("{proto}://{host}/"),
+    ]
+}
+
 async fn probe(
     host: &str,
     address: Ipv4Addr,
     proto: &str,
+    local_ports: &str,
+    cancel: &AtomicBool,
 ) -> Result<(Option<u16>, Option<u64>, String), String> {
     let program = program_path("curl");
-    let port = if proto == "http" { 80 } else { 443 };
-    let address = format!("{host}:{port}:{address}");
-    let url = format!("{proto}://{host}/");
-    let output = timeout(Duration::from_secs(10), async {
-        let mut child = Command::new(&program)
-            .args([
-                "--disable",
-                "--silent",
-                "--show-error",
-                "--insecure",
-                "--noproxy",
-                "*",
-                "--connect-timeout",
-                "4",
-                "--max-time",
-                "8",
-                "--max-filesize",
-                "16384",
-                "--max-redirs",
-                "0",
-                "--local-port",
-                "40000-40999",
-                "--resolve",
-                &address,
-                "--output",
-                if cfg!(windows) { "NUL" } else { "/dev/null" },
-                "--write-out",
-                "\nNFQWS_TRACE|%{http_code}|%{time_total}|%{errormsg}|%{time_connect}|%{time_appconnect}|%{time_starttransfer}",
-                &url,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| format!("curl недоступен: {e}"))?;
-        let mut bytes = Vec::new();
-        child
-            .stdout
-            .take()
-            .ok_or("Нет stdout curl")?
-            .take(1025)
-            .read_to_end(&mut bytes)
-            .await
-            .map_err(|e| e.to_string())?;
-        let status = child.wait().await.map_err(|e| e.to_string())?;
-        Ok::<_, String>((status.code().unwrap_or(-1), bytes))
-    })
-    .await
-    .map_err(|_| "Таймаут HTTP-запроса".to_string())??;
+    let args = http_probe_args(host, address, proto, local_ports);
+    let run = async {
+        timeout(Duration::from_secs(10), async {
+            let mut child = Command::new(&program)
+                .args(&args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .map_err(|e| format!("curl недоступен: {e}"))?;
+            let mut bytes = Vec::new();
+            child
+                .stdout
+                .take()
+                .ok_or("Нет stdout curl")?
+                .take(1025)
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|e| e.to_string())?;
+            let status = child.wait().await.map_err(|e| e.to_string())?;
+            Ok::<_, String>((status.code().unwrap_or(-1), bytes))
+        })
+        .await
+        .map_err(|_| "Таймаут HTTP-запроса".to_string())?
+    };
+    tokio::pin!(run);
+    let output = tokio::select! {
+        result = &mut run => result?,
+        _ = async {
+            while !cancel.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        } => return Err("HTTP-запрос отменён".into()),
+    };
     let text = String::from_utf8_lossy(&output.1);
     let fields = text
         .rsplit_once("NFQWS_TRACE|")
@@ -1042,7 +1776,7 @@ async fn probe_mode(
                 Some(format!("{:?}", diagnosis.classification)),
             ))
         }
-        TraceProbeMode::Http(proto) => probe(host, address, proto)
+        TraceProbeMode::Http(proto) => probe(host, address, proto, "40000-40999", cancel)
             .await
             .map(|(code, elapsed_ms, reason)| (code, elapsed_ms, reason, None)),
     }
@@ -1760,6 +2494,24 @@ mod tests {
     }
 
     #[test]
+    fn router_mark_selection_skips_partial_mask_bits_and_exact_values() {
+        let snapshot = "-A nfqws_post -m mark ! --mark 0x40000000/0x40000000 -j RETURN\n99: from all fwmark 0x1 lookup 111";
+        let lanes = allocate_router_lanes(3, 40_000, 40_191, snapshot).unwrap();
+        assert!(lanes.iter().all(|lane| lane.mark_mask & 0x4000_0000 == 0));
+        assert!(lanes.iter().all(|lane| lane.mark != 0x1));
+        assert_ne!(lanes[0].mark, lanes[1].mark);
+        assert_ne!(lanes[1].mark, lanes[2].mark);
+    }
+
+    #[test]
+    fn batch_source_ports_avoid_the_kernel_ephemeral_range() {
+        let (start, end) = select_batch_port_range(Some((49_000, 61_001)), 3).unwrap();
+        assert_eq!(end - start + 1, 192);
+        assert!(end < 49_000 || start > 61_001);
+        assert!(select_batch_port_range(Some((1024, u16::MAX)), 3).is_none());
+    }
+
+    #[test]
     fn hooks_only_match_connections_originating_on_this_router() {
         let target = Ipv4Addr::new(93, 184, 216, 34);
         let local = Ipv4Addr::new(192, 168, 1, 1);
@@ -1939,6 +2691,100 @@ mod tests {
         );
         assert_eq!(trace_hook("out"), "POSTROUTING");
         assert_eq!(trace_hook("in"), "PREROUTING");
+    }
+
+    #[test]
+    fn batch_lane_marks_are_limited_to_target_router_flow_and_lane_ports() {
+        let target = Ipv4Addr::new(93, 184, 216, 34);
+        let source = Ipv4Addr::new(192, 0, 2, 1);
+        let lane =
+            crate::probe_lanes::allocate_probe_lanes(2, 40_000, 40_127, 0x4000_0000).unwrap()[1];
+        let outgoing = batch_mark_rule("N2UOabc123def0", target, source, "out", 443, lane);
+        assert!(outgoing.windows(2).any(|pair| pair == ["-s", "192.0.2.1"]));
+        assert!(
+            outgoing
+                .windows(2)
+                .any(|pair| pair == ["-d", "93.184.216.34"])
+        );
+        assert!(
+            outgoing
+                .windows(2)
+                .any(|pair| pair == ["--sport", "40064:40127"])
+        );
+        assert!(outgoing.windows(2).any(|pair| pair == ["--dport", "443"]));
+        assert!(
+            outgoing
+                .windows(2)
+                .any(|pair| pair == ["--set-xmark", "0x00000002/0x00000003"])
+        );
+
+        let incoming = batch_mark_rule("N2UIabc123def0", target, source, "in", 443, lane);
+        assert!(
+            incoming
+                .windows(2)
+                .any(|pair| pair == ["-s", "93.184.216.34"])
+        );
+        assert!(
+            incoming
+                .windows(2)
+                .any(|pair| pair == ["--ctorigsrc", "192.0.2.1"])
+        );
+        assert!(
+            incoming
+                .windows(2)
+                .any(|pair| pair == ["--dport", "40064:40127"])
+        );
+        assert!(incoming.windows(2).any(|pair| pair == ["--sport", "443"]));
+    }
+
+    #[test]
+    fn batch_queue_rules_mark_each_lane_before_queueing_only_the_owned_port_span() {
+        let target = Ipv4Addr::new(93, 184, 216, 34);
+        let source = Ipv4Addr::new(192, 0, 2, 1);
+        let lanes =
+            crate::probe_lanes::allocate_probe_lanes(2, 40_000, 40_127, 0x4fff_ffff).unwrap();
+        let outbound =
+            batch_chain_rules("N2UOabc", target, source, "out", 443, 307, &lanes).unwrap();
+        assert_eq!(outbound.len(), 4);
+        assert!(
+            outbound[0]
+                .windows(2)
+                .any(|pair| pair == ["--sport", "40000:40063"])
+        );
+        assert!(
+            outbound[1]
+                .windows(2)
+                .any(|pair| pair == ["--sport", "40064:40127"])
+        );
+        assert!(
+            outbound[2]
+                .windows(2)
+                .any(|pair| pair == ["--sport", "40000:40127"])
+        );
+        assert!(
+            outbound[2]
+                .windows(2)
+                .any(|pair| pair == ["--queue-num", "307"])
+        );
+        assert!(
+            outbound[2]
+                .windows(2)
+                .any(|pair| pair == ["--connbytes", "1:15"])
+        );
+        assert!(outbound[3].ends_with(&["-j".into(), "ACCEPT".into()]));
+    }
+
+    #[test]
+    fn candidate_curl_is_pinned_to_its_lane_port_interval() {
+        let args = http_probe_args(
+            "example.com",
+            Ipv4Addr::new(93, 184, 216, 34),
+            "https",
+            "40064-40127",
+        );
+        let local_port = args.iter().position(|arg| arg == "--local-port").unwrap();
+        assert_eq!(args[local_port + 1], "40064-40127");
+        assert!(args.contains(&"example.com:443:93.184.216.34".into()));
     }
 
     #[test]
