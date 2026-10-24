@@ -20,7 +20,7 @@ describe('summarizeFreezeScan', () => {
       state: 'partial',
       message: 'Достигнут лимит времени',
       results: [result(true, true), result(false, false)],
-    })).toEqual({ tone: 'neutral', text: 'Проверка частичная: возможный обрыв в 1 из 2 проверенных сетей. Достигнут лимит времени' });
+    })).toEqual({ tone: 'neutral', text: 'Частичная проверка · возможный обрыв в 1 из 2 сетей · Достигнут лимит времени' });
   });
 
   it('reports a completed run with no observed freeze', () => {

@@ -102,6 +102,256 @@ pub fn validate_candidate(
     Ok(())
 }
 
+const REFINEMENT_FAKE_FUNCTIONS: &[&str] =
+    &["fake", "fakedsplit", "fakeddisorder", "hostfakesplit"];
+const REFINEMENT_FOOL_KEYS: &[&str] = &[
+    "tcp_ts",
+    "tcp_md5",
+    "badsum",
+    "tcp_seq",
+    "tcp_ack",
+    "ip_ttl",
+    "ip_autottl",
+];
+const CLONE_BLOB: &str = "tls_clone";
+const CLONE_STEP: &str =
+    "--lua-desync=tls_client_hello_clone:blob=tls_clone:fallback=fake_default_tls";
+type RefinementParameters = Vec<(String, Option<String>)>;
+type RefinementVariant = (String, String, bool);
+type RefinementAxis = (String, Vec<RefinementVariant>);
+
+fn parse_refinement_step(step: &str) -> Option<(String, RefinementParameters)> {
+    let value = step.strip_prefix("--lua-desync=")?;
+    let mut pieces = value.split(':');
+    let function = pieces.next()?.to_owned();
+    let parameters = pieces
+        .map(|piece| {
+            piece.split_once('=').map_or_else(
+                || (piece.to_owned(), None),
+                |(key, value)| (key.to_owned(), Some(value.to_owned())),
+            )
+        })
+        .collect();
+    Some((function, parameters))
+}
+
+fn refinement_fake_index(steps: &[String]) -> Option<usize> {
+    steps.iter().position(|step| {
+        parse_refinement_step(step)
+            .is_some_and(|(function, _)| REFINEMENT_FAKE_FUNCTIONS.contains(&function.as_str()))
+    })
+}
+
+fn build_refinement_step(function: &str, parameters: &[(String, Option<String>)]) -> String {
+    let mut step = format!("--lua-desync={function}");
+    for (key, value) in parameters {
+        step.push(':');
+        step.push_str(key);
+        if let Some(value) = value {
+            step.push('=');
+            step.push_str(value);
+        }
+    }
+    step
+}
+
+fn parameter(parameters: &mut Vec<(String, Option<String>)>, key: &str, value: Option<&str>) {
+    parameters.retain(|(existing, _)| existing != key);
+    if let Some(value) = value {
+        parameters.push((key.to_owned(), Some(value.to_owned())));
+    }
+}
+
+fn set_candidate_fake_step(
+    candidate: &StrategyCandidate,
+    fake_index: usize,
+    fake_step: String,
+    clone: bool,
+) -> Vec<String> {
+    let mut steps = candidate.steps.clone();
+    steps[fake_index] = fake_step.clone();
+    steps.retain(|step| step != CLONE_STEP);
+    if clone {
+        steps.insert(fake_index, CLONE_STEP.to_owned());
+    }
+    steps
+}
+
+/// Create the bounded, one-axis fake-strategy variants used by blockcheck2's
+/// refinement phase. Every result is filtered against the installed Lua/blob
+/// inventory before it can reach the live probe runner.
+pub fn refinement_variants(
+    candidate: &StrategyCandidate,
+    protocol: StrategyProtocol,
+    available_functions: &HashSet<String>,
+    available_blobs: &[String],
+) -> Vec<(String, StrategyCandidate)> {
+    if protocol == StrategyProtocol::Http {
+        return Vec::new();
+    }
+    let Some((fake_index, (function, parameters))) =
+        candidate
+            .steps
+            .iter()
+            .enumerate()
+            .find_map(|(index, step)| {
+                let parsed = parse_refinement_step(step)?;
+                REFINEMENT_FAKE_FUNCTIONS
+                    .contains(&parsed.0.as_str())
+                    .then_some((index, parsed))
+            })
+    else {
+        return Vec::new();
+    };
+
+    let mut axes: Vec<RefinementAxis> = Vec::new();
+    let fool_options = [
+        ("tcp_ts", vec![("tcp_ts", Some("-600000"))]),
+        ("tcp_md5", vec![("tcp_md5", None)]),
+        ("badsum", vec![("badsum", None)]),
+        ("tcp_seq", vec![("tcp_seq", Some("-10000"))]),
+        ("autottl", vec![("ip_autottl", Some("-2,3-20"))]),
+        (
+            "tcp_ts + tcp_md5",
+            vec![("tcp_ts", Some("-600000")), ("tcp_md5", None)],
+        ),
+    ];
+    let fool_variants = fool_options
+        .into_iter()
+        .map(|(label, params)| {
+            let mut refined = parameters
+                .iter()
+                .filter(|(key, _)| !REFINEMENT_FOOL_KEYS.contains(&key.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            for (key, value) in params {
+                parameter(&mut refined, key, value);
+            }
+            (
+                label.to_owned(),
+                build_refinement_step(&function, &refined),
+                false,
+            )
+        })
+        .collect();
+    axes.push(("fool".into(), fool_variants));
+
+    let repeat_variants = [1, 2, 4, 6, 8, 12, 16, 20]
+        .into_iter()
+        .map(|repeats| {
+            let mut refined = parameters.clone();
+            refined.retain(|(key, _)| key != "repeats");
+            if repeats > 1 {
+                refined.push(("repeats".into(), Some(repeats.to_string())));
+            }
+            (
+                repeats.to_string(),
+                build_refinement_step(&function, &refined),
+                false,
+            )
+        })
+        .collect();
+    axes.push(("repeats".into(), repeat_variants));
+
+    let blob = parameters
+        .iter()
+        .find(|(key, _)| key == "blob")
+        .and_then(|(_, value)| value.as_deref());
+    if protocol == StrategyProtocol::Https
+        && (function == "hostfakesplit"
+            || (function == "fake" && blob.is_some_and(|b| b.contains("tls"))))
+    {
+        let name_variants = ["ya.ru", "www.google.com", ""]
+            .into_iter()
+            .map(|name| {
+                let mut refined = parameters.clone();
+                let label = if name.is_empty() {
+                    "случайное".to_owned()
+                } else {
+                    name.to_owned()
+                };
+                if function == "hostfakesplit" {
+                    parameter(&mut refined, "host", (!name.is_empty()).then_some(name));
+                } else {
+                    parameter(
+                        &mut refined,
+                        "tls_mod",
+                        Some(if name.is_empty() {
+                            "rnd,rndsni,dupsid"
+                        } else if name == "ya.ru" {
+                            "rnd,dupsid,sni=ya.ru"
+                        } else {
+                            "rnd,dupsid,sni=www.google.com"
+                        }),
+                    );
+                }
+                (label, build_refinement_step(&function, &refined), false)
+            })
+            .collect();
+        axes.push(("name".into(), name_variants));
+    }
+
+    if function == "fake" && blob.is_some_and(|b| b.contains("tls")) {
+        let default_blob = if blob == Some(CLONE_BLOB) {
+            "fake_default_tls"
+        } else {
+            blob.unwrap_or_default()
+        };
+        let mut blob_variants = Vec::new();
+        for (label, target_blob, clone) in [
+            ("заготовка", default_blob, false),
+            ("копия приветствия", CLONE_BLOB, true),
+        ] {
+            if clone
+                && (!available_functions.contains("tls_client_hello_clone")
+                    || !available_blobs
+                        .iter()
+                        .any(|available| available == CLONE_BLOB)
+                    || !available_blobs
+                        .iter()
+                        .any(|available| available == "fake_default_tls"))
+            {
+                continue;
+            }
+            if !available_blobs
+                .iter()
+                .any(|available| available == target_blob)
+            {
+                continue;
+            }
+            let mut refined = parameters.clone();
+            parameter(&mut refined, "blob", Some(target_blob));
+            let refined_step = build_refinement_step(&function, &refined);
+            let clone_flag = clone && function == "fake";
+            blob_variants.push((label.to_owned(), refined_step, clone_flag));
+        }
+        axes.push(("blob".into(), blob_variants));
+    }
+
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for (axis, variants) in axes {
+        for (label, step, clone) in variants {
+            let steps = set_candidate_fake_step(candidate, fake_index, step, clone);
+            if steps == candidate.steps
+                || !seen.insert(steps.clone())
+                || validate_candidate(&steps, available_functions, available_blobs).is_err()
+            {
+                continue;
+            }
+            out.push((
+                format!("{axis}: {label}"),
+                StrategyCandidate {
+                    name: format!("{} · {axis}: {label}", candidate.name),
+                    source: "Уточнение blockcheck2".into(),
+                    steps,
+                },
+            ));
+        }
+    }
+    out
+}
+
 fn candidates_for(
     protocol: StrategyProtocol,
     mode: StrategyMode,
@@ -884,25 +1134,325 @@ mod repeat_tests {
             Arc::new(std::sync::atomic::AtomicBool::new(false)),
             3,
             false,
-            move |_, _| {
+            move |_, requested_repeats| {
                 runner_calls.fetch_add(1, Ordering::SeqCst);
-                async {
-                    StrategyProbeResult {
-                        baseline_ok: Some(false),
-                        candidate_ok: Some(true),
-                        detail: "router probe completed".into(),
-                    }
+                async move {
+                    (0..requested_repeats)
+                        .map(|_| StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: Some(true),
+                            detail: "router probe completed".into(),
+                        })
+                        .collect::<Vec<_>>()
                 }
             },
             |_, _, _| {},
         )
         .await;
 
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(result.results[0].attempts, 3);
         assert_eq!(result.results[0].successes, 3);
         assert!(result.results[0].confirmed);
         assert!(result.message.contains("3 последовательными"));
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_a_candidate_batch_preserves_completed_repeats_without_confirming()
+    {
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let runner_cancel = cancel.clone();
+        let plan = StrategyPlan {
+            protocol: StrategyProtocol::Https,
+            candidates: vec![StrategyCandidate {
+                name: "test candidate".into(),
+                source: "test".into(),
+                steps: vec!["--lua-desync=multisplit:pos=1".into()],
+            }],
+        };
+        let result = run_candidates(
+            plan,
+            cancel,
+            3,
+            false,
+            move |_, _| {
+                runner_cancel.store(true, Ordering::Release);
+                async {
+                    vec![
+                        StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: Some(true),
+                            detail: "first response succeeded".into(),
+                        },
+                        StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: None,
+                            detail: "second response was cancelled".into(),
+                        },
+                    ]
+                }
+            },
+            |_, _, _| {},
+        )
+        .await;
+
+        assert_eq!(result.state, "cancelled");
+        assert_eq!(result.results[0].attempts, 1);
+        assert_eq!(result.results[0].successes, 1);
+        assert!(!result.results[0].confirmed);
+    }
+}
+
+#[cfg(test)]
+mod refinement_tests {
+    use super::{StrategyCandidate, StrategyProtocol, refinement_variants};
+    use std::collections::HashSet;
+
+    async fn forbidden_probe() -> Vec<super::StrategyProbeResult> {
+        panic!("refinement must not start a probe in this branch")
+    }
+
+    #[test]
+    fn builds_upstream_one_axis_variants_without_changing_other_steps() {
+        let candidate = StrategyCandidate {
+            name: "hostfake + split".into(),
+            source: "blockcheck2".into(),
+            steps: vec![
+                "--lua-desync=hostfakesplit:repeats=4:tcp_md5:host=old.example".into(),
+                "--lua-desync=multisplit:pos=1,midsld".into(),
+            ],
+        };
+        let functions = HashSet::from(["hostfakesplit".into(), "multisplit".into()]);
+        let variants = refinement_variants(
+            &candidate,
+            StrategyProtocol::Https,
+            &functions,
+            &["tls_client_hello".into()],
+        );
+
+        assert!(variants.iter().any(|(label, variant)| {
+            label == "fool: tcp_ts"
+                && variant.steps[0]
+                    == "--lua-desync=hostfakesplit:repeats=4:host=old.example:tcp_ts=-600000"
+                && variant.steps[1] == candidate.steps[1]
+        }));
+        assert!(variants.iter().any(|(label, variant)| {
+            label == "repeats: 1"
+                && variant.steps[0] == "--lua-desync=hostfakesplit:tcp_md5:host=old.example"
+        }));
+        assert!(variants.iter().any(|(label, variant)| {
+            label == "name: www.google.com" && variant.steps[0].ends_with(":host=www.google.com")
+        }));
+    }
+
+    #[test]
+    fn refinement_skips_http_and_rejects_unavailable_functions_or_blobs() {
+        let candidate = StrategyCandidate {
+            name: "fake".into(),
+            source: "blockcheck2".into(),
+            steps: vec!["--lua-desync=fake:blob=tls_client_hello".into()],
+        };
+        let functions = HashSet::from(["fake".into()]);
+        assert!(
+            refinement_variants(&candidate, StrategyProtocol::Http, &functions, &[]).is_empty()
+        );
+        let variants = refinement_variants(
+            &candidate,
+            StrategyProtocol::Https,
+            &functions,
+            &["tls_client_hello".into()],
+        );
+        assert!(!variants.is_empty());
+        assert!(
+            variants.iter().all(|(_, variant)| {
+                variant.steps.iter().all(|step| !step.contains("tls_clone"))
+            })
+        );
+    }
+
+    #[test]
+    fn chooses_at_most_two_fake_bases_by_success_count_and_forced_mode_by_duration() {
+        use super::{StrategyCandidateResult, select_refinement_bases};
+        let result = |function: &str, successes, elapsed_ms| StrategyCandidateResult {
+            candidate: StrategyCandidate {
+                name: function.into(),
+                source: "blockcheck2".into(),
+                steps: vec![format!("--lua-desync={function}:blob=tls_client_hello")],
+            },
+            attempts: 3,
+            successes,
+            confirmed: successes == 3,
+            elapsed_ms,
+            detail: "timeout".into(),
+        };
+        let candidates = vec![
+            result("fake", 1, 500),
+            result("hostfakesplit", 2, 400),
+            result("fakedsplit", 1, 100),
+        ];
+        let selected = select_refinement_bases(&candidates, StrategyProtocol::Https, false, false);
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].candidate.name, "hostfakesplit");
+        assert_ne!(
+            selected[0].candidate.steps[0].split(':').next(),
+            selected[1].candidate.steps[0].split(':').next()
+        );
+        assert!(
+            select_refinement_bases(&candidates, StrategyProtocol::Https, true, false).is_empty()
+        );
+        let confirmed = vec![result("fake", 3, 500), result("hostfakesplit", 3, 100)];
+        let forced = select_refinement_bases(&confirmed, StrategyProtocol::Https, true, true);
+        assert_eq!(forced.len(), 1);
+        assert_eq!(forced[0].candidate.name, "hostfakesplit");
+    }
+
+    #[tokio::test]
+    async fn refinement_reuses_the_real_probe_callback_and_confirms_full_repeats() {
+        use super::{StrategyCandidateResult, StrategyProbeResult, refine_candidates};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runner_calls = calls.clone();
+        let base = StrategyCandidateResult {
+            candidate: StrategyCandidate {
+                name: "host fake".into(),
+                source: "blockcheck2".into(),
+                steps: vec!["--lua-desync=hostfakesplit:host=ya.ru".into()],
+            },
+            attempts: 2,
+            successes: 0,
+            confirmed: false,
+            elapsed_ms: 20,
+            detail: "timeout".into(),
+        };
+        let functions = HashSet::from(["hostfakesplit".into()]);
+        let candidates = [base];
+        let outcome = refine_candidates(
+            super::StrategyRefinementConfig {
+                candidates: &candidates,
+                protocol: StrategyProtocol::Https,
+                repeats: 2,
+                already_confirmed: false,
+                force: false,
+                cancel: Arc::new(AtomicBool::new(false)),
+                available_functions: &functions,
+                available_blobs: &[],
+            },
+            move |_candidate, _repeat| {
+                runner_calls.fetch_add(1, Ordering::SeqCst);
+                async {
+                    vec![
+                        StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: Some(true),
+                            detail: "HTTP response received".into(),
+                        };
+                        2
+                    ]
+                }
+            },
+            |_done, _total, _current| {},
+        )
+        .await;
+        assert_eq!(outcome.state, "complete");
+        assert!(outcome.results.iter().any(|result| result.confirmed));
+        assert!(outcome.total >= 13 && outcome.total <= 17);
+        assert_eq!(calls.load(Ordering::SeqCst), outcome.total);
+    }
+
+    #[tokio::test]
+    async fn refinement_does_not_probe_after_cancellation_or_without_force_when_a_fake_works() {
+        use super::{StrategyCandidateResult, StrategyProbeResult, refine_candidates};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        let base = StrategyCandidateResult {
+            candidate: StrategyCandidate {
+                name: "host fake".into(),
+                source: "blockcheck2".into(),
+                steps: vec!["--lua-desync=hostfakesplit:host=ya.ru".into()],
+            },
+            attempts: 2,
+            successes: 2,
+            confirmed: true,
+            elapsed_ms: 1,
+            detail: "HTTP 200".into(),
+        };
+        let functions = HashSet::from(["hostfakesplit".into()]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runner_calls = calls.clone();
+        let result = refine_candidates(
+            super::StrategyRefinementConfig {
+                candidates: std::slice::from_ref(&base),
+                protocol: StrategyProtocol::Https,
+                repeats: 2,
+                already_confirmed: true,
+                force: false,
+                cancel: Arc::new(AtomicBool::new(true)),
+                available_functions: &functions,
+                available_blobs: &[],
+            },
+            move |_candidate, _repeat| {
+                runner_calls.fetch_add(1, Ordering::SeqCst);
+                async {
+                    vec![
+                        StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: Some(true),
+                            detail: "ok".into(),
+                        };
+                        2
+                    ]
+                }
+            },
+            |_done, _total, _current| {},
+        )
+        .await;
+        assert_eq!(result.state, "complete");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        let cancelled_base = StrategyCandidateResult {
+            confirmed: false,
+            successes: 1,
+            ..base.clone()
+        };
+        let cancelled = refine_candidates(
+            super::StrategyRefinementConfig {
+                candidates: std::slice::from_ref(&cancelled_base),
+                protocol: StrategyProtocol::Https,
+                repeats: 2,
+                already_confirmed: false,
+                force: false,
+                cancel: Arc::new(AtomicBool::new(true)),
+                available_functions: &functions,
+                available_blobs: &[],
+            },
+            |_candidate, _repeat| forbidden_probe(),
+            |_done, _total, _current| {},
+        )
+        .await;
+        assert_eq!(cancelled.state, "cancelled");
+
+        let skipped = refine_candidates(
+            super::StrategyRefinementConfig {
+                candidates: std::slice::from_ref(&base),
+                protocol: StrategyProtocol::Https,
+                repeats: 2,
+                already_confirmed: true,
+                force: false,
+                cancel: Arc::new(AtomicBool::new(false)),
+                available_functions: &functions,
+                available_blobs: &[],
+            },
+            |_candidate, _repeat| forbidden_probe(),
+            |_done, _total, _current| {},
+        )
+        .await;
+        assert_eq!(skipped.total, 0);
+        assert_eq!(skipped.message, "Уточнение не требуется");
     }
 }
 
@@ -939,6 +1489,26 @@ pub struct StrategyProbeResult {
     pub detail: String,
 }
 
+/// Normalize one-result test runners and real batched runners to a bounded
+/// sequence. Production candidate execution uses a batch so router setup is
+/// performed once; the single-result implementation keeps lightweight unit
+/// fixtures source-compatible.
+pub trait IntoProbeBatch {
+    fn into_probe_batch(self, requested: usize) -> Vec<StrategyProbeResult>;
+}
+
+impl IntoProbeBatch for StrategyProbeResult {
+    fn into_probe_batch(self, requested: usize) -> Vec<StrategyProbeResult> {
+        vec![self; requested]
+    }
+}
+
+impl IntoProbeBatch for Vec<StrategyProbeResult> {
+    fn into_probe_batch(self, requested: usize) -> Vec<StrategyProbeResult> {
+        self.into_iter().take(requested).collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StrategyCandidateResult {
@@ -946,6 +1516,8 @@ pub struct StrategyCandidateResult {
     pub attempts: usize,
     pub successes: usize,
     pub confirmed: bool,
+    #[serde(default)]
+    pub elapsed_ms: u64,
     pub detail: String,
 }
 
@@ -955,9 +1527,229 @@ pub struct StrategyRunResult {
     pub checked: usize,
     pub total: usize,
     pub results: Vec<StrategyCandidateResult>,
+    pub refinement_bases: Vec<StrategyCandidateResult>,
     pub failures: usize,
     pub omitted_results: usize,
     pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StrategyRefinementOutcome {
+    pub state: String,
+    pub checked: usize,
+    pub total: usize,
+    pub results: Vec<StrategyCandidateResult>,
+    pub message: String,
+}
+
+pub struct StrategyRefinementConfig<'a> {
+    pub candidates: &'a [StrategyCandidateResult],
+    pub protocol: StrategyProtocol,
+    pub repeats: usize,
+    pub already_confirmed: bool,
+    pub force: bool,
+    pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub available_functions: &'a HashSet<String>,
+    pub available_blobs: &'a [String],
+}
+
+fn refinement_stage(detail: &str) -> u8 {
+    let detail = detail.to_ascii_lowercase();
+    if detail.contains("16–20") || detail.contains("16-20") || detail.contains("possiblefreeze") {
+        2
+    } else if detail.contains("tls") || detail.contains("сброш") || detail.contains("reset") {
+        1
+    } else {
+        0
+    }
+}
+
+fn select_refinement_bases(
+    candidates: &[StrategyCandidateResult],
+    protocol: StrategyProtocol,
+    already_confirmed: bool,
+    force: bool,
+) -> Vec<StrategyCandidateResult> {
+    if protocol == StrategyProtocol::Http || (already_confirmed && !force) {
+        return Vec::new();
+    }
+    let mut eligible = candidates
+        .iter()
+        .filter(|candidate| {
+            refinement_fake_index(&candidate.candidate.steps).is_some()
+                && (!already_confirmed || candidate.confirmed)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if already_confirmed && force {
+        eligible.sort_by_key(|candidate| candidate.elapsed_ms);
+        eligible.truncate(1);
+        return eligible;
+    }
+    eligible.sort_by(|a, b| {
+        b.successes
+            .cmp(&a.successes)
+            .then_with(|| refinement_stage(&b.detail).cmp(&refinement_stage(&a.detail)))
+    });
+    let mut functions = HashSet::new();
+    eligible.retain(|candidate| {
+        refinement_fake_index(&candidate.candidate.steps)
+            .and_then(|index| parse_refinement_step(&candidate.candidate.steps[index]))
+            .is_some_and(|(function, _)| functions.insert(function))
+    });
+    eligible.truncate(2);
+    eligible
+}
+
+/// Run the upstream-style second phase: mutate one fake axis at a time,
+/// confirm each candidate with the same real runner, and adopt an axis winner
+/// only when its success count improves or ties at full confirmation.
+pub async fn refine_candidates<F, Fut, P>(
+    config: StrategyRefinementConfig<'_>,
+    mut runner: F,
+    mut progress: P,
+) -> StrategyRefinementOutcome
+where
+    F: FnMut(&StrategyCandidate, usize) -> Fut,
+    Fut: std::future::Future,
+    Fut::Output: IntoProbeBatch,
+    P: FnMut(usize, usize, &str),
+{
+    use std::sync::atomic::Ordering;
+    let StrategyRefinementConfig {
+        candidates,
+        protocol,
+        repeats,
+        already_confirmed,
+        force,
+        cancel,
+        available_functions,
+        available_blobs,
+    } = config;
+    let bases = select_refinement_bases(candidates, protocol, already_confirmed, force);
+    let mut outcome = StrategyRefinementOutcome {
+        state: "complete".into(),
+        checked: 0,
+        total: 0,
+        results: Vec::new(),
+        message: "Уточнение не требуется".into(),
+    };
+    if bases.is_empty() {
+        return outcome;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    const AXES: [&str; 4] = ["fool:", "repeats:", "name:", "blob:"];
+    for base in bases {
+        let mut current = base.clone();
+        let mut improved = false;
+        for axis in AXES {
+            if cancel.load(Ordering::Acquire) {
+                outcome.state = "cancelled".into();
+                outcome.message = "Уточнение отменено; завершённые проверки сохранены".into();
+                return outcome;
+            }
+            if std::time::Instant::now() >= deadline {
+                outcome.state = "partial".into();
+                outcome.message =
+                    "Уточнение остановлено по лимиту 300 секунд; завершённые проверки сохранены"
+                        .into();
+                return outcome;
+            }
+            let variants = refinement_variants(
+                &current.candidate,
+                protocol,
+                available_functions,
+                available_blobs,
+            )
+            .into_iter()
+            .filter(|(label, _)| label.starts_with(axis))
+            .collect::<Vec<_>>();
+            outcome.total = outcome.total.saturating_add(variants.len());
+            let mut best: Option<StrategyCandidateResult> = None;
+            for (label, candidate) in variants {
+                progress(outcome.checked, outcome.total, &candidate.name);
+                if cancel.load(Ordering::Acquire) {
+                    outcome.state = "cancelled".into();
+                    outcome.message = "Уточнение отменено; завершённые проверки сохранены".into();
+                    return outcome;
+                }
+                if std::time::Instant::now() >= deadline {
+                    outcome.state = "partial".into();
+                    outcome.message = "Уточнение остановлено по лимиту 300 секунд; завершённые проверки сохранены".into();
+                    return outcome;
+                }
+                let started = std::time::Instant::now();
+                let mut attempts = 0;
+                let mut successes = 0;
+                let mut detail = String::new();
+                let probes = runner(&candidate, repeats.max(1))
+                    .await
+                    .into_probe_batch(repeats.max(1));
+                for probe in probes {
+                    attempts += 1;
+                    detail = probe.detail;
+                    match (probe.baseline_ok, probe.candidate_ok) {
+                        (Some(false), Some(true)) => successes += 1,
+                        (Some(false), Some(false)) => break,
+                        _ => break,
+                    }
+                    if cancel.load(Ordering::Acquire) || std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                }
+                outcome.checked += 1;
+                progress(outcome.checked, outcome.total, &label);
+                let result = StrategyCandidateResult {
+                    candidate,
+                    attempts,
+                    successes,
+                    confirmed: attempts == repeats.max(1) && successes == repeats.max(1),
+                    elapsed_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                    detail,
+                };
+                if successes > 0 {
+                    outcome.results.push(result.clone());
+                }
+                if best
+                    .as_ref()
+                    .is_none_or(|previous| result.successes > previous.successes)
+                {
+                    best = Some(result);
+                }
+                if cancel.load(Ordering::Acquire) {
+                    outcome.state = "cancelled".into();
+                    outcome.message = "Уточнение отменено; завершённые проверки сохранены".into();
+                    return outcome;
+                }
+                if std::time::Instant::now() >= deadline {
+                    outcome.state = "partial".into();
+                    outcome.message = "Уточнение остановлено по лимиту 300 секунд; завершённые проверки сохранены".into();
+                    return outcome;
+                }
+            }
+            if let Some(best) = best
+                && (best.successes > current.successes
+                    || (best.successes == current.successes && best.confirmed))
+            {
+                improved |= best.candidate.steps != current.candidate.steps;
+                current = best;
+            }
+        }
+        if improved && current.successes > 0 {
+            current.candidate.source = "Уточнение blockcheck2".into();
+            current.candidate.name = format!("{} · лучший уточнённый вариант", base.candidate.name);
+            outcome.results.push(current);
+        }
+    }
+    outcome.message = if outcome.results.iter().any(|result| result.confirmed) {
+        "Уточнение завершено: найдены проверенные варианты; исходная стратегия не менялась".into()
+    } else if outcome.results.is_empty() {
+        "Уточнение завершено; подтверждённый вариант лучше исходного не найден".into()
+    } else {
+        "Уточнение завершено: есть частично успешные варианты, повторное подтверждение не получено"
+            .into()
+    };
+    outcome
 }
 
 /// Sequentially execute candidates for the requested number of real probes.
@@ -974,7 +1766,8 @@ pub async fn run_candidates<F, Fut, P>(
 ) -> StrategyRunResult
 where
     F: FnMut(&StrategyCandidate, usize) -> Fut,
-    Fut: std::future::Future<Output = StrategyProbeResult>,
+    Fut: std::future::Future,
+    Fut::Output: IntoProbeBatch,
     P: FnMut(usize, usize, &str),
 {
     run_candidates_with_compaction(
@@ -1003,7 +1796,8 @@ pub async fn run_candidates_with_compaction<F, Fut, P>(
 ) -> StrategyRunResult
 where
     F: FnMut(&StrategyCandidate, usize) -> Fut,
-    Fut: std::future::Future<Output = StrategyProbeResult>,
+    Fut: std::future::Future,
+    Fut::Output: IntoProbeBatch,
     P: FnMut(usize, usize, &str),
 {
     let total = plan.candidates.len();
@@ -1012,6 +1806,7 @@ where
         checked: 0,
         total,
         results: Vec::new(),
+        refinement_bases: Vec::new(),
         failures: 0,
         omitted_results: 0,
         message: "Подготовка кандидатов".into(),
@@ -1022,17 +1817,20 @@ where
             result.message = "Подбор отменён".into();
             return result;
         }
+        let candidate_started = std::time::Instant::now();
         let mut attempts = 0;
         let mut successes = 0;
         let mut detail = String::new();
-        for repeat in 1..=repeats {
-            progress(result.checked, total, &candidate.name);
-            if cancel.load(std::sync::atomic::Ordering::Acquire) {
-                result.state = "cancelled".into();
-                result.message = "Подбор отменён".into();
-                return result;
-            }
-            let probe = runner(&candidate, repeat).await;
+        progress(result.checked, total, &candidate.name);
+        if cancel.load(std::sync::atomic::Ordering::Acquire) {
+            result.state = "cancelled".into();
+            result.message = "Подбор отменён".into();
+            return result;
+        }
+        let probes = runner(&candidate, repeats.max(1))
+            .await
+            .into_probe_batch(repeats.max(1));
+        for probe in probes {
             attempts += 1;
             detail = probe.detail;
             match (probe.baseline_ok, probe.candidate_ok) {
@@ -1044,6 +1842,23 @@ where
                 }
                 (Some(false), Some(true)) => successes += 1,
                 (Some(false), Some(false)) => break,
+                _ if cancel.load(std::sync::atomic::Ordering::Acquire) => {
+                    result.results.push(StrategyCandidateResult {
+                        candidate: candidate.clone(),
+                        attempts,
+                        successes,
+                        confirmed: false,
+                        elapsed_ms: candidate_started
+                            .elapsed()
+                            .as_millis()
+                            .min(u64::MAX as u128) as u64,
+                        detail,
+                    });
+                    result.checked += 1;
+                    result.state = "cancelled".into();
+                    result.message = "Подбор отменён; завершённые повторы сохранены".into();
+                    return result;
+                }
                 _ => {
                     result.state = "failed".into();
                     result.message = "Сетевая проверка не дала достаточного результата".into();
@@ -1052,20 +1867,48 @@ where
                         attempts,
                         successes,
                         confirmed: false,
+                        elapsed_ms: candidate_started
+                            .elapsed()
+                            .as_millis()
+                            .min(u64::MAX as u128) as u64,
                         detail,
                     });
                     return result;
                 }
             }
+            if cancel.load(std::sync::atomic::Ordering::Acquire) {
+                result.results.push(StrategyCandidateResult {
+                    candidate: candidate.clone(),
+                    attempts,
+                    successes,
+                    confirmed: false,
+                    elapsed_ms: candidate_started
+                        .elapsed()
+                        .as_millis()
+                        .min(u64::MAX as u128) as u64,
+                    detail,
+                });
+                result.checked += 1;
+                result.state = "cancelled".into();
+                result.message = "Подбор отменён; завершённые повторы сохранены".into();
+                return result;
+            }
         }
-        let confirmed = successes == repeats;
+        let confirmed = attempts == repeats.max(1) && successes == repeats.max(1);
         let candidate_result = StrategyCandidateResult {
             candidate: candidate.clone(),
             attempts,
             successes,
             confirmed,
+            elapsed_ms: candidate_started
+                .elapsed()
+                .as_millis()
+                .min(u64::MAX as u128) as u64,
             detail,
         };
+        if refinement_fake_index(&candidate.steps).is_some() && result.refinement_bases.len() < 64 {
+            result.refinement_bases.push(candidate_result.clone());
+        }
         if compact_failures && successes == 0 {
             result.failures += 1;
         } else if compact_failures && result.results.len() >= 256 {

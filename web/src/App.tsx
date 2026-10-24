@@ -1054,6 +1054,12 @@ export default function App() {
                   <input id={"strategyStopAfterFirst"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
                   <span>Автоматически остановиться на первой подтверждённой стратегии</span>
                 </label>
+                <label htmlFor={"strategyRefineLighter"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                  <input id={"strategyRefineLighter"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
+                  <span>Искать более лёгкий вариант даже после нахождения рабочего
+                    <span className={"mt-1 block text-[11px] font-normal leading-4 text-slate-400"}>Дополнительно проверит параметры fake-шага по одной группе. Займёт до 5 минут; исходный результат останется доступен.</span>
+                  </span>
+                </label>
                 <label htmlFor={"strategyIncludeOtherHistory"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
                   <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
                   <span>Проверять подтверждённые стратегии с других сайтов</span>

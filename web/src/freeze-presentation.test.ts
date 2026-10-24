@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { freezeRowPresentation, freezeCanApplyToHost } from './freeze-presentation';
 
 describe('freeze scan row presentation', () => {
-  it('marks confirmed freeze findings red and clean comparisons green', () => {
-    expect(freezeRowPresentation({ freezeDetected: true, foundStrategy: null, directOk: false, currentOk: false }).tone).toBe('error');
+  it('marks possible freeze findings red without claiming they are proven', () => {
+    expect(freezeRowPresentation({ freezeDetected: true, foundStrategy: null, directOk: false, currentOk: false })).toEqual({ tone: 'error', label: 'Возможный обрыв' });
     expect(freezeRowPresentation({ freezeDetected: false, foundStrategy: null, directOk: true, currentOk: true }).tone).toBe('success');
     expect(freezeRowPresentation({ freezeDetected: true, foundStrategy: {}, directOk: false, currentOk: false }).tone).toBe('success');
     expect(freezeRowPresentation({ freezeDetected: true, foundStrategy: { reusedFrom: 'hetzner.com' }, directOk: false, currentOk: false }).tone).toBe('warning');

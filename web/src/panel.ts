@@ -2,6 +2,7 @@ import { diagnosisRows } from './diagnosis-layout';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
 import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentation';
+import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
@@ -743,7 +744,7 @@ async function stopSiteTrace() {
 const STRATEGY_PICK_STORAGE = 'nfqws2-ui-strategy-pick-id';
 function renderStrategyPick(operation: StrategyPickOperation) {
   localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
-  setText('#scanProgressLabel', operation.current ? `${operation.done}/${operation.total} · ${operation.current}` : operation.message);
+  setText('#scanProgressLabel', operation.current ? `${operation.stage === 'refining' ? 'Уточнение' : 'Проверка'} · ${operation.done}/${operation.total} · ${operation.current}` : operation.message);
   const bar = $('#scanProgressBar');
   if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(100 * operation.done / operation.total) : 0}%`;
   const container = $('#autotuneStrategiesList');
@@ -760,14 +761,15 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     return;
   }
   operation.results.forEach((result, index) => {
+    const refined = result.candidate.source === 'Уточнение blockcheck2';
     const card = document.createElement('article');
     card.className = 'ui-card strategy-result-enter rounded-xl p-4 space-y-2';
     const heading = document.createElement('h3');
     heading.className = `font-semibold ${result.confirmed ? 'text-emerald-200' : 'text-slate-200'}`;
-    heading.textContent = `${result.confirmed ? 'Подтверждена' : 'Не подтверждена'} · ${result.candidate.name}`;
+    heading.textContent = `${result.confirmed ? 'Подтверждена' : 'Не подтверждена'}${refined ? ' · Уточнённый вариант' : ''} · ${result.candidate.name}`;
     const summary = document.createElement('p');
     summary.className = 'text-sm font-medium text-slate-300';
-    summary.textContent = `${result.successes}/${result.attempts} успешных проверок · ${result.candidate.source}`;
+    summary.textContent = `${result.successes}/${result.attempts} успешных проверок · ${result.candidate.source} · ${result.elapsedMs} мс`;
     const detail = document.createElement('p'); detail.className = 'text-xs text-slate-400 break-words'; detail.textContent = result.detail;
     const args = document.createElement('code'); args.className = 'block whitespace-pre-wrap break-all rounded-lg bg-[#060a12] p-2 text-xs text-cyan-200'; args.textContent = result.candidate.steps.join('\n');
     card.append(heading, summary, detail, args);
@@ -945,10 +947,10 @@ async function pollStrategyPick(id: string) {
     }
     renderStrategyPick(current);
     setText('#scanProgressLabel', current.message);
-    if (['complete', 'no_match', 'site_unblocked', 'cancelled', 'failed'].includes(current.state)) {
+    if (['complete', 'partial', 'no_match', 'site_unblocked', 'cancelled', 'failed'].includes(current.state)) {
       void loadStrategyPickHistory();
       if (current.state === 'failed') toast(current.message, 'error');
-      else toast(current.message, current.state === 'complete' ? 'success' : 'error');
+      else toast(current.message, ['complete', 'partial'].includes(current.state) ? 'success' : 'error');
     }
   } catch (error) {
     setText('#scanProgressLabel', error instanceof Error ? error.message : 'Статус автоподбора пока недоступен');
@@ -970,6 +972,7 @@ async function startStrategyPick() {
   const stopAfterFirst = ($('#strategyStopAfterFirst') as HTMLInputElement | null)?.checked ?? false;
   const includeCommunity = ($('#strategyIncludeCommunity') as HTMLInputElement | null)?.checked ?? false;
   const includeOtherHistory = ($('#strategyIncludeOtherHistory') as HTMLInputElement | null)?.checked ?? false;
+  const refineLighter = ($('#strategyRefineLighter') as HTMLInputElement | null)?.checked ?? false;
   if (!Number.isInteger(repeats) || repeats < 2 || repeats > 5) return toast('Число повторов должно быть от 2 до 5.', 'error');
   const customSteps = customInput instanceof HTMLTextAreaElement ? customInput.value.split(/\r?\n/).map((step) => step.trim()).filter(Boolean) : [];
   if (selectedMode === 'custom' && customSteps.length === 0) return toast('Добавьте хотя бы один параметр --lua-desync=…', 'error');
@@ -978,7 +981,7 @@ async function startStrategyPick() {
   activeStrategyPreview = null;
   const applyButton = $('#applyStrategyPickButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   try {
-    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeCommunity, includeOtherHistory);
+    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeCommunity, includeOtherHistory, refineLighter);
     activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
     await pollStrategyPick(operation.id);
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить автоподбор', 'error'); }
@@ -994,9 +997,10 @@ async function cancelStrategyPick() {
 
 function freezeMeasurementLabel(measurement: FreezeScanOperation['results'][number]['current']) {
   if (measurement.ok) return `ответ получен · ${measurement.elapsedMs} мс`;
-  if (measurement.classification === 'PossibleFreeze') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
-  if (measurement.classification === 'PossibleUploadStall') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
-  if (measurement.classification === 'TimeoutBeforeResponse' || measurement.classification === 'TimeoutBeforeBody') return `${measurement.reason} · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'PossibleFreeze') return `тайм-аут после ответа · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'PossibleBoundaryStall') return `объёмный тайм-аут · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'PossibleUploadStall') return `тайм-аут при отправке · ${measurement.elapsedMs} мс`;
+  if (measurement.classification === 'TimeoutBeforeResponse' || measurement.classification === 'TimeoutBeforeBody') return `тайм-аут до тела ответа · ${measurement.elapsedMs} мс`;
   if (measurement.classification === 'ServerDoesNotKeepConnection') return 'сервер не удерживает соединение';
   if (measurement.classification === 'ConnectFailure') return 'TCP-соединение не установлено';
   if (measurement.classification === 'TlsFailure') return 'ошибка TLS';
@@ -1008,9 +1012,12 @@ function freezeMeasurementLabel(measurement: FreezeScanOperation['results'][numb
 function renderFreezeScan(operation: FreezeScanOperation) {
   const status = $('#freezeScanStatus');
   if (status) {
-    status.textContent = `${operation.message}${operation.current ? ` · сейчас: ${operation.current}` : ''} · ${operation.done}/${operation.total}`;
-    status.setAttribute('aria-busy', String(['queued', 'running', 'stopping'].includes(operation.state)));
-    status.classList.remove('hidden');
+    const active = ['queued', 'running', 'stopping'].includes(operation.state);
+    status.textContent = active
+      ? `${operation.stage === 'strategy_search' ? 'Подбор имени' : 'Проверка'} · ${operation.current ?? 'подготовка'} · ${operation.done}/${operation.total}`
+      : '';
+    status.setAttribute('aria-busy', String(active));
+    status.classList.toggle('hidden', !active);
   }
   const summary = $('#freezeScanSummary');
   const summaryValue = summarizeFreezeScan(operation);
@@ -1041,25 +1048,48 @@ function renderFreezeScan(operation: FreezeScanOperation) {
     const presentation = freezeRowPresentation({ freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, directOk: result.direct.ok, currentOk: result.current.ok });
     const row = document.createElement('tr'); row.className = `freeze-result-row freeze-result-${presentation.tone} align-top hover:bg-slate-900/50`;
     row.dataset.resultTone = presentation.tone;
-    const recentAttempts = result.candidateAttempts.slice(-3).map((attempt) => `${attempt.sni} · ${attempt.successes}/${attempt.attempts}${attempt.reason ? ` · ${attempt.reason}` : ''}`).join('\n');
     const cells = [
-      `${result.label}\nИмя / SNI: ${result.host}${result.path === '/' ? '' : result.path}`,
+      freezeRowIdentity(result),
       `${result.address ?? 'адрес не найден'}\n${result.asn.state === 'verified' ? `AS${result.asn.asn} · подтверждён` : result.asn.state === 'changed' ? `ASN изменился: ожидался AS${result.asn.expected}, сейчас AS${result.asn.actual}` : 'ASN не подтверждён'}`,
       freezeMeasurementLabel(result.direct),
       freezeMeasurementLabel(result.current),
-      result.foundStrategy ? `Найдено имя ${result.foundStrategy.sni} · ${result.foundStrategy.successes}/${result.foundStrategy.attempts} успешных${result.foundStrategy.reusedFrom ? ` · совпадающий ASN, найдено на ${result.foundStrategy.reusedFrom}` : ''}\n${result.foundStrategy.step}${recentAttempts ? `\nПредыдущие проверки:\n${recentAttempts}` : ''}` : result.freezeDetected ? `Возможный обрыв · проверено вариантов: ${result.triedCandidates}${result.triedCandidates ? ', подтверждённый вариант не найден' : ''}${recentAttempts ? `\nПоследние проверки:\n${recentAttempts}` : ''}` : result.direct.ok && result.current.ok ? 'Обрыв не обнаружен' : 'Результат не подтверждает обрыв 16–20 КБ',
+      result.foundStrategy ? `${freezeRowDetails(result).summary}${result.foundStrategy.reusedFrom ? ` · ASN совпадает с ${result.foundStrategy.reusedFrom}` : ''}` : result.freezeDetected ? 'Проверки показывают возможный обрыв' : result.direct.ok && result.current.ok ? 'Обрыв не обнаружен' : 'Результат не подтверждён',
     ];
     cells.forEach((value, index) => {
       const cell = document.createElement('td'); cell.dataset.label = labels[index];
-      cell.className = `whitespace-pre-line px-3 py-3 ${index === 4 ? 'freeze-result-summary font-bold' : 'font-semibold text-white'}`;
-      cell.textContent = index === 4 ? `${presentation.label}\n${value}` : value;
+      cell.className = `whitespace-pre-line px-3 py-2.5 leading-snug ${index === 4 ? 'freeze-result-summary font-bold' : 'font-semibold text-white'}`;
+      if (index === 4) {
+        const badge = document.createElement('span');
+        badge.className = 'freeze-result-badge mb-1 inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-bold';
+        badge.textContent = presentation.label;
+        badge.setAttribute('role', 'status');
+        const detail = document.createElement('span');
+        detail.className = 'block whitespace-pre-line';
+        detail.textContent = value;
+        const facts = freezeRowDetails(result);
+        cell.append(badge, detail);
+        if (facts.details) {
+          const disclosure = document.createElement('details');
+          disclosure.className = 'freeze-result-details mt-1 text-xs font-medium';
+          const summary = document.createElement('summary');
+          summary.textContent = 'Подробности проверки';
+          const content = document.createElement('span');
+          content.className = 'mt-1 block whitespace-pre-line';
+          content.textContent = facts.details;
+          disclosure.append(summary, content);
+          cell.append(disclosure);
+        }
+      } else {
+        cell.textContent = value;
+      }
       if (index === 4 && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
         const button = document.createElement('button');
         button.type = 'button';
-        button.className = 'mt-2 rounded-lg border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-bold text-blue-100 transition hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
+        button.className = 'mt-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-100 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300';
         button.dataset.actionClick = 'previewFreezeStrategy';
         button.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
-        button.textContent = `Профиль для ${result.host}`;
+        button.textContent = 'Применить к сайту';
+        button.title = 'Предпросмотр конфигурации откроется перед применением';
         cell.append(button);
       }
       row.append(cell);

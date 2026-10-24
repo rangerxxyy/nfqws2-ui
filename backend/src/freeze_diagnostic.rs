@@ -429,6 +429,74 @@ pub fn candidate_route_succeeded(current_route_ok: Option<bool>) -> bool {
     current_route_ok == Some(true)
 }
 
+fn classify_current_route(
+    classification: Option<&str>,
+    phase_state: &str,
+    phase_ok: Option<bool>,
+    target_kind: FreezeTargetKind,
+) -> &'static str {
+    if phase_ok == Some(true) {
+        return "Complete";
+    }
+    match classification {
+        Some("PossibleFreeze") if target_kind == FreezeTargetKind::PinnedAddress => {
+            "PossibleFreeze"
+        }
+        Some("PossibleBoundaryStall") => "PossibleBoundaryStall",
+        Some("PossibleUploadStall") => "PossibleUploadStall",
+        Some("TimeoutBeforeBody") => "TimeoutBeforeBody",
+        Some("TimeoutAfterBody") => "TimeoutAfterBody",
+        Some("ConnectionReset") => "ConnectionReset",
+        Some("PartialTransfer") => "PartialTransfer",
+        Some("ServerDoesNotKeepConnection") => "ServerDoesNotKeepConnection",
+        Some("TimeoutBeforeResponse") => "TimeoutBeforeResponse",
+        Some("ConnectFailure") => "ConnectFailure",
+        Some("TlsFailure") => "TlsFailure",
+        Some("Reset") => "Reset",
+        Some("Inconclusive") | None if phase_state != "complete" => "route_unavailable",
+        Some("Inconclusive") | None => "Inconclusive",
+        _ => "Inconclusive",
+    }
+}
+
+#[cfg(test)]
+mod route_classification_tests {
+    use super::{FreezeTargetKind, classify_current_route};
+
+    #[test]
+    fn timeout_before_body_is_not_upgraded_by_the_explanatory_16kb_text() {
+        let classification = classify_current_route(
+            Some("TimeoutBeforeBody"),
+            "complete",
+            Some(false),
+            FreezeTargetKind::HostReference,
+        );
+        assert_eq!(classification, "TimeoutBeforeBody");
+        assert!(!super::is_freeze_classification(classification));
+    }
+
+    #[test]
+    fn only_structured_repeatable_boundary_classification_marks_a_transfer_stall() {
+        let classification = classify_current_route(
+            Some("PossibleBoundaryStall"),
+            "error",
+            Some(false),
+            FreezeTargetKind::HostReference,
+        );
+        assert_eq!(classification, "PossibleBoundaryStall");
+        assert!(super::is_freeze_classification(classification));
+        assert_eq!(
+            classify_current_route(
+                Some("TimeoutBeforeBody"),
+                "complete",
+                Some(false),
+                FreezeTargetKind::HostReference,
+            ),
+            "TimeoutBeforeBody"
+        );
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FreezeMeasurement {
@@ -803,24 +871,12 @@ pub async fn scan_network_baselines(
         };
         let asn = asn_task.await.unwrap_or(AsnVerification::Unavailable);
         let phase = traced.with_nfqws2;
-        let classification = if phase.ok == Some(true) {
-            "Complete"
-        } else if phase.reason.contains("отправке тестового тела") {
-            "PossibleUploadStall"
-        } else if phase.reason.contains("16–20 КБ") || phase.reason.contains("после начала ответов")
-        {
-            if target.kind == FreezeTargetKind::PinnedAddress {
-                "PossibleFreeze"
-            } else {
-                "PossibleBoundaryStall"
-            }
-        } else if phase.reason.to_lowercase().contains("тайм-аут") {
-            "TimeoutBeforeBody"
-        } else if phase.state != "complete" {
-            "route_unavailable"
-        } else {
-            "Inconclusive"
-        };
+        let classification = classify_current_route(
+            phase.diagnostic_classification.as_deref(),
+            &phase.state,
+            phase.ok,
+            target.kind,
+        );
         let current = FreezeMeasurement {
             classification: classification.into(),
             ok: phase.ok == Some(true),
