@@ -5450,6 +5450,31 @@ mod tests {
         assert!(freeze_result_as_strategy_operation(&reused, 0).is_err());
     }
 
+    #[test]
+    fn freeze_scan_preview_scopes_confirmed_strategy_to_the_entered_domain() {
+        let operation = freeze_result_as_strategy_operation(
+            &confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost),
+            0,
+        )
+        .unwrap();
+        let preview = build_strategy_pick_preview(
+            &operation,
+            0,
+            "NFQWS_ARGS_CUSTOM=\"\"\n",
+            "revision-1".into(),
+            &HashSet::from(["hostfakesplit".to_string()]),
+            &[],
+        )
+        .unwrap();
+        assert!(
+            preview
+                .proposed_content
+                .contains("--hostlist-domains=site.example")
+        );
+        assert!(preview.proposed_content.contains("hostfakesplit:repeats=4"));
+        assert_eq!(preview.host, "site.example");
+    }
+
     fn test_state_with_trace_runner(
         data_dir: PathBuf,
         runner: Arc<SiteTraceRunner>,
