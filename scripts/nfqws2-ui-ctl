@@ -84,4 +84,3 @@ case "$cmd" in
 	help|-h|--help) usage ;;
 	*) usage >&2; exit 2 ;;
 esac
-
