@@ -12,6 +12,11 @@ export function configEditorLayout(value: string, minimumRows: number): {
   };
 }
 
+export function configEditorViewportHeight(visibleRows: number): string {
+  const rows = Math.min(10, Math.max(1, Math.floor(visibleRows)));
+  return `calc(${rows} * 1.25rem + 1rem)`;
+}
+
 export function configOutlineEntries(value: string): Array<{ name: string; line: number; offset: number }> {
   return [...value.matchAll(/^([A-Z_][A-Z0-9_]*)=/gm)].map((match) => ({
     name: match[1] ?? '',

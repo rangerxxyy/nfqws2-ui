@@ -2853,8 +2853,7 @@ fn strip_shell_comment(line: &str) -> &str {
     line
 }
 
-fn configured_list_reference(config_text: &str, id: &str) -> Option<PathBuf> {
-    let flag = list_flag(id)?;
+fn configured_list_reference_for_flag(config_text: &str, flag: &str) -> Option<PathBuf> {
     let mut found = None;
     let mut unresolved = false;
     for line in config_text.lines() {
@@ -2932,8 +2931,11 @@ fn configured_list_reference(config_text: &str, id: &str) -> Option<PathBuf> {
     (!unresolved).then_some(found).flatten()
 }
 
-fn list_reference_from_argv(args: &[String], id: &str) -> Option<PathBuf> {
-    let flag = list_flag(id)?;
+fn configured_list_reference(config_text: &str, id: &str) -> Option<PathBuf> {
+    configured_list_reference_for_flag(config_text, list_flag(id)?)
+}
+
+fn list_reference_from_argv_for_flag(args: &[String], flag: &str) -> Option<PathBuf> {
     let mut found = None;
     let mut index = 0;
     while index < args.len() {
@@ -2962,6 +2964,10 @@ fn list_reference_from_argv(args: &[String], id: &str) -> Option<PathBuf> {
         index += 1;
     }
     found
+}
+
+fn list_reference_from_argv(args: &[String], id: &str) -> Option<PathBuf> {
+    list_reference_from_argv_for_flag(args, list_flag(id)?)
 }
 
 fn active_process_arguments() -> Option<Vec<String>> {
@@ -3091,11 +3097,40 @@ async fn get_runtime() -> Response {
 }
 
 fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
-    if !LIST_IDS.contains(&id) {
-        return None;
-    }
     let config = config.canonicalize().ok()?;
     let root = config.parent()?.canonicalize().ok()?;
+    if !LIST_IDS.contains(&id) {
+        if !safe_custom_list_id(id) {
+            return None;
+        }
+        let lists_dir = root.join("lists");
+        let lists_metadata = std::fs::symlink_metadata(&lists_dir).ok()?;
+        if !lists_metadata.is_dir() || lists_metadata.file_type().is_symlink() {
+            return None;
+        }
+        let mut same_name_count = 0;
+        for entry in std::fs::read_dir(&lists_dir).ok()? {
+            let entry = entry.ok()?;
+            if entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.eq_ignore_ascii_case(id))
+                && entry.file_type().ok()?.is_file()
+            {
+                same_name_count += 1;
+            }
+        }
+        if same_name_count != 1 {
+            return None;
+        }
+        let candidate = lists_dir.join(id);
+        let metadata = std::fs::symlink_metadata(&candidate).ok()?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return None;
+        }
+        let path = candidate.canonicalize().ok()?;
+        return (path.starts_with(&root) && path.is_file()).then_some(path);
+    }
     let config_text = std::fs::read_to_string(&config).ok()?;
     let reference = active_process_arguments()
         .as_deref()
@@ -3133,11 +3168,110 @@ fn list_file_path(config: &Path, id: &str) -> Option<PathBuf> {
     (path.starts_with(&root) && path.is_file()).then_some(path)
 }
 
+fn safe_custom_list_id(id: &str) -> bool {
+    id.len() <= 128
+        && id.ends_with(".list")
+        && !id.starts_with('.')
+        && !id.contains("..")
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        && !LIST_IDS
+            .iter()
+            .any(|standard| standard.eq_ignore_ascii_case(id))
+}
+
+fn list_reference_matches(config: &Path, id: &str, reference: &Path) -> bool {
+    let Some(target) = list_file_path(config, id) else {
+        return false;
+    };
+    let Some(root) = config
+        .canonicalize()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    else {
+        return false;
+    };
+    let candidate = if reference.is_absolute() {
+        reference.to_path_buf()
+    } else {
+        root.join(reference)
+    };
+    candidate
+        .canonicalize()
+        .ok()
+        .is_some_and(|path| path == target)
+}
+
+fn custom_list_is_ipset(config: &Path, id: &str) -> bool {
+    const IPSET_FLAGS: [&str; 2] = ["--ipset", "--ipset-exclude"];
+    if let Some(args) = active_process_arguments()
+        && IPSET_FLAGS.iter().any(|flag| {
+            list_reference_from_argv_for_flag(&args, flag)
+                .is_some_and(|reference| list_reference_matches(config, id, &reference))
+        })
+    {
+        return true;
+    }
+    let Some(config_text) = std::fs::read_to_string(config).ok() else {
+        return false;
+    };
+    IPSET_FLAGS.iter().any(|flag| {
+        configured_list_reference_for_flag(&config_text, flag)
+            .is_some_and(|reference| list_reference_matches(config, id, &reference))
+    })
+}
+
+fn list_ids_for_config(config: &Path) -> Vec<String> {
+    let mut ids = LIST_IDS
+        .iter()
+        .filter(|id| list_file_path(config, id).is_some())
+        .map(|id| (*id).to_string())
+        .collect::<Vec<_>>();
+    let mut seen = ids
+        .iter()
+        .map(|id| id.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let root = match config
+        .canonicalize()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    {
+        Some(root) => root,
+        None => return ids,
+    };
+    let lists_dir = root.join("lists");
+    let Ok(entries) = std::fs::read_dir(lists_dir) else {
+        return ids;
+    };
+    let mut custom = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let id = entry.file_name().into_string().ok()?;
+            if !safe_custom_list_id(&id)
+                || !entry.file_type().ok()?.is_file()
+                || !seen.insert(id.to_ascii_lowercase())
+                || list_file_path(config, &id).is_none()
+            {
+                return None;
+            }
+            Some(id)
+        })
+        .collect::<Vec<_>>();
+    custom.sort_by_key(|id| id.to_ascii_lowercase());
+    ids.extend(custom);
+    ids
+}
+
+#[cfg(test)]
 fn validate_list_content(id: &str, content: &str) -> Result<(), String> {
-    if !LIST_IDS.contains(&id) {
+    validate_list_content_with_kind(id, content, id.starts_with("ipset"))
+}
+
+fn validate_list_content_with_kind(id: &str, content: &str, ip_list: bool) -> Result<(), String> {
+    if !LIST_IDS.contains(&id) && !safe_custom_list_id(id) {
         return Err("Неизвестный список".into());
     }
-    let ip_list = id.starts_with("ipset");
     for (index, line) in content.lines().enumerate() {
         let value = line.trim();
         if value.is_empty() || value.starts_with('#') {
@@ -4788,12 +4922,12 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
     let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
-    let files = LIST_IDS
-        .iter()
+    let files = list_ids_for_config(&config)
+        .into_iter()
         .filter_map(|id| {
-            let path = list_file_path(&config, id)?;
+            let path = list_file_path(&config, &id)?;
             Some(ListSummary {
-                id: (*id).to_string(),
+                id,
                 path: path.display().to_string(),
                 readable: std::fs::File::open(&path).is_ok(),
                 writable: std::fs::OpenOptions::new().append(true).open(&path).is_ok(),
@@ -4852,13 +4986,14 @@ async fn put_list(
             "Список содержит запрещённый NUL-байт",
         );
     }
-    if let Err(message) = validate_list_content(&id, &write.content) {
-        return error(StatusCode::BAD_REQUEST, message);
-    }
-    let _write_guard = state.config_write_lock.lock().await;
     let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
+    let ip_list = id.starts_with("ipset") || custom_list_is_ipset(&config, &id);
+    if let Err(message) = validate_list_content_with_kind(&id, &write.content, ip_list) {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
+    let _write_guard = state.config_write_lock.lock().await;
     let Some(path) = list_file_path(&config, &id) else {
         return error(
             StatusCode::NOT_FOUND,
@@ -7938,6 +8073,163 @@ mod tests {
             .map(|file| file["id"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(ids, LIST_IDS);
+    }
+
+    #[tokio::test]
+    async fn list_index_includes_custom_list_files_from_the_lists_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_EXTRA_ARGS=--hostlist=lists/user.list\n")
+            .await
+            .unwrap();
+        tokio::fs::write(list_dir.join("user.list"), "example.org\n")
+            .await
+            .unwrap();
+        tokio::fs::write(list_dir.join("google.list"), "google.com\n")
+            .await
+            .unwrap();
+        tokio::fs::create_dir_all(list_dir.join("nested"))
+            .await
+            .unwrap();
+        tokio::fs::write(list_dir.join("nested/ignored.list"), "ignored.example\n")
+            .await
+            .unwrap();
+        tokio::fs::write(list_dir.join("notes.txt"), "ignored.example\n")
+            .await
+            .unwrap();
+
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let report = body_json(response).await;
+        let ids = report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|file| file["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(ids.contains(&"google.list"));
+        assert!(!ids.contains(&"nested/ignored.list"));
+        assert!(!ids.contains(&"notes.txt"));
+    }
+
+    #[tokio::test]
+    async fn custom_list_can_be_read_and_saved_with_revision_protection() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_EXTRA_ARGS=--hostlist=lists/user.list\n")
+            .await
+            .unwrap();
+        let custom_path = list_dir.join("google.list");
+        tokio::fs::write(&custom_path, "google.com\n")
+            .await
+            .unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/google.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(loaded.status(), StatusCode::OK);
+        let loaded = body_json(loaded).await;
+        assert_eq!(loaded["id"], "google.list");
+        assert_eq!(loaded["content"], "google.com\n");
+        let revision = loaded["revision"].as_str().unwrap();
+
+        let saved = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/google.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"google.com\nwww.google.com\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(custom_path).await.unwrap(),
+            "google.com\nwww.google.com\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_list_validation_uses_its_configured_ipset_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS_IPSET=--ipset=lists/google.list\n")
+            .await
+            .unwrap();
+        let custom_path = list_dir.join("google.list");
+        tokio::fs::write(&custom_path, "192.0.2.1\n").await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/google.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let revision = body_json(loaded).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let saved = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/google.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"google.com\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(saved.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            tokio::fs::read_to_string(custom_path).await.unwrap(),
+            "192.0.2.1\n"
+        );
     }
 
     #[test]

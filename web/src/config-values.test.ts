@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configAssignmentValue, configEditorLayout, configOutlineEntries } from './config-values';
+import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries } from './config-values';
 
 describe('configAssignmentValue', () => {
   it('reads a full multiline quoted assignment without its shell quotes', () => {
@@ -41,6 +41,16 @@ describe('configAssignmentValue', () => {
       visibleRows: 10,
       lineNumbers: Array.from({ length: 14 }, (_, index) => String(index + 1)).join('\n'),
     });
+  });
+
+  it('caps the shared viewport height to the rendered row count', () => {
+    expect(configEditorViewportHeight(3)).toBe('calc(3 * 1.25rem + 1rem)');
+    expect(configEditorViewportHeight(10)).toBe('calc(10 * 1.25rem + 1rem)');
+  });
+
+  it('keeps empty and trailing-newline rows explicit without padding short values', () => {
+    expect(configEditorLayout('', 3).lineCount).toBe(1);
+    expect(configEditorLayout('--one\n', 3)).toMatchObject({ lineCount: 2, visibleRows: 3, lineNumbers: '1\n2' });
   });
 
   it('lists uppercase config assignments with their source line and text offset', () => {

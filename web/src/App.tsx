@@ -226,8 +226,8 @@ export default function App() {
           {"\n        "}
           <div>
             {"\n          "}
-            <div className={"px-3 mb-2 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500"}>
-              {"\n            Управление и Правила\n          "}
+            <div className={"px-3 mb-2 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>
+              {"\n            Управление и правила\n          "}
             </div>
             {"\n          "}
             <nav className={"space-y-1"}>
@@ -281,8 +281,8 @@ export default function App() {
           {"\n        "}
           <div>
             {"\n          "}
-            <div className={"px-3 mb-2 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-500"}>
-              {"\n            Диагностика и Автоматика\n          "}
+            <div className={"px-3 mb-2 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>
+              {"\n            Диагностика и автоматика\n          "}
             </div>
             {"\n          "}
             <nav className={"space-y-1"}>
@@ -338,7 +338,7 @@ export default function App() {
               </button>
               {"\n\n            "}
               {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["monitor"])} id={"navBtn-monitor"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["monitor"])} id={"navBtn-monitor"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 {"\n              "}
                 <div className={"flex items-center gap-3"}>
                   {"\n                "}
@@ -790,7 +790,7 @@ export default function App() {
           <div className={"ui-card rounded-2xl overflow-hidden shadow-xl"}>
             {"\n          "}
             {"\n          "}
-            <div className={"flex items-center overflow-x-auto bg-[#080d18] border-b border-slate-800 px-2"}>
+            <div id={"listFileTabs"} className={"flex items-center overflow-x-auto bg-[#080d18] border-b border-slate-800 px-2"}>
               {"\n            \n            "}
               <button data-action-click={"selectListFile"} data-args={JSON.stringify(["user.list"])} id={"listTab-user.list"} className={"list-file-tab active flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-bold text-white border-b-2 border-sky-400 bg-slate-800/40 transition-all whitespace-nowrap"}>
                 {"\n              "}
@@ -1196,175 +1196,19 @@ export default function App() {
           </div>
         </section>
         <section id={"tabContent-monitor"} className={"hidden view-animate space-y-5"}>
-          {"\n        "}
-          <div className={"grid grid-cols-1 lg:grid-cols-12 gap-5"}>
-            {"\n          \n          "}
-            {"\n          "}
-            <div className={"lg:col-span-7 ui-card rounded-2xl p-6 space-y-5"}>
-              {"\n            "}
-              <div className={"flex items-center justify-between pb-4 border-b border-slate-800"}>
-                {"\n              "}
-                <div>
-                  {"\n                "}
-                  <h2 className={"text-base sm:text-lg font-bold text-white"}>
-                  {"Мониторинг доступности сайтов"}
-                  </h2>
-                  {"\n                "}
-                  <p className={"text-xs text-slate-400 mt-0.5"}>
-                    {"Проверки доступности и автоматический подбор стратегии пока не подключены к backend."}
-                  </p>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"px-3 py-1 rounded-full bg-slate-800 text-slate-400 border border-slate-700 text-xs font-mono font-bold"}>
-                  {"Данные мониторинга не подключены"}
-                </span>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              <div className={"grid grid-cols-1 sm:grid-cols-3 gap-3.5"}>
-                {"\n              "}
-                <div className={"bg-[#060a12] border border-slate-800 rounded-xl p-3.5"}>
-                  {"\n                "}
-                  <label className={"text-xs text-slate-400 font-mono"}>
-                    {"Интервал проверки"}
-                  </label>
-                  {"\n                "}
-                  <select defaultValue={""} disabled className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"}>
-                    <option value={""}>Настройка не загружена</option>
-                  </select>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <div className={"bg-[#060a12] border border-slate-800 rounded-xl p-3.5"}>
-                  {"\n                "}
-                  <label className={"text-xs text-slate-400 font-mono"}>
-                    {"Порог сбоев подряд"}
-                  </label>
-                  {"\n                "}
-                  <select defaultValue={""} disabled className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"}>
-                    <option value={""}>Настройка не загружена</option>
-                  </select>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <div className={"bg-[#060a12] border border-slate-800 rounded-xl p-3.5"}>
-                  {"\n                "}
-                  <label className={"text-xs text-slate-400 font-mono"}>
-                    {"Реакция при падении"}
-                  </label>
-                  {"\n                "}
-                  <select defaultValue={""} disabled className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-emerald-300"}>
-                    <option value={""}>Реакция не настроена</option>
-                  </select>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              {"\n            "}
-              <div className={"space-y-2.5"}>
-                {"\n              "}
-                <div className={"p-3 rounded-xl bg-[#060a12] border border-slate-800 text-slate-400 font-mono text-xs"}>
-                  {"Нет контрольных сайтов из backend."}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n          "}
+          <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-5"}>
+            <div className={"flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-4"}>
+              <div><h2 className={"text-lg font-bold text-white"}>Мониторинг сайтов</h2><p className={"mt-1 text-sm text-slate-400"}>Ручная последовательная проверка через диагностику роутера. Последние 10 результатов на домен хранятся в этом браузере.</p></div>
+              <span className={"rounded-full border border-blue-400/30 bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200"}>До 20 сайтов · вручную</span>
             </div>
-            {"\n\n          "}
-            {"\n          "}
-            <div className={"lg:col-span-5 ui-card rounded-2xl p-6 space-y-4"}>
-              {"\n            "}
-              <div className={"flex items-center justify-between pb-3 border-b border-slate-800"}>
-                {"\n              "}
-                <div>
-                  {"\n                "}
-                  <h3 className={"text-base font-bold text-white"}>
-                    {"Уведомления в Telegram"}
-                  </h3>
-                  {"\n                "}
-                  <p className={"text-xs text-slate-400"}>
-                    {"Поддержка прокси и VPN-интерфейсов при блокировке Telegram"}
-                  </p>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"text-xs font-mono text-sky-400"}>
-                  {"notify.json"}
-                </span>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              <div className={"space-y-3 text-xs"}>
-                {"\n              "}
-                <div>
-                  {"\n                "}
-                  <label className={"block text-slate-400 font-mono mb-1"}>
-                    {"Bot Token (@BotFather)"}
-                  </label>
-                  {"\n                "}
-                  <input type={"password"} defaultValue={""} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2 font-mono text-white"} />
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div className={"grid grid-cols-3 gap-2 items-end"}>
-                  {"\n                "}
-                  <div className={"col-span-2"}>
-                    {"\n                  "}
-                    <label className={"block text-slate-400 font-mono mb-1"}>
-                      {"Chat ID получателя"}
-                    </label>
-                    {"\n                  "}
-                    <input id={"tgChatIdInput"} type={"text"} placeholder={"Chat ID не загружен из backend"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2 font-mono text-white"} />
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <button data-action-click={"findTelegramChatId"} className={"py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-semibold transition-all"}>
-                    {"\n                  Найти Chat ID\n                "}
-                  </button>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div>
-                  {"\n                "}
-                  <label className={"block text-slate-400 font-mono mb-1"}>
-                    {"Маршрут до api.telegram.org (Прокси / Туннель)"}
-                  </label>
-                  {"\n                "}
-                  <select defaultValue={""} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3 py-2 font-mono text-white"}>
-                    <option value={""} disabled>Маршрут не загружен из backend</option>
-                    {"\n                  "}
-                    <option value={"direct"}>
-                      {"Напрямую (через обход nfqws2)"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"nwg0"}>
-                      {"Через интерфейс WireGuard / AWG (nwg0)"}
-                    </option>
-                    {"\n                  "}
-                    <option value={"socks5"}>
-                      {"Через локальный SOCKS5 (127.0.0.1:1080)"}
-                    </option>
-                    {"\n                "}
-                  </select>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div className={"pt-2 flex items-center gap-2.5"}>
-                  {"\n                "}
-                  <button data-action-click={"sendTestTelegram"} className={"flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold transition-all"}>
-                    {"\n                  Отправить тестовое сообщение\n                "}
-                  </button>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n          "}
+            <div className={"flex flex-col gap-2 sm:flex-row"}>
+              <input id={"monitorHostInput"} type={"text"} placeholder={"example.com"} aria-label={"Домен для мониторинга"} className={"min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#060a12] px-3.5 py-2.5 font-mono text-sm text-white placeholder:text-slate-500"} />
+              <button data-action-click={"addMonitoringSite"} title={"Добавить домен в список мониторинга"} className={"rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700"}>Добавить сайт</button>
+              <button data-action-click={"runMonitoring"} title={"Последовательно проверить все добавленные сайты"} className={"rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500 disabled:opacity-50"}>Проверить сайты</button>
             </div>
-            {"\n\n        "}
+            <p id={"monitoringStatus"} className={"text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Проверки запускаются только вручную.</p>
+            <div id={"monitorSites"} className={"space-y-2.5"}></div>
           </div>
-          {"\n      "}
         </section>
         {"\n\n      "}
         {"\n      "}

@@ -1,10 +1,29 @@
 import type { NfqwsListId } from './api';
 
-const LIST_IDS: readonly NfqwsListId[] = ['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list'];
+const STANDARD_LIST_IDS: readonly NfqwsListId[] = ['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list'];
+
+export function isSafeNfqwsListId(id: string): id is NfqwsListId {
+  return id.length <= 128
+    && /^[A-Za-z0-9._-]+\.list$/.test(id)
+    && !id.startsWith('.')
+    && !id.includes('..')
+    && !STANDARD_LIST_IDS.some((standard) => standard.toLocaleLowerCase('en-US') === id.toLocaleLowerCase('en-US') && standard !== id);
+}
+
+export function listTabIdsFromInventory(files: readonly { id: string }[]): NfqwsListId[] {
+  const seen = new Set<string>();
+  return files.flatMap(({ id }) => {
+    if (!isSafeNfqwsListId(id)) return [];
+    const normalized = id.toLocaleLowerCase('en-US');
+    if (seen.has(normalized)) return [];
+    seen.add(normalized);
+    return [id];
+  });
+}
 
 export function listIdFromTabElementId(tabId: string): NfqwsListId | null {
   const id = tabId.startsWith('listTab-') ? tabId.slice('listTab-'.length) : '';
-  return LIST_IDS.find((candidate) => candidate === id) ?? null;
+  return isSafeNfqwsListId(id) ? id : null;
 }
 
 export function isListTabSelected(tabElementId: string, activeId: NfqwsListId): boolean {

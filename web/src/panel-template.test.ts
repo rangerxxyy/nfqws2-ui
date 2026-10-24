@@ -7,6 +7,8 @@ import App from './App';
 const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
 const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8');
+const styledSelectSource = readFileSync(new URL('./styled-select.ts', import.meta.url), 'utf8');
+const monitoringSource = readFileSync(new URL('./monitoring.ts', import.meta.url), 'utf8');
 const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8');
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
@@ -50,7 +52,24 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('configEditorLayout(field.value, minimumRows)');
     expect(panelSource).toContain('gutter.textContent = layout.lineNumbers');
     expect(panelSource).toContain('field.rows = layout.visibleRows');
+    expect(panelSource).toContain('gutter.style.maxHeight = viewportHeight');
+    expect(panelSource).toContain('field.style.maxHeight = viewportHeight');
     expect(panelStyles).toContain('.config-argument-line-numbers');
+  });
+
+  it('uses normal case for left navigation group headings', () => {
+    const headings = [...template.matchAll(/<div class="px-3 mb-2 text-\[11px\] font-mono font-bold ([^"]+)">/g)];
+    expect(headings).toHaveLength(2);
+    expect(headings.every((heading) => !heading[1]?.includes('uppercase'))).toBe(true);
+  });
+
+  it('installs a shared styled menu for all native selects and preserves change behavior', () => {
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(11);
+    expect(panelSource).toContain('installStyledSelects(document)');
+    expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
+    expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
+    expect(styledSelectSource).toContain("new Event('change', { bubbles: true })");
+    expect(styledSelectSource).toContain('MutationObserver');
   });
 
   it('exposes the full blockcheck2 catalog mode and submits it to the Rust API', () => {
@@ -278,8 +297,14 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('showDiagnosisProgress');
   });
 
-  it('exposes only backend-connected new diagnostics and keeps unfinished sections unavailable', () => {
-    for (const route of ['monitor', 'community']) {
+  it('exposes the manually connected monitoring page and keeps only unfinished sections unavailable', () => {
+    expect(template).toMatch(/id="navBtn-monitor" class="(?![^\"]*hidden)[^\"]*side-nav-btn/);
+    expect(template).toContain('id="monitorHostInput"');
+    expect(template).toContain('id="monitorSites"');
+    expect(panelSource).toContain('nfqwsDiagnostics.site(current)');
+    expect(monitoringSource).toContain('MAX_MONITORING_SITES = 20');
+    expect(panelSource).toContain('Проверка ${completed + 1} из ${hosts.length}');
+    for (const route of ['community']) {
       expect(template).toMatch(new RegExp(`id="navBtn-${route}" class="[^"]*hidden`));
       expect(template).toMatch(new RegExp(`id="tabContent-${route}" class="hidden`));
     }
@@ -288,6 +313,16 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('id="tabContent-diagnostic16k"');
     expect(template).toContain('data-action-click="runFreezeScan"');
     expect(panelSource).toContain('UNAVAILABLE_PANEL_ROUTES');
+  });
+
+  it('installs delayed styled tooltips for action buttons', () => {
+    const tooltipSource = readFileSync(new URL('./action-tooltips.ts', import.meta.url), 'utf8');
+    expect(panelSource).toContain('installActionTooltips(document)');
+    expect(tooltipSource).toContain('scheduleDelayedTooltip');
+    expect(tooltipSource).toContain('element.removeAttribute(\'title\')');
+    expect(tooltipSource).toContain("setAttribute('role', 'tooltip')");
+    expect(tooltipSource).toContain('DEFAULT_ACTION_TOOLTIP_DELAY_MS = 3000');
+    expect(panelStyles).toContain('.action-tooltip');
   });
 
   it('removes the logs and backup sections from navigation and panel actions', () => {
@@ -353,6 +388,8 @@ describe('TSX panel without authentication', () => {
   it('matches each list tab by its real element id when enabling files from the API index', () => {
     expect(panelSource).toContain('listIdFromTabElementId(candidate.id)');
     expect(panelSource).toContain('availableListIds.has(tabId)');
+    expect(panelSource).toContain('renderCustomListTabs(index.files)');
+    expect(template).toContain('id="listFileTabs"');
     expect(panelSource).not.toContain('index.files.some((file) => file.id === candidate.dataset.arg)');
   });
 
@@ -465,10 +502,9 @@ describe('TSX panel without authentication', () => {
   it('does not show invented router metrics, monitoring, provider, or update progress', () => {
     expect(template).toMatch(/id="ramProgressBar"[^>]*style="width:0%"/);
     expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);
-    expect(template).toContain('Данные мониторинга не подключены');
+    expect(template).toContain('До 20 сайтов · вручную');
     expect(template).toContain('Провайдер не определён');
     expect(template).toContain('Нет данных сообщества из backend.');
-    expect(template).toContain('Нет контрольных сайтов из backend.');
     expect(template).toContain('0%');
     expect(template).not.toContain('Ростелеком (AS12389)');
     expect(template).not.toContain('Рейтинг успешности: 96%');
