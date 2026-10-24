@@ -647,6 +647,28 @@ textarea { line-height: 1.7; tab-size: 4; }
 }
 .strategy-mode-help.mode-help-enter { animation: mode-help-enter 190ms var(--ease-out) both; }
 .strategy-result-enter { animation: freeze-row-enter 220ms var(--ease-out) both; }
+.strategy-pick-summary { border: 1px solid #31415b; border-radius: .85rem; padding: .9rem 1rem; background: linear-gradient(120deg, rgb(30 58 138 / 22%), rgb(15 23 42 / 72%)); }
+.strategy-pick-summary.has-confirmed { border-color: rgb(16 185 129 / 38%); background: linear-gradient(120deg, rgb(6 78 59 / 42%), rgb(15 23 42 / 76%)); }
+.strategy-pick-summary.has-no-confirmed { border-color: rgb(245 158 11 / 32%); background: linear-gradient(120deg, rgb(120 53 15 / 26%), rgb(15 23 42 / 76%)); }
+.strategy-pick-summary-title { color: #e7eefb; font-weight: 750; }
+.strategy-pick-summary-meta { margin-top: .3rem; color: #c0cde1; font-size: .82rem; font-variant-numeric: tabular-nums; }
+.strategy-pick-summary-message { margin-top: .3rem; color: #93a4bd; font-size: .75rem; line-height: 1.5; }
+.strategy-pick-winner { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .25rem .75rem; border: 1px solid rgb(16 185 129 / 35%); border-radius: .85rem; padding: .9rem 1rem; background: rgb(6 78 59 / 24%); color: #d1fae5; }
+.strategy-pick-winner-time { grid-column: 2; grid-row: 1 / span 2; color: #6ee7b7; font-size: 1.15rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.strategy-pick-winner-source { color: #a7f3d0; font-size: .78rem; }
+.strategy-pick-winner-steps { grid-column: 1 / -1; overflow-wrap: anywhere; white-space: pre-wrap; border-radius: .55rem; background: rgb(2 6 23 / 62%); padding: .6rem .7rem; color: #86efac; font: .74rem/1.5 ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace; }
+.strategy-pick-result-row { display: grid; grid-template-columns: 1.65rem minmax(0, 1fr) auto; align-items: start; gap: .75rem; border: 1px solid #263449; border-radius: .8rem; padding: .8rem .9rem; background: linear-gradient(145deg, #111a28, #0b111c); }
+.strategy-pick-result-row.is-confirmed { border-left: 3px solid #34d399; }
+.strategy-pick-result-row.is-unconfirmed { border-left: 3px solid #64748b; }
+.strategy-pick-result-status { display: grid; width: 1.45rem; height: 1.45rem; place-items: center; border: 1px solid currentColor; border-radius: 50%; color: #fb7185; font-weight: 800; }
+.strategy-pick-result-row.is-confirmed .strategy-pick-result-status { color: #34d399; }
+.strategy-pick-result-main { min-width: 0; }
+.strategy-pick-result-title { color: #eef4ff; font-weight: 700; }
+.strategy-pick-result-meta { margin-top: .18rem; color: #a9bad2; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.strategy-pick-result-detail { margin-top: .3rem; overflow-wrap: anywhere; color: #8f9eb4; font-size: .75rem; line-height: 1.45; }
+.strategy-pick-steps { margin-top: .45rem; color: #a8c8ff; font-size: .75rem; }
+.strategy-pick-steps summary { cursor: pointer; font-weight: 650; }
+.strategy-pick-steps code { display: block; margin-top: .45rem; overflow-wrap: anywhere; white-space: pre-wrap; border-radius: .55rem; background: #060a12; padding: .55rem .65rem; color: #a5f3fc; font: .72rem/1.5 ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace; }
 @keyframes mode-help-enter {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: translateY(0); }
@@ -662,6 +684,11 @@ textarea { line-height: 1.7; tab-size: 4; }
 }
 
 @media (max-width: 700px) {
+  .strategy-pick-result-row { grid-template-columns: 1.5rem minmax(0, 1fr); }
+  .strategy-pick-result-row > button { grid-column: 2; justify-self: start; }
+  .strategy-pick-winner { grid-template-columns: minmax(0, 1fr); }
+  .strategy-pick-winner-time { grid-column: 1; grid-row: auto; }
+  .strategy-pick-winner-steps { grid-column: 1; }
   #freezeScanResults { overflow: visible; border: 0; }
   .freeze-scan-table { min-width: 0; display: block; }
   .freeze-scan-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }

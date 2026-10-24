@@ -81,7 +81,8 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain("['extended', 'full', 'custom']");
     expect(panelSource).toContain('Проверка идёт по одному, занимает дольше');
     expect(panelStyles).toContain('.strategy-mode-help.mode-help-enter');
-    expect(panelSource).toContain('Полный перебор завершён: подтверждённых стратегий нет.');
+    expect(panelSource).toContain('Проверено ${operation.done} из ${operation.total} стратегий');
+    expect(panelSource).toContain("'Рабочая стратегия не подтверждена'");
     expect(backendSource).toContain('"full" => Some(StrategyMode::Full)');
   });
 
@@ -260,6 +261,14 @@ describe('TSX panel without authentication', () => {
     expect(renderer).not.toContain('if (!container || !operation.results.length) return');
   });
 
+  it('reports attempted candidates separately from result rows and keeps strategy details compact', () => {
+    const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('function renderStrategyPickPreview'));
+    expect(renderer).toContain('operation.done} из ${operation.total}');
+    expect(renderer).toContain("details.className = 'strategy-pick-steps'");
+    expect(panelStyles).toContain('.strategy-pick-result-row');
+    expect(renderer).not.toContain('подтверждено ${confirmed.length} из ${operation.results.length} стратегий');
+  });
+
   it('exposes a confirmed strategy preview followed by explicit guarded apply', () => {
     const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('async function loadStrategyPickHistory'));
     expect(renderer).toContain("operation.state === 'complete' && result.confirmed");
@@ -317,13 +326,22 @@ describe('TSX panel without authentication', () => {
     expect(actionTooltipSource).toContain('fallbackTooltipText');
   });
 
-  it('uses fast batch reachability checks for monitoring instead of full site diagnostics', () => {
-    expect(panelSource).toContain('nfqwsDiagnostics.monitor(hosts)');
+  it('persists manual monitoring checks and keeps diagnostic stages separate from history cycles', () => {
+    expect(panelSource).toContain('nfqwsMonitoring.run(hosts)');
     expect(backendSource).toContain('/api/nfqws2/diagnostics/monitor');
     expect(panelSource).toContain("const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: 'Передача' }");
     expect(panelStyles).toContain('.monitor-stage-list');
     expect(template).toContain('История последних 96 проверок хранится на роутере');
-    expect(panelSource).toContain('nfqwsMonitoring.run()');
+    expect(panelSource).toContain('nfqwsMonitoring.run(hosts)');
+    expect(panelSource).toContain('slice(0, 48).reverse()');
+    expect(panelSource).toContain('Проверок в истории: ${site.results.length}');
+    expect(panelSource).toContain('Этапы последнего цикла');
+    expect(backendSource).toContain('telegram_notifications');
+    expect(backendSource).toContain('TELEGRAM_NOTIFICATION_TTL_SECS: u64 = 24 * 60 * 60');
+    expect(backendSource).toContain('check_saved_sites(&state, true, hosts)');
+    expect(backendSource).toContain('monitoring_lock.lock().await');
+    expect(backendSource).toContain('if only_hosts.is_none()');
+    expect(backendSource).toContain('/api/nfqws2/telegram/notifications');
   });
 
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
@@ -337,7 +355,8 @@ describe('TSX panel without authentication', () => {
     expect(template).toMatch(/id="navBtn-monitor" class="(?![^\"]*hidden)[^\"]*side-nav-btn/);
     expect(template).toContain('id="monitorHostInput"');
     expect(template).toContain('id="monitorSites"');
-    expect(panelSource).toContain('nfqwsDiagnostics.monitor(hosts)');
+    expect(panelSource).toContain('nfqwsMonitoring.run(hosts)');
+    expect(panelSource).toContain('renderTelegramNotifications(cfg.notifications)');
     expect(monitoringSource).toContain('MAX_MONITORING_SITES = 20');
     expect(panelSource).toContain('Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ');
     for (const route of ['community']) {

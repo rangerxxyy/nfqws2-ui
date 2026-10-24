@@ -1458,6 +1458,62 @@ mod repeat_tests {
     }
 
     #[tokio::test]
+    async fn continues_testing_remaining_candidates_after_a_probe_timeout() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let runner_calls = calls.clone();
+        let candidates = (0..4)
+            .map(|index| StrategyCandidate {
+                name: format!("candidate {index}"),
+                source: "custom".into(),
+                steps: vec![format!("--lua-desync=multisplit:pos={index}")],
+            })
+            .collect();
+        let result = run_candidates(
+            StrategyPlan {
+                protocol: StrategyProtocol::Https,
+                candidates,
+            },
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            3,
+            false,
+            move |candidate, requested_repeats| {
+                let name = candidate.name.clone();
+                runner_calls.lock().unwrap().push(name.clone());
+                async move {
+                    if name == "candidate 1" {
+                        vec![StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: None,
+                            detail: "TCP connection timed out".into(),
+                        }]
+                    } else {
+                        (0..requested_repeats)
+                            .map(|_| StrategyProbeResult {
+                                baseline_ok: Some(false),
+                                candidate_ok: Some(true),
+                                detail: "HTTP response received".into(),
+                            })
+                            .collect()
+                    }
+                }
+            },
+            |_, _, _| {},
+        )
+        .await;
+
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec!["candidate 0", "candidate 1", "candidate 2", "candidate 3"]
+        );
+        assert_eq!(result.checked, 4);
+        assert_eq!(result.total, 4);
+        assert_eq!(result.results.len(), 4);
+        assert_eq!(result.results[1].attempts, 1);
+        assert!(result.results[1].detail.contains("timed out"));
+        assert_eq!(result.state, "complete");
+    }
+
+    #[tokio::test]
     async fn cancellation_during_a_candidate_batch_preserves_completed_repeats_without_confirming()
     {
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2302,20 +2358,9 @@ where
                     return result;
                 }
                 _ => {
-                    result.state = "failed".into();
-                    result.message = "Сетевая проверка не дала достаточного результата".into();
-                    result.results.push(StrategyCandidateResult {
-                        candidate,
-                        attempts,
-                        successes,
-                        confirmed: false,
-                        elapsed_ms: candidate_started
-                            .elapsed()
-                            .as_millis()
-                            .min(u64::MAX as u128) as u64,
-                        detail,
-                    });
-                    return result;
+                    // This candidate produced no usable HTTP result. Match the upstream
+                    // picker: stop retries for this candidate, record it, then try the next.
+                    break;
                 }
             }
             if cancel.load(std::sync::atomic::Ordering::Acquire) {
@@ -2566,10 +2611,10 @@ where
                     return result;
                 }
                 _ => {
-                    result.state = "failed".into();
-                    result.message =
-                        "Пакетная сетевая проверка не дала достаточного результата".into();
-                    return result;
+                    // A missing HTTP result rules out only this candidate. Keep
+                    // the rest of the batch and let serial confirmation continue.
+                    result.failures += 1;
+                    result.checked += 1;
                 }
             }
         }

@@ -81,6 +81,7 @@ struct AppState {
     update_lock: Mutex<()>,
     ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
+    monitoring_lock: Arc<Mutex<()>>,
     site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     site_trace_runner: Arc<SiteTraceRunner>,
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -96,6 +97,39 @@ struct MonitoringStore {
     last_auto_check: Option<u64>,
     sites: Vec<MonitoredSite>,
     telegram: TelegramSettings,
+    #[serde(default)]
+    telegram_notifications: TelegramNotificationStore,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramNotificationStore {
+    #[serde(default)]
+    queue: Vec<TelegramQueuedMessage>,
+    #[serde(default)]
+    log: Vec<TelegramDeliveryLog>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramQueuedMessage {
+    timestamp: u64,
+    text: String,
+    #[serde(default)]
+    tries: u32,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramDeliveryLog {
+    timestamp: u64,
+    event_timestamp: u64,
+    text: String,
+    ok: bool,
+    #[serde(default)]
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +195,7 @@ impl Default for MonitoringStore {
             last_auto_check: None,
             sites: Vec::new(),
             telegram: TelegramSettings::default(),
+            telegram_notifications: TelegramNotificationStore::default(),
         }
     }
 }
@@ -171,6 +206,12 @@ struct MonitoringStoreUpdate {
     enabled: bool,
     interval_minutes: u64,
     sites: Vec<MonitoredSite>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct MonitoringRunRequest {
+    hosts: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3557,7 +3598,7 @@ async fn check_monitoring_host(host: String) -> MonitoringHostResult {
         Ok(Ok(addresses)) => addresses
             .map(|address| address.ip())
             .filter_map(|ip| match ip {
-                IpAddr::V4(ip) if site_diagnostics::public_ip(IpAddr::V4(ip)) => Some(ip),
+                IpAddr::V4(ip) if monitor_probe_ipv4(ip) => Some(ip),
                 _ => None,
             })
             .collect::<Vec<_>>(),
@@ -3628,6 +3669,11 @@ async fn check_monitoring_host(host: String) -> MonitoringHostResult {
             }))
             .collect(),
     }
+}
+
+fn monitor_probe_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    let value = u32::from(ip);
+    site_diagnostics::public_ip(IpAddr::V4(ip)) || (0xc612_0000..=0xc613_ffff).contains(&value)
 }
 
 async fn monitor_sites(Json(request): Json<MonitoringRequest>) -> Response {
@@ -3703,6 +3749,7 @@ async fn put_monitoring_store(
     State(state): State<Arc<AppState>>,
     Json(update): Json<MonitoringStoreUpdate>,
 ) -> Response {
+    let _monitoring_guard = state.monitoring_lock.lock().await;
     if ![30, 60, 120].contains(&update.interval_minutes)
         && !(1..=1440).contains(&update.interval_minutes)
     {
@@ -3743,7 +3790,14 @@ async fn put_monitoring_store(
 
 async fn get_telegram_settings(State(state): State<Arc<AppState>>) -> Response {
     match load_monitoring_store(&state.data_dir).await {
-        Ok(store) => Json(serde_json::json!({"tokenSet":!store.telegram.token.is_empty(),"chatId":store.telegram.chat_id,"sendVia":store.telegram.send_via,"interface":store.telegram.interface,"proxy":store.telegram.proxy})).into_response(),
+        Ok(store) => Json(serde_json::json!({"tokenSet":!store.telegram.token.is_empty(),"chatId":store.telegram.chat_id,"sendVia":store.telegram.send_via,"interface":store.telegram.interface,"proxy":store.telegram.proxy,"notifications":store.telegram_notifications})).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn get_telegram_notifications(State(state): State<Arc<AppState>>) -> Response {
+    match load_monitoring_store(&state.data_dir).await {
+        Ok(store) => Json(store.telegram_notifications).into_response(),
         Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
     }
 }
@@ -3752,6 +3806,7 @@ async fn put_telegram_settings(
     State(state): State<Arc<AppState>>,
     Json(update): Json<TelegramSettingsUpdate>,
 ) -> Response {
+    let _monitoring_guard = state.monitoring_lock.lock().await;
     if !["direct", "interface", "proxy"].contains(&update.send_via.as_str()) {
         return error(
             StatusCode::BAD_REQUEST,
@@ -3789,13 +3844,47 @@ async fn put_telegram_settings(
     }
 }
 
+#[derive(Debug)]
+struct TelegramApiError {
+    message: String,
+    retryable: bool,
+    error_code: Option<u64>,
+}
+
+async fn telegram_interface_resolve() -> Option<std::net::Ipv4Addr> {
+    let system_has_public_address = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::net::lookup_host("api.telegram.org:443"),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .is_some_and(|addresses| {
+        addresses
+            .map(|address| address.ip())
+            .any(|ip| matches!(ip, IpAddr::V4(ip) if site_diagnostics::public_ip(IpAddr::V4(ip))))
+    });
+    if system_has_public_address {
+        return None;
+    }
+    let addresses = site_diagnostics::public_ipv4_references("api.telegram.org").await;
+    addresses.into_iter().find_map(|ip| match ip {
+        IpAddr::V4(ip) => Some(ip),
+        IpAddr::V6(_) => None,
+    })
+}
+
 async fn telegram_api(
     settings: &TelegramSettings,
     method: &str,
     form: &[(&str, &str)],
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, TelegramApiError> {
     if settings.token.trim().is_empty() {
-        return Err("Сначала укажите токен бота".into());
+        return Err(TelegramApiError {
+            message: "Сначала укажите токен бота".into(),
+            retryable: false,
+            error_code: None,
+        });
     }
     let url = format!(
         "https://api.telegram.org/bot{}/{method}",
@@ -3810,19 +3899,31 @@ async fn telegram_api(
         "--disable",
         "--silent",
         "--show-error",
+        "--connect-timeout",
+        "6",
         "--max-time",
-        "12",
+        "10",
         "--request",
         "POST",
     ]);
     match settings.send_via.as_str() {
         "interface" if !settings.interface.is_empty() => {
             cmd.arg("--interface").arg(&settings.interface);
+            if let Some(ip) = telegram_interface_resolve().await {
+                cmd.arg("--resolve")
+                    .arg(format!("api.telegram.org:443:{ip}"));
+            }
         }
         "proxy" if !settings.proxy.is_empty() => {
             cmd.arg("--proxy").arg(&settings.proxy);
         }
-        "proxy" => return Err("Укажите адрес прокси".into()),
+        "proxy" => {
+            return Err(TelegramApiError {
+                message: "Укажите адрес прокси".into(),
+                retryable: false,
+                error_code: None,
+            });
+        }
         _ => {}
     }
     for (key, value) in form {
@@ -3833,10 +3934,11 @@ async fn telegram_api(
         .arg(url)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let output = cmd
-        .output()
-        .await
-        .map_err(|_| "Не удалось запустить curl для Telegram".to_string())?;
+    let output = cmd.output().await.map_err(|_| TelegramApiError {
+        message: "Не удалось запустить curl для Telegram".into(),
+        retryable: true,
+        error_code: None,
+    })?;
     let redact = |value: &str| {
         let value = value.replace(settings.token.trim(), "[токен скрыт]");
         if settings.proxy.is_empty() {
@@ -3853,10 +3955,14 @@ async fn telegram_api(
         let detail = String::from_utf8_lossy(&output.stderr);
         let detail = redact(detail.trim());
         let detail = detail.chars().take(180).collect::<String>();
-        return Err(if detail.is_empty() {
-            format!("Не удалось связаться с Telegram (curl, код {code})")
-        } else {
-            format!("Не удалось связаться с Telegram (curl, код {code}): {detail}")
+        return Err(TelegramApiError {
+            message: if detail.is_empty() {
+                format!("Не удалось связаться с Telegram (curl, код {code})")
+            } else {
+                format!("Не удалось связаться с Telegram (curl, код {code}): {detail}")
+            },
+            retryable: true,
+            error_code: None,
         });
     }
     let response = String::from_utf8_lossy(&output.stdout);
@@ -3866,20 +3972,151 @@ async fn telegram_api(
     );
     let value: serde_json::Value = serde_json::from_str(body.trim()).map_err(|_| {
         let preview = redact(body.trim()).chars().take(180).collect::<String>();
-        if preview.is_empty() {
+        let message = if preview.is_empty() {
             format!("Telegram API не вернул JSON (HTTP {http_code}); проверьте маршрут соединения")
         } else {
             format!("Telegram API не вернул JSON (HTTP {http_code}); ответ: {preview}")
+        };
+        TelegramApiError {
+            message,
+            retryable: true,
+            error_code: None,
         }
     })?;
     if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
-        return Err(value
-            .get("description")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Telegram отклонил запрос")
-            .to_owned());
+        let code = value.get("error_code").and_then(|v| v.as_u64());
+        return Err(TelegramApiError {
+            message: value
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Telegram отклонил запрос")
+                .to_owned(),
+            retryable: code == Some(429),
+            error_code: code,
+        });
     }
     Ok(value)
+}
+
+const TELEGRAM_NOTIFICATION_TTL_SECS: u64 = 24 * 60 * 60;
+const TELEGRAM_NOTIFICATION_LOG_LIMIT: usize = 30;
+
+fn queue_telegram_notification(store: &mut MonitoringStore, text: String, timestamp: u64) {
+    store
+        .telegram_notifications
+        .queue
+        .push(TelegramQueuedMessage {
+            timestamp,
+            text,
+            tries: 0,
+            error: None,
+        });
+}
+
+fn format_telegram_event_time(timestamp: u64) -> String {
+    let seconds = i64::try_from(timestamp).unwrap_or(i64::MAX);
+    let days = seconds.div_euclid(86_400);
+    let day_seconds = seconds.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 }.div_euclid(146_097);
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    let hour = day_seconds / 3_600;
+    let minute = day_seconds % 3_600 / 60;
+    format!("{day:02}.{month:02}.{year:04} {hour:02}:{minute:02} UTC")
+}
+
+async fn flush_telegram_notifications_unlocked(data_dir: &Path) -> Result<(), String> {
+    let mut store = load_monitoring_store(data_dir).await?;
+    if store.telegram_notifications.queue.is_empty() {
+        return Ok(());
+    }
+    let now = now_unix_seconds();
+    while let Some(message) = store.telegram_notifications.queue.first().cloned() {
+        if now.saturating_sub(message.timestamp) > TELEGRAM_NOTIFICATION_TTL_SECS {
+            store.telegram_notifications.queue.remove(0);
+            store.telegram_notifications.log.insert(
+                0,
+                TelegramDeliveryLog {
+                    timestamp: now,
+                    event_timestamp: message.timestamp,
+                    text: message.text,
+                    ok: false,
+                    error: Some(format!(
+                        "Не доставлено за сутки: {}",
+                        message.error.unwrap_or_else(|| "нет связи".into())
+                    )),
+                },
+            );
+            continue;
+        }
+        if store.telegram.chat_id.trim().is_empty() || store.telegram.token.trim().is_empty() {
+            break;
+        }
+        let late = now.saturating_sub(message.timestamp) > 120;
+        let text = if late {
+            format!(
+                "{}\n(событие в {}, сообщение задержалось: Telegram был недоступен)",
+                message.text,
+                format_telegram_event_time(message.timestamp)
+            )
+        } else {
+            message.text.clone()
+        };
+        match telegram_api(
+            &store.telegram,
+            "sendMessage",
+            &[("chat_id", &store.telegram.chat_id), ("text", &text)],
+        )
+        .await
+        {
+            Ok(_) => {
+                store.telegram_notifications.queue.remove(0);
+                store.telegram_notifications.log.insert(
+                    0,
+                    TelegramDeliveryLog {
+                        timestamp: now,
+                        event_timestamp: message.timestamp,
+                        text: message.text,
+                        ok: true,
+                        error: None,
+                    },
+                );
+            }
+            Err(failure) if failure.retryable => {
+                if let Some(queued) = store.telegram_notifications.queue.first_mut() {
+                    queued.tries = queued.tries.saturating_add(1);
+                    queued.error = Some(failure.message);
+                }
+                break;
+            }
+            Err(failure) => {
+                store.telegram_notifications.queue.remove(0);
+                store.telegram_notifications.log.insert(
+                    0,
+                    TelegramDeliveryLog {
+                        timestamp: now,
+                        event_timestamp: message.timestamp,
+                        text: message.text,
+                        ok: false,
+                        error: Some(failure.message),
+                    },
+                );
+            }
+        }
+    }
+    store
+        .telegram_notifications
+        .log
+        .truncate(TELEGRAM_NOTIFICATION_LOG_LIMIT);
+    save_monitoring_store(data_dir, &store).await
 }
 
 async fn telegram_test(State(state): State<Arc<AppState>>) -> Response {
@@ -3904,7 +4141,7 @@ async fn telegram_test(State(state): State<Arc<AppState>>) -> Response {
     .await
     {
         Ok(_) => Json(serde_json::json!({"sent":true})).into_response(),
-        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+        Err(failure) => error(StatusCode::BAD_GATEWAY, failure.message),
     }
 }
 
@@ -3923,11 +4160,19 @@ async fn telegram_find_chats(State(state): State<Arc<AppState>>) -> Response {
                         "edited_message",
                         "channel_post",
                         "edited_channel_post",
+                        "my_chat_member",
+                        "chat_member",
+                        "chat_join_request",
                     ] {
                         if let Some(chat) = update.get(key).and_then(|v| v.get("chat"))
                             && let Some(id) = chat.get("id")
                         {
-                            let item = serde_json::json!({"id":id.to_string().trim_matches('"'),"title":chat.get("title").or_else(||chat.get("username")).or_else(||chat.get("first_name")).cloned().unwrap_or_default()});
+                            let name = chat
+                                .get("title")
+                                .or_else(|| chat.get("first_name"))
+                                .and_then(|value| value.as_str())
+                                .unwrap_or_default();
+                            let item = serde_json::json!({"id":id.to_string().trim_matches('"'),"title":name,"type":chat.get("type").cloned().unwrap_or_default(),"username":chat.get("username").cloned().unwrap_or_default()});
                             if !chats.contains(&item) {
                                 chats.push(item);
                             }
@@ -3937,14 +4182,25 @@ async fn telegram_find_chats(State(state): State<Arc<AppState>>) -> Response {
             }
             Json(serde_json::json!({"chats":chats})).into_response()
         }
-        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+        Err(failure) => {
+            let message = match failure.error_code {
+                Some(401 | 404) => "Telegram не принял токен — проверьте, что он скопирован у @BotFather целиком.".to_owned(),
+                Some(409) if failure.message.to_ascii_lowercase().contains("webhook") => "У этого бота включён webhook, поэтому Telegram не отдаёт сообщения через getUpdates. Создайте отдельного бота для уведомлений или укажите ID чата вручную.".to_owned(),
+                Some(409) => "Этого бота сейчас опрашивает другая программа. Создайте отдельного бота для уведомлений или укажите ID чата вручную.".to_owned(),
+                _ => format!("Telegram: {}", failure.message),
+            };
+            error(StatusCode::BAD_GATEWAY, message)
+        }
     }
 }
 
 async fn check_saved_sites(
-    data_dir: &Path,
+    state: &AppState,
     force: bool,
+    only_hosts: Option<Vec<String>>,
 ) -> Result<Vec<MonitoringHostResult>, String> {
+    let _monitoring_guard = state.monitoring_lock.lock().await;
+    let data_dir = state.data_dir.as_path();
     let mut store = load_monitoring_store(data_dir).await?;
     if !force && (!store.enabled || store.sites.is_empty()) {
         return Ok(Vec::new());
@@ -3957,16 +4213,27 @@ async fn check_saved_sites(
     {
         return Ok(Vec::new());
     }
-    let sites = store
+    let configured_hosts = store
         .sites
         .iter()
         .map(|site| site.host.clone())
         .collect::<Vec<_>>();
+    let sites = configured_hosts
+        .iter()
+        .filter(|host| {
+            only_hosts
+                .as_ref()
+                .is_none_or(|selected| selected.contains(host))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     if sites.is_empty() {
         return Ok(Vec::new());
     }
-    store.last_auto_check = Some(now);
-    save_monitoring_store(data_dir, &store).await?;
+    if only_hosts.is_none() {
+        store.last_auto_check = Some(now);
+        save_monitoring_store(data_dir, &store).await?;
+    }
     let mut tasks = tokio::task::JoinSet::new();
     for host in sites {
         tasks.spawn(check_monitoring_host(host));
@@ -3976,6 +4243,7 @@ async fn check_saved_sites(
         reports.push(result.map_err(|e| e.to_string())?);
     }
     let mut updated = load_monitoring_store(data_dir).await?;
+    let mut notification_messages = Vec::new();
     for report in &reports {
         if let Some(site) = updated
             .sites
@@ -3995,12 +4263,7 @@ async fn check_saved_sites(
                         report.host, report.summary
                     )
                 };
-                let _ = telegram_api(
-                    &updated.telegram,
-                    "sendMessage",
-                    &[("chat_id", &updated.telegram.chat_id), ("text", &text)],
-                )
-                .await;
+                notification_messages.push(text);
             }
             site.results.insert(
                 0,
@@ -4025,12 +4288,20 @@ async fn check_saved_sites(
             site.results.truncate(96);
         }
     }
+    for text in notification_messages {
+        queue_telegram_notification(&mut updated, text, now);
+    }
     save_monitoring_store(data_dir, &updated).await?;
+    flush_telegram_notifications_unlocked(data_dir).await?;
     Ok(reports)
 }
 
-async fn run_saved_monitoring(State(state): State<Arc<AppState>>) -> Response {
-    match check_saved_sites(&state.data_dir, true).await {
+async fn run_saved_monitoring(
+    State(state): State<Arc<AppState>>,
+    request: Option<Json<MonitoringRunRequest>>,
+) -> Response {
+    let hosts = request.and_then(|Json(request)| request.hosts);
+    match check_saved_sites(&state, true, hosts).await {
         Ok(results) => Json(results).into_response(),
         Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
     }
@@ -4041,7 +4312,14 @@ fn start_monitoring_scheduler(state: Arc<AppState>) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
         loop {
             interval.tick().await;
-            if let Err(message) = check_saved_sites(&state.data_dir, false).await {
+            let flush_result = {
+                let _monitoring_guard = state.monitoring_lock.lock().await;
+                flush_telegram_notifications_unlocked(&state.data_dir).await
+            };
+            if let Err(message) = flush_result {
+                tracing::warn!("telegram notification queue: {message}");
+            }
+            if let Err(message) = check_saved_sites(&state, false, None).await {
                 tracing::warn!("monitoring scheduler: {message}");
             }
         }
@@ -6458,6 +6736,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             "/api/nfqws2/telegram",
             get(get_telegram_settings).put(put_telegram_settings),
         )
+        .route(
+            "/api/nfqws2/telegram/notifications",
+            get(get_telegram_notifications),
+        )
         .route("/api/nfqws2/telegram/test", post(telegram_test))
         .route("/api/nfqws2/telegram/find-chats", post(telegram_find_chats))
         .route(
@@ -6590,6 +6872,7 @@ async fn main() {
         update_lock: Mutex::new(()),
         ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
+        monitoring_lock: Arc::new(Mutex::new(())),
         site_trace_controls: Mutex::new(HashMap::new()),
         site_trace_runner: Arc::new(router_site_trace_runner),
         strategy_pick_controls: Mutex::new(HashMap::new()),
@@ -6640,6 +6923,30 @@ mod tests {
         http::Request,
     };
     use tower::ServiceExt;
+
+    #[test]
+    fn monitoring_store_keeps_a_defaulted_telegram_delivery_queue_for_existing_installations() {
+        let old_store = serde_json::json!({
+            "enabled": true,
+            "intervalMinutes": 30,
+            "lastAutoCheck": null,
+            "sites": [],
+            "telegram": {}
+        });
+        let parsed: MonitoringStore = serde_json::from_value(old_store).unwrap();
+        let serialized = serde_json::to_value(parsed).unwrap();
+
+        assert!(serialized.get("telegramNotifications").is_some());
+        assert_eq!(format_telegram_event_time(0), "01.01.1970 00:00 UTC");
+    }
+
+    #[test]
+    fn monitoring_accepts_podkop_fake_ipv4_range_but_rejects_other_reserved_addresses() {
+        assert!(monitor_probe_ipv4("198.18.0.0".parse().unwrap()));
+        assert!(monitor_probe_ipv4("198.19.255.255".parse().unwrap()));
+        assert!(!monitor_probe_ipv4("198.51.100.1".parse().unwrap()));
+        assert!(!monitor_probe_ipv4("127.0.0.1".parse().unwrap()));
+    }
 
     #[test]
     fn ui_update_status_selects_newest_semver_and_only_announces_newer_version() {
@@ -6726,6 +7033,7 @@ mod tests {
             update_lock: Mutex::new(()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
+            monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: Arc::new(router_site_trace_runner),
             strategy_pick_controls: Mutex::new(HashMap::new()),
@@ -6869,6 +7177,7 @@ mod tests {
             update_lock: Mutex::new(()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
+            monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: runner,
             strategy_pick_controls: Mutex::new(HashMap::new()),

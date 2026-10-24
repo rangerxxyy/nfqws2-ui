@@ -16,7 +16,7 @@ import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
-import { appendMonitoringResult, loadMonitoringState, normalizeMonitoringHost, saveMonitoringState, type MonitoringState } from './monitoring';
+import { loadMonitoringState, normalizeMonitoringHost, saveMonitoringState, type MonitoringState } from './monitoring';
 import type { UiUpdateStatus } from './api';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community';
@@ -228,14 +228,14 @@ function renderMonitoringSites() {
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'monitor-remove'; remove.dataset.actionClick = 'removeMonitoringSite'; remove.dataset.args = JSON.stringify([site.host]); remove.textContent = '×'; remove.title = `Убрать ${site.host} из мониторинга`;
     heading.append(check, remove); card.append(heading);
     if (latest) {
-      const bars = document.createElement('div'); bars.className = 'monitor-history-bars'; bars.setAttribute('aria-label', `История ${site.results.length} проверок`);
-      for (const result of [...site.results].slice(0, 30).reverse()) { const bar = document.createElement('span'); bar.dataset.status = result.status; bar.title = `${new Date(result.checkedAt).toLocaleString()}: ${result.summary}`; bars.append(bar); }
+      const bars = document.createElement('div'); bars.className = 'monitor-history-bars'; bars.setAttribute('aria-label', `История: ${site.results.length} циклов проверки`);
+      for (const result of [...site.results].slice(0, 48).reverse()) { const bar = document.createElement('span'); bar.dataset.status = result.status; bar.title = `${new Date(result.checkedAt).toLocaleString()}: ${result.summary}`; bars.append(bar); }
       card.append(bars);
       const detail = document.createElement('p'); detail.className = 'mt-2 text-xs text-slate-400'; detail.textContent = `${new Date(latest.checkedAt).toLocaleString()} · ${latest.summary}`; card.append(detail);
       if (latest.steps.length) {
         const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: 'Передача' };
         const stageDetails = document.createElement('details'); stageDetails.className = 'monitor-stage-list mt-2';
-        const stageSummary = document.createElement('summary'); stageSummary.textContent = `Этапы проверки · ${latest.steps.filter((step) => step.status === 'ok').length}/${latest.steps.length} успешно`;
+        const stageSummary = document.createElement('summary'); stageSummary.textContent = `Этапы последнего цикла · ${latest.steps.filter((step) => step.status === 'ok').length}/${latest.steps.length} успешно`;
         const stageList = document.createElement('div'); stageList.className = 'mt-2 space-y-1.5';
         for (const step of latest.steps) {
           const row = document.createElement('div'); row.className = 'monitor-stage-row';
@@ -247,7 +247,7 @@ function renderMonitoringSites() {
         stageDetails.append(stageSummary, stageList); card.append(stageDetails);
       }
     }
-    if (site.results.length > 1) { const history = document.createElement('p'); history.className = 'mt-1 text-[11px] text-slate-500'; history.textContent = `Доступность: ${Math.round(site.results.filter((r) => r.status === 'ok').length * 100 / site.results.length)}% за ${site.results.length} проверок`; card.append(history); }
+    if (site.results.length) { const history = document.createElement('p'); history.className = 'mt-1 text-[11px] text-slate-500'; history.textContent = `Проверок в истории: ${site.results.length} · доступность: ${Math.round(site.results.filter((r) => r.status === 'ok').length * 100 / site.results.length)}%`; card.append(history); }
     host.append(card);
   }
 }
@@ -285,6 +285,7 @@ function showMonitorSection(section: 'sites' | 'telegram') {
   $('#monitorSection-sites')?.classList.toggle('hidden', section !== 'sites');
   $('#monitorSection-telegram')?.classList.toggle('hidden', section !== 'telegram');
   all<HTMLButtonElement>('.monitor-subtab').forEach((button) => button.classList.toggle('active', button.textContent?.includes(section === 'sites' ? 'Мониторинг' : 'Telegram') ?? false));
+  if (section === 'telegram') void loadTelegramNotifications().catch(() => {});
 }
 async function saveMonitoringSettings() {
   if (!monitoringState) return;
@@ -299,6 +300,33 @@ async function loadTelegramSettings() {
   const proxy = $('#telegramProxy') as HTMLInputElement | null; if (proxy) proxy.value = cfg.proxy;
   const chat = $('#telegramChatId') as HTMLInputElement | null; if (chat) chat.value = cfg.chatId;
   setText('#telegramStatus', cfg.tokenSet ? 'Токен бота сохранён на роутере.' : 'Токен ещё не задан.');
+  renderTelegramNotifications(cfg.notifications);
+}
+async function loadTelegramNotifications() {
+  renderTelegramNotifications(await nfqwsMonitoring.telegramNotifications());
+}
+function renderTelegramNotifications(notifications: { queue: Array<{ timestamp: number; text: string; tries: number; error?: string | null }>; log: Array<{ timestamp: number; eventTimestamp: number; text: string; ok: boolean; error?: string | null }> }) {
+  const host = $('#telegramNotifications'); if (!host) return;
+  host.replaceChildren();
+  if (!notifications.queue.length && !notifications.log.length) return;
+  const heading = document.createElement('h3'); heading.className = 'text-sm font-semibold text-white'; heading.textContent = 'Последние сообщения'; host.append(heading);
+  const date = (seconds: number) => new Date(seconds * 1000).toLocaleString();
+  for (const message of notifications.queue) {
+    const row = document.createElement('article'); row.className = 'rounded-lg border border-amber-500/30 bg-amber-500/5 p-3';
+    const status = document.createElement('strong'); status.className = 'text-sm text-amber-300'; status.textContent = `Ждёт отправки · ${date(message.timestamp)}`;
+    const body = document.createElement('p'); body.className = 'mt-1 whitespace-pre-wrap break-words text-sm text-slate-200'; body.textContent = message.text;
+    const detail = document.createElement('p'); detail.className = 'mt-1 text-xs text-slate-400'; detail.textContent = `Попыток: ${message.tries}. ${message.error || 'Повторная отправка будет выполнена автоматически, срок хранения — 24 часа.'}`;
+    row.append(status, body, detail); host.append(row);
+  }
+  for (const message of notifications.log.slice(0, 20)) {
+    const row = document.createElement('article'); row.className = `rounded-lg border p-3 ${message.ok ? 'border-emerald-500/25 bg-emerald-500/5' : 'border-rose-500/25 bg-rose-500/5'}`;
+    const status = document.createElement('strong'); status.className = `text-sm ${message.ok ? 'text-emerald-300' : 'text-rose-300'}`; status.textContent = `${message.ok ? 'Отправлено' : 'Не отправлено'} · ${date(message.eventTimestamp)}`;
+    const body = document.createElement('p'); body.className = 'mt-1 whitespace-pre-wrap break-words text-sm text-slate-200'; body.textContent = message.text;
+    row.append(status, body);
+    if (message.error) { const detail = document.createElement('p'); detail.className = 'mt-1 text-xs text-rose-300'; detail.textContent = message.error; row.append(detail); }
+    if (message.ok && message.timestamp - message.eventTimestamp > 120) { const detail = document.createElement('p'); detail.className = 'mt-1 text-xs text-slate-400'; detail.textContent = `Доставлено с задержкой · ${date(message.timestamp)}`; row.append(detail); }
+    host.append(row);
+  }
 }
 async function saveTelegramSettings() {
   const token = ($('#telegramToken') as HTMLInputElement | null)?.value ?? '';
@@ -323,13 +351,8 @@ async function runMonitoring(host?: string) {
   const statusNode = $('#monitoringStatus'); if (statusNode) { statusNode.textContent = `Проверка 0 из ${hosts.length}`; statusNode.setAttribute('aria-busy', 'true'); }
   try {
     if (statusNode) statusNode.textContent = `Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ`;
-    const reports = host ? await nfqwsDiagnostics.monitor(hosts) : await nfqwsMonitoring.run();
-    const reportByHost = new Map(reports.map((report) => [report.host, report]));
-    for (const current of hosts) {
-      const report = reportByHost.get(current);
-      if (monitoringState) monitoringState = appendMonitoringResult(monitoringState, current, report ?? null, Date.now(), 'Роутер не вернул результат');
-    }
-    persistMonitoring();
+    await nfqwsMonitoring.run(hosts);
+    await loadBackendMonitoring();
     toast(`Мониторинг завершён: ${hosts.length} сайтов проверено.`);
   } finally {
     monitoringRunning = false;
@@ -1099,41 +1122,54 @@ function renderStrategyPick(operation: StrategyPickOperation) {
   const container = $('#autotuneStrategiesList');
   if (!container) return;
   container.replaceChildren();
+  const confirmed = operation.results.filter((result) => result.confirmed);
+  const resultSummary = document.createElement('section');
+  resultSummary.className = `strategy-pick-summary ${confirmed.length ? 'has-confirmed' : operation.state === 'running' ? 'is-running' : 'has-no-confirmed'}`;
+  resultSummary.setAttribute('role', operation.state === 'running' ? 'status' : 'region');
+  const resultTitle = document.createElement('h3'); resultTitle.className = 'strategy-pick-summary-title';
+  resultTitle.textContent = operation.state === 'running'
+    ? 'Проверка стратегий выполняется'
+    : confirmed.length
+      ? `Подтверждено ${confirmed.length} из ${operation.total} стратегий`
+      : operation.state === 'cancelled'
+        ? 'Проверка остановлена'
+        : operation.state === 'failed'
+          ? 'Проверка прервана'
+          : 'Рабочая стратегия не подтверждена';
+  const resultMeta = document.createElement('p'); resultMeta.className = 'strategy-pick-summary-meta';
+  resultMeta.textContent = `Проверено ${operation.done} из ${operation.total} стратегий · результатов: ${operation.results.length}`;
+  const resultMessage = document.createElement('p'); resultMessage.className = 'strategy-pick-summary-message'; resultMessage.textContent = operation.message;
+  resultSummary.append(resultTitle, resultMeta, resultMessage);
   if (!operation.results.length) {
-    const empty = document.createElement('p'); empty.className = 'ui-card rounded-xl p-4 text-sm font-medium text-slate-300';
-    empty.textContent = operation.state === 'site_unblocked'
-      ? 'Прямое соединение отвечает; стратегии проверять не требуется.'
-      : operation.state === 'no_match' && operation.total >= 1000
-        ? `Полный перебор завершён: подтверждённых стратегий нет. ${operation.message}`
-      : 'Для этой операции результатов стратегий нет.';
-    container.append(empty);
+    if (operation.state === 'site_unblocked') resultTitle.textContent = 'Без обхода сайт уже отвечает';
+    resultMeta.textContent = operation.total ? `Проверено ${operation.done} из ${operation.total} стратегий` : 'Стратегии не запускались';
+    container.append(resultSummary);
     return;
   }
-  const confirmed = operation.results.filter((result) => result.confirmed);
-  const resultSummary = document.createElement('p');
-  resultSummary.className = 'rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-sm text-slate-200';
-  if (operation.state === 'running') {
-    resultSummary.textContent = `Проверено ${operation.results.length} из ${operation.total} стратегий · подтверждено ${confirmed.length}`;
-  } else if (confirmed.length) {
-    const fastest = [...confirmed].sort((a, b) => a.elapsedMs - b.elapsedMs)[0];
-    resultSummary.textContent = `Готово · подтверждено ${confirmed.length} из ${operation.results.length} стратегий · быстрее всего: ${fastest.candidate.name} (${fastest.elapsedMs} мс)`;
-  } else {
-    resultSummary.textContent = `Готово · подтверждённых стратегий нет · проверено ${operation.results.length}`;
-  }
-  container.append(resultSummary);
+  let fastest: StrategyPickOperation['results'][number] | undefined;
+  if (confirmed.length) {
+    fastest = [...confirmed].sort((a, b) => a.elapsedMs - b.elapsedMs)[0];
+    const winner = document.createElement('section'); winner.className = 'strategy-pick-winner';
+    const title = document.createElement('strong'); title.textContent = `Быстрее всех · ${fastest.candidate.name}`;
+    const metric = document.createElement('span'); metric.className = 'strategy-pick-winner-time'; metric.textContent = `${fastest.elapsedMs} мс`;
+    const source = document.createElement('p'); source.className = 'strategy-pick-winner-source'; source.textContent = `${fastest.successes}/${fastest.attempts} успешных проверок · ${fastest.candidate.source}`;
+    const steps = document.createElement('code'); steps.className = 'strategy-pick-winner-steps'; steps.textContent = fastest.candidate.steps.join('\n');
+    winner.append(title, metric, source, steps); container.append(resultSummary, winner);
+  } else container.append(resultSummary);
   operation.results.forEach((result, index) => {
     const refined = result.candidate.source === 'Уточнение blockcheck2';
     const card = document.createElement('article');
-    card.className = 'ui-card strategy-result-enter rounded-xl p-4 space-y-2';
-    const heading = document.createElement('h3');
-    heading.className = `font-semibold ${result.confirmed ? 'text-emerald-200' : 'text-slate-200'}`;
-    heading.textContent = `${result.confirmed ? 'Подтверждена' : 'Не подтверждена'}${refined ? ' · Уточнённый вариант' : ''} · ${result.candidate.name}`;
-    const summary = document.createElement('p');
-    summary.className = 'text-sm font-medium text-slate-300';
-    summary.textContent = `${result.successes}/${result.attempts} успешных проверок · ${result.candidate.source} · ${result.elapsedMs} мс`;
-    const detail = document.createElement('p'); detail.className = 'text-xs text-slate-400 break-words'; detail.textContent = result.detail;
-    const args = document.createElement('code'); args.className = 'block whitespace-pre-wrap break-all rounded-lg bg-[#060a12] p-2 text-xs text-cyan-200'; args.textContent = result.candidate.steps.join('\n');
-    card.append(heading, summary, detail, args);
+    card.className = `strategy-pick-result-row strategy-result-enter ${result.confirmed ? 'is-confirmed' : 'is-unconfirmed'}`;
+    const status = document.createElement('span'); status.className = 'strategy-pick-result-status'; status.setAttribute('aria-label', result.confirmed ? 'Подтверждена' : 'Не подтверждена'); status.textContent = result.confirmed ? '✓' : '×';
+    const body = document.createElement('div'); body.className = 'strategy-pick-result-main';
+    const heading = document.createElement('h4'); heading.className = 'strategy-pick-result-title';
+    heading.textContent = `${result.candidate.name}${refined ? ' · уточнённый вариант' : ''}`;
+    const meta = document.createElement('p'); meta.className = 'strategy-pick-result-meta'; meta.textContent = `${result.candidate.source} · ${result.successes}/${result.attempts} успешных · ${result.elapsedMs} мс`;
+    const detail = document.createElement('p'); detail.className = 'strategy-pick-result-detail'; detail.textContent = result.detail;
+    const details = document.createElement('details'); details.className = 'strategy-pick-steps';
+    const detailsSummary = document.createElement('summary'); detailsSummary.textContent = `Параметры стратегии · ${result.candidate.steps.length} шаг.`;
+    const args = document.createElement('code'); args.textContent = result.candidate.steps.join('\n');
+    details.append(detailsSummary, args); body.append(heading, meta, detail, details); card.append(status, body);
     if (operation.state === 'complete' && result.confirmed) {
       const preview = document.createElement('button');
       preview.type = 'button';
@@ -1849,6 +1885,11 @@ function boot() {
   renderMonitoringSites();
   void loadBackendMonitoring().catch(() => setText('#monitoringStatus', 'Не удалось загрузить настройки мониторинга с роутера.'));
   void loadTelegramSettings().catch(() => setText('#telegramStatus', 'Не удалось загрузить настройки Telegram с роутера.'));
+  window.setInterval(() => {
+    if (document.visibilityState === 'visible' && $('#tabContent-monitor:not(.hidden) #monitorSection-telegram:not(.hidden)')) {
+      void loadTelegramNotifications().catch(() => {});
+    }
+  }, 30_000);
   bindPrototypeActions();
   document.documentElement.classList.add('dark');
   const initialStrategyMode = ($('#strategyModeSelect') as HTMLSelectElement | null)?.value ?? 'quick';

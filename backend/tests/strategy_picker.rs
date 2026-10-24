@@ -1,7 +1,8 @@
 use nfqws2_ui::strategy_picker::{
-    StrategyCandidate, StrategyMode, StrategyProbeResult, StrategyProtocol, build_plan,
-    candidate_argv, configured_candidates, insert_reusable_candidates, parse_lua_functions,
-    run_candidates, run_candidates_with_compaction, validate_candidate,
+    FullBatchOptions, StrategyBatchProbeResult, StrategyCandidate, StrategyMode,
+    StrategyProbeResult, StrategyProtocol, build_plan, candidate_argv, configured_candidates,
+    insert_reusable_candidates, parse_lua_functions, run_candidates,
+    run_candidates_with_compaction, run_full_candidates_with_batches, validate_candidate,
 };
 use std::collections::HashSet;
 
@@ -599,7 +600,7 @@ async fn automatic_mode_stops_after_the_first_candidate_passes_every_repeat() {
 }
 
 #[tokio::test]
-async fn inconclusive_network_probe_ends_as_persistable_failure() {
+async fn inconclusive_network_probe_is_recorded_as_a_completed_no_match() {
     let mut plan = build_plan(
         StrategyProtocol::Https,
         StrategyMode::Quick,
@@ -623,7 +624,7 @@ async fn inconclusive_network_probe_ends_as_persistable_failure() {
         |_, _, _| {},
     )
     .await;
-    assert_eq!(result.state, "failed");
+    assert_eq!(result.state, "no_match");
     assert_eq!(result.results.len(), 1);
     assert!(!result.results[0].confirmed);
 }
@@ -698,6 +699,74 @@ async fn full_catalog_run_compacts_negative_rows_and_reports_their_count() {
     assert_eq!(result.failures, 3);
     assert!(result.results.is_empty());
     assert!(result.message.contains("без успешного ответа: 3"));
+}
+
+#[tokio::test]
+async fn full_catalog_keeps_testing_after_an_inconclusive_probe_in_a_batch() {
+    let candidates = (0..2)
+        .map(|index| StrategyCandidate {
+            name: format!("catalog candidate {index}"),
+            source: "Каталог zapret2 (расширенный)".into(),
+            steps: vec![format!("--lua-desync=multisplit:pos={index}")],
+        })
+        .collect();
+    let serial_calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen_serial = serial_calls.clone();
+    let result = run_full_candidates_with_batches(
+        nfqws2_ui::strategy_picker::StrategyPlan {
+            protocol: StrategyProtocol::Https,
+            candidates,
+        },
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        FullBatchOptions {
+            repeats: 2,
+            stop_after_first_confirmed: false,
+            max_batch_size: 2,
+        },
+        |batch| async move {
+            assert_eq!(batch.len(), 2);
+            Ok(vec![
+                StrategyBatchProbeResult {
+                    candidate_index: 0,
+                    elapsed_ms: 40,
+                    probe: StrategyProbeResult {
+                        baseline_ok: Some(false),
+                        candidate_ok: None,
+                        detail: "TCP connection timed out".into(),
+                    },
+                },
+                StrategyBatchProbeResult {
+                    candidate_index: 1,
+                    elapsed_ms: 50,
+                    probe: StrategyProbeResult {
+                        baseline_ok: Some(false),
+                        candidate_ok: Some(true),
+                        detail: "HTTP response received".into(),
+                    },
+                },
+            ])
+        },
+        move |candidate, repeats| {
+            seen_serial.lock().unwrap().push(candidate.name.clone());
+            std::future::ready(vec![
+                StrategyProbeResult {
+                    baseline_ok: Some(false),
+                    candidate_ok: Some(true),
+                    detail: "HTTP response received".into(),
+                };
+                repeats
+            ])
+        },
+        |_, _, _| {},
+    )
+    .await;
+
+    assert_eq!(result.state, "complete");
+    assert_eq!(result.checked, 2);
+    assert_eq!(result.failures, 1);
+    assert_eq!(result.results.len(), 1);
+    assert!(result.results[0].confirmed);
+    assert_eq!(*serial_calls.lock().unwrap(), vec!["catalog candidate 1"]);
 }
 
 #[test]

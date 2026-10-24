@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpStream, lookup_host},
     process::Command,
     time::timeout,
@@ -33,6 +33,7 @@ pub struct MonitorProbeResult {
     pub summary: String,
     pub current: DiagnosticStep,
     pub steps: Vec<DiagnosticStep>,
+    pub received_bytes: u64,
 }
 
 impl DiagnosticStep {
@@ -267,6 +268,10 @@ fn monitor_curl_args(host: &str, ip: std::net::Ipv4Addr) -> Vec<String> {
     args.extend([
         "--ipv4".into(),
         "--insecure".into(),
+        "--connect-timeout".into(),
+        "5".into(),
+        "--user-agent".into(),
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36".into(),
         "--resolve".into(),
         format!("{host}:443:{ip}"),
         "--range".into(),
@@ -291,6 +296,18 @@ fn monitor_ms(value: Option<&&str>) -> Option<u64> {
         .and_then(|value| value.parse::<f64>().ok())
         .filter(|value| value.is_finite() && *value >= 0.0 && *value <= 60.0)
         .map(|value| (value * 1000.0).round() as u64)
+}
+
+const MONITOR_VOLUME_SMALL_BYTES: u64 = 24_576;
+const MONITOR_VOLUME_TEST_BYTES: usize = 65_536;
+
+fn monitor_should_test_upload(received_bytes: u64, status: &str) -> bool {
+    status == "ok" && received_bytes < MONITOR_VOLUME_SMALL_BYTES
+}
+
+fn monitor_upload_stall_confirmed(exit_code: i32, appconnect_seconds: Option<f64>) -> bool {
+    exit_code == 28
+        && appconnect_seconds.is_some_and(|seconds| seconds.is_finite() && seconds > 0.0)
 }
 
 fn parse_monitor_curl(exit_code: i32, stdout: &[u8]) -> MonitorProbeResult {
@@ -461,15 +478,130 @@ fn parse_monitor_curl(exit_code: i32, stdout: &[u8]) -> MonitorProbeResult {
         summary: detail,
         current,
         steps,
+        received_bytes: received,
     }
 }
 
 pub async fn monitor_probe(host: &str, ip: std::net::Ipv4Addr) -> MonitorProbeResult {
     let args = monitor_curl_args(host, ip);
-    match capture(curl_program(), &args, 10, 4096).await {
+    let mut result = match capture(curl_program(), &args, 10, 4096).await {
         Ok((exit_code, output)) => parse_monitor_curl(exit_code, &output),
         Err(_) => parse_monitor_curl(-1, b""),
+    };
+    if monitor_should_test_upload(result.received_bytes, result.current.status) {
+        match monitor_upload_stalled(host, ip).await {
+            Some(true) => {
+                result.current.status = "warning";
+                result.current.detail = format!(
+                    "{} · тестовая отправка 64 КиБ зависла после TLS handshake",
+                    result.current.detail
+                );
+                result.summary = result.current.detail.clone();
+                if let Some(transfer) = result.steps.iter_mut().find(|step| step.id == "transfer") {
+                    transfer.status = "warning";
+                    transfer.detail = "Контрольная отправка 64 КиБ зависла после TLS handshake · возможное ограничение передачи".into();
+                }
+            }
+            Some(false) => {
+                if let Some(transfer) = result.steps.iter_mut().find(|step| step.id == "transfer") {
+                    transfer.detail = format!(
+                        "{} · короткий ответ, контрольная отправка 64 КиБ не зависла",
+                        transfer.detail
+                    );
+                }
+            }
+            None => {}
+        }
     }
+    result
+}
+
+async fn monitor_upload_stalled(host: &str, ip: std::net::Ipv4Addr) -> Option<bool> {
+    let mut payload = vec![0_u8; MONITOR_VOLUME_TEST_BYTES];
+    getrandom::fill(&mut payload).ok()?;
+    let cache_buster = hex::encode(&payload[..8]);
+    let mut args = curl_args();
+    args.extend([
+        "--ipv4".into(),
+        "--insecure".into(),
+        "--connect-timeout".into(),
+        "5".into(),
+        "--max-time".into(),
+        "8".into(),
+        "--user-agent".into(),
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36".into(),
+        "--resolve".into(),
+        format!("{host}:443:{ip}"),
+        "--header".into(),
+        "Expect:".into(),
+        "--header".into(),
+        "Content-Type: application/octet-stream".into(),
+        "--data-binary".into(),
+        "@-".into(),
+        "--output".into(),
+        if cfg!(windows) { "NUL".into() } else { "/dev/null".into() },
+        "--write-out".into(),
+        "\\nNFQWS2_MON_UPLOAD|%{time_appconnect}".into(),
+        format!("https://{host}/?t={cache_buster}"),
+    ]);
+    let (exit_code, output) = capture_with_input(curl_program(), &args, &payload, 10, 1024)
+        .await
+        .ok()?;
+    let appconnect_seconds = String::from_utf8_lossy(&output)
+        .rsplit_once("\nNFQWS2_MON_UPLOAD|")
+        .and_then(|(_, value)| value.trim().parse::<f64>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0 && *seconds <= 60.0);
+    Some(monitor_upload_stall_confirmed(
+        exit_code,
+        appconnect_seconds,
+    ))
+}
+
+async fn capture_with_input(
+    program: &str,
+    args: &[String],
+    input: &[u8],
+    seconds: u64,
+    limit: usize,
+) -> Result<(i32, Vec<u8>), String> {
+    let task = async {
+        let mut child = Command::new(program)
+            .args(args)
+            .env("no_proxy", "*")
+            .env("NO_PROXY", "*")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|_| format!("Утилита {program} недоступна"))?;
+        let mut stdin = child.stdin.take().ok_or("Нет stdin")?;
+        stdin
+            .write_all(input)
+            .await
+            .map_err(|_| "Не удалось передать данные проверочного запроса")?;
+        drop(stdin);
+        let mut bytes = Vec::new();
+        child
+            .stdout
+            .take()
+            .ok_or("Нет stdout")?
+            .take((limit + 1) as u64)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| "Не удалось прочитать результат проверки")?;
+        if bytes.len() > limit {
+            return Err("Результат проверки превышает лимит".into());
+        }
+        let status = child
+            .wait()
+            .await
+            .map_err(|_| "Проверочный процесс не завершился")?;
+        Ok((status.code().unwrap_or(-1), bytes))
+    };
+    timeout(Duration::from_secs(seconds), task)
+        .await
+        .map_err(|_| "Истекло время проверки".to_string())?
 }
 
 fn parse_curl(id: &str, exit_code: i32, stdout: &[u8]) -> DiagnosticStep {
@@ -569,7 +701,7 @@ async fn probe_scoped(
     }
 }
 
-async fn dns_reference(host: &str) -> (DiagnosticStep, Vec<IpAddr>) {
+pub async fn dns_reference(host: &str) -> (DiagnosticStep, Vec<IpAddr>) {
     let mut args = curl_args();
     args.extend([
         "--resolve".into(),
@@ -617,6 +749,52 @@ async fn dns_reference(host: &str) -> (DiagnosticStep, Vec<IpAddr>) {
         },
     );
     (step, addresses)
+}
+
+pub async fn public_ipv4_references(host: &str) -> Vec<IpAddr> {
+    for (server, ip, url) in [
+        (
+            "cloudflare-dns.com",
+            "1.1.1.1",
+            format!("https://cloudflare-dns.com/dns-query?name={host}&type=A"),
+        ),
+        (
+            "dns.google",
+            "8.8.8.8",
+            format!("https://dns.google/resolve?name={host}&type=A"),
+        ),
+    ] {
+        let mut args = curl_args();
+        args.extend([
+            "--resolve".into(),
+            format!("{server}:443:{ip}"),
+            "--header".into(),
+            "Accept: application/dns-json".into(),
+            url,
+        ]);
+        let data = match capture(curl_program(), &args, 7, 65536).await {
+            Ok((0, bytes)) => serde_json::from_slice::<serde_json::Value>(&bytes).ok(),
+            _ => None,
+        };
+        let addresses = data
+            .as_ref()
+            .and_then(|value| value.get("Answer"))
+            .and_then(|value| value.as_array())
+            .map(|answers| {
+                answers
+                    .iter()
+                    .filter(|value| value.get("type").and_then(|value| value.as_u64()) == Some(1))
+                    .filter_map(|value| value.get("data")?.as_str()?.parse::<IpAddr>().ok())
+                    .filter(|ip| public_ip(*ip))
+                    .take(8)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if !addresses.is_empty() {
+            return addresses;
+        }
+    }
+    Vec::new()
 }
 
 async fn tcp_step(addresses: &[IpAddr]) -> DiagnosticStep {
@@ -1172,6 +1350,29 @@ mod tests {
                 .any(|arg| arg == "--location" || arg == "--data-binary" || arg == "--request")
         );
         assert!(args.iter().any(|arg| arg == "https://example.com/"));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--connect-timeout", "5"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--user-agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"]));
+    }
+
+    #[test]
+    fn monitor_checks_volume_only_for_small_completed_http_responses() {
+        assert!(monitor_should_test_upload(0, "ok"));
+        assert!(monitor_should_test_upload(
+            MONITOR_VOLUME_SMALL_BYTES - 1,
+            "ok"
+        ));
+        assert!(!monitor_should_test_upload(
+            MONITOR_VOLUME_SMALL_BYTES,
+            "ok"
+        ));
+        assert!(!monitor_should_test_upload(512, "warning"));
+        assert!(monitor_upload_stall_confirmed(28, Some(0.0001)));
+        assert!(!monitor_upload_stall_confirmed(28, None));
+        assert!(!monitor_upload_stall_confirmed(28, Some(0.0)));
+        assert!(!monitor_upload_stall_confirmed(23, Some(0.08)));
     }
 
     #[test]
