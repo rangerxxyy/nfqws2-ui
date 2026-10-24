@@ -136,6 +136,8 @@ describe('TSX panel without authentication', () => {
     expect(diagnostic16k).toContain('id="freezeScanHostsInput"');
     expect(diagnostic16k).toContain('Запустить пробу');
     expect(diagnostic16k).toContain('id="freezeScanSummary"');
+    expect(diagnostic16k).toContain('id="freezeScanProgress"');
+    expect(diagnostic16k).toContain('id="freezeScanProgressSteps"');
     expect(diagnostic16k).toContain('id="freezeScanResults"');
     expect(diagnostic16k.match(/data-action-click="runFreezeScan"/g)).toHaveLength(1);
     expect(diagnostic16k.match(/data-action-click="cancelFreezeScan"/g)).toHaveLength(1);
@@ -146,6 +148,7 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('freezeRowIdentity(result)');
     expect(panelSource).toContain('freezeRowDetails(result)');
     expect(panelSource).toContain("operation.stage === 'strategy_search'");
+    expect(panelSource).toContain('freezeProgressPresentation(operation)');
     expect(panelSource).toContain("status.classList.toggle('hidden', !active)");
     expect(panelSource).toContain('Подробности проверки');
     expect(panelSource).toContain('result.address ??');
@@ -155,7 +158,8 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('freezeCanApplyToHost');
     expect(panelSource).toContain('freeze-result-badge');
     expect(panelSource).toContain('Применить к сайту');
-    expect(panelSource).toContain('Предпросмотр конфигурации откроется перед применением');
+    expect(panelSource).toContain('applyFreezeStrategyOneClick');
+    expect(panelSource).toContain('Проверенный вариант добавляется только этому домену');
     expect(panelStyles).toContain('@keyframes freeze-row-enter');
     expect(panelStyles).toContain('.freeze-result-details summary');
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');

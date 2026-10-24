@@ -135,7 +135,15 @@ pub fn verify_asn_hint(hint: Option<u32>, response: &[u8]) -> AsnVerification {
         .and_then(|value| value.get("data"))
         .and_then(|value| value.get("asns"))
         .and_then(serde_json::Value::as_array)
-        .and_then(|asns| asns.iter().find_map(serde_json::Value::as_u64))
+        // RIPEstat's network-info response encodes ASNs as JSON strings
+        // (for example ["396982"]), not JSON numbers.
+        .and_then(|asns| {
+            asns.iter().find_map(|value| {
+                value
+                    .as_u64()
+                    .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()))
+            })
+        })
         .and_then(|asn| u32::try_from(asn).ok())
         .filter(|asn| *asn > 0);
     match (hint.filter(|hint| *hint > 0), asn) {
@@ -396,6 +404,25 @@ pub fn is_freeze_classification(classification: &str) -> bool {
     )
 }
 
+/// A transfer timeout is a possible freeze signal that should receive a
+/// strategy probe, while retaining its specific timeout classification and
+/// never asserting that the timeout alone proves a 16–20 KB stall or DPI.
+pub fn is_possible_freeze_signal(classification: &str) -> bool {
+    is_freeze_classification(classification)
+        || matches!(
+            classification,
+            "TimeoutBeforeBody" | "TimeoutAfterBody" | "TimeoutBeforeResponse"
+        )
+}
+
+fn timeout_with_tcp_reachable(classification: &str, tcp_reachable: bool) -> bool {
+    tcp_reachable
+        && matches!(
+            classification,
+            "TimeoutBeforeBody" | "TimeoutBeforeResponse" | "TimeoutAfterBody"
+        )
+}
+
 pub fn instantiate_template(template: &str, name: &str) -> Result<Vec<String>, String> {
     let normalized = normalize_host(name)?;
     if normalized != name || !template.starts_with("--lua-desync=") || !template.contains("NAME") {
@@ -461,7 +488,43 @@ fn classify_current_route(
 
 #[cfg(test)]
 mod route_classification_tests {
-    use super::{FreezeTargetKind, classify_current_route};
+    use super::{
+        AsnVerification, FreezeTargetKind, classify_current_route, timeout_with_tcp_reachable,
+        verify_asn_hint,
+    };
+
+    #[test]
+    fn parses_ripe_asns_encoded_as_strings_and_detects_changed_hints() {
+        let response = br#"{"status":"ok","data":{"asns":["396982"],"prefix":"35.227.64.0/20"}}"#;
+        assert_eq!(
+            verify_asn_hint(Some(396_982), response),
+            AsnVerification::Verified { asn: 396_982 }
+        );
+        assert_eq!(
+            verify_asn_hint(Some(1), response),
+            AsnVerification::Changed {
+                expected: 1,
+                actual: 396_982
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_or_zero_asn_values() {
+        assert_eq!(
+            verify_asn_hint(None, br#"{"data":{"asns":["oops","0"]}}"#),
+            AsnVerification::Unavailable
+        );
+    }
+
+    #[test]
+    fn a_pre_response_timeout_is_a_possible_stall_only_when_tcp_connect_works() {
+        assert!(timeout_with_tcp_reachable("TimeoutBeforeBody", true));
+        assert!(timeout_with_tcp_reachable("TimeoutBeforeResponse", true));
+        assert!(timeout_with_tcp_reachable("TimeoutAfterBody", true));
+        assert!(!timeout_with_tcp_reachable("TimeoutBeforeResponse", false));
+        assert!(!timeout_with_tcp_reachable("ConnectFailure", true));
+    }
 
     #[test]
     fn timeout_before_body_is_not_upgraded_by_the_explanatory_16kb_text() {
@@ -473,6 +536,15 @@ mod route_classification_tests {
         );
         assert_eq!(classification, "TimeoutBeforeBody");
         assert!(!super::is_freeze_classification(classification));
+    }
+
+    #[test]
+    fn all_transfer_timeouts_surface_as_possible_freeze_signals_for_strategy_probing() {
+        assert!(super::is_possible_freeze_signal("TimeoutBeforeBody"));
+        assert!(super::is_possible_freeze_signal("TimeoutAfterBody"));
+        assert!(super::is_possible_freeze_signal("TimeoutBeforeResponse"));
+        assert!(!super::is_possible_freeze_signal("ConnectFailure"));
+        assert!(!super::is_possible_freeze_signal("Complete"));
     }
 
     #[test]
@@ -731,6 +803,20 @@ async fn measure_target(
     })
 }
 
+async fn direct_tcp_reachable(address: Ipv4Addr, port: u16) -> bool {
+    let probe = async {
+        timeout(
+            Duration::from_secs(4),
+            tokio::net::TcpStream::connect((address, port)),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok())
+    };
+    crate::site_trace::bypass_probe(address, port, crate::site_trace::ProbeTransport::Tcp, probe)
+        .await
+        .unwrap_or(false)
+}
+
 /// Tests direct and isolated current-route baselines, then tries the upstream
 /// fake-SNI templates against affected networks. The main nfqws2 process and
 /// its config are not modified.
@@ -885,8 +971,20 @@ pub async fn scan_network_baselines(
             elapsed_ms: phase.duration_ms.unwrap_or_default(),
             reason: phase.reason,
         };
-        let freeze_detected = is_freeze_classification(&direct.classification)
-            || is_freeze_classification(&current.classification);
+        let tcp_reachable = if timeout_with_tcp_reachable(&direct.classification, true) {
+            direct_tcp_reachable(address, target.port).await
+        } else {
+            false
+        };
+        let pre_response_stall = timeout_with_tcp_reachable(&direct.classification, tcp_reachable);
+        let freeze_detected = is_possible_freeze_signal(&direct.classification)
+            || is_possible_freeze_signal(&current.classification)
+            || pre_response_stall;
+        if pre_response_stall {
+            results[result_index].direct.reason.push_str(
+                " TCP-соединение отдельно устанавливается; как в проверке Zemidala это возможный ранний обрыв, но не доказательство DPI.",
+            );
+        }
         results[result_index].asn = asn;
         results[result_index].current = current;
         results[result_index].freeze_detected = freeze_detected;

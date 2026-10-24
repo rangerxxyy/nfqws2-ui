@@ -2,6 +2,7 @@ use serde::Serialize;
 pub mod community_strategies;
 pub mod config_document;
 pub mod freeze_diagnostic;
+pub mod probe_lanes;
 pub mod quic_probe;
 pub mod site_diagnostics;
 pub mod site_trace;

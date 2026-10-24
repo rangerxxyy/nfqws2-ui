@@ -2,7 +2,8 @@ use nfqws2_ui::freeze_diagnostic::{
     AsnVerification, FreezeNetworkResult, FreezeStrategyMatch, FreezeTargetKind, PAD_REQUESTS,
     PadClassification, build_targets, candidate_confirmed, candidate_route_succeeded,
     classify_padded_head, confirmed_strategy_candidates, freeze_candidates, instantiate_template,
-    is_freeze_classification, network_has_freeze, padded_head_curl_args, verify_asn_hint,
+    is_freeze_classification, is_possible_freeze_signal, network_has_freeze, padded_head_curl_args,
+    verify_asn_hint,
 };
 use nfqws2_ui::transfer_diagnostic::{TransferAttempt, TransferClass, classify_transfer};
 use std::net::Ipv4Addr;
@@ -164,7 +165,7 @@ fn baseline_freeze_requires_repeatable_boundary_not_only_a_tcp_connected_timeout
 }
 
 #[test]
-fn freeze_candidate_search_starts_only_after_a_response_or_upload_stall() {
+fn timeout_is_possible_not_proven_and_still_triggers_candidate_search() {
     for inconclusive in [
         "TimeoutBeforeResponse",
         "TimeoutBeforeBody",
@@ -174,10 +175,16 @@ fn freeze_candidate_search_starts_only_after_a_response_or_upload_stall() {
         "route_unavailable",
         "Inconclusive",
     ] {
-        assert!(
-            !is_freeze_classification(inconclusive),
-            "{inconclusive} must not trigger fake-SNI candidate search"
-        );
+        if matches!(
+            inconclusive,
+            "TimeoutBeforeResponse" | "TimeoutBeforeBody" | "TimeoutAfterBody"
+        ) {
+            assert!(is_possible_freeze_signal(inconclusive));
+            assert!(!is_freeze_classification(inconclusive));
+        } else {
+            assert!(!is_possible_freeze_signal(inconclusive));
+            assert!(!is_freeze_classification(inconclusive));
+        }
     }
     for confirmed_signal in [
         "PossibleFreeze",
