@@ -17,6 +17,7 @@ if [ -x /opt/etc/init.d/S99nfqws2-ui ]; then
 	/opt/etc/init.d/S99nfqws2-ui stop || { echo 'Could not stop nfqws2-ui; refusing removal' >&2; exit 1; }
 fi
 rm -f /opt/etc/init.d/S99nfqws2-ui /opt/var/run/nfqws2-ui.port
+rm -f /opt/bin/nfqws2-ui-ctl
 rm -rf "$ROOT" /opt/var/run/nfqws2-ui
 rm -f "$ETC/password.hash"
 rmdir "$ETC" 2>/dev/null || true
