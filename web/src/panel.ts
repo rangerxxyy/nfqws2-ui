@@ -10,16 +10,16 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
 import { loadMonitoringState, normalizeMonitoringHost, saveMonitoringState, type MonitoringState } from './monitoring';
-import type { UiUpdateStatus } from './api';
+import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community' | 'snapshots' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
@@ -34,6 +34,7 @@ let diagnosisRunning = false;
 let monitoringRunning = false;
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
+let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard' };
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -209,6 +210,127 @@ function showRoute(route: Route) {
     button.classList.toggle('text-slate-400', !active);
   });
   if (route === 'lists') void loadList(activeListId);
+  if (route === 'snapshots') void loadBackups();
+  if (route === 'about') void loadAboutStatus();
+}
+let snapshotOverview: SnapshotOverview | null = null;
+function renderBackups(data: SnapshotOverview) {
+  const host = $('#backupList'); if (!host) return;
+  snapshotOverview = data;
+  setText('#snapshotCount', `${data.localCount} ${pluralize(data.localCount, 'снимок', 'снимка', 'снимков')} · ${formatBytes(data.totalBytes)}`);
+  setText('#snapshotDirectory', data.directory);
+  setText('#snapshotRemoteStatus', !data.remote.tool ? 'На роутере нет SSH-клиента' : data.remote.error ? `Ошибка отправки: ${data.remote.error}` : data.remote.on ? `Включено · на NAS ${data.remote.stored} · ждут отправки ${data.remote.pending}` : 'Отправка выключена — снимки хранятся на роутере');
+  setValue('#snapshotDays', String(data.settings.maxDays)); setValue('#snapshotMaxCount', String(data.settings.maxCount));
+  setValue('#snapshotRemoteEnabled', String(data.settings.remote.enabled), true); setValue('#snapshotRemoteHost', data.settings.remote.host); setValue('#snapshotRemotePort', String(data.settings.remote.port)); setValue('#snapshotRemoteUser', data.settings.remote.user); setValue('#snapshotRemoteDir', data.settings.remote.dir); setValue('#snapshotRemoteKeep', String(data.settings.remote.keepLocal));
+  setText('#snapshotPublicKey', data.remote.publicKey);
+  const command = $('#snapshotSetupCommand'); if (command instanceof HTMLTextAreaElement) command.value = data.remote.setupCommand;
+  $('#snapshotSetupDetails')?.classList.toggle('hidden', !data.remote.setupCommand);
+  const keyButton = $('#snapshotCreateKey'); if (keyButton instanceof HTMLButtonElement) { keyButton.textContent = data.remote.publicKey ? 'Ключ роутера готов' : '＋ Создать ключ роутера'; keyButton.disabled = Boolean(data.remote.publicKey) || !data.remote.tool; }
+  const pushButton = $('#snapshotRemotePush'); if (pushButton instanceof HTMLButtonElement) pushButton.disabled = !data.remote.on || data.remote.pending === 0;
+  const testButton = $('#snapshotRemoteTest'); if (testButton instanceof HTMLButtonElement) testButton.disabled = !data.remote.tool || !data.remote.publicKey;
+  host.replaceChildren();
+  if (!data.items.length) { const empty = document.createElement('p'); empty.className = 'rounded-xl border border-slate-800 bg-[#060a12] p-4 text-sm text-slate-400'; empty.textContent = 'Снимков пока нет. Создайте первый снимок вручную.'; host.append(empty); return; }
+  for (const item of data.items) {
+    const row = document.createElement('article'); row.className = 'backup-row';
+    const details = document.createElement('div'); details.className = 'min-w-0';
+    const title = document.createElement('strong'); title.className = 'block text-sm text-white'; title.textContent = `${snapshotReason(item.reason)}${item.pinned ? ' · закреплён' : ''}`;
+    const date = document.createElement('span'); date.className = 'mt-1 block text-xs text-slate-400'; date.textContent = new Date(item.ts * 1000).toLocaleString();
+    const note = document.createElement('span'); note.className = 'mt-1 block break-words text-xs text-slate-500'; note.textContent = item.note || `${item.local && item.remote ? 'Роутер и NAS' : item.local ? 'На роутере' : 'На NAS'} · ${formatBytes(item.size)}`;
+    details.append(title, date, note);
+    const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-2';
+    const download = document.createElement('a'); download.className = 'backup-action'; download.href = `/api/snapshots/${encodeURIComponent(item.id)}/archive`; download.textContent = 'Скачать';
+    const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'backup-action'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.args = JSON.stringify([item.id]); restore.textContent = 'Восстановить';
+    const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'backup-action'; pin.dataset.actionClick = 'pinSnapshot'; pin.dataset.args = JSON.stringify([item.id, !item.pinned]); pin.textContent = item.pinned ? 'Открепить' : 'Закрепить';
+    pin.disabled = !item.local;
+    actions.append(download, restore, pin); row.append(details, actions); host.append(row);
+  }
+}
+async function loadBackups() {
+  const label = $('#backupStatus'); if (label) label.textContent = 'Загружаем список снимков с роутера…';
+  try { renderBackups(await nfqwsSnapshots.get()); if (label) label.textContent = 'Автоснимки создаются перед изменениями через панель и ежедневно в 04:05.'; }
+  catch (error) { if (label) label.textContent = error instanceof Error ? `Не удалось загрузить снимки: ${error.message}` : 'Не удалось загрузить резервные копии.'; }
+}
+function setValue(selector: string, value: string, checked = false) { const element = $(selector); if (element instanceof HTMLInputElement) { if (checked) element.checked = value === 'true'; else element.value = value; } }
+function formatBytes(value: number): string { if (value < 1024) return `${value} Б`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} КБ`; return `${(value / (1024 * 1024)).toFixed(1)} МБ`; }
+function pluralize(value: number, one: string, few: string, many: string): string { const n = Math.abs(value) % 100; const last = n % 10; return n > 10 && n < 20 ? many : last > 1 && last < 5 ? few : last === 1 ? one : many; }
+function snapshotReason(reason: string): string { return ({ 'вручную': 'Вручную', 'перед изменением': 'Перед изменением', 'ежедневный': 'Ежедневный', 'перед восстановлением': 'Перед восстановлением', 'из файла': 'Из файла' } as Record<string, string>)[reason] ?? reason; }
+async function createSnapshot() {
+  const note = window.prompt('Подпись к снимку (необязательно):', ''); if (note === null) return;
+  try { const item = await nfqwsSnapshots.create(note); toast(`Снимок создан · ${new Date(item.ts * 1000).toLocaleString()}`); await loadBackups(); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось создать снимок.', 'error'); }
+}
+async function restoreSnapshot(id: string) {
+  if (!window.confirm('Восстановить конфигурацию, списки и настройки из этого снимка? Перед записью сохранится текущее состояние.')) return;
+  try { const result = await nfqwsSnapshots.restore(id); toast(result.message); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить снимок.', 'error'); }
+}
+async function restoreSnapshotFile(input: HTMLInputElement) {
+  const file = input.files?.[0]; if (!file) return;
+  if (!window.confirm(`Восстановить состояние из «${file.name}»? Перед записью создастся снимок текущего состояния.`)) { input.value = ''; return; }
+  try { const result = await nfqwsSnapshots.restoreFile(file); toast(result.message ?? `Восстановлено файлов: ${result.changed?.length ?? 0}`); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить архив.', 'error'); }
+  finally { input.value = ''; }
+}
+function readSnapshotSettings() {
+  const current = snapshotOverview?.settings; if (!current) throw new Error('Сначала загрузите настройки снимков.');
+  const number = (selector: string, fallback: number) => Number.parseInt(($<HTMLInputElement>(selector)?.value ?? ''), 10) || fallback;
+  return { ...current, maxDays: number('#snapshotDays', current.maxDays), maxCount: number('#snapshotMaxCount', current.maxCount), remote: { ...current.remote, enabled: ($<HTMLInputElement>('#snapshotRemoteEnabled')?.checked ?? false), host: $<HTMLInputElement>('#snapshotRemoteHost')?.value.trim() ?? '', port: number('#snapshotRemotePort', current.remote.port), user: $<HTMLInputElement>('#snapshotRemoteUser')?.value.trim() ?? '', dir: $<HTMLInputElement>('#snapshotRemoteDir')?.value.trim() ?? '', keepLocal: number('#snapshotRemoteKeep', current.remote.keepLocal) } };
+}
+async function saveSnapshotSettings(remoteOnly = false) {
+  const settings = readSnapshotSettings();
+  if (remoteOnly && snapshotOverview) { settings.maxDays = snapshotOverview.settings.maxDays; settings.maxCount = snapshotOverview.settings.maxCount; }
+  await nfqwsSnapshots.saveSettings(settings); toast('Настройки резервных копий сохранены.'); await loadBackups();
+}
+async function runSnapshotRemote(action: 'test' | 'push' | 'key') {
+  try {
+    if (action !== 'key') await saveSnapshotSettings(true);
+    if (action === 'test') { const result = await nfqwsSnapshots.testRemote(); toast(`Связь с NAS есть · найдено файлов: ${result.count}`); }
+    else if (action === 'push') { const result = await nfqwsSnapshots.pushRemote(); toast(`Отправлено снимков: ${result.sent}`); }
+    else { await nfqwsSnapshots.createKey(); toast('Ключ создан. Выполните команду для NAS, затем проверьте связь.'); }
+    await loadBackups();
+  } catch (error) { toast(error instanceof Error ? error.message : 'Операция с NAS не выполнена.', 'error'); }
+}
+function syncAppearanceControls() {
+  all<HTMLInputElement>('input[name="appearanceTheme"]').forEach((input) => { input.checked = input.value === appearanceSettings.theme; });
+  all<HTMLInputElement>('input[name="appearanceLayout"]').forEach((input) => { input.checked = input.value === appearanceSettings.layout; });
+}
+function updateAppearance(change: Partial<AppearanceSettings>) {
+  let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Apply for this session without persistent storage. */ }
+  appearanceSettings = saveAppearance(storage, { ...appearanceSettings, ...change });
+  applyAppearance(appearanceSettings);
+  syncAppearanceControls();
+  void nfqwsAppearance.save(appearanceSettings).catch((error) => toast(error instanceof Error ? `Оформление сохранено только в этом браузере: ${error.message}` : 'Оформление сохранено только в этом браузере.', 'error'));
+}
+async function syncAppearanceFromRouter() {
+  const saved = await nfqwsAppearance.get(); if (!saved) return;
+  let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Use the restored settings for this session. */ }
+  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
+}
+function initializeAppearanceSettings() {
+  let storage: Storage | null = null;
+  try { storage = window.localStorage; } catch { /* Use safe defaults if browser storage is blocked. */ }
+  appearanceSettings = loadAppearance(storage);
+  applyAppearance(appearanceSettings);
+  syncAppearanceControls();
+  void nfqwsAppearance.get().then((saved) => {
+    if (!saved) { void nfqwsAppearance.save(appearanceSettings).catch(() => undefined); return; }
+    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
+  }).catch(() => undefined);
+}
+async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
+  try {
+    const result = statusOverride ?? await nfqwsUpdates.uiStatus();
+    setText('#aboutCurrentVersion', result.currentVersion);
+    setText('#aboutLatestVersion', result.latestVersion ?? 'не удалось определить');
+    setText('#aboutUpdateStatus', result.updateAvailable ? `Доступна версия ${result.latestVersion}. Обновите панель через кнопку обновления в верхней панели.` : result.latestVersion ? `Установлена актуальная версия ${result.currentVersion}.` : 'Последнюю версию пока не удалось определить. Проверьте соединение с GitHub.');
+  } catch (error) { setText('#aboutUpdateStatus', error instanceof Error ? error.message : 'Не удалось загрузить сведения об обновлении.'); }
+}
+async function checkUiUpdate() {
+  const button = $('[data-action-click="checkUiUpdate"]'); if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Проверяем…'; }
+  setText('#aboutUpdateStatus', 'Запрашиваем список релизов GitHub…');
+  try { const response = await nfqwsUpdates.releases(); await loadAboutStatus(response.updateStatus); renderUiUpdateNotice(response.updateStatus, true); }
+  catch (error) { setText('#aboutUpdateStatus', error instanceof Error ? `Проверка не удалась: ${error.message}` : 'Не удалось проверить обновления.'); }
+  finally { if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '↻ Проверить обновление'; } }
 }
 function renderMonitoringSites() {
   const host = $('#monitorSites'); if (!host || !monitoringState) return;
@@ -1768,6 +1890,21 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
+    createBackup: () => void createSnapshot(),
+    createSnapshot: () => void createSnapshot(),
+    refreshBackups: () => void loadBackups(),
+    restoreSnapshot: (id: string) => void restoreSnapshot(id),
+    pinSnapshot: (id: string, pinned: string | boolean) => void (async () => { try { await nfqwsSnapshots.pin(id, pinned === true || pinned === 'true'); await loadBackups(); } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось закрепить снимок.', 'error'); } })(),
+    saveSnapshotRetention: () => void saveSnapshotSettings().catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить срок хранения.', 'error')),
+    saveSnapshotRemote: () => void saveSnapshotSettings(true).catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить настройки NAS.', 'error')),
+    testSnapshotRemote: () => void runSnapshotRemote('test'),
+    pushSnapshotRemote: () => void runSnapshotRemote('push'),
+    createSnapshotKey: () => void runSnapshotRemote('key'),
+    restoreSnapshotFile: (input: HTMLInputElement) => void restoreSnapshotFile(input),
+    copySnapshotSetup: () => { const command = $<HTMLTextAreaElement>('#snapshotSetupCommand'); if (command) void navigator.clipboard.writeText(command.value).then(() => toast('Команда скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
+    setAppearanceTheme: (theme: UiTheme) => updateAppearance({ theme }),
+    setAppearanceLayout: (layout: UiLayout) => updateAppearance({ layout }),
+    checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
     checkMonitoringSite: (host: string) => void runMonitoring(host),
     saveMonitoringSettings: () => void saveMonitoringSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить расписание.', 'error')),
@@ -1879,6 +2016,7 @@ function bindPrototypeActions() {
 }
 
 function boot() {
+  initializeAppearanceSettings();
   installStyledSelects(document);
   installActionTooltips(document);
   monitoringState = loadMonitoringState(getMonitoringStorage());

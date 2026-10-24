@@ -274,6 +274,16 @@ export default function App() {
                 {"\n            "}
               </button>
               {"\n\n          "}
+              <div className={"px-3 pt-3 pb-1 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>Система</div>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-emerald-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 7h16M6 4h12v16H6zM9 11h6m-6 4h6"}></path></svg><span>Резервные копии</span>
+              </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["appearance"])} id={"navBtn-appearance"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>Оформление UI</span>
+              </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>О nfqws2-UI</span>
+              </button>
             </nav>
             {"\n        "}
           </div>
@@ -1175,6 +1185,65 @@ export default function App() {
             <div className={"grid gap-2 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}><label htmlFor={"telegramChatId"} className={"text-sm text-slate-300"}>ID чата</label><div className={"flex gap-2"}><input id={"telegramChatId"} placeholder={"123456789"} className={"min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 font-mono text-white"} /><button data-action-click={"findTelegramChatId"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800"}>⌕ Найти</button></div></div>
             <p id={"telegramStatus"} className={"text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p><div className={"flex gap-2"}><button data-action-click={"saveTelegramSettings"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button><button data-action-click={"sendTestTelegram"} className={"rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"}>Отправить проверочное</button></div>
             <div id={"telegramNotifications"} className={"space-y-3"} aria-live={"polite"}></div>
+          </section>
+        </section>
+        <section id={"tabContent-snapshots"} className={"hidden view-animate space-y-4"}>
+          <div className={"flex flex-wrap items-center justify-between gap-3"}><h1 className={"text-xl font-bold text-white"}>Резервные копии</h1><button data-action-click={"createSnapshot"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"}>＋ Создать снимок сейчас</button></div>
+          <div className={"grid gap-3 xl:grid-cols-2"}>
+            <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
+              <div className={"flex items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>На роутере</h2><span id={"snapshotCount"} className={"backup-chip"}>Загрузка…</span></div>
+              <p className={"text-sm leading-6 text-slate-400"}>Снимок включает конфигурацию, списки, блобы, мониторинг, Telegram и оформление UI. Создаётся перед изменениями через панель (не чаще раза в 15 минут), ежедневно в 04:05 и вручную.</p>
+              <div className={"grid gap-2 sm:grid-cols-[auto_5.5rem_auto_5.5rem_auto] sm:items-center text-sm"}><label htmlFor={"snapshotDays"} className={"text-slate-300"}>Хранить</label><input id={"snapshotDays"} type={"number"} min={1} max={3650} className={"backup-input"} /><span>дней, не больше</span><input id={"snapshotMaxCount"} type={"number"} min={5} max={500} className={"backup-input"} /><span>снимков</span></div>
+              <button data-action-click={"saveSnapshotRetention"} className={"rounded-lg border border-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800"}>Применить</button>
+              <div className={"flex gap-3 text-sm"}><span className={"w-14 shrink-0 text-slate-400"}>Где</span><code id={"snapshotDirectory"} className={"break-all text-slate-200"}>—</code></div>
+              <p className={"text-xs text-slate-500"}>Пять последних снимков и закреплённые не удаляются автоматически.</p>
+            </section>
+            <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
+              <h2 className={"font-bold text-white"}>Вне роутера</h2>
+              <div className={"flex flex-wrap gap-2"}><a href={"/api/snapshots/current/archive"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↓ Скачать архив</a><label htmlFor={"snapshotRestoreFile"} className={"cursor-pointer rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↑ Восстановить из файла</label><input id={"snapshotRestoreFile"} type={"file"} accept={".tar.gz,.tgz,application/gzip"} className={"hidden"} data-action-change={"restoreSnapshotFile"} data-args={JSON.stringify([{source:"self"}])} /></div>
+              <p className={"text-sm leading-6 text-slate-400"}>Архив `.tar.gz` сохраняется на устройство, с которого открыт интерфейс. В нём могут быть секреты Telegram. Перед восстановлением панель создаёт снимок текущего состояния.</p>
+              <p id={"backupStatus"} className={"text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Загрузка сведений…</p>
+            </section>
+          </div>
+          <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
+            <div className={"flex flex-wrap items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>Копии на NAS</h2><span id={"snapshotRemoteStatus"} className={"text-sm text-slate-400"}>Отправка выключена</span></div>
+            <p className={"text-sm leading-6 text-slate-400"}>Роутер отправляет новые снимки по SSH. NAS хранит архивы, а ключ роутера ограничен одной папкой: он может добавлять новые снимки и читать их, но не удалять и не перезаписывать.</p>
+            <div className={"grid gap-3 lg:grid-cols-2"}>
+              <label className={"backup-field"}><span>Отправлять</span><span className={"flex items-center gap-2"}><input id={"snapshotRemoteEnabled"} type={"checkbox"} /> каждый новый снимок на NAS</span></label>
+              <label className={"backup-field"}><span>Адрес</span><input id={"snapshotRemoteHost"} className={"backup-input"} placeholder={"192.168.1.207"} /></label>
+              <label className={"backup-field"}><span>Порт SSH</span><input id={"snapshotRemotePort"} className={"backup-input max-w-28"} type={"number"} min={1} max={65535} /></label>
+              <label className={"backup-field"}><span>Пользователь</span><input id={"snapshotRemoteUser"} className={"backup-input"} placeholder={"имя пользователя на NAS"} /></label>
+              <label className={"backup-field lg:col-span-2"}><span>Папка на NAS</span><input id={"snapshotRemoteDir"} className={"backup-input"} placeholder={"/volume1/homes/user/Backups/nfqws2-ui"} /><small>Полный путь. Команда установки ключа разрешает доступ только к этой папке.</small></label>
+              <label className={"backup-field"}><span>Оставлять на роутере</span><input id={"snapshotRemoteKeep"} className={"backup-input max-w-28"} type={"number"} min={1} max={50} /><small>последних снимков, плюс закреплённые</small></label>
+            </div>
+            <div className={"flex flex-wrap gap-2"}><button data-action-click={"saveSnapshotRemote"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button><button id={"snapshotRemoteTest"} data-action-click={"testSnapshotRemote"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>Проверить связь</button><button id={"snapshotRemotePush"} data-action-click={"pushSnapshotRemote"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>Отправить сейчас</button></div>
+            <div className={"grid gap-2 border-t border-slate-800 pt-3 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-start"}><span className={"text-sm text-slate-400"}>Ключ роутера</span><div className={"space-y-2"}><button id={"snapshotCreateKey"} data-action-click={"createSnapshotKey"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>＋ Создать ключ роутера</button><code id={"snapshotPublicKey"} className={"block break-all text-xs text-slate-300"}></code><details id={"snapshotSetupDetails"} className={"hidden"}><summary className={"cursor-pointer text-sm text-blue-300"}>Команда для NAS — выполнить один раз</summary><textarea id={"snapshotSetupCommand"} readOnly rows={6} className={"backup-input mt-2 font-mono text-xs"}></textarea><button data-action-click={"copySnapshotSetup"} className={"mt-2 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-100"}>Копировать команду</button></details></div></div>
+          </section>
+          <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}><div className={"flex items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>Снимки</h2><button data-action-click={"refreshBackups"} className={"rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800"}>↻ Обновить</button></div><div id={"backupList"} className={"space-y-2"} aria-live={"polite"}></div></section>
+        </section>
+        <section id={"tabContent-appearance"} className={"hidden view-animate space-y-5"}>
+          <div><h1 className={"text-xl font-bold text-white"}>Оформление UI</h1><p className={"mt-1 text-sm text-slate-400"}>Настройки сохраняются в этом браузере.</p></div>
+          <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
+            <div><h2 className={"font-bold text-white"}>Цветовая тема</h2><p className={"mt-1 text-xs text-slate-400"}>Выберите подходящее оформление панели.</p></div>
+            <div className={"grid gap-3 sm:grid-cols-3"}>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"dark"} data-action-change={"setAppearanceTheme"} /><span className={"appearance-preview appearance-preview-dark"}></span><span><strong>Стандартная</strong><small>Текущая тёмная тема</small></span></label>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"light"} data-action-change={"setAppearanceTheme"} /><span className={"appearance-preview appearance-preview-light"}></span><span><strong>Светлая</strong><small>Светлый фон и контрастный текст</small></span></label>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"neon"} data-action-change={"setAppearanceTheme"} /><span className={"appearance-preview appearance-preview-neon"}></span><span><strong>Фиолетово-неоновая</strong><small>Тёмная тема с фиолетовым акцентом</small></span></label>
+            </div>
+            <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Вид меню</h2><p className={"mt-1 text-xs text-slate-400"}>Компактный вариант сокращает список редко используемых разделов. «Оформление UI» и другие системные страницы остаются на месте.</p><div className={"mt-3 flex flex-wrap gap-3"}>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"standard"} data-action-change={"setAppearanceLayout"} /><span><strong>Стандартный</strong><small>Все доступные разделы</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"compact"} data-action-change={"setAppearanceLayout"} /><span><strong>Компактный</strong><small>Основные разделы и система</small></span></label>
+            </div></div>
+          </section>
+        </section>
+        <section id={"tabContent-about"} className={"hidden view-animate space-y-5"}>
+          <div><h1 className={"text-xl font-bold text-white"}>О nfqws2-UI</h1><p className={"mt-1 text-sm text-slate-400"}>Версия панели, обновления и команды управления на роутере.</p></div>
+          <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
+            <div className={"flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4"}><div><h2 className={"font-bold text-white"}>nfqws2-UI</h2><a href={"https://github.com/rangerxxyy/nfqws2-ui"} target={"_blank"} rel={"noreferrer"} className={"mt-1 inline-block text-sm text-blue-400 hover:text-blue-300"}>github.com/rangerxxyy/nfqws2-ui ↗</a></div><div className={"flex items-center gap-3"}><p className={"text-sm text-slate-300"}>Установлена: <strong id={"aboutCurrentVersion"} className={"font-mono text-white"}>—</strong><br />Последняя: <strong id={"aboutLatestVersion"} className={"font-mono text-white"}>—</strong></p><button data-action-click={"checkUiUpdate"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↻ Проверить обновление</button></div></div>
+            <p id={"aboutUpdateStatus"} className={"text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Загрузка сведений о версии…</p>
+            <div><h2 className={"font-bold text-white"}>Команды в терминале роутера</h2><div className={"mt-3 grid gap-2"}>
+              {[["nfqws-ui update", "Обновить до последней версии"], ["nfqws-ui update --check", "Только проверить наличие обновления"], ["nfqws-ui update v1.0.0 --force", "Установить указанную версию или выполнить откат"], ["nfqws-ui status", "Показать адреса, порты и состояние HTTPS"], ["nfqws-ui help", "Показать полный список команд"]].map(([command, description]) => <div key={command} className={"about-command-row"}><div className={"min-w-0"}><code>{command}</code><small>{description}</small></div><button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify([command])} className={"rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"}>Копировать</button></div>)}
+            </div><p className={"mt-3 text-xs text-slate-500"}><code>nfqws-ui</code> — короткое имя команды <code>nfqws-ui-setup</code>.</p></div>
           </section>
         </section>
         {"\n\n      "}
