@@ -152,6 +152,23 @@ struct StrategyPickPreviewRequest {
     candidate_index: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategySourcePreviewRequest {
+    source: String,
+    operation_id: String,
+    candidate_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StrategyApplyRequest {
+    source: String,
+    operation_id: String,
+    candidate_index: usize,
+    expected_revision: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StrategyPickPreview {
@@ -675,6 +692,74 @@ fn build_strategy_pick_preview(
     })
 }
 
+fn strategy_dry_run_argv(
+    operation: &StrategyPickOperation,
+    candidate_index: usize,
+    active_args: &[String],
+    functions: &HashSet<String>,
+    blobs: &[String],
+) -> Result<Vec<String>, String> {
+    let protocol = match operation.protocol.as_str() {
+        "http" => StrategyProtocol::Http,
+        "https" => StrategyProtocol::Https,
+        _ => return Err("Для dry-run доступны только HTTP и HTTPS кандидаты".into()),
+    };
+    let candidate = operation
+        .results
+        .get(candidate_index)
+        .filter(|result| result.confirmed && result.attempts >= 2 && result.successes >= 2)
+        .ok_or_else(|| {
+            "Dry-run разрешён только для повторно подтверждённого кандидата".to_string()
+        })?;
+    let profile_args = strategy_picker::candidate_argv(
+        active_args,
+        protocol,
+        &candidate.candidate.steps,
+        functions,
+        blobs,
+    )?;
+    let mut argv = vec![active_args[0].clone()];
+    argv.extend(profile_args);
+    argv.insert(1, "--dry-run".into());
+    Ok(argv)
+}
+
+async fn validate_strategy_dry_run(argv: &[String]) -> Result<String, String> {
+    let Some(binary) = argv.first() else {
+        return Err("Пустой argv для проверки nfqws2 --dry-run".into());
+    };
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        tokio::process::Command::new(binary)
+            .args(&argv[1..])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| "nfqws2 --dry-run превысил лимит 20 секунд; конфигурация не изменена".to_string())?
+    .map_err(|error| format!("Не удалось запустить nfqws2 --dry-run: {error}"))?;
+    let detail = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !output.status.success() {
+        let detail = detail.trim();
+        return Err(if detail.is_empty() {
+            format!(
+                "nfqws2 --dry-run завершился с кодом {:?}; конфигурация не изменена",
+                output.status.code()
+            )
+        } else {
+            format!(
+                "nfqws2 --dry-run отклонил профиль; конфигурация не изменена: {}",
+                detail.chars().take(1500).collect::<String>()
+            )
+        });
+    }
+    Ok("nfqws2 --dry-run пройден".into())
+}
+
 async fn preview_strategy_pick(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -740,6 +825,288 @@ async fn preview_strategy_pick(
     ) {
         Ok(preview) => Json(preview).into_response(),
         Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    }
+}
+
+async fn preview_freeze_strategy(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<StrategySourcePreviewRequest>,
+) -> Response {
+    if request.source != "freezeScan" || !valid_site_trace_id(&request.operation_id) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Некорректный источник результата диагностики",
+        );
+    }
+    let scan = match read_freeze_scan_operation(
+        &state.data_dir.join("freeze-diagnostic-operations"),
+        &request.operation_id,
+    )
+    .await
+    {
+        Ok(Some(operation)) => operation,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "Результат теста 16 КБ не найден"),
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let operation = match freeze_result_as_strategy_operation(&scan, request.candidate_index) {
+        Ok(operation) => operation,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    let Some((_, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Preview остановлен: работающий nfqws2 не обнаружен однозначно",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let functions = active_lua_functions(&active_args, &paths.lua_dir);
+    let blobs = active_blob_names(&active_args);
+    let Some(config_path) = config_path_for_state(&state) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    };
+    let original = match tokio::fs::read(config_path).await {
+        Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => bytes,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Конфигурация превышает лимит 512 КБ",
+            );
+        }
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    let content = match String::from_utf8(original.clone()) {
+        Ok(content) => content,
+        Err(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Конфигурация не является UTF-8 текстом",
+            );
+        }
+    };
+    match build_strategy_pick_preview(
+        &operation,
+        0,
+        &content,
+        revision(&original),
+        &functions,
+        &blobs,
+    ) {
+        Ok(preview) => Json(preview).into_response(),
+        Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    }
+}
+
+fn freeze_result_as_strategy_operation(
+    operation: &FreezeScanOperation,
+    result_index: usize,
+) -> Result<StrategyPickOperation, String> {
+    if operation.state != "complete" {
+        return Err("Для применения нужен полностью завершённый тест 16 КБ".into());
+    }
+    let result = operation
+        .results
+        .get(result_index)
+        .ok_or_else(|| "Индекс результата теста 16 КБ не найден".to_string())?;
+    if result.target_kind != freeze_diagnostic::FreezeTargetKind::UserHost {
+        return Err(
+            "Стратегию из теста сети можно применять только после отдельного подбора для домена"
+                .into(),
+        );
+    }
+    let found = result
+        .found_strategy
+        .as_ref()
+        .filter(|found| {
+            found.attempts >= 3
+                && found.successes >= 3
+                && found.reused_from.is_none()
+                && result.freeze_detected
+        })
+        .ok_or_else(|| {
+            "Для этого домена нет стратегии, подтверждённой тремя проверками".to_string()
+        })?;
+    Ok(StrategyPickOperation {
+        id: operation.id.clone(),
+        host: result.host.clone(),
+        protocol: "https".into(),
+        state: "complete".into(),
+        stage: "complete".into(),
+        current: None,
+        done: 1,
+        total: 1,
+        results: vec![strategy_picker::StrategyCandidateResult {
+            candidate: strategy_picker::StrategyCandidate {
+                name: format!("Подтверждено тестом 16 КБ · {}", found.sni),
+                source: "Проверено на введённом домене".into(),
+                steps: vec![found.step.clone()],
+            },
+            attempts: found.attempts,
+            successes: found.successes,
+            confirmed: true,
+            detail: "Три последовательные проверки прошли на этом домене".into(),
+        }],
+        message: "Проверка 16 КБ завершена".into(),
+        updated_at: operation.updated_at,
+    })
+}
+
+async fn apply_confirmed_strategy(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<StrategyApplyRequest>,
+) -> Response {
+    if !valid_site_trace_id(&request.operation_id) {
+        return error(StatusCode::NOT_FOUND, "Операция диагностики не найдена");
+    }
+    let operation = match request.source.as_str() {
+        "strategyPick" => {
+            match read_strategy_pick_operation(
+                &state.data_dir.join("strategy-pick-operations"),
+                &request.operation_id,
+            )
+            .await
+            {
+                Ok(Some(operation)) => operation,
+                Ok(None) => return error(StatusCode::NOT_FOUND, "Результат автоподбора не найден"),
+                Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+            }
+        }
+        "freezeScan" => {
+            let scan = match read_freeze_scan_operation(
+                &state.data_dir.join("freeze-diagnostic-operations"),
+                &request.operation_id,
+            )
+            .await
+            {
+                Ok(Some(operation)) => operation,
+                Ok(None) => return error(StatusCode::NOT_FOUND, "Результат теста 16 КБ не найден"),
+                Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+            };
+            match freeze_result_as_strategy_operation(&scan, request.candidate_index) {
+                Ok(operation) => operation,
+                Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+            }
+        }
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Неизвестный источник подтверждённой стратегии",
+            );
+        }
+    };
+    let _diagnostic_guard = match state.site_diagnostic_lock.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return error(
+                StatusCode::CONFLICT,
+                "Сначала дождитесь завершения текущей сетевой диагностики",
+            );
+        }
+    };
+    let Some((active_pid, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Применение остановлено: работающий nfqws2 не обнаружен однозначно",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let functions = active_lua_functions(&active_args, &paths.lua_dir);
+    let blobs = active_blob_names(&active_args);
+    let Some(config_path) = config_path_for_state(&state) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    };
+    let original = match tokio::fs::read(&config_path).await {
+        Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => bytes,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Конфигурация превышает лимит 512 КБ",
+            );
+        }
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    let content = match String::from_utf8(original.clone()) {
+        Ok(content) => content,
+        Err(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Конфигурация не является UTF-8 текстом",
+            );
+        }
+    };
+    let current_revision = revision(&original);
+    if current_revision != request.expected_revision {
+        return error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась после предпросмотра; обновите preview и проверьте diff",
+        );
+    }
+    let candidate_index = if request.source == "freezeScan" {
+        0
+    } else {
+        request.candidate_index
+    };
+    let dry_run_argv = match strategy_dry_run_argv(
+        &operation,
+        candidate_index,
+        &active_args,
+        &functions,
+        &blobs,
+    ) {
+        Ok(argv) => argv,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    if let Err(message) = validate_strategy_dry_run(&dry_run_argv).await {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    }
+    if !matches!(active_process_snapshot(), Some((pid, ref args)) if pid == active_pid && args == &active_args)
+    {
+        return error(
+            StatusCode::CONFLICT,
+            "Активный процесс nfqws2 изменился во время проверки; конфигурация не изменена",
+        );
+    }
+    let preview = match build_strategy_pick_preview(
+        &operation,
+        candidate_index,
+        &content,
+        current_revision.clone(),
+        &functions,
+        &blobs,
+    ) {
+        Ok(preview) => preview,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    let write = ConfigWrite {
+        content: preview.proposed_content,
+        revision: current_revision,
+    };
+    match apply_config_transaction(&state, write, || async {
+        service_action(ServiceAction::Restart).await
+    })
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(message) if message == WRITE_REVISION_CONFLICT => error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась во время сохранения; повторите preview",
+        ),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
 }
 
@@ -4853,6 +5220,14 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             post(preview_strategy_pick),
         )
         .route(
+            "/api/nfqws2/strategies/preview",
+            post(preview_freeze_strategy),
+        )
+        .route(
+            "/api/nfqws2/strategies/apply",
+            post(apply_confirmed_strategy),
+        )
+        .route(
             "/api/nfqws2/diagnostics/trace/operations/{id}",
             get(get_site_trace_operation),
         )
@@ -5000,6 +5375,81 @@ mod tests {
         })
     }
 
+    fn confirmed_freeze_scan(kind: freeze_diagnostic::FreezeTargetKind) -> FreezeScanOperation {
+        FreezeScanOperation {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            state: "complete".into(),
+            stage: "complete".into(),
+            current: None,
+            done: 1,
+            total: 1,
+            results: vec![freeze_diagnostic::FreezeNetworkResult {
+                label: "site.example".into(),
+                host: "site.example".into(),
+                path: "/".into(),
+                target_kind: kind,
+                address: Some(std::net::Ipv4Addr::new(203, 0, 113, 15)),
+                asn_hint: None,
+                asn: freeze_diagnostic::AsnVerification::Unavailable,
+                direct: freeze_diagnostic::FreezeMeasurement {
+                    classification: "PossibleFreeze".into(),
+                    ok: false,
+                    bytes_received: Some(18_000),
+                    replies: None,
+                    elapsed_ms: 4000,
+                    reason: "repeatable boundary timeout".into(),
+                },
+                current: freeze_diagnostic::FreezeMeasurement {
+                    classification: "PossibleFreeze".into(),
+                    ok: false,
+                    bytes_received: Some(18_000),
+                    replies: None,
+                    elapsed_ms: 4000,
+                    reason: "repeatable boundary timeout".into(),
+                },
+                freeze_detected: true,
+                tried_candidates: 1,
+                found_strategy: Some(freeze_diagnostic::FreezeStrategyMatch {
+                    sni: "ya.ru".into(),
+                    step: "--lua-desync=hostfakesplit:repeats=4:tcp_ts=-600000:tcp_md5:host=ya.ru"
+                        .into(),
+                    attempts: 3,
+                    successes: 3,
+                    average_ms: Some(100),
+                    reused_from: None,
+                }),
+                candidate_attempts: Vec::new(),
+            }],
+            message: "done".into(),
+            updated_at: 1,
+        }
+    }
+
+    #[test]
+    fn freeze_scan_application_is_limited_to_confirmed_user_domains() {
+        let scan = confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost);
+        let candidate = freeze_result_as_strategy_operation(&scan, 0).unwrap();
+        assert_eq!(candidate.host, "site.example");
+        assert_eq!(candidate.results[0].successes, 3);
+        assert!(
+            freeze_result_as_strategy_operation(
+                &confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::PinnedAddress),
+                0
+            )
+            .is_err()
+        );
+        let mut partial = scan;
+        partial.state = "partial".into();
+        assert!(freeze_result_as_strategy_operation(&partial, 0).is_err());
+        let mut reused = confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost);
+        reused.results[0]
+            .found_strategy
+            .as_mut()
+            .unwrap()
+            .reused_from = Some("other.example".into());
+        assert!(freeze_result_as_strategy_operation(&reused, 0).is_err());
+    }
+
     fn test_state_with_trace_runner(
         data_dir: PathBuf,
         runner: Arc<SiteTraceRunner>,
@@ -5128,6 +5578,49 @@ mod tests {
             preview
                 .proposed_content
                 .starts_with(original.split("NFQWS_ARGS_CUSTOM").next().unwrap())
+        );
+    }
+
+    #[test]
+    fn strategy_dry_run_uses_only_server_persisted_confirmed_candidate() {
+        let operation = confirmed_strategy_pick("complete", "https", true);
+        let active_args = vec![
+            "/opt/usr/bin/nfqws2".into(),
+            "--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua".into(),
+            "--new".into(),
+            "--filter-tcp=443".into(),
+            "--lua-desync=old:pos=1".into(),
+        ];
+        let argv = strategy_dry_run_argv(
+            &operation,
+            0,
+            &active_args,
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(argv[0], "/opt/usr/bin/nfqws2");
+        assert_eq!(argv[1], "--dry-run");
+        assert!(
+            argv.iter()
+                .any(|argument| argument == "--lua-desync=multisplit:pos=1")
+        );
+        assert!(
+            !argv
+                .iter()
+                .any(|argument| argument == "--lua-desync=old:pos=1")
+        );
+        let mut unconfirmed = operation;
+        unconfirmed.results[0].confirmed = false;
+        assert!(
+            strategy_dry_run_argv(
+                &unconfirmed,
+                0,
+                &active_args,
+                &HashSet::from(["multisplit".to_string()]),
+                &[]
+            )
+            .is_err()
         );
     }
 
@@ -6121,6 +6614,7 @@ mod tests {
             label: "Hetzner".into(),
             host: "hetzner.com".into(),
             path: "/large.bin".into(),
+            target_kind: freeze_diagnostic::FreezeTargetKind::HostReference,
             address: Some(std::net::Ipv4Addr::new(91, 98, 156, 82)),
             asn_hint: Some(24940),
             asn: freeze_diagnostic::AsnVerification::Verified { asn: 24940 },
@@ -6169,6 +6663,7 @@ mod tests {
             label: label.into(),
             host: format!("{label}.example"),
             path: "/large.bin".into(),
+            target_kind: freeze_diagnostic::FreezeTargetKind::PinnedAddress,
             address: Some(std::net::Ipv4Addr::new(203, 0, 113, 1)),
             asn_hint: None,
             asn: freeze_diagnostic::AsnVerification::Unavailable,

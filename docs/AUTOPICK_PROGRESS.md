@@ -233,3 +233,12 @@
 - For the standard 20-target catalog this removes up to 40 ordinary HTTP transfers when every target responds normally, while preserving a second sample for suspected boundary stalls. This is a request-count consequence of the flow, not a wall-clock benchmark.
 - TDD: added tests for the repeat decision and single pre-body timeout, observed both fail on the old behavior, then implemented the helper and wired it into the scan and trace transfer paths.
 - Targeted Rust tests passed (15 transfer-diagnostic tests and 14 freeze-diagnostic tests); full Rust all-target suite passed (186 tests), Clippy, fmt check, host release build and ARM64 musl check passed. Frontend tests (99), typecheck, production build, frontend dependency audit, cargo audit and `git diff --check` passed. The end-to-end router scan and release workflow are still outstanding; no router state was changed.
+
+## 16 KB result presentation and confirmed-domain application — 2026-10-24
+
+- Styled scan rows by outcome: confirmed interruption uses a red edge/tint; a clean direct/current comparison or a strategy that passed repeat checks uses green; inconclusive rows remain neutral. Added frontend helper tests for row tones and apply eligibility.
+- Added `targetKind` to persisted scan results with a backward-compatible default. Only a fully completed scan can expose the apply action, and only when a user-entered hostname itself has a strategy with three successful probes. Reference IPs and provider rows cannot be applied to an entire ASN.
+- From the 16 KB row, users can preview a host-scoped profile without leaving the test page. Applying requires a confirmation, exact config revision, installed function/blob checks, static config validation, `nfqws2 --dry-run`, backup, and service restart. Existing config transaction restores the prior content and restarts the old config if service restart fails. Concurrent network diagnostics block apply.
+- Candidate steps come from the persisted completed test, not browser-supplied shell text. The active unsaved config editor draft is protected from accidental overwrite.
+- Verification: Rust all-target tests (188), frontend tests (103), typecheck and production Vite build passed. Device-side UI, binary dry-run and restart rollback are not exercised locally and still require router validation.
+- The remote 0.3.2 release dry-run succeeded before these UI/application changes. Rerun the release gate on the updated commit before merging and publishing.

@@ -511,6 +511,17 @@ textarea { line-height: 1.7; tab-size: 4; }
 #tabContent-diagnostic16k .freeze-scan-table tbody tr:hover {
   background-color: rgb(30 41 59 / 62%);
 }
+#tabContent-diagnostic16k .freeze-result-row {
+  border-inline-start: 3px solid transparent;
+}
+#tabContent-diagnostic16k .freeze-result-error { border-inline-start-color: #fb7185; background: rgb(127 29 29 / 10%); }
+#tabContent-diagnostic16k .freeze-result-success { border-inline-start-color: #34d399; background: rgb(6 78 59 / 9%); }
+#tabContent-diagnostic16k .freeze-result-warning { border-inline-start-color: #fbbf24; background: rgb(120 53 15 / 10%); }
+#tabContent-diagnostic16k .freeze-result-neutral { border-inline-start-color: #64748b; }
+#tabContent-diagnostic16k .freeze-result-error .freeze-result-summary { color: #fda4af; }
+#tabContent-diagnostic16k .freeze-result-success .freeze-result-summary { color: #6ee7b7; }
+#tabContent-diagnostic16k .freeze-result-warning .freeze-result-summary { color: #fde68a; }
+#tabContent-diagnostic16k .freeze-result-neutral .freeze-result-summary { color: #cbd5e1; }
 #tabContent-diagnostic16k .freeze-scan-table td {
   color: #f1f5f9;
   font-weight: 600;

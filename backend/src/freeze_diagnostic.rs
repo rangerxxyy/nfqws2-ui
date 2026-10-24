@@ -148,9 +148,10 @@ pub fn verify_asn_hint(hint: Option<u32>, response: &[u8]) -> AsnVerification {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FreezeTargetKind {
+    #[default]
     HostReference,
     PinnedAddress,
     UserHost,
@@ -445,6 +446,8 @@ pub struct FreezeNetworkResult {
     pub label: String,
     pub host: String,
     pub path: String,
+    #[serde(default)]
+    pub target_kind: FreezeTargetKind,
     pub address: Option<Ipv4Addr>,
     pub asn_hint: Option<u32>,
     pub asn: AsnVerification,
@@ -705,6 +708,7 @@ pub async fn scan_network_baselines(
                 label: target.label.clone(),
                 host: target.host.clone(),
                 path: target.path.clone(),
+                target_kind: target.kind,
                 address: None,
                 asn_hint: target.asn_hint,
                 asn: AsnVerification::Unavailable,
@@ -731,6 +735,7 @@ pub async fn scan_network_baselines(
             label: target.label.clone(),
             host: target.host.clone(),
             path: target.path.clone(),
+            target_kind: target.kind,
             address: Some(address),
             asn_hint: target.asn_hint,
             asn: AsnVerification::Unavailable,
