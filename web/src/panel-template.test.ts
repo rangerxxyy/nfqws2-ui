@@ -238,6 +238,12 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('set_literal_or_append(&request.key, &request.value)');
   });
 
+  it('places the UI release notice in its own bottom-left notification area', () => {
+    expect(template).toContain('id="uiUpdateNoticeWrapper"');
+    expect(template).toContain('fixed bottom-5 left-5');
+    expect(panelSource).toContain("const host = $('#uiUpdateNoticeWrapper')");
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');

@@ -95,7 +95,7 @@ function renderUiUpdateNotice(status: UiUpdateStatus, manualCheck = false) {
     hideUiUpdateNotice();
     return;
   }
-  const host = $('#toastWrapper');
+  const host = $('#uiUpdateNoticeWrapper');
   if (!host || $('#uiUpdateNotice')?.getAttribute('data-version') === presentation.version) return;
   hideUiUpdateNotice();
   const item = document.createElement('section');

@@ -1605,6 +1605,7 @@ export default function App() {
 {"\n\n  "}
 {"\n  "}
     <div id={"toastWrapper"} className={"fixed bottom-5 right-5 z-50 space-y-2.5 pointer-events-none"}></div>
+    <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 left-5 z-50 space-y-2.5 pointer-events-none"}></div>
 {"\n\n  "}
 {"\n  "}
 {"\n  "}
