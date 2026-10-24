@@ -8319,7 +8319,8 @@ mod tests {
         assert!(started["report"].is_null());
         let mut operation = serde_json::Value::Null;
         let mut saw_partial = false;
-        for _ in 0..20 {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
             let response = app
                 .clone()
                 .oneshot(
