@@ -1,5 +1,5 @@
 const TOOLTIP_CLASS = 'action-tooltip';
-export const DEFAULT_ACTION_TOOLTIP_DELAY_MS = 3000;
+export const DEFAULT_ACTION_TOOLTIP_DELAY_MS = 2000;
 export function scheduleDelayedTooltip(callback: () => void, delayMs = DEFAULT_ACTION_TOOLTIP_DELAY_MS): () => void {
   const timer = globalThis.setTimeout(callback, delayMs);
   return () => globalThis.clearTimeout(timer);

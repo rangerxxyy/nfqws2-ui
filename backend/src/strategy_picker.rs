@@ -915,6 +915,44 @@ pub fn build_custom_plan(
     })
 }
 
+/// Put user-entered candidates first, then keep the normal generated plan.
+pub fn prepend_custom_candidates(
+    plan: &mut StrategyPlan,
+    custom_strategies: &[Vec<String>],
+    available_functions: &HashSet<String>,
+    available_blobs: &[String],
+) -> Result<(), String> {
+    if custom_strategies.is_empty() || custom_strategies.len() > 10 {
+        return Err("Укажите от 1 до 10 пользовательских стратегий".into());
+    }
+    let mut seen = HashSet::<Vec<String>>::new();
+    let mut custom = Vec::new();
+    for steps in custom_strategies {
+        validate_candidate(steps, available_functions, available_blobs)?;
+        if !seen.insert(steps.clone()) {
+            continue;
+        }
+        let name = steps
+            .iter()
+            .filter_map(|step| parse_step(step).ok().map(|(function, _)| function))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        custom.push(StrategyCandidate {
+            name,
+            source: "Пользовательская стратегия".into(),
+            steps: steps.clone(),
+        });
+    }
+    if custom.is_empty() {
+        return Err("Не удалось добавить пользовательские стратегии".into());
+    }
+    plan.candidates
+        .retain(|candidate| !seen.contains(&candidate.steps));
+    plan.candidates.splice(0..0, custom);
+    plan.candidates.truncate(MAX_CANDIDATES);
+    Ok(())
+}
+
 /// Build a one-profile test argv from the active process. Global options/Lua
 /// initializers are retained; every live profile is discarded so the tested
 /// candidate cannot silently coexist with the primary strategies.
@@ -1120,7 +1158,10 @@ pub fn build_domain_profile(
 
 #[cfg(test)]
 mod application_tests {
-    use super::{StrategyProtocol, build_custom_plan, build_domain_profile};
+    use super::{
+        StrategyMode, StrategyProtocol, build_custom_plan, build_domain_profile, build_plan,
+        prepend_custom_candidates,
+    };
     use std::collections::HashSet;
 
     #[test]
@@ -1208,6 +1249,30 @@ mod application_tests {
                 &[],
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn custom_candidates_run_first_and_preserve_the_normal_quick_plan() {
+        let functions = HashSet::from(["multisplit".to_string(), "fakedsplit".to_string()]);
+        let configured = vec![vec!["--lua-desync=multisplit:pos=1".to_string()]];
+        let mut plan = build_plan(
+            StrategyProtocol::Https,
+            StrategyMode::Quick,
+            &configured,
+            &functions,
+            &[],
+        );
+        let baseline_count = plan.candidates.len();
+        let user_steps = vec![vec!["--lua-desync=fakedsplit:pos=1".to_string()]];
+        prepend_custom_candidates(&mut plan, &user_steps, &functions, &[]).unwrap();
+        assert_eq!(plan.candidates[0].source, "Пользовательская стратегия");
+        assert_eq!(plan.candidates[0].steps, user_steps[0]);
+        assert!(plan.candidates.len() >= baseline_count);
+        assert!(
+            plan.candidates
+                .iter()
+                .any(|candidate| candidate.source == "Текущий профиль")
         );
     }
 }

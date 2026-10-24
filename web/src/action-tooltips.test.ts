@@ -4,12 +4,12 @@ import { DEFAULT_ACTION_TOOLTIP_DELAY_MS, fallbackTooltipText, scheduleDelayedTo
 describe('delayed action tooltip timer', () => {
   afterEach(() => vi.useRealTimers());
 
-  it('waits three seconds and can be cancelled before it appears', () => {
+  it('waits two seconds and can be cancelled before it appears', () => {
     vi.useFakeTimers();
     const show = vi.fn();
     const cancel = scheduleDelayedTooltip(show);
-    expect(DEFAULT_ACTION_TOOLTIP_DELAY_MS).toBe(3000);
-    vi.advanceTimersByTime(2999);
+    expect(DEFAULT_ACTION_TOOLTIP_DELAY_MS).toBe(2000);
+    vi.advanceTimersByTime(1999);
     expect(show).not.toHaveBeenCalled();
     cancel();
     vi.advanceTimersByTime(1);

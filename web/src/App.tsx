@@ -36,7 +36,7 @@ export default function App() {
           {"\n\n        "}
           {"\n        "}
           <div id={"headerServiceControls"} className={"shrink-0 flex items-center gap-1"}>
-          <button data-action-click={"restartService"} title={"Перезапустить nfqws2"} aria-label={"Перезапустить nfqws2"} className={"h-9 w-9 rounded-lg bg-slate-800/90 hover:bg-slate-700 hover:-translate-y-0.5 text-slate-100 border border-slate-700 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+          <button data-action-click={"restartService"} data-action-tooltip={"Перезапустить nfqws2"} title={"Перезапустить nfqws2"} aria-label={"Перезапустить nfqws2"} className={"h-9 w-9 rounded-lg bg-slate-800/90 hover:bg-slate-700 hover:-translate-y-0.5 text-slate-100 border border-slate-700 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
             {"\n          "}
             <svg id={"restartIcon"} aria-hidden={"true"} className={"w-[18px] h-[18px] text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
@@ -48,11 +48,11 @@ export default function App() {
           </button>
           {"\n\n        "}
           {"\n        "}
-          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} title={"Остановить nfqws2"} aria-label={"Остановить nfqws2"} className={"h-9 w-9 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 hover:-translate-y-0.5 text-rose-400 border border-rose-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"}>
+          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} data-action-tooltip={"Остановить nfqws2"} title={"Остановить nfqws2"} aria-label={"Остановить nfqws2"} className={"h-9 w-9 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 hover:-translate-y-0.5 text-rose-400 border border-rose-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"}>
             {"\n          "}
             <svg aria-hidden={"true"} className={"w-[18px] h-[18px]"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
-              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
+              <rect x={"8"} y={"8"} width={"8"} height={"8"} rx={"1"} fill={"currentColor"}></rect>
               {"\n          "}
             </svg>
             {"\n          "}
@@ -160,7 +160,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:pr-2 lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
+        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:pr-2 lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto 2xl:-translate-x-2"}>
           {"\n        \n        "}
           {"\n        "}
           <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
@@ -851,6 +851,7 @@ export default function App() {
                 </span>
                 {"\n            "}
               </button>
+              <div id={"customListTabs"} className={"flex items-center"}></div>
               {"\n\n          "}
             </div>
             {"\n\n          "}
@@ -1423,7 +1424,7 @@ export default function App() {
     </div>
 {"\n\n  "}
 {"\n  "}
-    <div id={"toastWrapper"} className={"fixed bottom-5 left-5 z-50 space-y-2.5 pointer-events-none"}></div>
+    <div id={"toastWrapper"} className={"fixed bottom-24 right-5 z-50 space-y-2.5 pointer-events-none"}></div>
     <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] space-y-2.5 pointer-events-none"}></div>
     <div id={"customListDeleteModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"customListDeleteTitle"}>

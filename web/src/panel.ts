@@ -1,4 +1,5 @@
 import { diagnosisRows } from './diagnosis-layout';
+import { parseCustomStrategies } from './custom-strategy-input';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
 import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentation';
@@ -109,36 +110,31 @@ function renderUiUpdateNotice(status: UiUpdateStatus, manualCheck = false) {
   const item = document.createElement('section');
   item.id = 'uiUpdateNotice';
   item.dataset.version = presentation.version;
-  item.className = 'ui-update-notice pointer-events-auto relative max-w-sm rounded-xl border px-4 py-3 text-slate-100 shadow-2xl';
+  item.className = 'ui-update-notice pointer-events-auto relative w-[22.5rem] max-w-[calc(100vw-2.5rem)] rounded-xl border px-4 py-3 text-slate-100 shadow-2xl';
   item.setAttribute('role', 'status');
   item.setAttribute('aria-live', 'polite');
   const heading = document.createElement('div');
-  heading.className = 'flex items-center gap-2 pr-7 text-sm font-bold text-blue-100';
+  heading.className = 'flex items-center gap-2 text-sm font-bold text-blue-100';
   const icon = document.createElement('span');
   icon.className = 'inline-flex h-5 w-5 items-center justify-center rounded-full border border-blue-300/40 text-blue-200';
   icon.textContent = '✓';
   icon.setAttribute('aria-hidden', 'true');
   const title = document.createElement('span');
   title.textContent = 'Доступно обновление';
-  heading.append(icon, title);
-  const body = document.createElement('p');
-  body.className = 'mt-1 text-xs leading-relaxed text-slate-300';
-  body.textContent = `Доступна новая версия nfqws2-UI ${presentation.version}`;
-  const actions = document.createElement('div');
-  actions.className = 'mt-3 flex items-center justify-between gap-3';
-  const openButton = document.createElement('button');
-  openButton.type = 'button';
-  openButton.dataset.actionClick = 'openLatestUiUpdate';
-  openButton.dataset.args = JSON.stringify([presentation.version]);
-  openButton.className = 'rounded-lg border border-blue-400/50 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-100 transition-colors hover:bg-blue-500/25';
-  openButton.textContent = 'Обновить';
   const releaseLink = document.createElement('a');
   releaseLink.href = status.releaseUrl;
   releaseLink.target = '_blank';
   releaseLink.rel = 'noopener noreferrer';
-  releaseLink.className = 'text-xs text-slate-400 underline decoration-slate-600 underline-offset-2 hover:text-blue-200';
-  releaseLink.textContent = 'GitHub';
-  actions.append(openButton, releaseLink);
+  releaseLink.setAttribute('aria-label', 'Открыть релиз на GitHub');
+  releaseLink.className = 'ml-auto inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-300 transition-colors hover:bg-slate-700 hover:text-white';
+  releaseLink.innerHTML = '<svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="h-4 w-4"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.49-2.7-.95-2.7-.95-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.8.06 1.22.82 1.22.82.72 1.22 1.9.87 2.36.66.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.7 7.7 0 0 1 8 4.99c.68 0 1.36.09 2 .27 1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.08-1.87 3.75-3.66 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>';
+  heading.append(icon, title, releaseLink);
+  const body = document.createElement('button');
+  body.type = 'button';
+  body.dataset.actionClick = 'openLatestUiUpdate';
+  body.dataset.args = JSON.stringify([presentation.version]);
+  body.className = 'mt-1 block w-full text-left text-sm leading-relaxed text-slate-300 hover:text-white';
+  body.textContent = `Доступна новая версия nfqws2-UI ${presentation.version}`;
   const close = document.createElement('button');
   close.type = 'button';
   close.dataset.actionClick = 'dismissUiUpdateNotice';
@@ -146,7 +142,7 @@ function renderUiUpdateNotice(status: UiUpdateStatus, manualCheck = false) {
   close.className = 'absolute right-2.5 top-2 rounded-md px-1.5 py-0.5 text-lg leading-none text-slate-400 hover:bg-slate-700/70 hover:text-white';
   close.setAttribute('aria-label', 'Скрыть уведомление об обновлении');
   close.textContent = '×';
-  item.append(heading, body, actions, close);
+  item.append(heading, body, close);
   host.append(item);
 }
 async function refreshUiUpdateStatus() {
@@ -728,14 +724,16 @@ async function loadList(id: NfqwsListId) {
   }
 }
 function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
-  const host = $('#listFileTabs');
+  const host = $('#customListTabs');
   if (!host) return;
-  all<HTMLButtonElement>('[data-custom-list-tab="true"]').forEach((tab) => tab.remove());
+  host.replaceChildren();
   const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
   const fileById = new Map(files.map((file) => [file.id, file]));
   for (const id of listTabIdsFromInventory(files).filter((candidate) => !standardIds.has(candidate))) {
     const summary = fileById.get(id);
     if (!summary) continue;
+    const group = document.createElement('div');
+    group.className = 'list-custom-tab-group';
     const button = document.createElement('button');
     button.type = 'button';
     button.id = `listTab-${id}`;
@@ -747,16 +745,17 @@ function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
     const label = document.createElement('span');
     label.textContent = id;
     button.append(label);
-    host.append(button);
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.dataset.actionClick = 'requestDeleteCustomList';
     remove.dataset.args = JSON.stringify([id]);
     remove.dataset.customListDelete = 'true';
-    remove.className = 'list-file-delete px-2 text-slate-500 hover:text-rose-300 transition-colors';
+    remove.dataset.actionTooltip = `Удалить пользовательский список ${id}`;
+    remove.className = 'list-file-delete';
     remove.setAttribute('aria-label', `Удалить пользовательский список ${id}`);
-    remove.textContent = '×';
-    host.append(remove);
+    remove.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"></path></svg>';
+    group.append(button, remove);
+    host.append(group);
   }
 }
 function requestDeleteCustomList(id: string) {
@@ -1293,7 +1292,9 @@ async function startStrategyPick() {
   const includeOtherHistory = ($('#strategyIncludeOtherHistory') as HTMLInputElement | null)?.checked ?? false;
   const refineLighter = ($('#strategyRefineLighter') as HTMLInputElement | null)?.checked ?? false;
   if (!Number.isInteger(repeats) || repeats < 2 || repeats > 5) return toast('Число повторов должно быть от 2 до 5.', 'error');
-  const customSteps = customInput instanceof HTMLTextAreaElement ? customInput.value.split(/\r?\n/).map((step) => step.trim()).filter(Boolean) : [];
+  let customSteps: string[][] = [];
+  try { customSteps = customInput instanceof HTMLTextAreaElement ? parseCustomStrategies(customInput.value) : []; }
+  catch (error) { return toast(error instanceof Error ? error.message : 'Не удалось прочитать собственные стратегии.', 'error'); }
   if (selectedMode === 'custom' && customSteps.length === 0) return toast('Добавьте хотя бы один параметр --lua-desync=…', 'error');
   const container = $('#autotuneStrategiesList'); container?.replaceChildren();
   $('#autotunePreviewPanel')?.classList.add('hidden');
@@ -1575,9 +1576,6 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
       availableReleases = result.releases;
       installedCoreTag = null;
       renderUiUpdateNotice(result.updateStatus, true);
-      if (!result.updateStatus.updateAvailable) {
-        toast(`Панель актуальна: установлена версия ${result.updateStatus.currentVersion}.`);
-      }
     }
     selectedReleaseTag = availableReleases[0]?.tag ?? null;
     renderReleases();

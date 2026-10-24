@@ -44,11 +44,11 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'running', stage: 'testing', current: 'multisplit' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
-    const started = await nfqwsDiagnostics.strategyStart('example.com', 'https', 'custom', 4, ['--lua-desync=multisplit:pos=1'], true, true, true, true);
+    const started = await nfqwsDiagnostics.strategyStart('example.com', 'https', 'custom', 4, [['--lua-desync=multisplit:pos=1']], true, true, true, true);
     expect(await nfqwsDiagnostics.strategyStatus(started.id)).toMatchObject({ state: 'running', current: 'multisplit' });
     expect(await nfqwsDiagnostics.strategyCancel(started.id)).toMatchObject({ state: 'stopping' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeCommunity: true, includeOtherHistory: true, refineLighter: true, customSteps: ['--lua-desync=multisplit:pos=1'] });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeCommunity: true, includeOtherHistory: true, refineLighter: true, customSteps: [['--lua-desync=multisplit:pos=1']] });
   });
 
   it('requests the full blockcheck2 candidate catalog explicitly', async () => {

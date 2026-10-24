@@ -169,7 +169,7 @@ struct StrategyPickRequest {
     include_other_history: bool,
     #[serde(default)]
     refine_lighter: bool,
-    custom_steps: Option<Vec<String>>,
+    custom_steps: Option<Vec<Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -3718,14 +3718,15 @@ async fn start_strategy_pick(
             );
         }
     };
+    let custom_mode = request.mode.as_deref() == Some("custom");
     let mode = match request.mode.as_deref().unwrap_or("quick") {
         "quick" => Some(StrategyMode::Quick),
         "extended" => Some(StrategyMode::Extended),
         "full" => Some(StrategyMode::Full),
-        "custom" => None,
+        "custom" => Some(StrategyMode::Quick),
         _ => return error(StatusCode::BAD_REQUEST, "Неизвестный режим подбора"),
     };
-    if mode.is_none() && request.custom_steps.is_none() {
+    if custom_mode && request.custom_steps.is_none() {
         return error(
             StatusCode::BAD_REQUEST,
             "Для режима собственной стратегии укажите от 1 до 8 строк --lua-desync=…",
@@ -3757,22 +3758,28 @@ async fn start_strategy_pick(
         );
     }
     let blobs = active_blob_names(&active_args);
-    let mut plan = if let Some(mode) = mode {
-        let configured = strategy_picker::configured_candidates(&active_args, protocol);
-        strategy_picker::build_plan(protocol, mode, &configured, &functions, &blobs)
-    } else {
+    let configured = strategy_picker::configured_candidates(&active_args, protocol);
+    let mut plan = strategy_picker::build_plan(
+        protocol,
+        mode.unwrap_or(StrategyMode::Quick),
+        &configured,
+        &functions,
+        &blobs,
+    );
+    if custom_mode {
         let Some(steps) = request.custom_steps.as_deref() else {
             return error(
                 StatusCode::BAD_REQUEST,
-                "Для режима собственной стратегии укажите от 1 до 8 строк --lua-desync=…",
+                "Для собственной стратегии укажите от 1 до 10 вариантов --lua-desync=…",
             );
         };
-        match strategy_picker::build_custom_plan(protocol, steps, &functions, &blobs) {
-            Ok(plan) => plan,
-            Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+        if let Err(message) =
+            strategy_picker::prepend_custom_candidates(&mut plan, steps, &functions, &blobs)
+        {
+            return error(StatusCode::UNPROCESSABLE_ENTITY, message);
         }
-    };
-    if mode.is_some() {
+    }
+    {
         let history = load_confirmed_strategy_candidates(
             &state.data_dir.join("strategy-pick-operations"),
             &host,
@@ -3786,15 +3793,10 @@ async fn start_strategy_pick(
         .await;
         strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
     }
-    let freeze_candidates = if mode.is_some() {
+    let freeze_candidates = {
         load_confirmed_freeze_candidates(&state.data_dir.join("freeze-diagnostic-operations")).await
-    } else {
-        Vec::new()
     };
-    if plan.candidates.is_empty()
-        && freeze_candidates.is_empty()
-        && !(request.include_community && mode.is_some())
-    {
+    if plan.candidates.is_empty() && freeze_candidates.is_empty() && !request.include_community {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Нет совместимых стратегий для выбранного протокола в активном конфиге и подключённых Lua-файлах",
@@ -3856,9 +3858,9 @@ async fn start_strategy_pick(
     let task_repeats = repeats;
     let stop_after_first_confirmed = request.stop_after_first_confirmed;
     let refine_lighter = request.refine_lighter;
-    let include_community = request.include_community && mode.is_some();
+    let include_community = request.include_community;
     let community_cache_dir = state.data_dir.join("community-strategy-cache");
-    let include_catalog_sources = mode.is_some();
+    let include_catalog_sources = true;
     let binary = paths.binary.to_string_lossy().into_owned();
     let active_args_for_task = active_args.clone();
     let functions_for_task = functions.clone();

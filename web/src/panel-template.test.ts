@@ -301,7 +301,11 @@ describe('TSX panel without authentication', () => {
   });
 
   it('only offers delete actions for custom lists and deletes with revision protection', () => {
+    expect(template).toContain('id="customListTabs"');
+    expect(panelSource).toContain("const host = $('#customListTabs')");
+    expect(panelSource).toContain('host.replaceChildren()');
     expect(panelSource).toContain("remove.dataset.actionClick = 'requestDeleteCustomList'");
+    expect(panelSource).toContain('<svg aria-hidden="true" viewBox="0 0 24 24"');
     expect(panelSource).toContain('await nfqwsLists.delete(id, current.revision)');
     expect(readFileSync(new URL('./api.ts', import.meta.url), 'utf8')).toContain('method: \'DELETE\'');
     expect(backendSource).toContain('async fn delete_custom_list');
@@ -352,7 +356,7 @@ describe('TSX panel without authentication', () => {
     expect(tooltipSource).toContain('scheduleDelayedTooltip');
     expect(tooltipSource).toContain('element.removeAttribute(\'title\')');
     expect(tooltipSource).toContain("setAttribute('role', 'tooltip')");
-    expect(tooltipSource).toContain('DEFAULT_ACTION_TOOLTIP_DELAY_MS = 3000');
+    expect(tooltipSource).toContain('DEFAULT_ACTION_TOOLTIP_DELAY_MS = 2000');
     expect(panelStyles).toContain('.action-tooltip');
   });
 
