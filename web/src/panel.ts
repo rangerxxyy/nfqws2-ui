@@ -3,6 +3,7 @@ import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-
 import { summarizeFreezeScan } from './freeze-summary';
 import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentation';
 import { freezeProgressPresentation } from './freeze-progress';
+import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -11,6 +12,7 @@ import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqw
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
 import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
+import type { UiUpdateStatus } from './api';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community';
 export const UNAVAILABLE_PANEL_ROUTES = ['monitor', 'community'] as const;
@@ -35,7 +37,10 @@ let selectedReleaseTag: string | null = null;
 let updatePolling = false;
 let updateTarget: 'ui' | 'core' = 'ui';
 let installedCoreTag: string | null = null;
+let uiUpdateStatusPolling = false;
+let uiUpdateNoticeOpenedTag: string | null = null;
 const UPDATE_NOTICE_KEY = 'nfqws2-ui-update-notice';
+const UI_UPDATE_DISMISSED_TAG_KEY = 'nfqws2-ui-update-dismissed-tag';
 const LIST_DISPLAY_NAMES: Record<NfqwsListId, string> = {
   'user.list': 'Пользовательские домены',
   'auto.list': 'Домены для автообучения',
@@ -66,6 +71,80 @@ function showPendingUpdateNotice() {
     window.sessionStorage.removeItem(UPDATE_NOTICE_KEY);
     window.setTimeout(() => toast(message), 100);
   } catch { /* Storage can be unavailable in restricted browser contexts. */ }
+}
+function hideUiUpdateNotice() { $('#uiUpdateNotice')?.remove(); }
+function dismissUiUpdateNotice(tag: string) {
+  try { window.localStorage.setItem(UI_UPDATE_DISMISSED_TAG_KEY, tag); } catch { /* Still allow the notice to be closed if storage is blocked. */ }
+  hideUiUpdateNotice();
+}
+function renderUiUpdateNotice(status: UiUpdateStatus) {
+  let dismissedTag: string | null = null;
+  try { dismissedTag = window.localStorage.getItem(UI_UPDATE_DISMISSED_TAG_KEY); } catch { /* Treat storage failure as not dismissed. */ }
+  const suppressedTag = status.latestVersion && (dismissedTag === status.latestVersion || uiUpdateNoticeOpenedTag === status.latestVersion)
+    ? status.latestVersion
+    : null;
+  const presentation = uiUpdateNoticePresentation(status, suppressedTag);
+  const updateButton = $('#updateUiButton');
+  updateButton?.classList.toggle('update-available', presentation.highlight);
+  updateButton?.setAttribute('aria-label', presentation.highlight
+    ? `Доступно обновление панели: ${presentation.version}`
+    : `Версия панели ${status.currentVersion}`);
+  if (!presentation.notify || !presentation.version || !status.releaseUrl) {
+    hideUiUpdateNotice();
+    return;
+  }
+  const host = $('#toastWrapper');
+  if (!host || $('#uiUpdateNotice')?.getAttribute('data-version') === presentation.version) return;
+  hideUiUpdateNotice();
+  const item = document.createElement('section');
+  item.id = 'uiUpdateNotice';
+  item.dataset.version = presentation.version;
+  item.className = 'ui-update-notice pointer-events-auto relative max-w-sm rounded-xl border px-4 py-3 text-slate-100 shadow-2xl';
+  item.setAttribute('role', 'status');
+  item.setAttribute('aria-live', 'polite');
+  const heading = document.createElement('div');
+  heading.className = 'flex items-center gap-2 pr-7 text-sm font-bold text-blue-100';
+  const icon = document.createElement('span');
+  icon.className = 'inline-flex h-5 w-5 items-center justify-center rounded-full border border-blue-300/40 text-blue-200';
+  icon.textContent = '✓';
+  icon.setAttribute('aria-hidden', 'true');
+  const title = document.createElement('span');
+  title.textContent = 'Доступно обновление';
+  heading.append(icon, title);
+  const body = document.createElement('p');
+  body.className = 'mt-1 text-xs leading-relaxed text-slate-300';
+  body.textContent = `Доступна новая версия nfqws2-UI ${presentation.version}`;
+  const actions = document.createElement('div');
+  actions.className = 'mt-3 flex items-center justify-between gap-3';
+  const openButton = document.createElement('button');
+  openButton.type = 'button';
+  openButton.dataset.actionClick = 'openLatestUiUpdate';
+  openButton.dataset.args = JSON.stringify([presentation.version]);
+  openButton.className = 'rounded-lg border border-blue-400/50 bg-blue-500/15 px-3 py-1.5 text-xs font-semibold text-blue-100 transition-colors hover:bg-blue-500/25';
+  openButton.textContent = 'Обновить';
+  const releaseLink = document.createElement('a');
+  releaseLink.href = status.releaseUrl;
+  releaseLink.target = '_blank';
+  releaseLink.rel = 'noopener noreferrer';
+  releaseLink.className = 'text-xs text-slate-400 underline decoration-slate-600 underline-offset-2 hover:text-blue-200';
+  releaseLink.textContent = 'GitHub';
+  actions.append(openButton, releaseLink);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.dataset.actionClick = 'dismissUiUpdateNotice';
+  close.dataset.args = JSON.stringify([presentation.version]);
+  close.className = 'absolute right-2.5 top-2 rounded-md px-1.5 py-0.5 text-lg leading-none text-slate-400 hover:bg-slate-700/70 hover:text-white';
+  close.setAttribute('aria-label', 'Скрыть уведомление об обновлении');
+  close.textContent = '×';
+  item.append(heading, body, actions, close);
+  host.append(item);
+}
+async function refreshUiUpdateStatus() {
+  if (uiUpdateStatusPolling) return;
+  uiUpdateStatusPolling = true;
+  try { renderUiUpdateNotice(await nfqwsUpdates.uiStatus()); }
+  catch { /* Background update checks must not interrupt panel use. */ }
+  finally { uiUpdateStatusPolling = false; }
 }
 function showDiagnosisProgress(host: HTMLElement, domain: string) {
   const item = document.createElement('div');
@@ -1391,6 +1470,8 @@ function bindPrototypeActions() {
     resetDefaultConf: () => void loadConfig(),
     closeUpdateModal: () => { const modal = $('#updateModalBackdrop'); modal?.classList.add('hidden'); modal?.classList.remove('flex'); },
     openUpdateModal: (target: 'ui' | 'core') => void openUpdatePicker(target),
+    openLatestUiUpdate: (tag: string) => { uiUpdateNoticeOpenedTag = tag; hideUiUpdateNotice(); void openUpdatePicker('ui'); },
+    dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
     selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { selectedReleaseTag = tag; renderReleases(); } },
     installSelectedRelease: () => void installSelectedRelease(),
     switchUpdateTarget: (target: 'ui' | 'core') => { if (!updatePolling) void openUpdatePicker(target); },
@@ -1475,6 +1556,9 @@ function boot() {
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigLines);
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();
+  void refreshUiUpdateStatus();
+  window.setInterval(() => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); }, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); });
   void loadConfig();
   window.setInterval(() => { if (document.visibilityState === 'visible') void fetchStatus(); }, 3000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void fetchStatus(); });

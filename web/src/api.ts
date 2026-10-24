@@ -55,6 +55,7 @@ export type NfqwsInstallation = {
 };
 export type BackupItem = { id: string; createdAt: number; file: string };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
+export type UiUpdateStatus = { currentVersion: string; latestVersion: string | null; updateAvailable: boolean; releaseUrl: string | null; checkedAt: number | null };
 export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null };
 export type UpdateOperation = {
   id: string;
@@ -137,6 +138,7 @@ export const nfqwsDiagnostics = {
 };
 
 export const nfqwsUpdates = {
+  uiStatus: () => api<UiUpdateStatus>('/api/updates/status'),
   releases: () => api<{ releases: PanelRelease[] }>('/api/updates/releases'),
   install: (tag: string) => api<UpdateOperation>('/api/updates/install', {
     method: 'POST', body: JSON.stringify({ tag }),

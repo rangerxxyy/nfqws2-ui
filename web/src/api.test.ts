@@ -222,6 +222,20 @@ describe('API client used by the source-based panel', () => {
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ tag: 'v0.1.7' });
   });
 
+  it('loads the cached background UI update status from the local backend', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      '{"currentVersion":"0.3.4","latestVersion":"v0.3.5","updateAvailable":true,"releaseUrl":"https://github.com/rangerxxyy/nfqws2-ui/releases/tag/v0.3.5","checkedAt":123}',
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const status = await nfqwsUpdates.uiStatus();
+
+    expect(status.updateAvailable).toBe(true);
+    expect(status.latestVersion).toBe('v0.3.5');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/updates/status');
+  });
+
   it('polls update status by operation id', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":"abc123","state":"success","message":"Установлено"}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

@@ -347,6 +347,15 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).not.toMatch(/installSelectedRelease.*toast\('Эта функция пока не подключена/);
   });
 
+  it('checks UI updates in the background and provides a persistent dismissible notice', () => {
+    expect(panelSource).toContain("nfqwsUpdates.uiStatus()");
+    expect(panelSource).toContain("window.setInterval(() => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); }, 5 * 60 * 1000)");
+    expect(panelSource).toContain("dataset.actionClick = 'openLatestUiUpdate'");
+    expect(panelSource).toContain("dataset.actionClick = 'dismissUiUpdateNotice'");
+    expect(panelStyles).toContain('.version-pill.update-available');
+    expect(panelStyles).toContain('.ui-update-notice');
+  });
+
   it('shows the confirmed update result after a cache-fresh page reload', () => {
     expect(panelSource).toContain('schedulePanelRefreshAfterUpdate');
     expect(panelSource).toContain('nfqws2-ui-update-notice');
