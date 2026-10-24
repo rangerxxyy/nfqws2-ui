@@ -5,13 +5,13 @@ import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentati
 import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
-import { configAssignmentValue } from './config-values';
+import { configAssignmentValue, configEditorLayout, configOutlineEntries } from './config-values';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsModuleReference, type NfqwsRuntime, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
-import { availableNfqwsModes, summarizeNfqwsConfig } from './config-facts';
+import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import type { UiUpdateStatus } from './api';
 
@@ -19,6 +19,8 @@ type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k'
 export const UNAVAILABLE_PANEL_ROUTES = ['monitor', 'community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
+let luaScripts: NfqwsLuaScriptInfo[] = [];
+let activeLuaScript: string | null = null;
 let discoveredNetworkInterfaces: string[] = [];
 let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
@@ -284,12 +286,10 @@ async function loadConfig() {
     config = await api<ConfigResponse>('/api/config?file=nfqws2.conf');
     const applyButton = $('[data-action-click="applyConfigAndRestart"]');
     let canWriteConfig = false;
-    let moduleReferences: NfqwsModuleReference[] = [];
     let networkInterfaces: string[] = [];
     try {
       const installation = await nfqwsInstallation.get();
       canWriteConfig = installation.config?.writable === true;
-      moduleReferences = installation.moduleReferences ?? [];
       networkInterfaces = installation.networkInterfaces ?? [];
       discoveredNetworkInterfaces = networkInterfaces;
     } catch (error) {
@@ -304,138 +304,80 @@ async function loadConfig() {
     setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} строк`);
     setText('#currentConfigPath', 'Конфигурация');
     const configTitle = $('#currentConfigPath'); if (configTitle) configTitle.title = config.file;
-    setText('#moduleStatusBadge', `${moduleReferences.length} ссылок в конфигурации`);
-    renderConfigModules(moduleReferences);
-    renderConfigSections(config.content);
     renderNfqwsArgumentEditors(config.content);
-    await loadRuntimeProfiles();
     updateQuickParameters(config.content, networkInterfaces);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
     setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:—');
     syncConfigLines();
+    renderConfigOutline();
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
 }
-function switchConfigSection(section: 'editor' | 'settings') {
-  const activeId = section === 'editor' ? 'configEditorPanel' : 'configSettingsPanel';
-  const inactiveId = section === 'editor' ? 'configSettingsPanel' : 'configEditorPanel';
-  const activePanel = document.getElementById(activeId);
-  const inactivePanel = document.getElementById(inactiveId);
-  if (!activePanel || !inactivePanel) return;
-  activePanel.classList.remove('hidden');
-  inactivePanel.classList.add('hidden');
+function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
+  const selectedId = { editor: 'configEditorPanel', settings: 'configSettingsPanel', scripts: 'configScriptsPanel' }[section];
+  for (const id of ['configEditorPanel', 'configSettingsPanel', 'configScriptsPanel']) {
+    const panel = document.getElementById(id);
+    if (!panel) continue;
+    panel.classList.toggle('hidden', id !== selectedId);
+  }
+  const activePanel = document.getElementById(selectedId);
+  if (!activePanel) return;
   activePanel.classList.remove('config-panel-enter');
   void activePanel.offsetWidth;
   activePanel.classList.add('config-panel-enter');
-  for (const [id, selected] of [['configTabEditor', section === 'editor'], ['configTabSettings', section === 'settings']] as const) {
+  for (const [id, selected] of [['configTabEditor', section === 'editor'], ['configTabSettings', section === 'settings'], ['configTabScripts', section === 'scripts']] as const) {
     const button = document.getElementById(id);
     if (!button) continue;
     button.setAttribute('aria-pressed', String(selected));
     button.classList.toggle('config-subtab-active', selected);
   }
+  if (section === 'scripts') void loadLuaScripts();
 }
-async function loadRuntimeProfiles() {
-  const host = $('#nfqwsRuntimeProfiles');
+
+function renderLuaScriptTabs() {
+  const host = $('#luaScriptTabs');
   if (!host) return;
   host.replaceChildren();
-  try {
-    const runtime = await nfqwsRuntime.get();
-    renderRuntimeProfiles(host, runtime);
-  } catch (error) {
-    const message = document.createElement('div');
-    message.className = 'text-rose-300';
-    message.textContent = error instanceof Error ? `Снимок процесса недоступен: ${error.message}` : 'Снимок процесса недоступен';
-    host.append(message);
-  }
-}
-function renderRuntimeProfiles(host: HTMLElement, runtime: NfqwsRuntime) {
-  host.replaceChildren();
-  if (!runtime.running) {
-    const stopped = document.createElement('div');
-    stopped.className = 'text-amber-300';
-    stopped.textContent = 'Процесс nfqws2 не обнаружен; фактические профили недоступны.';
-    host.append(stopped);
-  } else if (!runtime.profiles.length) {
-    const empty = document.createElement('div');
-    empty.className = 'text-amber-300';
-    empty.textContent = `Процесс PID ${runtime.pid} найден, но профильные фильтры в его argv не обнаружены.`;
-    host.append(empty);
-  } else {
-    for (const profile of runtime.profiles) {
-      const row = document.createElement('div');
-      row.className = 'rounded-xl bg-[#070b14] border border-slate-800/90 p-2.5 space-y-1';
-      const title = document.createElement('div');
-      title.className = 'text-slate-200 font-semibold';
-      title.textContent = `#${profile.index}${profile.name ? ` · ${profile.name}` : ''}`;
-      const details = document.createElement('div');
-      details.className = 'text-slate-400 whitespace-pre-wrap break-all';
-      details.textContent = [
-        profile.filters.length ? `Фильтры: ${profile.filters.join(', ')}` : '',
-        profile.strategies.length ? `Lua: ${profile.strategies.join(', ')}` : '',
-        profile.payloads.length ? `Payload: ${profile.payloads.join(', ')}` : '',
-      ].filter(Boolean).join('\n');
-      row.append(title, details);
-      host.append(row);
-    }
-    const source = document.createElement('div');
-    source.className = 'text-slate-500';
-    source.textContent = `Снято с /proc/${runtime.pid}/cmdline · это подтверждает аргументы процесса, не успешную обработку трафика.`;
-    host.append(source);
-  }
-  for (const note of runtime.limitations) {
-    const limitation = document.createElement('div');
-    limitation.className = 'text-slate-500';
-    limitation.textContent = note;
-    host.append(limitation);
-  }
-}
-function renderConfigSections(content: string) {
-  const box = $('#nfqwsConfigSections');
-  if (!box) return;
-  const facts = summarizeNfqwsConfig(content);
-  box.replaceChildren();
-  setText('#profileStatusBadge', `${facts.sections.length} секций в конфигурации`);
-
-  const mode = document.createElement('div');
-  mode.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between gap-2';
-  const modeLabel = document.createElement('span'); modeLabel.className = 'text-slate-300';
-  modeLabel.textContent = `NFQWS_EXTRA_ARGS · выбранное значение: ${facts.selectedMode ?? 'не задано'}`;
-  const modeState = document.createElement('span'); modeState.className = 'px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-bold'; modeState.textContent = 'В конфигурации';
-  mode.append(modeLabel, modeState); box.append(mode);
-
-  if (!facts.sections.length) {
-    const empty = document.createElement('div'); empty.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 text-slate-400';
-    empty.textContent = 'Не найдены буквальные значения секций NFQWS_*_ARGS; динамические shell-переменные здесь не интерпретируются.'; box.append(empty); return;
-  }
-  for (const section of facts.sections) {
-    const row = document.createElement('div'); row.className = 'p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 flex items-center justify-between gap-2';
-    const label = document.createElement('span'); label.className = 'text-slate-300'; label.textContent = section.variable;
-    const details = document.createElement('span'); details.className = 'text-right text-slate-400';
-    details.textContent = `${section.strategies} --lua-desync · ${section.profiles} --new · ${section.filters} фильтров`;
-    row.append(label, details); box.append(row);
-  }
-}
-function renderConfigModules(references: NfqwsModuleReference[]) {
-  const host = $('#moduleFilesContainer'); if (!host) return;
-  host.replaceChildren();
-  if (!references.length) { const empty = document.createElement('span'); empty.className = 'text-slate-500'; empty.textContent = 'Backend не обнаружил literal-ссылки Lua/blob в активном конфиге'; host.append(empty); return; }
-  for (const reference of references) {
-    const path = reference.resolvedPath ?? reference.path;
+  for (const script of luaScripts) {
     const button = document.createElement('button');
-    button.className = `px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 ${reference.exists && reference.readable ? 'text-emerald-300' : 'text-amber-300'}`;
-    const fileName = path?.split(/[\\/]/).pop() ?? reference.argument;
-    const fileStatus = reference.resolution === 'dynamic'
-      ? 'путь вычисляется shell; файл не проверен'
-      : reference.resolution === 'relative_unknown'
-        ? 'относительный путь; базовый каталог неизвестен'
-        : reference.exists && reference.readable
-          ? 'файл существует и доступен для чтения'
-          : reference.exists
-            ? 'файл существует, но чтение не подтверждено'
-            : 'файл не найден по literal-пути';
-    button.textContent = `${reference.kind}: ${fileName}`;
-    button.title = `${path ?? reference.argument} · ${fileStatus}`;
-    button.addEventListener('click', () => void navigator.clipboard.writeText(reference.argument).then(() => toast('Аргумент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')));
+    button.type = 'button';
+    button.className = `lua-script-tab px-3 py-2 text-xs font-medium transition-colors ${script.name === activeLuaScript ? 'lua-script-tab-active text-cyan-200' : 'text-slate-400 hover:text-slate-100'}`;
+    button.setAttribute('aria-pressed', String(script.name === activeLuaScript));
+    button.textContent = script.name;
+    button.addEventListener('click', () => void showLuaScript(script.name));
     host.append(button);
+  }
+}
+
+async function loadLuaScripts() {
+  const host = $('#luaScriptTabs');
+  if (!host) return;
+  host.textContent = 'Читаю список скриптов…';
+  try {
+    luaScripts = await nfqwsScripts.list();
+    renderLuaScriptTabs();
+    const selected = activeLuaScript && luaScripts.some((script) => script.name === activeLuaScript)
+      ? activeLuaScript
+      : luaScripts.find((script) => script.exists)?.name ?? luaScripts[0]?.name;
+    if (selected) await showLuaScript(selected);
+    else setText('#luaScriptContent', 'Backend не обнаружил установку nfqws2 и каталог скриптов.');
+  } catch (error) {
+    host.textContent = 'Не удалось прочитать список скриптов';
+    setText('#luaScriptContent', error instanceof Error ? error.message : 'Ошибка чтения списка');
+  }
+}
+
+async function showLuaScript(name: string) {
+  activeLuaScript = name;
+  renderLuaScriptTabs();
+  setText('#luaScriptPath', `${name} · чтение…`);
+  setText('#luaScriptContent', 'Загружаю файл…');
+  try {
+    const script = await nfqwsScripts.get(name);
+    setText('#luaScriptPath', `${script.path}${script.compressed ? ' · gzip' : ''}${script.truncated ? ' · показаны первые 512 КБ' : ''}`);
+    setText('#luaScriptContent', script.content || '(файл пуст)');
+  } catch (error) {
+    setText('#luaScriptPath', `${name} · файл отсутствует или недоступен`);
+    setText('#luaScriptContent', error instanceof Error ? error.message : 'Не удалось прочитать файл');
   }
 }
 const NFQWS_ARGUMENT_GROUPS = [
@@ -452,21 +394,40 @@ function renderNfqwsArgumentEditors(content: string) {
   if (!host) return;
   host.replaceChildren();
   for (const [key, label] of NFQWS_ARGUMENT_GROUPS) {
-    const card = document.createElement('label');
+    const card = document.createElement('section');
     card.className = 'block rounded-xl border border-slate-800 bg-[#070b14] p-3';
-    const heading = document.createElement('span');
+    const heading = document.createElement('label');
+    const fieldId = `configArgument-${key}`;
+    heading.htmlFor = fieldId;
     heading.className = 'mb-2 block font-mono text-xs font-bold text-cyan-200';
     heading.textContent = `${key} · ${label}`;
     const field = document.createElement('textarea');
-    field.rows = key === 'NFQWS_ARGS_CUSTOM' ? 5 : 3;
+    const minimumRows = key === 'NFQWS_ARGS_CUSTOM' ? 5 : 3;
+    field.id = fieldId;
+    field.rows = minimumRows;
     field.spellcheck = false;
     field.dataset.configArgument = 'true';
-    field.className = 'w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60';
+    field.className = 'min-w-0 flex-1 resize-y border-0 bg-transparent px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none focus:ring-0 disabled:opacity-60';
     field.value = configAssignmentValue(content, key);
     field.placeholder = key === 'NFQWS_ARGS_CUSTOM' ? '--new --filter-tcp=443 --hostlist-domains=example.com …' : 'Введите аргументы для этой группы';
     field.title = 'Изменение обновит черновик; сохранить его можно кнопкой «Применить конфигурацию».';
+    const editor = document.createElement('div');
+    editor.className = 'config-argument-editor flex min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20';
+    const gutter = document.createElement('div');
+    gutter.className = 'config-argument-line-numbers line-numbers-col shrink-0 overflow-hidden border-r border-slate-800 bg-[#05080f] px-2.5 py-2 font-mono text-xs leading-5 text-slate-500';
+    gutter.setAttribute('aria-hidden', 'true');
+    editor.append(gutter, field);
+    const syncEditor = () => {
+      const layout = configEditorLayout(field.value, minimumRows);
+      field.rows = layout.visibleRows;
+      gutter.textContent = layout.lineNumbers;
+      gutter.scrollTop = field.scrollTop;
+    };
+    field.addEventListener('input', syncEditor);
+    field.addEventListener('scroll', syncEditor);
+    syncEditor();
     field.addEventListener('change', () => void updateConfigVariable(key, field.value));
-    card.append(heading, field);
+    card.append(heading, editor);
     host.append(card);
   }
 }
@@ -515,7 +476,7 @@ async function updateConfigVariable(key: string, value: string) {
     if (editor.value !== before) throw new Error('Черновик изменился во время запроса; повторите выбор настройки.');
     editor.value = preview.content;
     syncConfigLines();
-    renderConfigSections(editor.value);
+    renderConfigOutline();
     renderNfqwsArgumentEditors(editor.value);
     toast('Черновик изменён. Нажмите «Применить конфигурацию», чтобы сохранить.');
   } catch (error) {
@@ -532,6 +493,54 @@ function syncConfigLines() {
   gutter.innerHTML = Array.from({ length: count }, (_, i) => `${i + 1}`).join('<br>');
   gutter.scrollTop = editor.scrollTop;
   setText('#confLinesBadge', `${count} строк`);
+}
+function renderConfigOutline() {
+  const editor = $('#nfqwsConfTextarea');
+  const entriesHost = $('#configOutlineEntries');
+  if (!(editor instanceof HTMLTextAreaElement) || !entriesHost) return;
+  const entries = configOutlineEntries(editor.value);
+  const active = entries.filter((entry) => entry.offset <= editor.selectionStart).at(-1);
+  entriesHost.replaceChildren();
+  if (!entries.length) {
+    const empty = document.createElement('div');
+    empty.className = 'px-2 py-2 text-xs text-slate-500';
+    empty.textContent = 'В конфигурации не найдены переменные.';
+    entriesHost.append(empty);
+    return;
+  }
+  for (const entry of entries) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `config-outline-entry flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left font-mono text-xs transition-colors hover:bg-slate-800 ${active?.offset === entry.offset ? 'bg-blue-500/10 text-blue-200' : 'text-slate-200'}`;
+    button.title = `Перейти к строке ${entry.line}`;
+    const name = document.createElement('span');
+    name.className = 'min-w-0 truncate';
+    name.textContent = entry.name;
+    const line = document.createElement('span');
+    line.className = 'shrink-0 tabular-nums text-slate-500';
+    line.textContent = String(entry.line);
+    button.append(name, line);
+    button.addEventListener('click', () => {
+      editor.focus();
+      editor.setSelectionRange(entry.offset, entry.offset + entry.name.length);
+      const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 23;
+      editor.scrollTop = Math.max(0, (entry.line - 1) * lineHeight);
+      renderConfigOutline();
+    });
+    entriesHost.append(button);
+  }
+}
+function toggleConfigOutline() {
+  const outline = $('#configOutline');
+  const workspace = $('#configEditorWorkspace');
+  const button = $('#configStructureToggle');
+  if (!outline || !workspace || !button) return;
+  const open = outline.classList.contains('hidden');
+  outline.classList.toggle('hidden', !open);
+  workspace.classList.toggle('config-editor-workspace-open', open);
+  button.setAttribute('aria-expanded', String(open));
+  button.classList.toggle('config-structure-toggle-active', open);
+  if (open) renderConfigOutline();
 }
 async function saveConfigAndApply() {
   if (busy) return;
@@ -570,9 +579,8 @@ async function saveConfigAndApply() {
     config = result.config;
     setRestartInProgress(false);
     await fetchStatus();
-    await loadRuntimeProfiles();
     toast('Конфигурация сохранена, повторно прочитана; backend подтвердил перезапуск nfqws2.');
-  } catch (error) { setRestartInProgress(false); await fetchStatus(); await loadRuntimeProfiles(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
+  } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setRestartInProgress(false); setBusy(false); }
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = false) {
@@ -588,7 +596,6 @@ async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = f
     if (action === 'restart') setRestartInProgress(false);
     setBusy(false);
     await fetchStatus();
-    await loadRuntimeProfiles();
   }
 }
 async function loadList(id: NfqwsListId) {
@@ -1508,7 +1515,8 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
-    switchConfigSection: (section: 'editor' | 'settings') => switchConfigSection(section),
+    switchConfigSection: (section: 'editor' | 'settings' | 'scripts') => switchConfigSection(section),
+    refreshLuaScripts: () => void loadLuaScripts(),
     runSiteDiagnosis: () => void runSiteDiagnosis(),
     runSiteTrace: () => void runSiteTrace(),
     stopSiteTrace: () => void stopSiteTrace(),
@@ -1528,9 +1536,10 @@ function bindPrototypeActions() {
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string) => void navigator.clipboard.writeText(String(value)).then(() => toast('Фрагмент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')),
-    handleConfInput: () => syncConfigLines(),
+    handleConfInput: () => { syncConfigLines(); renderConfigOutline(); },
     syncConfScroll: () => syncConfigLines(),
     toggleWordWrapConf: (enabled: boolean) => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre'; },
+    toggleConfigOutline: () => toggleConfigOutline(),
     scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); editor.scrollTop = editor.value.slice(0, offset).split('\n').length * 23; },
     toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) { modal.classList.add('hidden'); modal.classList.remove('flex'); } else showDiff(); },
     resetDefaultConf: () => void loadConfig(),
@@ -1616,6 +1625,7 @@ function boot() {
   if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   $('#nfqwsConfTextarea')?.addEventListener('input', () => {
     syncConfigLines();
+    renderConfigOutline();
     const editor = $('#nfqwsConfTextarea');
     if (editor instanceof HTMLTextAreaElement) updateQuickParameters(editor.value);
   });

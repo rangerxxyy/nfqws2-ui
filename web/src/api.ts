@@ -53,6 +53,8 @@ export type NfqwsInstallation = {
   lists: InstallationPath[];
   moduleReferences?: NfqwsModuleReference[];
 };
+export type NfqwsLuaScriptInfo = { name: string; path: string | null; exists: boolean; readable: boolean };
+export type NfqwsLuaScriptContent = { name: string; path: string; compressed: boolean; content: string; truncated: boolean };
 export type BackupItem = { id: string; createdAt: number; file: string };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
 export type UiUpdateStatus = { currentVersion: string; latestVersion: string | null; updateAvailable: boolean; releaseUrl: string | null; checkedAt: number | null };
@@ -87,6 +89,11 @@ export const nfqwsLists = {
 
 export const nfqwsInstallation = {
   get: () => api<NfqwsInstallation>('/api/nfqws2/installation'),
+};
+
+export const nfqwsScripts = {
+  list: () => api<NfqwsLuaScriptInfo[]>('/api/nfqws2/scripts'),
+  get: (name: string) => api<NfqwsLuaScriptContent>(`/api/nfqws2/scripts/${encodeURIComponent(name)}`),
 };
 
 export const nfqwsRuntime = {

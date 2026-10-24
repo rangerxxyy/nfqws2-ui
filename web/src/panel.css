@@ -105,6 +105,8 @@
       border-color: rgba(96, 165, 250, 0.4);
       box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.08);
     }
+    .lua-script-tab { border-bottom: 2px solid transparent; font-family: var(--font-mono); }
+    .lua-script-tab-active { border-bottom-color: rgb(34 211 238); background: linear-gradient(180deg, transparent, rgb(8 145 178 / .08)); }
     .config-settings-panel .text-\[11px\] {
       font-size: 0.75rem;
       line-height: 1.25rem;
@@ -294,6 +296,13 @@ textarea { line-height: 1.7; tab-size: 4; }
 .text-slate-600 { color: #7a89a0; }
 .text-slate-400 { color: var(--text-muted); }
 .line-numbers-col { color: #6b7a92; }
+.config-argument-line-numbers { white-space: pre; text-align: right; }
+.config-structure-toggle-active { border-color: #3b82f6; color: #bfdbfe; background: #1e3a8a55; }
+.config-outline-entry:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; }
+@media (min-width: 1100px) {
+  .config-editor-workspace-open { grid-template-columns: minmax(0, 1fr) minmax(220px, 260px); }
+  .config-outline { position: sticky; top: 1rem; align-self: start; }
+}
 .diagnosis-row-inactive .diagnosis-state-icon { color: #7d8ca3; }
 .diagnosis-row-inactive .diagnosis-row-label { color: #8e9db4; }
 

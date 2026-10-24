@@ -1,4 +1,25 @@
 /** Read a literal shell assignment for display without evaluating shell code. */
+export function configEditorLayout(value: string, minimumRows: number): {
+  lineCount: number;
+  visibleRows: number;
+  lineNumbers: string;
+} {
+  const lineCount = Math.max(1, value.split(/\r\n|\r|\n/).length);
+  return {
+    lineCount,
+    visibleRows: Math.min(10, Math.max(minimumRows, lineCount)),
+    lineNumbers: Array.from({ length: lineCount }, (_, index) => String(index + 1)).join('\n'),
+  };
+}
+
+export function configOutlineEntries(value: string): Array<{ name: string; line: number; offset: number }> {
+  return [...value.matchAll(/^([A-Z_][A-Z0-9_]*)=/gm)].map((match) => ({
+    name: match[1] ?? '',
+    line: value.slice(0, match.index ?? 0).split(/\r\n|\r|\n/).length,
+    offset: match.index ?? 0,
+  }));
+}
+
 export function configAssignmentValue(content: string, key: string): string {
   const lines = content.split(/\r?\n/);
   let source = '';

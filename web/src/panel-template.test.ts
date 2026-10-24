@@ -19,11 +19,38 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('id="configSettingsPanel"');
     expect(template).toMatch(/id="configEditorPanel" class="[^"]*config-panel-enter/);
     expect(template).toMatch(/id="configSettingsPanel" class="[^"]*hidden/);
+    expect(template).toContain('id="configTabScripts"');
+    expect(template).toMatch(/id="configScriptsPanel" class="[^"]*hidden/);
     expect(template.indexOf('data-action-click="applyConfigAndRestart"')).toBeLessThan(template.indexOf('id="configSettingsPanel"'));
     expect(panelSource).toContain('switchConfigSection:');
-    expect(panelSource).toContain("activePanel.classList.remove('hidden')");
+    expect(panelSource).toContain("panel.classList.toggle('hidden', id !== selectedId)");
+    expect(panelSource).toContain("if (section === 'scripts') void loadLuaScripts()");
     expect(panelSource).toContain("button.setAttribute('aria-pressed', String(selected))");
     expect(panelStyles).toContain('.config-subtab-active');
+  });
+
+  it('shows the six backend-discovered Lua scripts in a dedicated read-only section', () => {
+    const tabs = ['configTabEditor', 'configTabSettings', 'configTabScripts'].map((id) => template.indexOf(`id="${id}"`));
+    expect(tabs[0]).toBeLessThan(tabs[1]);
+    expect(tabs[1]).toBeLessThan(tabs[2]);
+    expect(template).toContain('id="luaScriptTabs"');
+    expect(template).toContain('id="luaScriptPath"');
+    expect(template).toContain('id="luaScriptContent"');
+    expect(panelSource).toContain('nfqwsScripts.list()');
+    expect(panelSource).toContain('nfqwsScripts.get(name)');
+    expect(backendSource).toContain('.route("/api/nfqws2/scripts", get(get_lua_scripts))');
+    expect(backendSource).toContain('.route("/api/nfqws2/scripts/{name}", get(get_lua_script))');
+    for (const name of ['zapret-antidpi.lua', 'zapret-auto.lua', 'zapret-lib.lua', 'zapret-obfs.lua', 'zapret-pcap.lua', 'zapret-tests.lua']) {
+      expect(backendSource).toContain(`"${name}"`);
+    }
+    expect(backendSource).toContain('MAX_SCRIPT_BYTES: u64 = 512 * 1024');
+  });
+
+  it('numbers each editable config argument block without padding short values', () => {
+    expect(panelSource).toContain('configEditorLayout(field.value, minimumRows)');
+    expect(panelSource).toContain('gutter.textContent = layout.lineNumbers');
+    expect(panelSource).toContain('field.rows = layout.visibleRows');
+    expect(panelStyles).toContain('.config-argument-line-numbers');
   });
 
   it('exposes the full blockcheck2 catalog mode and submits it to the Rust API', () => {
@@ -402,20 +429,14 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
   });
 
-  it('does not label example profiles as active and renders config-derived sections', () => {
+  it('keeps configuration settings focused and omits the removed runtime summary block', () => {
     expect(template).not.toContain('TCP Circular (Стратегии 1–6)');
     expect(template).not.toContain('5 файлов OK');
-    expect(template).toContain('id="nfqwsConfigSections"');
-    expect(panelSource).toContain('summarizeNfqwsConfig');
-    expect(panelSource).toContain('renderConfigSections(config.content)');
-  });
-
-  it('shows profiles from the running nfqws2 process separately from config-derived sections', () => {
-    expect(template).toContain('id="nfqwsRuntimeProfiles"');
-    expect(template).toContain('Профили фактически работающего процесса:');
-    expect(panelSource).toContain('nfqwsRuntime.get()');
-    expect(panelSource).toContain('Снято с /proc/');
-    expect(backendSource).toContain('.route("/api/nfqws2/runtime", get(get_runtime))');
+    expect(template).not.toContain('id="nfqwsConfigSections"');
+    expect(template).not.toContain('id="nfqwsRuntimeProfiles"');
+    expect(template).not.toContain('Профили фактически работающего процесса:');
+    expect(panelSource).not.toContain('summarizeNfqwsConfig');
+    expect(panelSource).not.toContain('nfqwsRuntime.get()');
   });
 
   it('uses backend-discovered network interfaces instead of guessed router names', () => {
@@ -428,12 +449,12 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('network_interface_names(Path::new("/sys/class/net"))');
   });
 
-  it('shows Lua/blob files from the backend instead of guessed example paths', () => {
-    expect(template).toContain('id="moduleFilesContainer"');
+  it('keeps Lua script source browsing in the Scripts tab instead of duplicating paths in settings', () => {
+    expect(template).toContain('id="configScriptsPanel"');
+    expect(template).not.toContain('id="moduleFilesContainer"');
     expect(template).not.toContain('/opt/etc/nfqws2/lua/');
     expect(template).not.toContain('/opt/etc/nfqws2/blobs/');
-    expect(panelSource).toContain('installation.moduleReferences');
-    expect(panelSource).toContain('renderConfigModules(moduleReferences)');
+    expect(panelSource).toContain('nfqwsScripts.get(name)');
   });
 
   it('loads the selected mode from the backend config and limits choices to declared mode variables', () => {
