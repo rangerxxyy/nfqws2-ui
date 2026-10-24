@@ -3771,10 +3771,10 @@ async fn put_telegram_settings(
         Ok(value) => value,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
     };
-    if let Some(token) = update.token {
-        if !token.trim().is_empty() {
-            store.telegram.token = token.trim().to_owned();
-        }
+    if let Some(token) = update.token
+        && !token.trim().is_empty()
+    {
+        store.telegram.token = token.trim().to_owned();
     }
     store.telegram.chat_id = update.chat_id.trim().to_owned();
     store.telegram.send_via = update.send_via;
@@ -3888,12 +3888,12 @@ async fn telegram_find_chats(State(state): State<Arc<AppState>>) -> Response {
                         "channel_post",
                         "edited_channel_post",
                     ] {
-                        if let Some(chat) = update.get(key).and_then(|v| v.get("chat")) {
-                            if let Some(id) = chat.get("id") {
-                                let item = serde_json::json!({"id":id.to_string().trim_matches('"'),"title":chat.get("title").or_else(||chat.get("username")).or_else(||chat.get("first_name")).cloned().unwrap_or_default()});
-                                if !chats.contains(&item) {
-                                    chats.push(item);
-                                }
+                        if let Some(chat) = update.get(key).and_then(|v| v.get("chat"))
+                            && let Some(id) = chat.get("id")
+                        {
+                            let item = serde_json::json!({"id":id.to_string().trim_matches('"'),"title":chat.get("title").or_else(||chat.get("username")).or_else(||chat.get("first_name")).cloned().unwrap_or_default()});
+                            if !chats.contains(&item) {
+                                chats.push(item);
                             }
                         }
                     }
@@ -3948,24 +3948,23 @@ async fn check_saved_sites(
         {
             let previous = site.results.first().map(|r| r.status.clone());
             let status = report.current.status.to_owned();
-            if let Some(previous) = previous.filter(|old| old != &status) {
-                if !updated.telegram.chat_id.is_empty() {
-                    let text = if status == "ok" {
-                        format!("✅ {} снова открывается: {}", report.host, report.summary)
-                    } else {
-                        format!(
-                            "❌ {} перестал открываться: {}",
-                            report.host, report.summary
-                        )
-                    };
-                    let _ = telegram_api(
-                        &updated.telegram,
-                        "sendMessage",
-                        &[("chat_id", &updated.telegram.chat_id), ("text", &text)],
+            if let Some(previous) = previous.filter(|old| old != &status)
+                && !updated.telegram.chat_id.is_empty()
+            {
+                let text = if status == "ok" {
+                    format!("✅ {} снова открывается: {}", report.host, report.summary)
+                } else {
+                    format!(
+                        "❌ {} перестал открываться: {}",
+                        report.host, report.summary
                     )
-                    .await;
-                    let _ = previous;
-                }
+                };
+                let _ = telegram_api(
+                    &updated.telegram,
+                    "sendMessage",
+                    &[("chat_id", &updated.telegram.chat_id), ("text", &text)],
+                )
+                .await;
             }
             site.results.insert(
                 0,
