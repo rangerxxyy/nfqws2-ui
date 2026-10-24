@@ -1,7 +1,7 @@
 use nfqws2_ui::transfer_diagnostic::{
     TransferAttempt, TransferClass, assemble_curl_args, assemble_curl_args_for_path,
-    classify_transfer, parse_curl_attempt, should_probe_upload_stall, successful_http_response,
-    upload_stall_confirmed,
+    classify_transfer, parse_curl_attempt, should_probe_boundary_stall, should_probe_upload_stall,
+    successful_http_response, upload_stall_confirmed,
 };
 use std::net::IpAddr;
 
@@ -61,7 +61,32 @@ fn one_timeout_or_inconsistent_amount_is_inconclusive() {
 }
 
 #[test]
+fn repeat_probe_only_when_a_timeout_lands_in_the_16_to_20_kb_window() {
+    assert!(should_probe_boundary_stall(
+        &attempt(18_000, Some("timeout"), 200),
+        Some(65_536)
+    ));
+    assert!(!should_probe_boundary_stall(
+        &attempt(0, Some("timeout"), 0),
+        Some(65_536)
+    ));
+    assert!(!should_probe_boundary_stall(
+        &attempt(65_536, None, 206),
+        Some(65_536)
+    ));
+    assert!(!should_probe_boundary_stall(
+        &attempt(18_000, Some("timeout"), 200),
+        Some(18_000)
+    ));
+}
+
+#[test]
 fn timeout_before_body_and_reset_have_distinct_diagnoses() {
+    let single_timeout = classify_transfer(&[attempt(0, Some("timeout"), 0)], Some(65_536));
+    assert_eq!(
+        single_timeout.classification,
+        TransferClass::TimeoutBeforeBody
+    );
     let timeout = classify_transfer(
         &[
             attempt(0, Some("timeout"), 0),

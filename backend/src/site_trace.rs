@@ -1003,7 +1003,14 @@ async fn probe_mode(
                 )
                 .await?;
                 expected_bytes = parsed.expected_bytes.or(expected_bytes);
+                let should_repeat = crate::transfer_diagnostic::should_probe_boundary_stall(
+                    &parsed.attempt,
+                    expected_bytes,
+                );
                 attempts.push(parsed.attempt);
+                if !should_repeat {
+                    break;
+                }
             }
             let diagnosis =
                 crate::transfer_diagnostic::classify_transfer(&attempts, expected_bytes);

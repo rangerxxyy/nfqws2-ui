@@ -2,7 +2,9 @@
 //! `freezeJob`, `padProbe`, and `freezeCandidates` behavior.
 use crate::{
     site_diagnostics::{normalize_host, public_ip},
-    transfer_diagnostic::{TransferAttempt, TransferClass, classify_transfer},
+    transfer_diagnostic::{
+        TransferAttempt, TransferClass, classify_transfer, should_probe_boundary_stall,
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -639,7 +641,11 @@ async fn measure_target(
         )
         .await?;
         expected_bytes = parsed.expected_bytes.or(expected_bytes);
+        let should_repeat = should_probe_boundary_stall(&parsed.attempt, expected_bytes);
         attempts.push(parsed.attempt);
+        if !should_repeat {
+            break;
+        }
     }
     let diagnosis = classify_transfer(&attempts, expected_bytes);
     let elapsed_ms = attempts.iter().map(|attempt| attempt.elapsed_ms).sum();
