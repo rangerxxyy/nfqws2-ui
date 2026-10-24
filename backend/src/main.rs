@@ -1394,6 +1394,128 @@ struct InstallationResponse {
     module_references: Vec<ModuleReference>,
 }
 
+const LUA_SCRIPT_NAMES: [&str; 6] = [
+    "zapret-antidpi.lua",
+    "zapret-auto.lua",
+    "zapret-lib.lua",
+    "zapret-obfs.lua",
+    "zapret-pcap.lua",
+    "zapret-tests.lua",
+];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LuaScriptInfo {
+    name: &'static str,
+    path: Option<String>,
+    exists: bool,
+    readable: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LuaScriptContent {
+    name: &'static str,
+    path: String,
+    compressed: bool,
+    content: String,
+    truncated: bool,
+}
+
+fn resolve_lua_script(lua_dir: &Path, name: &str) -> Option<(PathBuf, bool)> {
+    if !LUA_SCRIPT_NAMES.contains(&name) || Path::new(name).file_name()?.to_str()? != name {
+        return None;
+    }
+    let plain = lua_dir.join(name);
+    let candidates = [
+        (plain.clone(), false),
+        (PathBuf::from(format!("{}.gz", plain.display())), true),
+    ];
+    let canonical_dir = lua_dir.canonicalize().ok()?;
+    candidates.into_iter().find_map(|(path, compressed)| {
+        let canonical = path.canonicalize().ok()?;
+        (canonical.starts_with(&canonical_dir) && canonical.is_file())
+            .then_some((canonical, compressed))
+    })
+}
+
+fn read_lua_script(lua_dir: &Path, name: &str) -> std::io::Result<LuaScriptContent> {
+    const MAX_SCRIPT_BYTES: u64 = 512 * 1024;
+    let (path, compressed) = resolve_lua_script(lua_dir, name)
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "Lua-скрипт не найден"))?;
+    let file = std::fs::File::open(&path)?;
+    let (bytes, truncated) = if compressed {
+        use std::io::Read;
+        let mut decoder = flate2::read::GzDecoder::new(file);
+        let mut bytes = Vec::new();
+        decoder
+            .by_ref()
+            .take(MAX_SCRIPT_BYTES + 1)
+            .read_to_end(&mut bytes)?;
+        let truncated = bytes.len() as u64 > MAX_SCRIPT_BYTES;
+        bytes.truncate(MAX_SCRIPT_BYTES as usize);
+        (bytes, truncated)
+    } else {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        file.take(MAX_SCRIPT_BYTES + 1).read_to_end(&mut bytes)?;
+        let truncated = bytes.len() as u64 > MAX_SCRIPT_BYTES;
+        bytes.truncate(MAX_SCRIPT_BYTES as usize);
+        (bytes, truncated)
+    };
+    let content = String::from_utf8_lossy(&bytes).into_owned();
+    Ok(LuaScriptContent {
+        name: LUA_SCRIPT_NAMES
+            .iter()
+            .find(|candidate| **candidate == name)
+            .unwrap(),
+        path: path.display().to_string(),
+        compressed,
+        content,
+        truncated,
+    })
+}
+
+async fn get_lua_scripts() -> Response {
+    let Some(paths) = discover_system_paths() else {
+        return Json(Vec::<LuaScriptInfo>::new()).into_response();
+    };
+    let scripts = LUA_SCRIPT_NAMES
+        .iter()
+        .map(|&name| {
+            let resolved = resolve_lua_script(&paths.lua_dir, name);
+            LuaScriptInfo {
+                name,
+                path: resolved
+                    .as_ref()
+                    .map(|(path, _)| path.display().to_string()),
+                exists: resolved.is_some(),
+                readable: resolved
+                    .as_ref()
+                    .is_some_and(|(path, _)| std::fs::File::open(path).is_ok()),
+            }
+        })
+        .collect::<Vec<_>>();
+    Json(scripts).into_response()
+}
+
+async fn get_lua_script(axum::extract::Path(name): axum::extract::Path<String>) -> Response {
+    let Some(paths) = discover_system_paths() else {
+        return error(StatusCode::NOT_FOUND, "Установка nfqws2 не обнаружена");
+    };
+    match read_lua_script(&paths.lua_dir, &name) {
+        Ok(script) => Json(script).into_response(),
+        Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => error(
+            StatusCode::NOT_FOUND,
+            "Lua-скрипт не найден в каталоге установки",
+        ),
+        Err(io_error) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось прочитать Lua-скрипт: {io_error}"),
+        ),
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeResponse {
@@ -5501,6 +5623,8 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/", get(panel_shell))
         .route("/api/health", get(health))
         .route("/api/nfqws2/installation", get(get_installation))
+        .route("/api/nfqws2/scripts", get(get_lua_scripts))
+        .route("/api/nfqws2/scripts/{name}", get(get_lua_script))
         .route("/api/status", get(get_status))
         .route("/api/nfqws2/runtime", get(get_runtime))
         .route("/api/service", post(post_service))
@@ -8480,5 +8604,41 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(persisted.state, "stopping");
+    }
+
+    #[test]
+    fn lua_script_reader_resolves_only_allowlisted_names_under_lua_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("zapret-lib.lua"), "return true\n").unwrap();
+
+        let script = read_lua_script(dir.path(), "zapret-lib.lua").unwrap();
+        assert_eq!(script.content, "return true\n");
+        assert!(!script.compressed);
+        assert!(!script.truncated);
+        assert!(resolve_lua_script(dir.path(), "../../etc/passwd").is_none());
+        assert!(resolve_lua_script(dir.path(), "custom.lua").is_none());
+        assert!(read_lua_script(dir.path(), "zapret-auto.lua").is_err());
+    }
+
+    #[test]
+    fn lua_script_reader_decompresses_gzip_and_caps_preview_size() {
+        use flate2::{Compression, write::GzEncoder};
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().unwrap();
+        let original = "-- source\n".repeat(70_000);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(original.as_bytes()).unwrap();
+        std::fs::write(
+            dir.path().join("zapret-auto.lua.gz"),
+            encoder.finish().unwrap(),
+        )
+        .unwrap();
+
+        let script = read_lua_script(dir.path(), "zapret-auto.lua").unwrap();
+        assert!(script.compressed);
+        assert!(script.truncated);
+        assert_eq!(script.content.len(), 512 * 1024);
+        assert!(original.starts_with(&script.content));
     }
 }

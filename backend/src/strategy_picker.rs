@@ -744,17 +744,29 @@ pub fn build_plan(
     let mut candidates = Vec::new();
     let mut seen = HashSet::<Vec<String>>::new();
     for steps in configured_steps.iter().take(MAX_CANDIDATES) {
-        if validate_candidate(steps, available_functions, available_blobs).is_ok()
-            && seen.insert(steps.clone())
+        let strategy_id = steps.iter().find_map(|step| {
+            step.strip_prefix("--lua-desync=")?
+                .split(':')
+                .find_map(|part| part.strip_prefix("strategy="))
+        });
+        let normalized_steps = steps
+            .iter()
+            .map(|step| strip_circular_strategy_tag(step))
+            .collect::<Vec<_>>();
+        if validate_candidate(&normalized_steps, available_functions, available_blobs).is_ok()
+            && seen.insert(normalized_steps.clone())
         {
             candidates.push(StrategyCandidate {
-                name: steps
+                name: normalized_steps
                     .iter()
                     .filter_map(|step| parse_step(step).ok().map(|(function, _)| function))
                     .collect::<Vec<_>>()
                     .join(" + "),
-                source: "Текущий профиль".into(),
-                steps: steps.clone(),
+                source: strategy_id.map_or_else(
+                    || "Текущий профиль".to_owned(),
+                    |id| format!("Текущий профиль · стратегия {id}"),
+                ),
+                steps: normalized_steps,
             });
         }
     }
@@ -805,6 +817,29 @@ pub fn build_plan(
     StrategyPlan {
         protocol,
         candidates,
+    }
+}
+
+fn strip_circular_strategy_tag(step: &str) -> String {
+    let Some(value) = step.strip_prefix("--lua-desync=") else {
+        return step.to_owned();
+    };
+    let (function, Some(arguments)) = value
+        .split_once(':')
+        .map_or((value, None), |(function, arguments)| {
+            (function, Some(arguments))
+        })
+    else {
+        return step.to_owned();
+    };
+    let arguments = arguments
+        .split(':')
+        .filter(|argument| !argument.starts_with("strategy="))
+        .collect::<Vec<_>>();
+    if arguments.is_empty() {
+        format!("--lua-desync={function}")
+    } else {
+        format!("--lua-desync={function}:{}", arguments.join(":"))
     }
 }
 
@@ -2581,7 +2616,7 @@ pub fn configured_candidates(
         let mut port_spec = None;
         let mut l7 = None;
         let mut payload: Option<String> = None;
-        let mut profile_steps = Vec::<(Option<String>, Option<String>, Vec<String>)>::new();
+        let mut profile_steps = Vec::<(Option<String>, Vec<String>)>::new();
         let mut index = 0;
         while index < group.len() {
             let arg = &group[index];
@@ -2619,21 +2654,13 @@ pub fn configured_candidates(
                 let strategy_id = value
                     .split(':')
                     .find_map(|part| part.strip_prefix("strategy="));
-                if let Some((_, _, steps)) =
-                    profile_steps
-                        .iter_mut()
-                        .find(|(existing_payload, existing_strategy, _)| {
-                            existing_payload == &payload
-                                && existing_strategy.as_deref() == strategy_id
-                        })
+                if let Some((_, steps)) = profile_steps
+                    .iter_mut()
+                    .find(|(existing_strategy, _)| existing_strategy.as_deref() == strategy_id)
                 {
                     steps.push(arg.clone());
                 } else {
-                    profile_steps.push((
-                        payload.clone(),
-                        strategy_id.map(str::to_owned),
-                        vec![arg.clone()],
-                    ));
+                    profile_steps.push((strategy_id.map(str::to_owned), vec![arg.clone()]));
                 }
             }
             index += 1;
@@ -2649,7 +2676,7 @@ pub fn configured_candidates(
         if !ports_match || !layer_match {
             continue;
         }
-        candidates.extend(profile_steps.into_iter().map(|(_, _, steps)| steps));
+        candidates.extend(profile_steps.into_iter().map(|(_, steps)| steps));
     }
     candidates
 }
@@ -2713,21 +2740,41 @@ mod configured_profile_tests {
             &["tls_clienthello".into()],
         );
 
-        assert_eq!(plan.candidates[0].source, "Текущий профиль");
+        assert_eq!(plan.candidates[0].source, "Текущий профиль · стратегия 1");
         assert_eq!(plan.candidates[0].steps.len(), 2);
-        assert_eq!(plan.candidates[1].source, "Текущий профиль");
+        assert_eq!(plan.candidates[1].source, "Текущий профиль · стратегия 2");
         assert_eq!(plan.candidates[1].steps.len(), 1);
         assert!(
             plan.candidates[0]
                 .steps
                 .iter()
-                .all(|step| step.contains("strategy=1"))
+                .all(|step| !step.contains("strategy="))
         );
         assert!(
             plan.candidates[1]
                 .steps
                 .iter()
-                .all(|step| step.contains("strategy=2"))
+                .all(|step| !step.contains("strategy="))
+        );
+    }
+
+    #[test]
+    fn combines_same_numbered_strategy_across_matching_payload_contexts() {
+        let active = vec![
+            "nfqws2".into(),
+            "--filter-tcp=443".into(),
+            "--filter-l7=tls".into(),
+            "--lua-desync=fake:blob=tls_clienthello:strategy=1".into(),
+            "--payload=tls_client_hello".into(),
+            "--lua-desync=multisplit:pos=1:strategy=1".into(),
+        ];
+
+        assert_eq!(
+            configured_candidates(&active, StrategyProtocol::Https),
+            vec![vec![
+                "--lua-desync=fake:blob=tls_clienthello:strategy=1",
+                "--lua-desync=multisplit:pos=1:strategy=1",
+            ]],
         );
     }
 

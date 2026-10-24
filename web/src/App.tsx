@@ -457,6 +457,9 @@ export default function App() {
             <button id={"configTabSettings"} type={"button"} aria-pressed={"false"} aria-controls={"configSettingsPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["settings"])} className={"config-subtab rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
               {"Настройки конфигурации"}
             </button>
+            <button id={"configTabScripts"} type={"button"} aria-pressed={"false"} aria-controls={"configScriptsPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["scripts"])} className={"config-subtab rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+              {"Скрипты"}
+            </button>
           </nav>
           <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5 items-start"}>
             {"\n          \n          "}
@@ -478,18 +481,29 @@ export default function App() {
                   </span>
                   {"\n              "}
                 </label>
+                <button id={"configStructureToggle"} type={"button"} aria-expanded={"false"} aria-controls={"configOutline"} data-action-click={"toggleConfigOutline"} title={"Показать структуру переменных конфигурации справа"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:border-blue-500/70 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+                  {"Структура"}
+                </button>
                 {"\n            "}
               </div>
               {"\n\n            "}
               {"\n            "}
-              <div className={"mobile-code-editor flex h-[740px] bg-[#060a12] font-mono text-[14px] leading-[1.68] overflow-hidden"}>
-                {"\n              "}
-                <div id={"confLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3 w-13 overflow-hidden select-none text-xs leading-[1.68]"}>
-                  {"\n                1\n              "}
+              <div id={"configEditorWorkspace"} className={"config-editor-workspace grid grid-cols-1 gap-3"}>
+                <div className={"mobile-code-editor flex h-[740px] min-w-0 bg-[#060a12] font-mono text-[14px] leading-[1.68] overflow-hidden"}>
+                  {"\n              "}
+                  <div id={"confLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3 w-13 overflow-hidden select-none text-xs leading-[1.68]"}>
+                    {"\n                1\n              "}
+                  </div>
+                  {"\n              "}
+                  <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"min-w-0 flex-1 bg-transparent text-slate-100 py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto selection:bg-blue-500/30 focus:ring-0 border-none"}></textarea>
+                  {"\n            "}
                 </div>
-                {"\n              "}
-                <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"flex-1 bg-transparent text-slate-100 py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto selection:bg-blue-500/30 focus:ring-0 border-none"}></textarea>
-                {"\n            "}
+                <aside id={"configOutline"} aria-label={"Структура конфигурации"} className={"config-outline hidden max-h-[740px] overflow-y-auto rounded-xl border border-slate-800 bg-[#070b14] p-2.5"}>
+                  <div className={"mb-2 px-2 text-[11px] font-bold uppercase tracking-wider text-slate-400"}>{"Структура"}</div>
+                  <div id={"configOutlineEntries"} className={"space-y-0.5"}>
+                    <div className={"px-2 py-2 text-xs text-slate-500"}>{"Загрузка структуры…"}</div>
+                  </div>
+                </aside>
               </div>
               {"\n\n          "}
             </div>
@@ -716,53 +730,6 @@ export default function App() {
                   <div className={"text-xs text-slate-500"}>{"Загрузка аргументов из конфигурации…"}</div>
                 </div>
               </div>
-              <div className={"ui-card rounded-2xl p-4 shadow-lg space-y-3"}>
-                {"\n              "}
-                <div className={"flex items-center justify-between pb-2.5 border-b border-slate-800"}>
-                  {"\n                "}
-                  <div className={"flex items-center gap-2"}>
-                    {"\n                  "}
-                    <span className={"w-2 h-4 rounded-full bg-emerald-400"}></span>
-                    {"\n                  "}
-                    <h3 className={"text-sm font-bold text-white"}>
-                      {"Профили и стратегии из конфигурации"}
-                    </h3>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <span id={"profileStatusBadge"} className={"text-[11px] font-mono text-slate-400"}>
-                    {"Ожидание backend"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div id={"nfqwsConfigSections"} className={"space-y-2 text-xs font-mono"}>
-                  <div className={"p-2.5 rounded-xl bg-[#070b14] border border-slate-800/90 text-slate-400"}>
-                    {"Конфигурация ещё не загружена из backend"}
-                  </div>
-                </div>
-                {"\n\n              "}
-                <div className={"pt-2 border-t border-slate-800"}>
-                  <div className={"text-[11px] text-slate-400 mb-2"}>
-                    {"Профили фактически работающего процесса:"}
-                  </div>
-                  <div id={"nfqwsRuntimeProfiles"} className={"space-y-2 text-xs font-mono"}>
-                    <div className={"text-slate-500"}>{"Ожидание снимка argv от Rust backend"}</div>
-                  </div>
-                </div>
-                {"\n\n              "}
-                {"\n              "}
-                <div className={"pt-1"}>
-                  <div className={"text-[11px] text-slate-400 mb-2"}>
-                    {"Файлы Lua/blob из активной конфигурации:"}
-                  </div>
-                  <div id={"moduleFilesContainer"} className={"flex flex-wrap gap-1.5 font-mono text-[11px]"}>
-                    <span className={"text-slate-500"}>{"Ожидание данных backend"}</span>
-                  </div>
-                </div>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
               {"\n            "}
               <div className={"ui-card rounded-2xl p-4 shadow-lg flex flex-col h-[315px]"}>
                 {"\n              "}
@@ -794,6 +761,22 @@ export default function App() {
               </div>
               {"\n\n          "}
             </div>
+            <section id={"configScriptsPanel"} className={"config-section-panel hidden xl:col-span-12 ui-card rounded-2xl border border-slate-800 p-4 shadow-xl"} aria-label={"Lua-скрипты nfqws2"}>
+              <div className={"mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3"}>
+                <div>
+                  <h3 className={"text-sm font-bold text-white"}>{"Скрипты nfqws2"}</h3>
+                  <p className={"mt-1 text-xs text-slate-400"}>{"Файлы читаются из каталога Lua обнаруженной установки. Просмотр доступен только для чтения."}</p>
+                </div>
+                <button type={"button"} data-action-click={"refreshLuaScripts"} className={"rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"}>{"Обновить список"}</button>
+              </div>
+              <nav id={"luaScriptTabs"} aria-label={"Lua-скрипты"} className={"mb-3 flex flex-wrap gap-1 border-b border-slate-800"}>
+                <span className={"px-3 py-2 text-xs text-slate-500"}>{"Список загружается…"}</span>
+              </nav>
+              <div id={"luaScriptViewer"} className={"overflow-hidden rounded-xl border border-slate-800 bg-[#070b14]"}>
+                <div id={"luaScriptPath"} className={"border-b border-slate-800 px-3 py-2 font-mono text-xs text-slate-400"}>{"Путь к файлу появится после загрузки"}</div>
+                <pre id={"luaScriptContent"} className={"max-h-[680px] min-h-36 overflow-auto p-4 font-mono text-xs leading-5 text-slate-200 whitespace-pre"}>{"Выберите скрипт для просмотра."}</pre>
+              </div>
+            </section>
             {"\n\n        "}
           </div>
           {"\n      "}
