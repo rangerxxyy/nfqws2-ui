@@ -17,7 +17,6 @@ export function freezeCanApplyToHost(input: {
 }): boolean {
   return ['running', 'complete', 'partial', 'cancelled'].includes(input.state)
     && input.targetKind === 'user_host'
-    && input.freezeDetected
     && input.foundStrategy !== null
     && input.foundStrategy.reusedFrom == null
     && input.foundStrategy.attempts >= 3

@@ -17,6 +17,7 @@ describe('freeze scan row presentation', () => {
     expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(true);
     expect(freezeCanApplyToHost({ state: 'running', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(true);
     expect(freezeCanApplyToHost({ state: 'partial', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(true);
+    expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'user_host', freezeDetected: false, foundStrategy: { attempts: 3, successes: 3 } })).toBe(true);
     expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3, reusedFrom: 'other.example' } })).toBe(false);
     expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'pinned_address', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(false);
     expect(freezeCanApplyToHost({ state: 'partial', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 2 } })).toBe(false);

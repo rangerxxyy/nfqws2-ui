@@ -703,6 +703,19 @@ export default function App() {
               </div>
               {"\n\n            "}
               {"\n            "}
+              <div className={"ui-card rounded-2xl p-4 shadow-lg space-y-3 xl:col-span-2"}>
+                <div className={"flex items-center justify-between gap-3 border-b border-slate-800 pb-2.5"}>
+                  <div className={"flex items-center gap-2"}>
+                    <span className={"h-4 w-2 rounded-full bg-cyan-400"}></span>
+                    <h3 className={"text-sm font-bold text-white"}>{"Параметры nfqws2 по группам"}</h3>
+                  </div>
+                  <span className={"text-[11px] text-slate-400"}>{"Измените нужную группу; сохраните кнопкой сверху"}</span>
+                </div>
+                <p className={"text-xs leading-relaxed text-slate-400"}>{"Каждое поле редактирует отдельную переменную. Изменения попадают в черновик полной конфигурации; для записи и перезапуска нажмите «Применить конфигурацию»."}</p>
+                <div id={"nfqwsArgEditors"} className={"grid grid-cols-1 gap-3 lg:grid-cols-2"}>
+                  <div className={"text-xs text-slate-500"}>{"Загрузка аргументов из конфигурации…"}</div>
+                </div>
+              </div>
               <div className={"ui-card rounded-2xl p-4 shadow-lg space-y-3"}>
                 {"\n              "}
                 <div className={"flex items-center justify-between pb-2.5 border-b border-slate-800"}>
