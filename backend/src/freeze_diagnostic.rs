@@ -134,23 +134,7 @@ pub enum AsnVerification {
 /// RIPEstat is used only to decide whether results may be reused across two
 /// targets. A catalog hint is never treated as a current ASN observation.
 pub fn verify_asn_hint(hint: Option<u32>, response: &[u8]) -> AsnVerification {
-    let parsed = serde_json::from_slice::<serde_json::Value>(response).ok();
-    let asn = parsed
-        .as_ref()
-        .and_then(|value| value.get("data"))
-        .and_then(|value| value.get("asns"))
-        .and_then(serde_json::Value::as_array)
-        // RIPEstat's network-info response encodes ASNs as JSON strings
-        // (for example ["396982"]), not JSON numbers.
-        .and_then(|asns| {
-            asns.iter().find_map(|value| {
-                value
-                    .as_u64()
-                    .or_else(|| value.as_str().and_then(|text| text.parse::<u64>().ok()))
-            })
-        })
-        .and_then(|asn| u32::try_from(asn).ok())
-        .filter(|asn| *asn > 0);
+    let asn = parse_ripe_asn(response);
     match (hint.filter(|hint| *hint > 0), asn) {
         (Some(expected), Some(actual)) if expected == actual => {
             AsnVerification::Verified { asn: actual }
@@ -159,6 +143,30 @@ pub fn verify_asn_hint(hint: Option<u32>, response: &[u8]) -> AsnVerification {
         (None, Some(actual)) => AsnVerification::Verified { asn: actual },
         (_, None) => AsnVerification::Unavailable,
     }
+}
+
+fn parse_ripe_asn(response: &[u8]) -> Option<u32> {
+    serde_json::from_slice::<serde_json::Value>(response)
+        .ok()?
+        .pointer("/data/asns")?
+        .as_array()?
+        .iter()
+        // RIPEstat normally returns strings such as "396982". Accept the
+        // optional AS prefix too, matching zemidala's parser.
+        .find_map(|value| {
+            value.as_u64().or_else(|| {
+                value.as_str().and_then(|text| {
+                    let text = text.trim();
+                    text.strip_prefix("AS")
+                        .or_else(|| text.strip_prefix("as"))
+                        .unwrap_or(text)
+                        .parse::<u64>()
+                        .ok()
+                })
+            })
+        })
+        .and_then(|asn| u32::try_from(asn).ok())
+        .filter(|asn| *asn > 0)
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,8 +503,9 @@ fn classify_current_route(
 mod route_classification_tests {
     use super::{
         AsnVerification, FreezeScanPause, FreezeTargetKind, classify_current_route,
-        timeout_with_tcp_reachable, verify_asn_hint,
+        ripe_asn_curl_args, timeout_with_tcp_reachable, verify_asn_hint,
     };
+    use std::net::Ipv4Addr;
     use std::sync::{Arc, atomic::AtomicBool};
     use tokio::sync::Mutex;
 
@@ -538,6 +547,25 @@ mod route_classification_tests {
                 actual: 396_982
             }
         );
+    }
+
+    #[test]
+    fn parses_ripe_asns_with_an_as_prefix_like_the_reference_client() {
+        assert_eq!(
+            verify_asn_hint(None, br#"{"data":{"asns":["AS13335"]}}"#),
+            AsnVerification::Verified { asn: 13_335 }
+        );
+    }
+
+    #[test]
+    fn ripe_lookup_uses_reference_timeouts_and_allows_configured_proxy_routing() {
+        let args = ripe_asn_curl_args(Ipv4Addr::new(1, 1, 1, 1));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--connect-timeout", "8"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--max-time", "25"]));
+        assert!(!args.iter().any(|argument| argument == "--noproxy"));
     }
 
     #[test]
@@ -807,26 +835,10 @@ async fn resolve_address(target: &FreezeTarget) -> Option<Ipv4Addr> {
 }
 
 async fn ripe_asn(address: Ipv4Addr, hint: Option<u32>) -> AsnVerification {
-    let url = format!(
-        "https://stat.ripe.net/data/network-info/data.json?sourceapp=nfqws2-ui&resource={address}"
-    );
-    let output = timeout(Duration::from_secs(9), async {
+    let args = ripe_asn_curl_args(address);
+    let output = timeout(Duration::from_secs(27), async {
         Command::new(curl_program())
-            .args([
-                "--disable",
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--noproxy",
-                "*",
-                "--connect-timeout",
-                "3",
-                "--max-time",
-                "7",
-                "--max-filesize",
-                "32768",
-                &url,
-            ])
+            .args(args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -841,6 +853,26 @@ async fn ripe_asn(address: Ipv4Addr, hint: Option<u32>) -> AsnVerification {
         }
         _ => AsnVerification::Unavailable,
     }
+}
+
+fn ripe_asn_curl_args(address: Ipv4Addr) -> Vec<String> {
+    let url = format!(
+        "https://stat.ripe.net/data/network-info/data.json?sourceapp=nfqws2-ui&resource={address}"
+    );
+    [
+        "--disable".into(),
+        "--silent".into(),
+        "--show-error".into(),
+        "--connect-timeout".into(),
+        "8".into(),
+        "--max-time".into(),
+        "25".into(),
+        "--max-filesize".into(),
+        "32768".into(),
+        url,
+    ]
+    .into_iter()
+    .collect()
 }
 
 async fn probe_padded_head(

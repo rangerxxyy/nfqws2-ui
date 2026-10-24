@@ -121,6 +121,11 @@ while [ "$tries" -lt 15 ]; do
 				[ -n "$PREVIOUS" ] && [ "$old_release" = "$PREVIOUS" ] && continue
 				rm -rf "$old_release" 2>/dev/null || true
 			done
+			if [ -r "$STAGE/scripts/nfqws2-ui-ctl" ]; then
+				mkdir -p /opt/bin
+				cp "$STAGE/scripts/nfqws2-ui-ctl" /opt/bin/nfqws2-ui-ctl
+				chmod 755 /opt/bin/nfqws2-ui-ctl
+			fi
 			COMMITTED=1
 			echo "Панель nfqws2-ui $VERSION успешно установлена. Откройте её по адресу:"
 			LAN_IPS=''

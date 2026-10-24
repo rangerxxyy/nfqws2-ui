@@ -6,6 +6,7 @@ import App from './App';
 
 const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8');
 const styledSelectSource = readFileSync(new URL('./styled-select.ts', import.meta.url), 'utf8');
 const monitoringSource = readFileSync(new URL('./monitoring.ts', import.meta.url), 'utf8');
@@ -74,6 +75,14 @@ describe('TSX panel without authentication', () => {
     expect(styledSelectSource).toContain('MutationObserver');
   });
 
+  it('keeps explanatory and data text readable across panel sections and themes', () => {
+    expect(panelStyles).toContain('font-size: max(0.75rem, 1em);');
+    expect(panelStyles).toContain('html[data-theme="light"] { color-scheme: light; }');
+    expect(panelStyles).toContain('backdrop-filter: blur(14px);');
+    expect(panelStyles).toContain('animation: styled-select-in 150ms var(--ease-out) both;');
+    expect(panelStyles).toContain('prefers-reduced-motion: reduce');
+  });
+
   it('exposes the full blockcheck2 catalog mode and submits it to the Rust API', () => {
     expect(template).toContain('value="full"');
     expect(template).toContain('каталог blockcheck2 (~3 000)');
@@ -106,7 +115,9 @@ describe('TSX panel without authentication', () => {
     expect(statusGroup).toContain('data-action-click="restartService"');
     expect(statusGroup).toContain('aria-label="Перезапустить nfqws2"');
     expect(statusGroup).toContain('id="togglePowerBtn"');
-    expect(statusGroup).toContain('aria-label="Остановить nfqws2"');
+    expect(statusGroup).toContain('aria-label="Запустить nfqws2"');
+    expect(statusGroup).toContain('data-power-icon="play"');
+    expect(panelSource).toContain('button.dataset.serviceAction = presentation.action');
     expect(statusGroup).toContain('id="togglePowerText" class="sr-only"');
     expect(statusGroup).toContain('h-9 w-9');
     expect(statusGroup).toContain('px-3 py-2 rounded-lg shadow-inner');
@@ -117,6 +128,12 @@ describe('TSX panel without authentication', () => {
     expect(updates).toMatch(/id="updateNfqws2Button"[^>]*data-args="\[&quot;core&quot;\]"/);
     expect(updates).toMatch(/id="updateUiButton"[^>]*data-args="\[&quot;ui&quot;\]"/);
     expect(updates).toContain('>UI</span>');
+  });
+
+  it('starts with a play icon and updates the service control presentation from status', () => {
+    expect(template).toContain('data-power-icon="play"');
+    expect(template).toContain('data-power-icon="stop"');
+    expect(panelSource).toContain('button.dataset.serviceAction = presentation.action');
   });
 
   it('centers the panel brand and aligns update controls to the right with balanced spacing', () => {
@@ -322,7 +339,7 @@ describe('TSX panel without authentication', () => {
   });
 
   it('supports accessible custom tooltips for navigation and all action buttons', () => {
-    expect(actionTooltipSource).toContain("'button[data-action-click], button[data-action-tooltip], .side-nav-btn'");
+    expect(actionTooltipSource).toContain("'button, .side-nav-btn'");
     expect(actionTooltipSource).toContain('fallbackTooltipText');
   });
 
@@ -377,20 +394,22 @@ describe('TSX panel without authentication', () => {
     expect(tooltipSource).toContain('element.removeAttribute(\'title\')');
     expect(tooltipSource).toContain("setAttribute('role', 'tooltip')");
     expect(tooltipSource).toContain('DEFAULT_ACTION_TOOLTIP_DELAY_MS = 2000');
+    expect(tooltipSource).toContain("root.querySelectorAll('button, .side-nav-btn').forEach(prepare)");
+    expect(tooltipSource).toContain("target.closest<HTMLButtonElement>('button, .side-nav-btn')");
     expect(panelStyles).toContain('.action-tooltip');
   });
 
-  it('removes the logs and backup sections from navigation and panel actions', () => {
-    for (const route of ['logs', 'snapshots']) {
+  it('removes the legacy logs section and exposes snapshot backups', () => {
+    for (const route of ['logs']) {
       expect(template).not.toContain(`id="navBtn-${route}"`);
       expect(template).not.toContain(`id="tabContent-${route}"`);
     }
-    expect(template).not.toContain('Система и Архивы');
-    expect(template).not.toContain('148,920 пакетов');
-    expect(template).not.toContain('Удалённое копирование на NAS по SSH');
-    expect(panelSource).not.toContain('loadLogs');
-    expect(panelSource).not.toContain('loadBackups');
-    expect(panelSource).not.toContain('restoreSnapshot');
+    expect(template).toContain('id="navBtn-snapshots"');
+    expect(template).toContain('id="tabContent-snapshots"');
+    expect(panelSource).toContain('nfqwsSnapshots.get()');
+    expect(panelSource).toContain('restoreSnapshot');
+    expect(backendSource).toContain('"/api/snapshots"');
+    expect(backendSource).toContain('get(get_snapshots).post(create_snapshot_api)');
   });
 
   it('keeps the interface in TSX and removes the HTML entry file', () => {
@@ -414,6 +433,101 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('id="tabContent-lists"');
     expect(template).not.toContain('authForm');
     expect(template).not.toContain('navBtn-auth');
+  });
+
+  it('shows the configuration structure panel enabled on first render', () => {
+    expect(template).toMatch(/id="configStructureToggle"[^>]*aria-pressed="true"[^>]*aria-expanded="true"/);
+    expect(template).toMatch(/id="configOutline"[^>]*class="config-outline(?! hidden)/);
+    expect(template).toContain('config-editor-workspace-open grid grid-cols-1');
+    expect(panelSource).toContain("button.setAttribute('aria-pressed', String(open))");
+  });
+
+  it('nudges the paired updater controls left by one spacing unit on desktop', () => {
+    const updates = template.slice(template.indexOf('id="headerUpdates"'), template.indexOf('</header>'));
+    expect(updates).toContain('lg:-translate-x-1');
+    expect(updates).toContain('2xl:-translate-x-1');
+    expect(updates).toContain('id="updateNfqws2Button"');
+    expect(updates).toContain('id="updateUiButton"');
+  });
+
+  it('shows the diagnosis checklist before its request and replays results in order', () => {
+    expect(panelSource).toContain("renderDiagnosisQueue(container, SITE_DIAGNOSIS_STAGES.map");
+    expect(panelSource).toContain('for (let index = 0; index < stages.length; index += 1)');
+    expect(panelSource).toContain('await waitForDiagnosisAnimation()');
+    expect(panelStyles).toContain('.diagnosis-queue-step.is-active');
+    expect(panelStyles).toContain('.diagnosis-queue-step.is-result-failure');
+  });
+
+  it('styles checkbox inputs while keeping their native keyboard semantics', () => {
+    expect(panelStyles).toContain('input[type="checkbox"] {');
+    expect(panelStyles).toContain('input[type="checkbox"]:checked::before');
+    expect(panelStyles).toContain('input[type="checkbox"]:focus-visible');
+    expect(panelStyles).toContain('[data-theme="light"] input[type="checkbox"]');
+    expect(panelStyles).toContain('input[type="checkbox"]::before {');
+  });
+
+  it('uses the full appearance card as a keyboard-accessible radio label', () => {
+    expect(appSource).toContain('<label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"}');
+    expect(appSource).toContain('<label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"}');
+    expect(panelStyles).toContain('.appearance-choice input[type="radio"], .appearance-layout-choice input[type="radio"]');
+    expect(panelStyles).toContain('position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer;');
+    expect(panelStyles).toContain('.appearance-choice:has(input:focus-visible)');
+    expect(panelStyles).toContain('.appearance-choice:has(input:checked)');
+  });
+
+  it('keeps custom strategy input inside its mode tile and exposes copy feedback', () => {
+    const modeTile = appSource.slice(appSource.indexOf('id={"strategyModeSelect"}'), appSource.indexOf('id={"scanProgressLabel"}'));
+    expect(modeTile).toContain('id={"strategyCustomInputPanel"}');
+    expect(appSource).not.toMatch(/<div id=\{"strategyCustomInputPanel"\}[^>]*md:col-span-2/);
+    expect(modeTile).toContain('data-action-click={"copyStrategyParams"}');
+    expect(panelSource).toContain('copyStrategyParams:');
+    expect(panelSource).toContain("copy.dataset.actionClick = 'copyStrategyResult'");
+    expect(panelSource).toContain('copyStrategyResult:');
+    expect(panelSource).toContain("closest('.strategy-mode-tile')?.classList.toggle('strategy-mode-tile-custom'");
+    expect(panelSource).toContain("document.execCommand('copy')");
+    expect(panelStyles).toContain('.strategy-copy-success');
+  });
+
+  it('places config actions in the same row as its section tabs', () => {
+    const navStart = appSource.indexOf('<nav aria-label={"Раздел конфигурации"}');
+    const navEnd = appSource.indexOf('</nav>', navStart);
+    const configNav = appSource.slice(navStart, navEnd);
+    expect(configNav).toContain('data-action-click={"copyConfigText"}');
+    expect(configNav).toContain('data-action-click={"applyConfigAndRestart"}');
+  });
+
+  it('documents the panel-specific terminal command instead of zemidala aliases', () => {
+    expect(appSource).toContain('nfqws2-ui-ctl update --check');
+    expect(appSource).toContain('nfqws2-ui-ctl update v0.6.1 --force');
+    expect(appSource).toContain('nfqws2-ui-ctl status');
+    expect(appSource).not.toContain('nfqws-ui-setup');
+    expect(appSource).not.toContain('nfqws-ui update');
+  });
+
+  it('shows Telegram route-specific settings only for the selected transport', () => {
+    expect(appSource).toContain('id={"telegramInterfaceField"} className={"hidden grid');
+    expect(appSource).toContain('id={"telegramProxyField"} className={"hidden grid');
+    expect(appSource).toContain('data-action-change={"toggleTelegramTransportFields"}');
+    expect(panelSource).toContain("via !== 'interface'");
+    expect(panelSource).toContain("via !== 'proxy'");
+    expect(panelSource).toContain('toggleTelegramTransportFields(cfg.sendVia)');
+  });
+
+  it('labels every auto-strategy row with a plain-language confirmation result', () => {
+    expect(panelSource).toContain("result.confirmed ? 'Подтверждена' : 'Не подтверждена'");
+    expect(panelSource).toContain('strategy-pick-result-badge');
+    expect(panelSource).toContain('result.successes}/${result.attempts} успешных');
+    expect(panelStyles).toContain('.strategy-pick-result-badge.is-confirmed');
+    expect(panelStyles).toContain('.strategy-pick-result-badge.is-unconfirmed');
+  });
+
+  it('lets long mobile navigation labels wrap within their grid cells', () => {
+    expect(panelStyles).toContain('.app-main-layout > aside nav button > div > span');
+    expect(panelStyles).toContain('overflow-wrap: anywhere; line-height: 1.25;');
+    expect(panelStyles).toContain('grid-template-columns: minmax(0, 1fr);');
+    expect(panelStyles).toContain('max-height: 50vh; overflow-y: auto;');
+    expect(template).toContain('Списки доменов и IP');
+    expect(template).toContain('Резервные копии');
   });
 
   it('does not ship login controls or example credentials', () => {
@@ -494,7 +608,7 @@ describe('TSX panel without authentication', () => {
     expect(template).not.toContain('id="updateTargetCore"');
     expect(panelSource).toContain("nfqwsUpdates.coreReleases()");
     expect(panelSource).toContain("nfqwsUpdates.installCore(tag)");
-    expect(panelSource).toContain("textContent = line.replace");
+    expect(panelSource).toContain("renderReleaseMarkdown(release.notes)");
     expect(panelSource).not.toMatch(/installSelectedRelease.*toast\('Эта функция пока не подключена/);
   });
 
