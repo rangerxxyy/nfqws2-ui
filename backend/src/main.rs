@@ -82,7 +82,7 @@ struct AppState {
     site_trace_runner: Arc<SiteTraceRunner>,
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    freeze_scan_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    freeze_scan_controls: Mutex<HashMap<String, Arc<freeze_diagnostic::FreezeScanPause>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -945,8 +945,13 @@ fn freeze_result_as_strategy_operation(
     operation: &FreezeScanOperation,
     result_index: usize,
 ) -> Result<StrategyPickOperation, String> {
-    if operation.state != "complete" {
-        return Err("Для применения нужен полностью завершённый тест 16 КБ".into());
+    if !matches!(
+        operation.state.as_str(),
+        "running" | "complete" | "partial" | "cancelled"
+    ) {
+        return Err(
+            "Для применения нужен завершённый тест домена с сохранённым подтверждением".into(),
+        );
     }
     let result = operation
         .results
@@ -1039,13 +1044,51 @@ async fn apply_confirmed_strategy(
             );
         }
     };
-    let _diagnostic_guard = match state.site_diagnostic_lock.try_lock() {
-        Ok(guard) => guard,
-        Err(_) => {
+    let pause_control = if request.source == "freezeScan" && operation.state == "running" {
+        let Some(control) = state
+            .freeze_scan_controls
+            .lock()
+            .await
+            .get(&request.operation_id)
+            .cloned()
+        else {
             return error(
                 StatusCode::CONFLICT,
-                "Сначала дождитесь завершения текущей сетевой диагностики",
+                "Проверка уже завершается; обновите результат и повторите применение",
             );
+        };
+        if let Err(message) = control.request_pause().await {
+            let latest = read_freeze_scan_operation(
+                &state.data_dir.join("freeze-diagnostic-operations"),
+                &request.operation_id,
+            )
+            .await
+            .ok()
+            .flatten();
+            if !latest.is_some_and(|scan| {
+                matches!(scan.state.as_str(), "complete" | "partial" | "cancelled")
+            }) {
+                return error(StatusCode::CONFLICT, message);
+            }
+            None
+        } else {
+            Some(control)
+        }
+    } else {
+        None
+    };
+    let _resume_scan = ResumeFreezeScanAfterApply(pause_control.clone());
+    let _diagnostic_guard = if pause_control.is_some() {
+        Some(state.site_diagnostic_lock.clone().lock_owned().await)
+    } else {
+        match state.site_diagnostic_lock.clone().try_lock_owned() {
+            Ok(guard) => Some(guard),
+            Err(_) => {
+                return error(
+                    StatusCode::CONFLICT,
+                    "Сначала дождитесь завершения текущей сетевой диагностики",
+                );
+            }
         }
     };
     let Some((active_pid, active_args)) = active_process_snapshot() else {
@@ -1145,6 +1188,16 @@ async fn apply_confirmed_strategy(
             "Конфигурация изменилась во время сохранения; повторите preview",
         ),
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+struct ResumeFreezeScanAfterApply(Option<Arc<freeze_diagnostic::FreezeScanPause>>);
+
+impl Drop for ResumeFreezeScanAfterApply {
+    fn drop(&mut self) {
+        if let Some(control) = &self.0 {
+            control.resume_after_apply();
+        }
     }
 }
 
@@ -4014,7 +4067,12 @@ async fn start_freeze_scan(
         }
     }
     let id = new_update_id();
-    let control = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let pause = Arc::new(freeze_diagnostic::FreezeScanPause::new(
+        state.site_diagnostic_lock.clone(),
+        guard,
+        cancel,
+    ));
     let operation = FreezeScanOperation {
         id: id.clone(),
         state: "queued".into(),
@@ -4034,13 +4092,12 @@ async fn start_freeze_scan(
         .freeze_scan_controls
         .lock()
         .await
-        .insert(id.clone(), control.clone());
+        .insert(id.clone(), pause.clone());
     let accepted = operation.clone();
     let task_state = state.clone();
     let task_id = id;
     let binary = paths.binary.to_string_lossy().into_owned();
     tokio::spawn(async move {
-        let _guard = guard;
         let directory = task_state.data_dir.join("freeze-diagnostic-operations");
         let mut operation = operation;
         operation.state = "running".into();
@@ -4052,17 +4109,18 @@ async fn start_freeze_scan(
         }
         let progress = shared.clone();
         let progress_directory = directory.clone();
-        let cancel = control.clone();
+        let cancel = pause.cancel_handle();
         let scan_args = active_args;
         let scan_functions = functions;
         let scan_blobs = blobs;
         let result = freeze_diagnostic::scan_network_baselines(
             &request.extra_hosts,
-            control,
+            cancel.clone(),
             scan_args,
             binary,
             scan_functions,
             scan_blobs,
+            pause.clone(),
             move |done, total, target, completed_results| {
                 if let Ok(mut value) = progress.lock() {
                     update_freeze_scan_progress(&mut value, done, total, target, completed_results);
@@ -4136,6 +4194,7 @@ async fn start_freeze_scan(
             }
             let _ = write_freeze_scan_operation(&directory, &value);
         }
+        pause.finish_scan().await;
         task_state
             .freeze_scan_controls
             .lock()
@@ -4187,7 +4246,7 @@ async fn cancel_freeze_scan(
     let Some(control) = controls.get(&id) else {
         return error(StatusCode::CONFLICT, "Операция уже завершается");
     };
-    control.store(true, Ordering::Release);
+    control.cancel();
     operation.state = "stopping".into();
     operation.stage = "cleanup".into();
     operation.message =
@@ -5688,6 +5747,7 @@ mod tests {
                     reason: "repeatable boundary timeout".into(),
                 },
                 freeze_detected: true,
+                candidate_total: 1,
                 tried_candidates: 1,
                 found_strategy: Some(freeze_diagnostic::FreezeStrategyMatch {
                     sni: "ya.ru".into(),
@@ -5720,7 +5780,7 @@ mod tests {
         );
         let mut partial = scan;
         partial.state = "partial".into();
-        assert!(freeze_result_as_strategy_operation(&partial, 0).is_err());
+        assert!(freeze_result_as_strategy_operation(&partial, 0).is_ok());
         let mut reused = confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost);
         reused.results[0]
             .found_strategy
@@ -5728,6 +5788,24 @@ mod tests {
             .unwrap()
             .reused_from = Some("other.example".into());
         assert!(freeze_result_as_strategy_operation(&reused, 0).is_err());
+    }
+
+    #[test]
+    fn freeze_scan_application_can_use_a_persisted_confirmation_while_scan_runs() {
+        let mut scan = confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost);
+        scan.state = "running".into();
+        scan.stage = "strategy_search".into();
+        scan.done = 21;
+        scan.total = 34;
+        assert_eq!(
+            freeze_result_as_strategy_operation(&scan, 0).unwrap().host,
+            "site.example"
+        );
+        scan.state = "partial".into();
+        assert_eq!(
+            freeze_result_as_strategy_operation(&scan, 0).unwrap().host,
+            "site.example"
+        );
     }
 
     #[test]
@@ -6973,6 +7051,7 @@ mod tests {
                 reason: "HTTP 206".into(),
             },
             freeze_detected: false,
+            candidate_total: 0,
             tried_candidates: 0,
             found_strategy: None,
             candidate_attempts: Vec::new(),
@@ -7022,6 +7101,7 @@ mod tests {
                 reason: "повторяемый тайм-аут после начала ответа".into(),
             },
             freeze_detected: true,
+            candidate_total: 1,
             tried_candidates: 1,
             found_strategy: Some(freeze_diagnostic::FreezeStrategyMatch {
                 sni: "ya.ru".into(),

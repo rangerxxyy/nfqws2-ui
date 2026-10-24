@@ -16,7 +16,12 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::{net::lookup_host, process::Command, time::timeout};
+use tokio::{
+    net::lookup_host,
+    process::Command,
+    sync::{Mutex, Notify, OwnedMutexGuard},
+    time::timeout,
+};
 
 pub const PAD_REQUESTS: usize = 12;
 pub const PAD_HEADER_BYTES: usize = 4_000;
@@ -489,9 +494,35 @@ fn classify_current_route(
 #[cfg(test)]
 mod route_classification_tests {
     use super::{
-        AsnVerification, FreezeTargetKind, classify_current_route, timeout_with_tcp_reachable,
-        verify_asn_hint,
+        AsnVerification, FreezeScanPause, FreezeTargetKind, classify_current_route,
+        timeout_with_tcp_reachable, verify_asn_hint,
     };
+    use std::sync::{Arc, atomic::AtomicBool};
+    use tokio::sync::Mutex;
+
+    #[tokio::test]
+    async fn apply_pause_yields_the_probe_lock_and_scan_resumes_after_apply() {
+        let lock = Arc::new(Mutex::new(()));
+        let guard = lock.clone().lock_owned().await;
+        let pause = Arc::new(FreezeScanPause::new(
+            lock.clone(),
+            guard,
+            Arc::new(AtomicBool::new(false)),
+        ));
+        let scanner = {
+            let pause = pause.clone();
+            tokio::spawn(async move { pause.checkpoint().await })
+        };
+
+        pause.request_pause().await.unwrap();
+        let probe_lock = lock
+            .try_lock()
+            .expect("paused scan released the diagnostic lock");
+        drop(probe_lock);
+        pause.resume_after_apply();
+        scanner.await.unwrap();
+        assert!(lock.try_lock().is_err(), "resumed scan reacquired the lock");
+    }
 
     #[test]
     fn parses_ripe_asns_encoded_as_strings_and_detects_changed_hints() {
@@ -597,6 +628,8 @@ pub struct FreezeNetworkResult {
     #[serde(default)]
     pub tried_candidates: usize,
     #[serde(default)]
+    pub candidate_total: usize,
+    #[serde(default)]
     pub found_strategy: Option<FreezeStrategyMatch>,
     #[serde(default)]
     pub candidate_attempts: Vec<FreezeCandidateAttempt>,
@@ -634,6 +667,115 @@ pub struct FreezeScanOutcome {
     /// The upstream-compatible global or per-network search budget ended
     /// before all affected networks had been exhausted.
     pub limited: bool,
+}
+
+/// Coordinates an apply request with the sequential scan. A request is
+/// acknowledged only at a completed target boundary, after the isolated
+/// probe has cleaned up its temporary rules and released the diagnostic lock.
+pub struct FreezeScanPause {
+    diagnostic_lock: Arc<Mutex<()>>,
+    guard: Mutex<Option<OwnedMutexGuard<()>>>,
+    cancel: Arc<AtomicBool>,
+    requested: AtomicBool,
+    paused: AtomicBool,
+    closed: AtomicBool,
+    paused_notify: Notify,
+    resume_notify: Notify,
+}
+
+impl FreezeScanPause {
+    pub fn new(
+        diagnostic_lock: Arc<Mutex<()>>,
+        guard: OwnedMutexGuard<()>,
+        cancel: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            diagnostic_lock,
+            guard: Mutex::new(Some(guard)),
+            cancel,
+            requested: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            paused_notify: Notify::new(),
+            resume_notify: Notify::new(),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancel.store(true, Ordering::Release);
+    }
+
+    pub fn cancel_handle(&self) -> Arc<AtomicBool> {
+        self.cancel.clone()
+    }
+
+    pub async fn finish_scan(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.guard.lock().await.take();
+        self.paused_notify.notify_one();
+    }
+
+    pub fn resume_after_apply(&self) {
+        self.requested.store(false, Ordering::Release);
+        self.resume_notify.notify_one();
+    }
+
+    pub async fn request_pause(&self) -> Result<(), String> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err("Проверка уже завершилась; обновите результат".into());
+        }
+        if self
+            .requested
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err("Применение этой стратегии уже ожидается".into());
+        }
+        let paused = timeout(Duration::from_secs(180), async {
+            loop {
+                if self.paused.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                if self.closed.load(Ordering::Acquire) {
+                    return Err("Проверка завершилась до паузы; обновите результат".to_string());
+                }
+                let notified = self.paused_notify.notified();
+                if self.paused.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                if self.closed.load(Ordering::Acquire) {
+                    return Err("Проверка завершилась до паузы; обновите результат".to_string());
+                }
+                notified.await;
+            }
+        })
+        .await;
+        if paused.is_err() {
+            self.resume_after_apply();
+            return Err("Не удалось безопасно приостановить тест; профиль не применён".into());
+        }
+        match paused.expect("checked above") {
+            Ok(()) => Ok(()),
+            Err(message) => {
+                self.resume_after_apply();
+                Err(message)
+            }
+        }
+    }
+
+    pub async fn checkpoint(&self) {
+        if !self.requested.load(Ordering::Acquire) {
+            return;
+        }
+        let resume = self.resume_notify.notified();
+        self.guard.lock().await.take();
+        self.paused.store(true, Ordering::Release);
+        self.paused_notify.notify_one();
+        resume.await;
+        self.paused.store(false, Ordering::Release);
+        let guard = self.diagnostic_lock.clone().lock_owned().await;
+        *self.guard.lock().await = Some(guard);
+    }
 }
 
 fn curl_program() -> &'static str {
@@ -820,6 +962,7 @@ async fn direct_tcp_reachable(address: Ipv4Addr, port: u16) -> bool {
 /// Tests direct and isolated current-route baselines, then tries the upstream
 /// fake-SNI templates against affected networks. The main nfqws2 process and
 /// its config are not modified.
+#[allow(clippy::too_many_arguments)]
 pub async fn scan_network_baselines(
     extra_hosts: &[String],
     cancel: Arc<AtomicBool>,
@@ -827,6 +970,7 @@ pub async fn scan_network_baselines(
     binary: String,
     functions: HashSet<String>,
     blobs: Vec<String>,
+    pause: Arc<FreezeScanPause>,
     mut progress: impl FnMut(usize, usize, &str, &[FreezeNetworkResult]) + Send,
 ) -> Result<FreezeScanOutcome, String> {
     let targets = build_targets(extra_hosts)?;
@@ -870,6 +1014,7 @@ pub async fn scan_network_baselines(
                 current: unavailable,
                 freeze_detected: false,
                 tried_candidates: 0,
+                candidate_total: 0,
                 found_strategy: None,
                 candidate_attempts: Vec::new(),
             });
@@ -897,6 +1042,7 @@ pub async fn scan_network_baselines(
             current: pending,
             freeze_detected: false,
             tried_candidates: 0,
+            candidate_total: 0,
             found_strategy: None,
             candidate_attempts: Vec::new(),
         });
@@ -990,9 +1136,15 @@ pub async fn scan_network_baselines(
         results[result_index].freeze_detected = freeze_detected;
         baseline_done = index + 1;
         progress(baseline_done, total, &target.label, &results);
+        pause.checkpoint().await;
     }
     let global_started = started;
     let candidates = freeze_candidates(&functions, &blobs);
+    for result in &mut results {
+        if result.freeze_detected {
+            result.candidate_total = candidates.len();
+        }
+    }
     let affected_indices = results
         .iter()
         .enumerate()
@@ -1033,6 +1185,7 @@ pub async fn scan_network_baselines(
                 &format!("{}: найден вариант в той же AS", results[index].label),
                 &results,
             );
+            pause.checkpoint().await;
             candidate_done = affected_index + 1;
             continue;
         }
@@ -1211,12 +1364,14 @@ pub async fn scan_network_baselines(
             &format!("{}: подбор завершён", results[index].label),
             &results,
         );
+        pause.checkpoint().await;
         candidate_done = affected_index + 1;
         if global_started.elapsed() > Duration::from_secs(900) {
             limited = true;
             break;
         }
     }
+    pause.checkpoint().await;
     Ok(FreezeScanOutcome {
         results,
         done: total + candidate_done,

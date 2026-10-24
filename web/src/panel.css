@@ -91,6 +91,37 @@
       animation: fadeSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     }
 
+    .config-subtab {
+      color: #a9b8cd;
+      border: 1px solid transparent;
+    }
+    .config-subtab:hover {
+      color: #f1f5f9;
+      background: rgba(30, 41, 59, 0.55);
+    }
+    .config-subtab-active {
+      color: #eff6ff;
+      background: rgba(37, 99, 235, 0.2);
+      border-color: rgba(96, 165, 250, 0.4);
+      box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.08);
+    }
+    .config-settings-panel .text-\[11px\] {
+      font-size: 0.75rem;
+      line-height: 1.25rem;
+    }
+    .config-settings-panel select,
+    .config-settings-panel input {
+      font-size: 0.875rem;
+      line-height: 1.25rem;
+    }
+    @keyframes config-panel-enter {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .config-panel-enter {
+      animation: config-panel-enter 0.18s ease-out both;
+    }
+
     @keyframes diag-card-enter {
       from { opacity: 0; transform: translateY(8px) scale(0.99); }
       to { opacity: 1; transform: translateY(0) scale(1); }
@@ -131,6 +162,7 @@
       .view-animate { animation: none; }
       .diag-result-card { animation: none; }
       .diagnosis-spinner { animation: none; }
+      .config-panel-enter { animation: none; }
       .version-pill, .side-nav-btn, .ui-card { transition-duration: 0.01ms; }
       .version-pill:hover { transform: none; }
     }

@@ -439,44 +439,31 @@ export default function App() {
         {"\n      "}
         <section id={"tabContent-conf"} className={"view-animate"}>
           {"\n        "}
+          <div className={"ui-card mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3"}>
+            <div className={"flex items-center gap-2.5"}>
+              <span className={"h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_#60a5fa]"}></span>
+              <span id={"currentConfigPath"} className={"font-mono text-sm font-bold tracking-tight text-white sm:text-base"}>{"Конфигурация"}</span>
+              <span id={"confLinesBadge"} className={"rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-300"}>{"— строк"}</span>
+            </div>
+            <div className={"flex flex-wrap items-center gap-2"}>
+              <button data-action-click={"copyConfigText"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"Копировать"}</button>
+              <button data-action-click={"applyConfigAndRestart"} className={"rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all hover:bg-blue-500 active:scale-95"}>{"Применить конфигурацию"}</button>
+            </div>
+          </div>
+          <nav aria-label={"Раздел конфигурации"} className={"config-subtabs mb-4 flex flex-wrap gap-2 rounded-xl border border-slate-800 bg-[#090e1a] p-1.5"}>
+            <button id={"configTabEditor"} type={"button"} aria-pressed={"true"} aria-controls={"configEditorPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["editor"])} className={"config-subtab config-subtab-active rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+              {"Конфигурация"}
+            </button>
+            <button id={"configTabSettings"} type={"button"} aria-pressed={"false"} aria-controls={"configSettingsPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["settings"])} className={"config-subtab rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+              {"Настройки конфигурации"}
+            </button>
+          </nav>
           <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5 items-start"}>
             {"\n          \n          "}
             {"\n          "}
-            <div className={"xl:col-span-8 ui-card rounded-2xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col"}>
+            <div id={"configEditorPanel"} className={"config-section-panel config-panel-enter xl:col-span-12 ui-card rounded-2xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col"}>
               {"\n            \n            "}
               {"\n            "}
-              <div className={"bg-[#090e1a] px-4 py-3 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5"}>
-                {"\n              "}
-                <div className={"flex items-center gap-2.5"}>
-                  {"\n                "}
-                  <span className={"w-2.5 h-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_#60a5fa]"}></span>
-                  {"\n                "}
-                  <span id={"currentConfigPath"} className={"font-mono text-sm sm:text-base font-bold text-white tracking-tight"}>
-                    {"Конфигурация"}
-                  </span>
-                  {"\n                "}
-                  <span id={"confLinesBadge"} className={"text-xs font-mono px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700"}>
-                    {"— строк"}
-                  </span>
-                  {"\n                "}
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div className={"flex flex-wrap items-center gap-2"}>
-                  {"\n                "}
-                  {"\n                "}
-                  <button data-action-click={"copyConfigText"} className={"px-3 py-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
-                    {"\n                  Копировать\n                "}
-                  </button>
-                  {"\n                "}
-                  <button data-action-click={"applyConfigAndRestart"} className={"px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-all shadow-md shadow-blue-600/25 active:scale-95"}>
-                    {"\n                  Применить конфигурацию\n                "}
-                  </button>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
               {"\n            "}
               <div className={"bg-[#070b14] px-4 py-2 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono"}>
                 {"\n              "}
@@ -508,7 +495,7 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"xl:col-span-4 space-y-4"}>
+            <div id={"configSettingsPanel"} className={"config-settings-panel config-section-panel hidden xl:col-span-12 grid grid-cols-1 xl:grid-cols-2 gap-4"}>
               {"\n            \n            "}
               {"\n            "}
               <div className={"ui-card rounded-2xl p-4 shadow-lg"}>
