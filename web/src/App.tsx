@@ -274,16 +274,7 @@ export default function App() {
                 {"\n            "}
               </button>
               {"\n\n          "}
-              <div className={"px-3 pt-3 pb-1 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>Система</div>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-emerald-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 7h16M6 4h12v16H6zM9 11h6m-6 4h6"}></path></svg><span>Резервные копии</span>
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["appearance"])} id={"navBtn-appearance"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>Оформление UI</span>
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>О nfqws2-UI</span>
-              </button>
+
             </nav>
             {"\n        "}
           </div>
@@ -394,6 +385,23 @@ export default function App() {
           {"\n        "}
 
           {"\n\n      "}
+          <div>
+            {"\n          "}
+            <div className={"px-3 pt-3 pb-1 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>Система</div>
+            <nav className={"space-y-1"}>
+
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-emerald-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 7h16M6 4h12v16H6zM9 11h6m-6 4h6"}></path></svg><span>Резервные копии</span>
+              </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["appearance"])} id={"navBtn-appearance"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>Оформление UI</span>
+              </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>О nfqws2-UI</span>
+              </button>
+            </nav>
+          </div>
+          {"\n\n        "}
         </div>
         {"\n\n      "}
         {"\n      "}
@@ -1226,13 +1234,13 @@ export default function App() {
           <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
             <div><h2 className={"font-bold text-white"}>Цветовая тема</h2><p className={"mt-1 text-xs text-slate-400"}>Выберите подходящее оформление панели.</p></div>
             <div className={"grid gap-3 sm:grid-cols-3"}>
-              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"dark"} data-action-change={"setAppearanceTheme"} /><span className={"appearance-preview appearance-preview-dark"}></span><span><strong>Стандартная</strong><small>Текущая тёмная тема</small></span></label>
-              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"light"} data-action-change={"setAppearanceTheme"} /><span className={"appearance-preview appearance-preview-light"}></span><span><strong>Светлая</strong><small>Светлый фон и контрастный текст</small></span></label>
-              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"neon"} data-action-change={"setAppearanceTheme"} /><span className={"appearance-preview appearance-preview-neon"}></span><span><strong>Фиолетово-неоновая</strong><small>Тёмная тема с фиолетовым акцентом</small></span></label>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"dark"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-dark"}></span><span><strong>Стандартная</strong><small>Текущая тёмная тема</small></span></label>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"light"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-light"}></span><span><strong>Светлая</strong><small>Светлый фон и контрастный текст</small></span></label>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"neon"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-neon"}></span><span><strong>Фиолетово-неоновая</strong><small>Тёмная тема с фиолетовым акцентом</small></span></label>
             </div>
             <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Вид меню</h2><p className={"mt-1 text-xs text-slate-400"}>Компактный вариант сокращает список редко используемых разделов. «Оформление UI» и другие системные страницы остаются на месте.</p><div className={"mt-3 flex flex-wrap gap-3"}>
-              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"standard"} data-action-change={"setAppearanceLayout"} /><span><strong>Стандартный</strong><small>Все доступные разделы</small></span></label>
-              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"compact"} data-action-change={"setAppearanceLayout"} /><span><strong>Компактный</strong><small>Основные разделы и система</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"standard"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Стандартный</strong><small>Все доступные разделы</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"compact"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Компактный</strong><small>Основные разделы и система</small></span></label>
             </div></div>
           </section>
         </section>
