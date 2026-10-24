@@ -1,5 +1,5 @@
 export type UiTheme = 'dark' | 'light' | 'neon';
-export type UiLayout = 'standard' | 'compact';
+export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide';
 export type AppearanceSettings = { theme: UiTheme; layout: UiLayout };
 
 const STORAGE_KEY = 'nfqws2-ui-appearance-v1';
@@ -20,14 +20,14 @@ export function loadAppearance(storage: Storage | null): AppearanceSettings {
   const value = saved as Partial<AppearanceSettings>;
   return {
     theme: value.theme === 'light' || value.theme === 'neon' ? value.theme : 'dark',
-    layout: value.layout === 'compact' ? 'compact' : 'standard',
+    layout: value.layout === 'compact' || value.layout === 'dense' || value.layout === 'wide' ? value.layout : 'standard',
   };
 }
 
 export function saveAppearance(storage: Storage | null, settings: AppearanceSettings): AppearanceSettings {
   const normalized: AppearanceSettings = {
     theme: settings.theme === 'light' || settings.theme === 'neon' ? settings.theme : 'dark',
-    layout: settings.layout === 'compact' ? 'compact' : 'standard',
+    layout: settings.layout === 'compact' || settings.layout === 'dense' || settings.layout === 'wide' ? settings.layout : 'standard',
   };
   try { storage?.setItem(STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Appearance still applies for this session. */ }
   return normalized;

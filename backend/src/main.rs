@@ -6841,7 +6841,10 @@ async fn put_ui_appearance(
     Json(settings): Json<UiAppearanceSettings>,
 ) -> Response {
     if !matches!(settings.theme.as_str(), "dark" | "light" | "neon")
-        || !matches!(settings.layout.as_str(), "standard" | "compact")
+        || !matches!(
+            settings.layout.as_str(),
+            "standard" | "compact" | "dense" | "wide"
+        )
     {
         return error(StatusCode::BAD_REQUEST, "Недопустимые параметры оформления");
     }

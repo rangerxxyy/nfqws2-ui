@@ -280,7 +280,7 @@ export default function App() {
           </div>
           {"\n\n        "}
           {"\n        "}
-          <div>
+          <div id={"diagnosticNavGroup"}>
             {"\n          "}
             <div className={"px-3 mb-2 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>
               {"\n            Диагностика и автоматика\n          "}
@@ -474,7 +474,10 @@ export default function App() {
                     {"\n                1\n              "}
                   </div>
                   {"\n              "}
-                  <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"min-w-0 flex-1 bg-transparent text-slate-100 py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto selection:bg-blue-500/30 focus:ring-0 border-none"}></textarea>
+                  <div className={"conf-editor-surface relative min-w-0 flex-1 overflow-hidden"}>
+                    <pre id={"confSyntaxHighlight"} aria-hidden={"true"} className={"conf-syntax-highlight absolute inset-0 m-0 overflow-hidden py-4 px-5 font-mono leading-[1.68]"}></pre>
+                    <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto selection:bg-blue-500/30 focus:ring-0 border-none"}></textarea>
+                  </div>
                   {"\n            "}
                 </div>
                 <aside id={"configOutline"} aria-label={"Структура конфигурации"} className={"config-outline hidden max-h-[740px] overflow-y-auto rounded-xl border border-slate-800 bg-[#070b14] p-2.5"}>
@@ -1238,9 +1241,11 @@ export default function App() {
               <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"light"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-light"}></span><span><strong>Светлая</strong><small>Светлый фон и контрастный текст</small></span></label>
               <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"neon"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-neon"}></span><span><strong>Фиолетово-неоновая</strong><small>Тёмная тема с фиолетовым акцентом</small></span></label>
             </div>
-            <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Вид меню</h2><p className={"mt-1 text-xs text-slate-400"}>Компактный вариант сокращает список редко используемых разделов. «Оформление UI» и другие системные страницы остаются на месте.</p><div className={"mt-3 flex flex-wrap gap-3"}>
+            <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Расположение меню</h2><p className={"mt-1 text-xs text-slate-400"}>Выберите плотность и ширину панели. В компактном виде целиком скрыта группа «Диагностика и автоматика».</p><div className={"mt-3 grid gap-3 sm:grid-cols-2"}>
               <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"standard"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Стандартный</strong><small>Все доступные разделы</small></span></label>
-              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"compact"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Компактный</strong><small>Основные разделы и система</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"compact"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Компактный</strong><small>Скрывает всю группу диагностики и автоматики</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"dense"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Плотный</strong><small>Все разделы с уменьшенными отступами</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"wide"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Широкий</strong><small>Увеличенная ширина боковой панели</small></span></label>
             </div></div>
           </section>
         </section>
