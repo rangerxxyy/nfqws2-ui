@@ -1,6 +1,7 @@
 import { diagnosisRows } from './diagnosis-layout';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
+import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentation';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
@@ -25,6 +26,7 @@ let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
 let freezeScanRunning = false;
 let activeFreezeScanId: string | null = null;
+let activeStrategyPreview: { source: 'strategyPick' | 'freezeScan'; operationId: string; candidateIndex: number; revision: string; panel: 'autotune' | 'freeze' } | null = null;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
@@ -782,10 +784,10 @@ function renderStrategyPick(operation: StrategyPickOperation) {
   });
 }
 
-function renderStrategyPickPreview(preview: StrategyPickPreview) {
-  const panel = $('#autotunePreviewPanel');
-  const summary = $('#autotunePreviewSummary');
-  const diff = $('#autotunePreviewDiff');
+function renderStrategyPickPreview(preview: StrategyPickPreview, source: 'strategyPick' | 'freezeScan', candidateIndex: number, target: 'autotune' | 'freeze' = 'autotune') {
+  const panel = $(`#${target === 'freeze' ? 'freezeApplyPreviewPanel' : 'autotunePreviewPanel'}`);
+  const summary = $(`#${target === 'freeze' ? 'freezeApplyPreviewSummary' : 'autotunePreviewSummary'}`);
+  const diff = $(`#${target === 'freeze' ? 'freezeApplyPreviewDiff' : 'autotunePreviewDiff'}`);
   if (!panel || !summary || !diff) return;
   panel.classList.remove('hidden');
   summary.textContent = `${preview.host} · ${preview.protocol.toUpperCase()} · ${preview.candidate.name}. ${preview.summary} Revision: ${preview.originalRevision.slice(0, 12)}.`;
@@ -807,6 +809,12 @@ function renderStrategyPickPreview(preview: StrategyPickPreview) {
     diff.append(row);
   }
   if (!diff.childElementCount) diff.textContent = 'Изменений нет.';
+  activeStrategyPreview = { source, operationId: preview.operationId, candidateIndex, revision: preview.originalRevision, panel: target };
+  const apply = $(`#${target === 'freeze' ? 'applyFreezeStrategyButton' : 'applyStrategyPickButton'}`);
+  if (apply instanceof HTMLButtonElement) {
+    apply.disabled = false;
+    apply.dataset.args = JSON.stringify([source, preview.operationId, String(candidateIndex), preview.originalRevision]);
+  }
 }
 
 async function previewStrategyPick(candidateIndex: string) {
@@ -820,10 +828,58 @@ async function previewStrategyPick(candidateIndex: string) {
   if (diff) diff.textContent = '';
   try {
     const preview = await nfqwsDiagnostics.strategyPreview(operationId, index);
-    renderStrategyPickPreview(preview);
+    renderStrategyPickPreview(preview, 'strategyPick', index);
   } catch (error) {
     panel?.classList.add('hidden');
     toast(error instanceof Error ? error.message : 'Предпросмотр стратегии недоступен.', 'error');
+  }
+}
+
+async function previewFreezeStrategy(operationId: string, resultIndex: string) {
+  const index = Number(resultIndex);
+  if (!Number.isInteger(index) || index < 0) return toast('Индекс проверенного домена некорректен.', 'error');
+  const panel = $('#freezeApplyPreviewPanel');
+  panel?.classList.remove('hidden');
+  setText('#freezeApplyPreviewSummary', 'Формируется профиль только для проверенного домена…');
+  const diff = $('#freezeApplyPreviewDiff');
+  if (diff) diff.textContent = '';
+  try {
+    const preview = await nfqwsDiagnostics.freezeStrategyPreview(operationId, index);
+    renderStrategyPickPreview(preview, 'freezeScan', index, 'freeze');
+  } catch (error) {
+    panel?.classList.add('hidden');
+    toast(error instanceof Error ? error.message : 'Предпросмотр стратегии недоступен.', 'error');
+  }
+}
+
+async function applyStrategyPick(source: string, operationId: string, candidateIndex: string, expectedRevision: string) {
+  if ((source !== 'strategyPick' && source !== 'freezeScan') || !activeStrategyPreview
+    || activeStrategyPreview.source !== source || activeStrategyPreview.operationId !== operationId) {
+    return toast('Сначала откройте актуальный предпросмотр стратегии.', 'error');
+  }
+  const summaryId = activeStrategyPreview.panel === 'freeze' ? '#freezeApplyPreviewSummary' : '#autotunePreviewSummary';
+  const buttonId = activeStrategyPreview.panel === 'freeze' ? '#applyFreezeStrategyButton' : '#applyStrategyPickButton';
+  if (activeStrategyPreview.candidateIndex !== Number(candidateIndex) || activeStrategyPreview.revision !== expectedRevision) return toast('Предпросмотр устарел. Откройте его снова.', 'error');
+  const editor = $('#nfqwsConfTextarea');
+  if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) return toast('Сначала примените или отмените черновик конфигурации. Стратегия не применена.', 'error');
+  if (!window.confirm(`Добавить профиль только для ${$(summaryId)?.textContent?.split(' · ')[0] ?? 'проверенного домена'} и перезапустить nfqws2? Будет создана резервная копия; при ошибке запуска конфигурация откатится.`)) return;
+  const button = $(buttonId);
+  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Применение…'; }
+  let wasApplied = false;
+  try {
+    const applied = await nfqwsDiagnostics.applyStrategy(source, operationId, Number(candidateIndex), expectedRevision);
+    wasApplied = true;
+    activeStrategyPreview = null;
+    try { await loadConfig(); }
+    catch { toast('Стратегия применена, но страницу конфигурации не удалось обновить. Перезагрузите панель.', 'error'); return; }
+    toast(`${applied.message} Профиль добавлен; резервная копия сохранена.`, 'success');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось применить профиль.', 'error');
+  } finally {
+    if (button instanceof HTMLButtonElement) {
+      button.disabled = wasApplied;
+      button.textContent = wasApplied ? 'Стратегия применена' : activeStrategyPreview?.panel === 'freeze' ? 'Применить и перезапустить' : 'Применить стратегию и перезапустить';
+    }
   }
 }
 
@@ -919,6 +975,8 @@ async function startStrategyPick() {
   if (selectedMode === 'custom' && customSteps.length === 0) return toast('Добавьте хотя бы один параметр --lua-desync=…', 'error');
   const container = $('#autotuneStrategiesList'); container?.replaceChildren();
   $('#autotunePreviewPanel')?.classList.add('hidden');
+  activeStrategyPreview = null;
+  const applyButton = $('#applyStrategyPickButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   try {
     const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeCommunity, includeOtherHistory);
     activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
@@ -966,7 +1024,7 @@ function renderFreezeScan(operation: FreezeScanOperation) {
   }
   const container = $('#freezeScanResults');
   if (!container) return;
-  const resultsSignature = JSON.stringify(operation.results);
+  const resultsSignature = JSON.stringify({ state: operation.state, results: operation.results });
   if (container.dataset.resultsSignature === resultsSignature) return;
   container.dataset.resultsSignature = resultsSignature;
   container.replaceChildren();
@@ -979,8 +1037,10 @@ function renderFreezeScan(operation: FreezeScanOperation) {
   for (const title of labels) { const cell = document.createElement('th'); cell.className = 'px-3 py-3 font-bold'; cell.textContent = title; headerRow.append(cell); }
   head.append(headerRow); table.append(head);
   const body = document.createElement('tbody'); body.className = 'divide-y divide-slate-800 text-slate-200';
-  for (const result of operation.results) {
-    const row = document.createElement('tr'); row.className = 'align-top hover:bg-slate-900/50';
+  for (const [resultIndex, result] of operation.results.entries()) {
+    const presentation = freezeRowPresentation({ freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, directOk: result.direct.ok, currentOk: result.current.ok });
+    const row = document.createElement('tr'); row.className = `freeze-result-row freeze-result-${presentation.tone} align-top hover:bg-slate-900/50`;
+    row.dataset.resultTone = presentation.tone;
     const recentAttempts = result.candidateAttempts.slice(-3).map((attempt) => `${attempt.sni} · ${attempt.successes}/${attempt.attempts}${attempt.reason ? ` · ${attempt.reason}` : ''}`).join('\n');
     const cells = [
       `${result.label}\nИмя / SNI: ${result.host}${result.path === '/' ? '' : result.path}`,
@@ -989,7 +1049,21 @@ function renderFreezeScan(operation: FreezeScanOperation) {
       freezeMeasurementLabel(result.current),
       result.foundStrategy ? `Найдено имя ${result.foundStrategy.sni} · ${result.foundStrategy.successes}/${result.foundStrategy.attempts} успешных${result.foundStrategy.reusedFrom ? ` · совпадающий ASN, найдено на ${result.foundStrategy.reusedFrom}` : ''}\n${result.foundStrategy.step}${recentAttempts ? `\nПредыдущие проверки:\n${recentAttempts}` : ''}` : result.freezeDetected ? `Возможный обрыв · проверено вариантов: ${result.triedCandidates}${result.triedCandidates ? ', подтверждённый вариант не найден' : ''}${recentAttempts ? `\nПоследние проверки:\n${recentAttempts}` : ''}` : result.direct.ok && result.current.ok ? 'Обрыв не обнаружен' : 'Результат не подтверждает обрыв 16–20 КБ',
     ];
-    cells.forEach((value, index) => { const cell = document.createElement('td'); cell.dataset.label = labels[index]; cell.className = `whitespace-pre-line px-3 py-3 ${index === 4 && result.foundStrategy ? 'font-bold text-emerald-200' : index === 4 && result.freezeDetected ? 'font-bold text-amber-100' : 'font-semibold text-white'}`; cell.textContent = value; row.append(cell); });
+    cells.forEach((value, index) => {
+      const cell = document.createElement('td'); cell.dataset.label = labels[index];
+      cell.className = `whitespace-pre-line px-3 py-3 ${index === 4 ? 'freeze-result-summary font-bold' : 'font-semibold text-white'}`;
+      cell.textContent = index === 4 ? `${presentation.label}\n${value}` : value;
+      if (index === 4 && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mt-2 rounded-lg border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs font-bold text-blue-100 transition hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
+        button.dataset.actionClick = 'previewFreezeStrategy';
+        button.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
+        button.textContent = `Профиль для ${result.host}`;
+        cell.append(button);
+      }
+      row.append(cell);
+    });
     body.append(row);
   }
   table.append(body); container.append(table);
@@ -1026,6 +1100,9 @@ async function startFreezeScan() {
   if (extraHosts.length > 20) return toast('Можно добавить не более 20 своих доменов.', 'error');
   const results = $('#freezeScanResults');
   results?.replaceChildren();
+  $('#freezeApplyPreviewPanel')?.classList.add('hidden');
+  activeStrategyPreview = null;
+  const applyButton = $('#applyFreezeStrategyButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   if (results) delete results.dataset.resultsSignature;
   $('#freezeScanSummary')?.classList.add('hidden');
   try { const operation = await nfqwsDiagnostics.freezeScanStart(extraHosts); localStorage.setItem('nfqws2-ui-freeze-scan', operation.id); await pollFreezeScan(operation.id); }
@@ -1205,6 +1282,8 @@ function bindPrototypeActions() {
     cancelStrategyPick: () => void cancelStrategyPick(),
     toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
+    previewFreezeStrategy: (operationId: string, index: string) => void previewFreezeStrategy(operationId, index),
+    applyStrategyPick: (source: string, operationId: string, index: string, revision: string) => void applyStrategyPick(source, operationId, index, revision),
     runFreezeScan: () => void startFreezeScan(),
     cancelFreezeScan: () => void cancelFreezeScan(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },

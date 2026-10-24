@@ -241,6 +241,16 @@ fn error_is(attempt: &TransferAttempt, value: &str) -> bool {
         .is_some_and(|error| error.eq_ignore_ascii_case(value))
 }
 
+/// A second transfer sample is useful only when the first one could support a
+/// 16–20 KB boundary-stall diagnosis. Complete responses and unrelated errors
+/// need no repeat; this keeps the ordinary network baseline close to the
+/// single-probe behavior used by the reference implementation.
+pub fn should_probe_boundary_stall(attempt: &TransferAttempt, expected_bytes: Option<u64>) -> bool {
+    error_is(attempt, "timeout")
+        && (BOUNDARY_MIN_BYTES..=BOUNDARY_MAX_BYTES).contains(&attempt.bytes_received)
+        && expected_bytes.is_none_or(|expected| expected > attempt.bytes_received)
+}
+
 pub fn classify_transfer(
     attempts: &[TransferAttempt],
     expected_bytes: Option<u64>,
@@ -284,7 +294,7 @@ pub fn classify_transfer(
         TransferClass::PossibleBoundaryStall
     } else if attempts.is_empty() {
         TransferClass::Inconclusive
-    } else if attempts.len() >= 2
+    } else if !attempts.is_empty()
         && attempts
             .iter()
             .all(|attempt| error_is(attempt, "timeout") && attempt.bytes_received == 0)

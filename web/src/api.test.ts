@@ -78,6 +78,20 @@ describe('API client used by the source-based panel', () => {
     expect(JSON.parse(String(init.body))).toEqual({ candidateIndex: 0 });
   });
 
+  it('previews and applies only a server-confirmed strategy with an expected config revision', async () => {
+    const preview = { operationId: '0123456789abcdef0123456789abcdef', candidateIndex: 3, host: 'example.com', protocol: 'https', candidate: { name: 'freeze', source: 'scan', steps: ['--lua-desync=hostfakesplit:host=ya.ru'] }, originalRevision: 'rev-1', originalContent: '', proposedContent: '', summary: 'preview' };
+    const response = { config: { file: '/opt/etc/nfqws2.conf', content: 'new', revision: 'rev-2' }, message: 'restarted' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsDiagnostics.freezeStrategyPreview(preview.operationId, 3)).toEqual(preview);
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({ source: 'freezeScan', operationId: preview.operationId, candidateIndex: 3 });
+    expect(await nfqwsDiagnostics.applyStrategy('freezeScan', preview.operationId, 3, preview.originalRevision)).toEqual(response);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/nfqws2/strategies/apply');
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ source: 'freezeScan', operationId: preview.operationId, candidateIndex: 3, expectedRevision: 'rev-1' });
+  });
+
   it('requests router-side website diagnostics and returns the real stage results', async () => {
     const report = { host: 'example.com', addresses: ['1.1.1.1'], steps: [{id:'https',status:'error',detail:'TLS timeout',durationMs:8000,httpCode:null}], summary: 'Не удалось проверить HTTPS', limitations: [] };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(report), {status:200}));

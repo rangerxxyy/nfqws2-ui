@@ -2,7 +2,9 @@
 //! `freezeJob`, `padProbe`, and `freezeCandidates` behavior.
 use crate::{
     site_diagnostics::{normalize_host, public_ip},
-    transfer_diagnostic::{TransferAttempt, TransferClass, classify_transfer},
+    transfer_diagnostic::{
+        TransferAttempt, TransferClass, classify_transfer, should_probe_boundary_stall,
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -146,9 +148,10 @@ pub fn verify_asn_hint(hint: Option<u32>, response: &[u8]) -> AsnVerification {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FreezeTargetKind {
+    #[default]
     HostReference,
     PinnedAddress,
     UserHost,
@@ -443,6 +446,8 @@ pub struct FreezeNetworkResult {
     pub label: String,
     pub host: String,
     pub path: String,
+    #[serde(default)]
+    pub target_kind: FreezeTargetKind,
     pub address: Option<Ipv4Addr>,
     pub asn_hint: Option<u32>,
     pub asn: AsnVerification,
@@ -639,7 +644,11 @@ async fn measure_target(
         )
         .await?;
         expected_bytes = parsed.expected_bytes.or(expected_bytes);
+        let should_repeat = should_probe_boundary_stall(&parsed.attempt, expected_bytes);
         attempts.push(parsed.attempt);
+        if !should_repeat {
+            break;
+        }
     }
     let diagnosis = classify_transfer(&attempts, expected_bytes);
     let elapsed_ms = attempts.iter().map(|attempt| attempt.elapsed_ms).sum();
@@ -699,6 +708,7 @@ pub async fn scan_network_baselines(
                 label: target.label.clone(),
                 host: target.host.clone(),
                 path: target.path.clone(),
+                target_kind: target.kind,
                 address: None,
                 asn_hint: target.asn_hint,
                 asn: AsnVerification::Unavailable,
@@ -725,6 +735,7 @@ pub async fn scan_network_baselines(
             label: target.label.clone(),
             host: target.host.clone(),
             path: target.path.clone(),
+            target_kind: target.kind,
             address: Some(address),
             asn_hint: target.asn_hint,
             asn: AsnVerification::Unavailable,

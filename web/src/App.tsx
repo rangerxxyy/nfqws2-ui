@@ -1129,7 +1129,10 @@ export default function App() {
                 <p id={"autotunePreviewSummary"} className={"mt-1 text-sm font-medium text-slate-300"}></p>
               </div>
               <div id={"autotunePreviewDiff"} className={"max-h-96 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
-              <p className={"text-xs font-medium text-slate-400"}>Это только просмотр. Конфигурация и служба не изменены.</p>
+              <p className={"text-xs font-medium text-slate-300"}>Профиль ограничен проверенным доменом. Проверьте diff перед применением; будет создана резервная копия, затем nfqws2 перезапустится.</p>
+              <button id={"applyStrategyPickButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>
+                {"Применить стратегию и перезапустить"}
+              </button>
             </section>
             {"\n\n          "}
             <div className={"xl:col-span-4 ui-card rounded-2xl p-5 flex flex-col min-h-[220px] xl:h-[540px]"}>
@@ -1180,6 +1183,15 @@ export default function App() {
             <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
             <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-4 py-3 text-sm font-bold leading-relaxed"} role={"status"} aria-live={"polite"}></p>
             <div id={"freezeScanResults"} className={"hidden overflow-x-auto rounded-xl border border-slate-800"}></div>
+            <section id={"freezeApplyPreviewPanel"} className={"hidden rounded-2xl border border-blue-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>
+              <div>
+                <h3 className={"text-sm font-bold text-white"}>Применение к проверенному сайту</h3>
+                <p id={"freezeApplyPreviewSummary"} className={"mt-1 text-sm font-medium text-slate-200"}></p>
+              </div>
+              <div id={"freezeApplyPreviewDiff"} className={"max-h-72 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
+              <p className={"text-xs font-medium text-slate-300"}>Профиль ограничен этим доменом. Перед применением проверьте diff; будет создана резервная копия, затем nfqws2 перезапустится.</p>
+              <button id={"applyFreezeStrategyButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>Применить и перезапустить</button>
+            </section>
             <p className={"text-xs font-semibold leading-relaxed text-slate-300"}>Проверки идут по очереди с ограничением времени. Причина сбоя отмечается как возможный обрыв, а не как доказательство DPI. Результаты и прогресс сохраняются при перезагрузке страницы.</p>
           </div>
         </section>

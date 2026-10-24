@@ -49,6 +49,7 @@ fn freeze_network_results_expose_domain_path_ip_and_asn_for_the_ui() {
         label: "Hetzner".into(),
         host: "hetzner.com".into(),
         path: "/".into(),
+        target_kind: FreezeTargetKind::HostReference,
         address: Some(Ipv4Addr::new(91, 98, 156, 82)),
         asn_hint: Some(24940),
         asn: AsnVerification::Verified { asn: 24940 },
@@ -63,6 +64,10 @@ fn freeze_network_results_expose_domain_path_ip_and_asn_for_the_ui() {
     assert_eq!(result["host"], "hetzner.com");
     assert_eq!(result["address"], "91.98.156.82");
     assert_eq!(result["asnHint"], 24940);
+    let mut legacy = result.clone();
+    legacy.as_object_mut().unwrap().remove("targetKind");
+    let old_result: FreezeNetworkResult = serde_json::from_value(legacy).unwrap();
+    assert_eq!(old_result.target_kind, FreezeTargetKind::HostReference);
 }
 
 fn unreachable_measurement() -> nfqws2_ui::freeze_diagnostic::FreezeMeasurement {
@@ -261,6 +266,7 @@ fn sample_freeze_result(label: &str, freeze_detected: bool) -> FreezeNetworkResu
         label: label.into(),
         host: format!("{label}.example"),
         path: "/large.bin".into(),
+        target_kind: FreezeTargetKind::PinnedAddress,
         address: Some(Ipv4Addr::new(203, 0, 113, 1)),
         asn_hint: None,
         asn: AsnVerification::Unavailable,

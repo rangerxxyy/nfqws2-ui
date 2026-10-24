@@ -142,6 +142,10 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('freeze-scan-table');
     expect(panelSource).toContain("result.host}${result.path === '/' ? '' : result.path}");
     expect(panelSource).toContain('result.address ??');
+    expect(template).toContain('id="freezeApplyPreviewPanel"');
+    expect(panelSource).toContain('freezeStrategyPreview');
+    expect(panelSource).toContain('JSON.stringify({ state: operation.state, results: operation.results })');
+    expect(panelSource).toContain('freezeCanApplyToHost');
     expect(panelStyles).toContain('@keyframes freeze-row-enter');
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
     expect(panelSource).toContain("status.setAttribute('aria-busy'");
@@ -178,13 +182,19 @@ describe('TSX panel without authentication', () => {
     expect(renderer).not.toContain('if (!container || !operation.results.length) return');
   });
 
-  it('exposes a read-only backend preview only for confirmed strategy candidates', () => {
+  it('exposes a confirmed strategy preview followed by explicit guarded apply', () => {
     const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('async function loadStrategyPickHistory'));
     expect(renderer).toContain("operation.state === 'complete' && result.confirmed");
     expect(renderer).toContain("preview.dataset.actionClick = 'previewStrategyPick'");
     expect(panelSource).toContain('nfqwsDiagnostics.strategyPreview');
     expect(template).toContain('id="autotunePreviewPanel"');
-    expect(template).not.toContain('data-action-click="applyStrategyPick"');
+    expect(template).toContain('data-action-click="applyStrategyPick"');
+    expect(panelSource).toContain('nfqwsDiagnostics.applyStrategy');
+    expect(backendSource).toContain('/api/nfqws2/strategies/apply');
+    expect(panelSource).toContain('window.confirm(');
+    expect(panelSource).toContain("result.targetKind");
+    expect(panelStyles).toContain('freeze-result-error');
+    expect(panelStyles).toContain('freeze-result-success');
   });
 
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
