@@ -3828,13 +3828,49 @@ async fn telegram_api(
     for (key, value) in form {
         cmd.arg("--data-urlencode").arg(format!("{key}={value}"));
     }
-    cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.arg("--write-out")
+        .arg("\nNFQWS2_TELEGRAM_HTTP_CODE:%{http_code}")
+        .arg(url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let output = cmd
         .output()
         .await
         .map_err(|_| "Не удалось запустить curl для Telegram".to_string())?;
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-        "Telegram Bot API не вернул JSON; проверьте сеть и способ отправки".to_string()
+    let redact = |value: &str| {
+        let value = value.replace(settings.token.trim(), "[токен скрыт]");
+        if settings.proxy.is_empty() {
+            value
+        } else {
+            value.replace(&settings.proxy, "[прокси скрыт]")
+        }
+    };
+    if !output.status.success() {
+        let code = output
+            .status
+            .code()
+            .map_or_else(|| "неизвестен".to_string(), |code| code.to_string());
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = redact(detail.trim());
+        let detail = detail.chars().take(180).collect::<String>();
+        return Err(if detail.is_empty() {
+            format!("Не удалось связаться с Telegram (curl, код {code})")
+        } else {
+            format!("Не удалось связаться с Telegram (curl, код {code}): {detail}")
+        });
+    }
+    let response = String::from_utf8_lossy(&output.stdout);
+    let (body, http_code) = response.rsplit_once("\nNFQWS2_TELEGRAM_HTTP_CODE:").map_or(
+        (response.as_ref(), "неизвестен"),
+        |(body, code)| (body, code.trim()),
+    );
+    let value: serde_json::Value = serde_json::from_str(body.trim()).map_err(|_| {
+        let preview = redact(body.trim()).chars().take(180).collect::<String>();
+        if preview.is_empty() {
+            format!("Telegram API не вернул JSON (HTTP {http_code}); проверьте маршрут соединения")
+        } else {
+            format!("Telegram API не вернул JSON (HTTP {http_code}); ответ: {preview}")
+        }
     })?;
     if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         return Err(value

@@ -1332,7 +1332,6 @@ async function pollStrategyPick(id: string, notifyOnCompletion = true) {
     renderStrategyPick(current);
     setText('#scanProgressLabel', current.message);
     if (['complete', 'partial', 'no_match', 'site_unblocked', 'cancelled', 'failed'].includes(current.state)) {
-      if (localStorage.getItem(STRATEGY_PICK_STORAGE) === id) localStorage.removeItem(STRATEGY_PICK_STORAGE);
       void loadStrategyPickHistory();
       if (notifyOnCompletion) {
         if (current.state === 'failed') toast(current.message, 'error');
