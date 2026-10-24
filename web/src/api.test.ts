@@ -208,7 +208,7 @@ describe('API client used by the source-based panel', () => {
 
   it('lists real eligible releases and starts a selected-version update through Rust', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('{"releases":[{"tag":"v0.1.7","publishedAt":"2026-10-22T00:00:00Z","notes":"notes"}]}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"releases":[{"tag":"v0.1.7","publishedAt":"2026-10-22T00:00:00Z","notes":"notes"}],"updateStatus":{"currentVersion":"0.1.6","latestVersion":"v0.1.7","updateAvailable":true,"releaseUrl":"https://github.com/rangerxxyy/nfqws2-ui/releases/tag/v0.1.7","checkedAt":123}}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"id":"abc123","state":"downloading"}', { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -216,6 +216,7 @@ describe('API client used by the source-based panel', () => {
     const operation = await nfqwsUpdates.install('v0.1.7');
 
     expect(releases.releases[0]?.tag).toBe('v0.1.7');
+    expect(releases.updateStatus).toMatchObject({ updateAvailable: true, latestVersion: 'v0.1.7' });
     expect(operation.state).toBe('downloading');
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/updates/releases');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/updates/install');

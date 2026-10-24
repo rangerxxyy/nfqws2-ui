@@ -79,10 +79,10 @@ function dismissUiUpdateNotice(tag: string) {
   try { window.localStorage.setItem(UI_UPDATE_DISMISSED_TAG_KEY, tag); } catch { /* Still allow the notice to be closed if storage is blocked. */ }
   hideUiUpdateNotice();
 }
-function renderUiUpdateNotice(status: UiUpdateStatus) {
+function renderUiUpdateNotice(status: UiUpdateStatus, manualCheck = false) {
   let dismissedTag: string | null = null;
   try { dismissedTag = window.localStorage.getItem(UI_UPDATE_DISMISSED_TAG_KEY); } catch { /* Treat storage failure as not dismissed. */ }
-  const suppressedTag = status.latestVersion && (dismissedTag === status.latestVersion || uiUpdateNoticeOpenedTag === status.latestVersion)
+  const suppressedTag = status.latestVersion && ((dismissedTag === status.latestVersion && !manualCheck) || uiUpdateNoticeOpenedTag === status.latestVersion)
     ? status.latestVersion
     : null;
   const presentation = uiUpdateNoticePresentation(status, suppressedTag);
@@ -177,6 +177,10 @@ function setBusy(value: boolean) {
   all<HTMLSelectElement>('select[data-action-change]').forEach((select) => {
     if (value && !select.disabled) { select.disabled = true; select.dataset.busyDisabled = 'true'; }
     else if (!value && select.dataset.busyDisabled === 'true') { select.disabled = false; delete select.dataset.busyDisabled; }
+  });
+  all<HTMLTextAreaElement>('textarea[data-config-argument]').forEach((field) => {
+    if (value && !field.disabled) { field.disabled = true; field.dataset.busyDisabled = 'true'; }
+    else if (!value && field.dataset.busyDisabled === 'true') { field.disabled = false; delete field.dataset.busyDisabled; }
   });
 }
 function setRestartInProgress(value: boolean) {
@@ -302,6 +306,7 @@ async function loadConfig() {
     setText('#moduleStatusBadge', `${moduleReferences.length} ссылок в конфигурации`);
     renderConfigModules(moduleReferences);
     renderConfigSections(config.content);
+    renderNfqwsArgumentEditors(config.content);
     await loadRuntimeProfiles();
     updateQuickParameters(config.content, networkInterfaces);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
@@ -438,6 +443,38 @@ function configAssignmentValue(content: string, key: string): string {
   const raw = line.slice(line.indexOf('=') + 1).trim();
   return raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) ? raw.slice(1, -1) : raw;
 }
+const NFQWS_ARGUMENT_GROUPS = [
+  ['NFQWS_EXTRA_ARGS', 'Режим и общие параметры'],
+  ['NFQWS_BASE_ARGS', 'Базовые параметры'],
+  ['NFQWS_ARGS', 'TCP / TLS'],
+  ['NFQWS_ARGS_QUIC', 'QUIC'],
+  ['NFQWS_ARGS_UDP', 'UDP'],
+  ['NFQWS_ARGS_IPSET', 'IPSET'],
+  ['NFQWS_ARGS_CUSTOM', 'Пользовательские доменные профили'],
+] as const;
+function renderNfqwsArgumentEditors(content: string) {
+  const host = $('#nfqwsArgEditors');
+  if (!host) return;
+  host.replaceChildren();
+  for (const [key, label] of NFQWS_ARGUMENT_GROUPS) {
+    const card = document.createElement('label');
+    card.className = 'block rounded-xl border border-slate-800 bg-[#070b14] p-3';
+    const heading = document.createElement('span');
+    heading.className = 'mb-2 block font-mono text-xs font-bold text-cyan-200';
+    heading.textContent = `${key} · ${label}`;
+    const field = document.createElement('textarea');
+    field.rows = key === 'NFQWS_ARGS_CUSTOM' ? 5 : 3;
+    field.spellcheck = false;
+    field.dataset.configArgument = 'true';
+    field.className = 'w-full resize-y rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60';
+    field.value = configAssignmentValue(content, key);
+    field.placeholder = key === 'NFQWS_ARGS_CUSTOM' ? '--new --filter-tcp=443 --hostlist-domains=example.com …' : 'Введите аргументы для этой группы';
+    field.title = 'Изменение обновит черновик; сохранить его можно кнопкой «Применить конфигурацию».';
+    field.addEventListener('change', () => void updateConfigVariable(key, field.value));
+    card.append(heading, field);
+    host.append(card);
+  }
+}
 function updateQuickParameters(content: string, networkInterfaces: string[] = []) {
   const availableModes = new Set(availableNfqwsModes(content));
   const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
@@ -484,6 +521,7 @@ async function updateConfigVariable(key: string, value: string) {
     editor.value = preview.content;
     syncConfigLines();
     renderConfigSections(editor.value);
+    renderNfqwsArgumentEditors(editor.value);
     toast('Черновик изменён. Нажмите «Применить конфигурацию», чтобы сохранить.');
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось изменить черновик', 'error');
@@ -1395,6 +1433,10 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
       const result = await nfqwsUpdates.releases();
       availableReleases = result.releases;
       installedCoreTag = null;
+      renderUiUpdateNotice(result.updateStatus, true);
+      if (!result.updateStatus.updateAvailable) {
+        toast(`Панель актуальна: установлена версия ${result.updateStatus.currentVersion}.`);
+      }
     }
     selectedReleaseTag = availableReleases[0]?.tag ?? null;
     renderReleases();

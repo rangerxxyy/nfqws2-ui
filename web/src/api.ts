@@ -139,7 +139,7 @@ export const nfqwsDiagnostics = {
 
 export const nfqwsUpdates = {
   uiStatus: () => api<UiUpdateStatus>('/api/updates/status'),
-  releases: () => api<{ releases: PanelRelease[] }>('/api/updates/releases'),
+  releases: () => api<{ releases: PanelRelease[]; updateStatus: UiUpdateStatus }>('/api/updates/releases'),
   install: (tag: string) => api<UpdateOperation>('/api/updates/install', {
     method: 'POST', body: JSON.stringify({ tag }),
   }),

@@ -285,6 +285,41 @@ impl<'a> ConfigDocument<'a> {
         Ok(self.replace(assignment, &encoded))
     }
 
+    /// Set a unique literal assignment or append it when an optional nfqws2
+    /// argument group is absent from an otherwise valid configuration.
+    pub fn set_literal_or_append(&self, name: &str, value: &str) -> Result<String, String> {
+        if value.contains('\0') {
+            return Err("Значение содержит NUL-байт".into());
+        }
+        let matches = self
+            .assignments
+            .iter()
+            .filter(|item| item.name == name)
+            .count();
+        match matches {
+            1 => self.set_literal(name, value),
+            count if count > 1 => Err(format!(
+                "Переменная {name} задана несколько раз; сначала устраните неоднозначность в raw-редакторе"
+            )),
+            _ => {
+                let mut encoded = String::from("\"");
+                for character in value.chars() {
+                    if matches!(character, '\\' | '"' | '$' | '`') {
+                        encoded.push('\\');
+                    }
+                    encoded.push(character);
+                }
+                encoded.push('"');
+                let separator = if self.source.is_empty() || self.source.ends_with('\n') {
+                    ""
+                } else {
+                    "\n"
+                };
+                Ok(format!("{}{separator}{name}={encoded}\n", self.source))
+            }
+        }
+    }
+
     /// Read a shell assignment only when its full value is a single literal.
     /// Expansions, concatenated quote fragments and escaped syntax are refused;
     /// this parser never evaluates shell code.
@@ -379,6 +414,23 @@ mod tests {
             edited,
             text.replace("ISP_INTERFACE=wan", "ISP_INTERFACE=eth0")
         );
+    }
+
+    #[test]
+    fn argument_groups_can_be_added_when_missing_and_existing_lines_are_preserved() {
+        let source = "KEEP=1\nNFQWS_ARGS=\"--filter-tcp=443\"\n";
+        let edited = ConfigDocument::parse(source)
+            .unwrap()
+            .set_literal_or_append("NFQWS_ARGS_UDP", "--filter-udp=443 --payload=quic_initial")
+            .unwrap();
+        assert!(edited.starts_with(source));
+        assert!(edited.ends_with("NFQWS_ARGS_UDP=\"--filter-udp=443 --payload=quic_initial\"\n"));
+
+        let changed = ConfigDocument::parse(&edited)
+            .unwrap()
+            .set_literal_or_append("NFQWS_ARGS_UDP", "--filter-udp=443 --new")
+            .unwrap();
+        assert!(changed.ends_with("NFQWS_ARGS_UDP=\"--filter-udp=443 --new\"\n"));
     }
 
     #[test]

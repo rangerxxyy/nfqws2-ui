@@ -227,6 +227,17 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('freeze-result-success');
   });
 
+  it('shows editable draft fields for each nfqws2 argument group in configuration settings', () => {
+    expect(template).toContain('id="nfqwsArgEditors"');
+    expect(panelSource).toContain("['NFQWS_BASE_ARGS', 'Базовые параметры']");
+    expect(panelSource).toContain("['NFQWS_ARGS_QUIC', 'QUIC']");
+    expect(panelSource).toContain("['NFQWS_ARGS_UDP', 'UDP']");
+    expect(panelSource).toContain("['NFQWS_ARGS_IPSET', 'IPSET']");
+    expect(panelSource).toContain("['NFQWS_ARGS_CUSTOM', 'Пользовательские доменные профили']");
+    expect(panelSource).toContain('updateConfigVariable(key, field.value)');
+    expect(backendSource).toContain('set_literal_or_append(&request.key, &request.value)');
+  });
+
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
     expect(panelSource).toContain('Проверка домена');
     expect(panelSource).toContain('На роутере проверяются DNS');

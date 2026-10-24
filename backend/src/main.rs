@@ -756,6 +756,25 @@ fn strategy_dry_run_argv(
         blobs,
     )?;
     let mut argv = vec![active_args[0].clone()];
+    let queue = active_args
+        .iter()
+        .skip(1)
+        .enumerate()
+        .find_map(|(index, argument)| {
+            if argument == "--qnum" {
+                active_args
+                    .get(index + 2)
+                    .map(|value| format!("--qnum={value}"))
+            } else {
+                argument
+                    .strip_prefix("--qnum=")
+                    .map(|value| format!("--qnum={value}"))
+            }
+        })
+        .ok_or_else(|| {
+            "Не найден --qnum работающего nfqws2; нельзя безопасно проверить профиль".to_owned()
+        })?;
+    argv.extend([queue]);
     argv.extend(profile_args);
     argv.insert(1, "--dry-run".into());
     Ok(argv)
@@ -966,12 +985,7 @@ fn freeze_result_as_strategy_operation(
     let found = result
         .found_strategy
         .as_ref()
-        .filter(|found| {
-            found.attempts >= 3
-                && found.successes >= 3
-                && found.reused_from.is_none()
-                && result.freeze_detected
-        })
+        .filter(|found| found.attempts >= 3 && found.successes >= 3 && found.reused_from.is_none())
         .ok_or_else(|| {
             "Для этого домена нет стратегии, подтверждённой тремя проверками".to_string()
         })?;
@@ -1742,18 +1756,24 @@ fn ui_update_status(
     }
 }
 
+fn cache_ui_update_status(
+    cache: &std::sync::RwLock<UiUpdateStatus>,
+    releases: &[PanelRelease],
+    checked_at: u64,
+) -> UiUpdateStatus {
+    let status = ui_update_status(env!("CARGO_PKG_VERSION"), releases, checked_at);
+    if let Ok(mut cached) = cache.write() {
+        *cached = status.clone();
+    }
+    status
+}
+
 fn start_ui_update_checker(state: Arc<AppState>) {
     tokio::spawn(async move {
         loop {
             let retry_after = match fetch_github_releases().await {
                 Ok(releases) => {
-                    if let Ok(mut status) = state.ui_update_status.write() {
-                        *status = ui_update_status(
-                            env!("CARGO_PKG_VERSION"),
-                            &releases,
-                            now_unix_seconds(),
-                        );
-                    }
+                    cache_ui_update_status(&state.ui_update_status, &releases, now_unix_seconds());
                     std::time::Duration::from_secs(4 * 60 * 60)
                 }
                 Err(error) => {
@@ -2100,9 +2120,14 @@ fn new_update_id() -> String {
     format!("{nanos:016x}{sequence:016x}")
 }
 
-async fn get_github_releases() -> Response {
+async fn get_github_releases(State(state): State<Arc<AppState>>) -> Response {
     match fetch_github_releases().await {
-        Ok(releases) => Json(serde_json::json!({ "releases": releases })).into_response(),
+        Ok(releases) => {
+            let update_status =
+                cache_ui_update_status(&state.ui_update_status, &releases, now_unix_seconds());
+            Json(serde_json::json!({ "releases": releases, "updateStatus": update_status }))
+                .into_response()
+        }
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
 }
@@ -4491,6 +4516,12 @@ async fn preview_config(Json(request): Json<ConfigPreviewRequest>) -> Response {
     if ![
         "ISP_INTERFACE",
         "NFQWS_EXTRA_ARGS",
+        "NFQWS_BASE_ARGS",
+        "NFQWS_ARGS",
+        "NFQWS_ARGS_QUIC",
+        "NFQWS_ARGS_UDP",
+        "NFQWS_ARGS_IPSET",
+        "NFQWS_ARGS_CUSTOM",
         "NFQUEUE_NUM",
         "POLICY_NAME",
         "IPV6_ENABLED",
@@ -4507,8 +4538,22 @@ async fn preview_config(Json(request): Json<ConfigPreviewRequest>) -> Response {
         Ok(document) => document,
         Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
     };
-    let result = if request.key == "NFQWS_EXTRA_ARGS" {
+    let editable_argument_groups = [
+        "NFQWS_BASE_ARGS",
+        "NFQWS_ARGS",
+        "NFQWS_ARGS_QUIC",
+        "NFQWS_ARGS_UDP",
+        "NFQWS_ARGS_IPSET",
+        "NFQWS_ARGS_CUSTOM",
+    ];
+    let result = if request.key == "NFQWS_EXTRA_ARGS"
+        && ["$MODE_LIST", "$MODE_AUTO", "$MODE_ALL"].contains(&request.value.as_str())
+    {
         document.set_mode(&request.value)
+    } else if request.key == "NFQWS_EXTRA_ARGS"
+        || editable_argument_groups.contains(&request.key.as_str())
+    {
+        document.set_literal_or_append(&request.key, &request.value)
     } else {
         document.set_literal(&request.key, &request.value)
     };
@@ -5675,6 +5720,25 @@ mod tests {
     }
 
     #[test]
+    fn manual_ui_release_check_refreshes_the_background_notification_cache() {
+        let cache = std::sync::RwLock::new(UiUpdateStatus::default());
+        let releases = vec![PanelRelease {
+            tag: "v0.3.7".into(),
+            published_at: None,
+            notes: String::new(),
+        }];
+
+        let checked = cache_ui_update_status(&cache, &releases, 456);
+        let background_status = cache.read().unwrap().clone();
+
+        assert_eq!(checked.latest_version.as_deref(), Some("v0.3.7"));
+        assert_eq!(checked.checked_at, Some(456));
+        assert_eq!(background_status.latest_version, checked.latest_version);
+        assert_eq!(background_status.release_url, checked.release_url);
+        assert_eq!(background_status.checked_at, Some(456));
+    }
+
+    #[test]
     fn ui_update_status_uses_only_releases_with_the_existing_arm64_package_gate() {
         let json = r#"[
           {"tag_name":"v0.3.11","draft":false,"prerelease":false,"assets":[]},
@@ -5771,6 +5835,9 @@ mod tests {
         let candidate = freeze_result_as_strategy_operation(&scan, 0).unwrap();
         assert_eq!(candidate.host, "site.example");
         assert_eq!(candidate.results[0].successes, 3);
+        let mut confirmed_without_baseline_flag = scan.clone();
+        confirmed_without_baseline_flag.results[0].freeze_detected = false;
+        assert!(freeze_result_as_strategy_operation(&confirmed_without_baseline_flag, 0).is_ok());
         assert!(
             freeze_result_as_strategy_operation(
                 &confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::PinnedAddress),
@@ -5971,6 +6038,7 @@ mod tests {
         let operation = confirmed_strategy_pick("complete", "https", true);
         let active_args = vec![
             "/opt/usr/bin/nfqws2".into(),
+            "--qnum=300".into(),
             "--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua".into(),
             "--new".into(),
             "--filter-tcp=443".into(),
@@ -5986,6 +6054,7 @@ mod tests {
         .unwrap();
         assert_eq!(argv[0], "/opt/usr/bin/nfqws2");
         assert_eq!(argv[1], "--dry-run");
+        assert!(argv.iter().any(|argument| argument == "--qnum=300"));
         assert!(
             argv.iter()
                 .any(|argument| argument == "--lua-desync=multisplit:pos=1")
@@ -7515,6 +7584,16 @@ mod tests {
         assert_eq!(
             result["content"],
             original.replace("\"wan\n eth2\"", "\"eth3\"")
+        );
+        let missing_group = app.clone().oneshot(Request::builder().method("POST")
+            .uri("/api/nfqws2/config/preview").header("content-type", "application/json")
+            .body(Body::from(serde_json::json!({"content": original, "key": "NFQWS_ARGS_UDP", "value": "--filter-udp=443 --payload=quic_initial"}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(missing_group.status(), StatusCode::OK);
+        assert!(
+            body_json(missing_group).await["content"]
+                .as_str()
+                .unwrap()
+                .contains("NFQWS_ARGS_UDP=\"--filter-udp=443 --payload=quic_initial\"")
         );
         assert_eq!(tokio::fs::read_to_string(&config).await.unwrap(), original);
         for (content, key, value, expected) in [
