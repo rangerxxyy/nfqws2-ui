@@ -61,4 +61,3 @@ export function appendMonitoringResult(state: MonitoringState, host: string, rep
   sites.unshift({ host: normalized, results: [result, ...previous.results].slice(0, MAX_MONITORING_RESULTS) });
   return { version: 1, sites: sites.slice(0, MAX_MONITORING_SITES) };
 }
-

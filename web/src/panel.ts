@@ -1871,4 +1871,3 @@ export function bootPanel() {
   booted = true;
   boot();
 }
-

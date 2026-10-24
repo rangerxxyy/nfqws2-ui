@@ -177,4 +177,3 @@ export const nfqwsUpdates = {
     method: 'POST', body: JSON.stringify({ tag }),
   }),
 };
-

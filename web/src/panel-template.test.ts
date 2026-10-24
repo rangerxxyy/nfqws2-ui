@@ -608,5 +608,3 @@ describe('TSX panel without authentication', () => {
     }
   });
 });
-
-
