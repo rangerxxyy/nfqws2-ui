@@ -5,6 +5,7 @@ import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentati
 import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
+import { configAssignmentValue } from './config-values';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
@@ -436,12 +437,6 @@ function renderConfigModules(references: NfqwsModuleReference[]) {
     button.addEventListener('click', () => void navigator.clipboard.writeText(reference.argument).then(() => toast('Аргумент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')));
     host.append(button);
   }
-}
-function configAssignmentValue(content: string, key: string): string {
-  const line = content.split(/\r?\n/).find((item) => item.trimStart().startsWith(`${key}=`));
-  if (!line) return '';
-  const raw = line.slice(line.indexOf('=') + 1).trim();
-  return raw.length >= 2 && ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) ? raw.slice(1, -1) : raw;
 }
 const NFQWS_ARGUMENT_GROUPS = [
   ['NFQWS_EXTRA_ARGS', 'Режим и общие параметры'],

@@ -2576,60 +2576,208 @@ pub fn configured_candidates(
             groups.last_mut().unwrap().push(arg.clone());
         }
     }
-    groups
-        .into_iter()
-        .filter_map(|group| {
-            let mut port_spec = None;
-            let mut l7 = None;
-            let mut payload = None;
-            let mut steps = Vec::new();
-            let mut index = 0;
-            while index < group.len() {
-                let arg = &group[index];
-                for (prefix, target) in [("--filter-tcp", "tcp"), ("--filter-udp", "udp")] {
-                    if target != transport {
-                        continue;
-                    }
-                    if let Some(value) = arg.strip_prefix(&format!("{prefix}=")) {
-                        port_spec = Some(value.to_string());
-                    } else if arg == prefix {
-                        port_spec = group.get(index + 1).cloned();
-                        index += 1;
-                    }
+    let mut candidates = Vec::new();
+    for group in groups {
+        let mut port_spec = None;
+        let mut l7 = None;
+        let mut payload: Option<String> = None;
+        let mut profile_steps = Vec::<(Option<String>, Option<String>, Vec<String>)>::new();
+        let mut index = 0;
+        while index < group.len() {
+            let arg = &group[index];
+            for (prefix, target) in [("--filter-tcp", "tcp"), ("--filter-udp", "udp")] {
+                if target != transport {
+                    continue;
                 }
-                if let Some(value) = arg.strip_prefix("--filter-l7=") {
-                    l7 = Some(value.to_string());
-                } else if arg == "--filter-l7" {
-                    l7 = group.get(index + 1).cloned();
+                if let Some(value) = arg.strip_prefix(&format!("{prefix}=")) {
+                    port_spec = Some(value.to_string());
+                } else if arg == prefix {
+                    port_spec = group.get(index + 1).cloned();
                     index += 1;
                 }
-                if let Some(value) = arg.strip_prefix("--payload=") {
-                    payload = Some(value.to_string());
-                } else if arg == "--payload" {
-                    payload = group.get(index + 1).cloned();
-                    index += 1;
-                }
-                if let Some(value) = arg.strip_prefix("--lua-desync=")
-                    && value.split([':', '=']).next() != Some("circular")
-                {
-                    steps.push(arg.clone());
-                }
+            }
+            if let Some(value) = arg.strip_prefix("--filter-l7=") {
+                l7 = Some(value.to_string());
+            } else if arg == "--filter-l7" {
+                l7 = group.get(index + 1).cloned();
                 index += 1;
             }
-            let ports_match = port_spec
-                .as_deref()
-                .is_some_and(|spec| port_filter_matches(spec, port));
-            let layer_match = l7.as_deref().is_none_or(|value| {
-                value
-                    .split(',')
-                    .any(|item| item == wanted_l7 || item == "all")
-            });
-            let payload_match = payload.as_deref().is_none_or(|value| {
-                value
-                    .split(',')
-                    .any(|item| item == wanted_payload || item == "all" || item == "known")
-            });
-            (ports_match && layer_match && payload_match && !steps.is_empty()).then_some(steps)
-        })
-        .collect()
+            if let Some(value) = arg.strip_prefix("--payload=") {
+                payload = Some(value.to_string());
+            } else if arg == "--payload" {
+                payload = group.get(index + 1).cloned();
+                index += 1;
+            }
+            if let Some(value) = arg.strip_prefix("--lua-desync=")
+                && value.split([':', '=']).next() != Some("circular")
+                && payload.as_deref().is_none_or(|value| {
+                    value
+                        .split(',')
+                        .any(|item| item == wanted_payload || item == "all" || item == "known")
+                })
+            {
+                let strategy_id = value
+                    .split(':')
+                    .find_map(|part| part.strip_prefix("strategy="));
+                if let Some((_, _, steps)) =
+                    profile_steps
+                        .iter_mut()
+                        .find(|(existing_payload, existing_strategy, _)| {
+                            existing_payload == &payload
+                                && existing_strategy.as_deref() == strategy_id
+                        })
+                {
+                    steps.push(arg.clone());
+                } else {
+                    profile_steps.push((
+                        payload.clone(),
+                        strategy_id.map(str::to_owned),
+                        vec![arg.clone()],
+                    ));
+                }
+            }
+            index += 1;
+        }
+        let ports_match = port_spec
+            .as_deref()
+            .is_some_and(|spec| port_filter_matches(spec, port));
+        let layer_match = l7.as_deref().is_none_or(|value| {
+            value
+                .split(',')
+                .any(|item| item == wanted_l7 || item == "all")
+        });
+        if !ports_match || !layer_match {
+            continue;
+        }
+        candidates.extend(profile_steps.into_iter().map(|(_, _, steps)| steps));
+    }
+    candidates
+}
+
+#[cfg(test)]
+mod configured_profile_tests {
+    use super::{StrategyMode, StrategyProtocol, build_plan, configured_candidates};
+
+    #[test]
+    fn splits_numbered_strategy_steps_into_separate_candidates() {
+        let active = vec![
+            "nfqws2".into(),
+            "--filter-tcp=443".into(),
+            "--filter-l7=tls".into(),
+            "--payload=tls_client_hello".into(),
+            "--lua-desync=circular:fails=2:time=300".into(),
+            "--lua-desync=fake:blob=tls_clienthello:strategy=1".into(),
+            "--lua-desync=multisplit:pos=1:strategy=1".into(),
+            "--lua-desync=fake:blob=tls_clienthello:strategy=2".into(),
+            "--lua-desync=hostfakesplit:host=google.com:strategy=2".into(),
+        ];
+
+        let candidates = configured_candidates(&active, StrategyProtocol::Https);
+
+        assert_eq!(
+            candidates,
+            vec![
+                vec![
+                    "--lua-desync=fake:blob=tls_clienthello:strategy=1",
+                    "--lua-desync=multisplit:pos=1:strategy=1",
+                ],
+                vec![
+                    "--lua-desync=fake:blob=tls_clienthello:strategy=2",
+                    "--lua-desync=hostfakesplit:host=google.com:strategy=2",
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn exposes_each_numbered_profile_strategy_as_its_own_plan_candidate() {
+        let active = vec![
+            "nfqws2".into(),
+            "--filter-tcp=443".into(),
+            "--filter-l7=tls".into(),
+            "--payload=tls_client_hello".into(),
+            "--lua-desync=circular:fails=2:time=300".into(),
+            "--lua-desync=fake:blob=tls_clienthello:strategy=1".into(),
+            "--lua-desync=multisplit:pos=1:strategy=1".into(),
+            "--lua-desync=hostfakesplit:host=google.com:strategy=2".into(),
+        ];
+        let functions = ["fake", "multisplit", "hostfakesplit"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let plan = build_plan(
+            StrategyProtocol::Https,
+            StrategyMode::Extended,
+            &configured_candidates(&active, StrategyProtocol::Https),
+            &functions,
+            &["tls_clienthello".into()],
+        );
+
+        assert_eq!(plan.candidates[0].source, "Текущий профиль");
+        assert_eq!(plan.candidates[0].steps.len(), 2);
+        assert_eq!(plan.candidates[1].source, "Текущий профиль");
+        assert_eq!(plan.candidates[1].steps.len(), 1);
+        assert!(
+            plan.candidates[0]
+                .steps
+                .iter()
+                .all(|step| step.contains("strategy=1"))
+        );
+        assert!(
+            plan.candidates[1]
+                .steps
+                .iter()
+                .all(|step| step.contains("strategy=2"))
+        );
+    }
+
+    #[test]
+    fn keeps_unnumbered_profile_steps_as_one_candidate() {
+        let active = vec![
+            "nfqws2".into(),
+            "--filter-tcp=443".into(),
+            "--filter-l7=tls".into(),
+            "--payload=tls_client_hello".into(),
+            "--lua-desync=fake:blob=tls_clienthello".into(),
+            "--lua-desync=multisplit:pos=1".into(),
+        ];
+
+        assert_eq!(
+            configured_candidates(&active, StrategyProtocol::Https),
+            vec![vec![
+                "--lua-desync=fake:blob=tls_clienthello",
+                "--lua-desync=multisplit:pos=1",
+            ]],
+        );
+    }
+
+    #[test]
+    fn keeps_payload_context_for_each_step_and_includes_unnumbered_http_profile() {
+        let active = vec![
+            "nfqws2".into(),
+            "--filter-tcp=443,80".into(),
+            "--filter-l7=http,tls".into(),
+            "--payload=tls_client_hello".into(),
+            "--lua-desync=fake:blob=tls_clienthello:strategy=1".into(),
+            "--lua-desync=multisplit:pos=1:strategy=1".into(),
+            "--lua-desync=hostfakesplit:host=google.com:strategy=2".into(),
+            "--payload=http_req".into(),
+            "--lua-desync=http_methodeol:badsum".into(),
+        ];
+
+        assert_eq!(
+            configured_candidates(&active, StrategyProtocol::Https),
+            vec![
+                vec![
+                    "--lua-desync=fake:blob=tls_clienthello:strategy=1",
+                    "--lua-desync=multisplit:pos=1:strategy=1",
+                ],
+                vec!["--lua-desync=hostfakesplit:host=google.com:strategy=2"],
+            ],
+        );
+        assert_eq!(
+            configured_candidates(&active, StrategyProtocol::Http),
+            vec![vec!["--lua-desync=http_methodeol:badsum"]],
+        );
+    }
 }
