@@ -24,6 +24,8 @@ export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc
 export type NfqwsListId = string;
 export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
+export type MonitoringProbeStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
+export type MonitoringProbeReport = { host: string; summary: string; current: { status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null }; steps: MonitoringProbeStep[] };
 export type InstallationPath = {
   path: string;
   exists: boolean;
@@ -85,6 +87,10 @@ export const nfqwsLists = {
     `/api/nfqws2/lists/${encodeURIComponent(id)}`,
     { method: 'PUT', body: JSON.stringify({ content, revision }) },
   ),
+  delete: (id: NfqwsListId, revision: string) => api<{ message: string }>(
+    `/api/nfqws2/lists/${encodeURIComponent(id)}`,
+    { method: 'DELETE', body: JSON.stringify({ revision }) },
+  ),
 };
 
 export const nfqwsInstallation = {
@@ -126,6 +132,9 @@ export const nfqwsConfig = {
 export const nfqwsDiagnostics = {
   site: (host: string) => api<SiteDiagnosticReport>('/api/nfqws2/diagnostics/site', {
     method: 'POST', body: JSON.stringify({ host }),
+  }),
+  monitor: (hosts: string[]) => api<MonitoringProbeReport[]>('/api/nfqws2/diagnostics/monitor', {
+    method: 'POST', body: JSON.stringify({ hosts }),
   }),
   traceStart: (host: string, proto: 'http' | 'https') => api<SiteTraceOperation>('/api/nfqws2/diagnostics/trace', {
     method: 'POST', body: JSON.stringify({ host, proto }),

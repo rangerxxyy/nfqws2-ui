@@ -53,7 +53,8 @@ const PANEL_SHELL_HTML: &str = r##"<!doctype html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>nfqws2-UI — Панель управления</title>
+  <title>nfqws2-UI</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/nfqws2-ui.css">
 </head>
 <body>
@@ -1635,6 +1636,31 @@ struct SiteDiagnosticRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoringRequest {
+    hosts: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoringHostResult {
+    host: String,
+    summary: String,
+    current: MonitoringStep,
+    steps: Vec<MonitoringStep>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoringStep {
+    id: &'static str,
+    status: &'static str,
+    detail: String,
+    duration_ms: Option<u64>,
+    http_code: Option<u16>,
+}
+
+#[derive(Deserialize)]
 struct SiteTraceRequest {
     host: String,
     proto: Option<String>,
@@ -1757,6 +1783,11 @@ struct ListResponse {
 #[derive(Deserialize)]
 struct ListWrite {
     content: String,
+    revision: String,
+}
+
+#[derive(Deserialize)]
+struct ListDelete {
     revision: String,
 }
 
@@ -3417,6 +3448,118 @@ async fn diagnose_site(
         });
     }
     Json(report).into_response()
+}
+
+async fn check_monitoring_host(host: String) -> MonitoringHostResult {
+    use tokio::net::lookup_host;
+    use tokio::time::{Duration, Instant, timeout};
+
+    let started = Instant::now();
+    let addresses = match timeout(Duration::from_secs(3), lookup_host(format!("{host}:443"))).await
+    {
+        Ok(Ok(addresses)) => addresses
+            .map(|address| address.ip())
+            .filter_map(|ip| match ip {
+                IpAddr::V4(ip) if site_diagnostics::public_ip(IpAddr::V4(ip)) => Some(ip),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let dns_ms = started.elapsed().as_millis() as u64;
+    let Some(ip) = addresses.first().copied() else {
+        let dns_detail = "DNS не вернул публичный IPv4-адрес".to_string();
+        let dns = MonitoringStep {
+            id: "dns",
+            status: "error",
+            detail: dns_detail.clone(),
+            duration_ms: Some(dns_ms),
+            http_code: None,
+        };
+        let current = MonitoringStep {
+            id: "current",
+            status: "error",
+            detail: dns_detail.clone(),
+            duration_ms: Some(dns_ms),
+            http_code: None,
+        };
+        return MonitoringHostResult {
+            host,
+            summary: dns_detail,
+            current,
+            steps: vec![dns],
+        };
+    };
+    let dns = MonitoringStep {
+        id: "dns",
+        status: "ok",
+        detail: format!(
+            "Публичный IPv4: {}",
+            addresses
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        duration_ms: Some(dns_ms),
+        http_code: None,
+    };
+    let probe = site_diagnostics::monitor_probe(&host, ip).await;
+    MonitoringHostResult {
+        host,
+        summary: probe.summary,
+        current: MonitoringStep {
+            id: "current",
+            status: probe.current.status,
+            detail: probe.current.detail,
+            duration_ms: probe.current.duration_ms,
+            http_code: probe.current.http_code,
+        },
+        steps: std::iter::once(dns)
+            .chain(probe.steps.into_iter().map(|step| MonitoringStep {
+                id: match step.id.as_str() {
+                    "tcp" => "tcp",
+                    "tls" => "tls",
+                    "http" => "http",
+                    "transfer" => "transfer",
+                    _ => "current",
+                },
+                status: step.status,
+                detail: step.detail,
+                duration_ms: step.duration_ms,
+                http_code: step.http_code,
+            }))
+            .collect(),
+    }
+}
+
+async fn monitor_sites(Json(request): Json<MonitoringRequest>) -> Response {
+    if request.hosts.is_empty() || request.hosts.len() > 20 {
+        return error(StatusCode::BAD_REQUEST, "Нужно передать от 1 до 20 доменов");
+    }
+    let hosts = match request
+        .hosts
+        .into_iter()
+        .map(|host| site_diagnostics::normalize_host(&host))
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(hosts) => hosts,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    for host in hosts {
+        tasks.spawn(check_monitoring_host(host));
+    }
+    let mut results = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(report) => results.push(report),
+            Err(join_error) => {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, join_error.to_string());
+            }
+        }
+    }
+    Json(results).into_response()
 }
 
 async fn trace_site(
@@ -5235,6 +5378,67 @@ where
     }
 }
 
+async fn delete_custom_list(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(request): Json<ListDelete>,
+) -> Response {
+    if !safe_custom_list_id(&id) {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Удалять можно только пользовательские .list файлы",
+        );
+    }
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let _write_guard = state.config_write_lock.lock().await;
+    let Some(path) = list_file_path(&config, &id) else {
+        return error(StatusCode::NOT_FOUND, "Пользовательский список не найден");
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
+            return error(StatusCode::NOT_FOUND, "Пользовательский список не найден");
+        }
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    if revision(&bytes) != request.revision {
+        return error(
+            StatusCode::CONFLICT,
+            "Список изменился после загрузки; обновите список перед удалением",
+        );
+    }
+    if let Err(backup_error) = backup_and_write_named(
+        &state.data_dir,
+        &path,
+        &format!("list-{id}"),
+        MAX_LIST_BYTES,
+        &bytes,
+        Some(&request.revision),
+    )
+    .await
+    {
+        return match backup_error {
+            BackupWriteError::Conflict => error(
+                StatusCode::CONFLICT,
+                "Список изменился во время удаления; обновите его перед повторной попыткой",
+            ),
+            BackupWriteError::Failed(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        };
+    }
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Json(MessageResponse {
+            message: format!("Пользовательский список {id} удалён"),
+        })
+        .into_response(),
+        Err(io_error) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось удалить список: {io_error}"),
+        ),
+    }
+}
+
 async fn restore_config_content(
     data_dir: &Path,
     path: &Path,
@@ -5767,6 +5971,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/preview", post(preview_config))
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
+        .route("/api/nfqws2/diagnostics/monitor", post(monitor_sites))
         .route(
             "/api/nfqws2/diagnostics/transfer",
             post(start_transfer_diagnostic),
@@ -5827,7 +6032,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         )
         .route("/api/nfqws2/apply", post(apply_config))
         .route("/api/nfqws2/lists", get(get_lists))
-        .route("/api/nfqws2/lists/{id}", get(get_list).put(put_list))
+        .route(
+            "/api/nfqws2/lists/{id}",
+            get(get_list).put(put_list).delete(delete_custom_list),
+        )
         .route("/api/backups", get(get_backups).post(create_backup))
         .route("/api/backups/{id}/restore", post(restore_backup))
         .route("/api/logs", get(get_logs))
@@ -8180,6 +8388,123 @@ mod tests {
             tokio::fs::read_to_string(custom_path).await.unwrap(),
             "google.com\nwww.google.com\n"
         );
+    }
+
+    #[tokio::test]
+    async fn custom_list_delete_is_revision_checked_and_rejects_standard_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_EXTRA_ARGS=$MODE_LIST\n")
+            .await
+            .unwrap();
+        tokio::fs::write(list_dir.join("google.list"), "google.com\n")
+            .await
+            .unwrap();
+        tokio::fs::write(list_dir.join("user.list"), "example.com\n")
+            .await
+            .unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/google.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let revision = body_json(loaded).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let stale = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/nfqws2/lists/google.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"revision":"stale"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert!(list_dir.join("google.list").exists());
+        let standard = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(r#"{{"revision":"{revision}"}}"#)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(standard.status(), StatusCode::FORBIDDEN);
+        assert!(list_dir.join("user.list").exists());
+        let deleted = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/nfqws2/lists/google.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(r#"{{"revision":"{revision}"}}"#)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+        assert!(!list_dir.join("google.list").exists());
+        let backup_dir = dir.path().join("state").join("backups");
+        let backups = std::fs::read_dir(backup_dir).unwrap().count();
+        assert_eq!(backups, 1);
+    }
+
+    #[tokio::test]
+    async fn monitoring_batch_rejects_invalid_hosts_and_more_than_twenty_sites() {
+        let app = api_router(
+            test_state(PathBuf::from("/tmp/nfqws2-ui-test")),
+            PathBuf::from("/tmp/web"),
+        );
+        let invalid = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/monitor")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"hosts":["192.168.1.1"]}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        let hosts = (0..21)
+            .map(|index| format!("site{index}.example"))
+            .collect::<Vec<_>>();
+        let too_many = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/diagnostics/monitor")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "hosts": hosts }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(too_many.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

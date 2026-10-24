@@ -15,7 +15,7 @@ import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
-import { appendMonitoringResult, checkMonitoringHostsSequentially, loadMonitoringState, normalizeMonitoringHost, saveMonitoringState, type MonitoringState } from './monitoring';
+import { appendMonitoringResult, loadMonitoringState, normalizeMonitoringHost, saveMonitoringState, type MonitoringState } from './monitoring';
 import type { UiUpdateStatus } from './api';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community';
@@ -229,7 +229,23 @@ function renderMonitoringSites() {
     heading.append(name, summary);
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'monitor-remove'; remove.dataset.actionClick = 'removeMonitoringSite'; remove.dataset.args = JSON.stringify([site.host]); remove.textContent = 'Убрать'; remove.title = `Убрать ${site.host} из мониторинга`;
     heading.append(remove); card.append(heading);
-    if (latest) { const detail = document.createElement('p'); detail.className = 'mt-2 text-xs text-slate-400'; detail.textContent = `${new Date(latest.checkedAt).toLocaleString()} · ${latest.summary}`; card.append(detail); }
+    if (latest) {
+      const detail = document.createElement('p'); detail.className = 'mt-2 text-xs text-slate-400'; detail.textContent = `${new Date(latest.checkedAt).toLocaleString()} · ${latest.summary}`; card.append(detail);
+      if (latest.steps.length) {
+        const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: 'Передача' };
+        const stageDetails = document.createElement('details'); stageDetails.className = 'monitor-stage-list mt-2';
+        const stageSummary = document.createElement('summary'); stageSummary.textContent = `Этапы проверки · ${latest.steps.filter((step) => step.status === 'ok').length}/${latest.steps.length} успешно`;
+        const stageList = document.createElement('div'); stageList.className = 'mt-2 space-y-1.5';
+        for (const step of latest.steps) {
+          const row = document.createElement('div'); row.className = 'monitor-stage-row';
+          const stageName = document.createElement('strong'); stageName.textContent = labels[step.id] ?? step.id;
+          const stageInfo = document.createElement('span'); stageInfo.textContent = `${step.detail}${step.durationMs === null ? '' : ` · ${step.durationMs} мс`}`;
+          row.dataset.status = step.status;
+          row.append(stageName, stageInfo); stageList.append(row);
+        }
+        stageDetails.append(stageSummary, stageList); card.append(stageDetails);
+      }
+    }
     if (site.results.length > 1) { const history = document.createElement('p'); history.className = 'mt-1 text-[11px] text-slate-500'; history.textContent = `Последние проверки: ${site.results.slice(0, 10).map((result) => `${new Date(result.checkedAt).toLocaleTimeString()} ${result.latencyMs === null ? '—' : `${result.latencyMs} мс`}`).join(' · ')}`; card.append(history); }
     host.append(card);
   }
@@ -244,19 +260,14 @@ async function runMonitoring(host?: string) {
   const button = $('[data-action-click="runMonitoring"]'); if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Проверяем…'; }
   const statusNode = $('#monitoringStatus'); if (statusNode) { statusNode.textContent = `Проверка 0 из ${hosts.length}`; statusNode.setAttribute('aria-busy', 'true'); }
   try {
-    let completed = 0;
-    await checkMonitoringHostsSequentially(hosts, async (current) => {
-      if (statusNode) statusNode.textContent = `Проверка ${completed + 1} из ${hosts.length}: ${current}`;
-      return nfqwsDiagnostics.site(current);
-    }, (current, report) => {
-      completed++;
-      if (monitoringState) monitoringState = appendMonitoringResult(monitoringState, current, report, Date.now());
-      persistMonitoring();
-    }, (current, error) => {
-      completed++;
-      if (monitoringState) monitoringState = appendMonitoringResult(monitoringState, current, null, Date.now(), error instanceof Error ? error.message : 'Не удалось выполнить запрос');
-      persistMonitoring();
-    });
+    if (statusNode) statusNode.textContent = `Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ`;
+    const reports = await nfqwsDiagnostics.monitor(hosts);
+    const reportByHost = new Map(reports.map((report) => [report.host, report]));
+    for (const current of hosts) {
+      const report = reportByHost.get(current);
+      if (monitoringState) monitoringState = appendMonitoringResult(monitoringState, current, report ?? null, Date.now(), 'Роутер не вернул результат');
+    }
+    persistMonitoring();
     toast(`Мониторинг завершён: ${hosts.length} сайтов проверено.`);
   } finally {
     monitoringRunning = false;
@@ -652,11 +663,9 @@ async function saveConfigAndApply() {
   } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setRestartInProgress(false); setBusy(false); }
 }
-async function serviceAction(action: 'start' | 'stop' | 'restart', confirmed = false) {
+async function serviceAction(action: 'start' | 'stop' | 'restart') {
   if (busy) return;
 
-  if (!confirmed && action === 'stop' && !window.confirm('Остановить nfqws2?')) return;
-  if (!confirmed && action === 'restart' && !window.confirm('Перезапустить nfqws2?')) return;
   setBusy(true);
   if (action === 'restart') setRestartInProgress(true);
   try { await api('/api/service', { method: 'POST', body: JSON.stringify({ action }) }); toast('Команда выполнена'); }
@@ -739,6 +748,48 @@ function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
     label.textContent = id;
     button.append(label);
     host.append(button);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.dataset.actionClick = 'requestDeleteCustomList';
+    remove.dataset.args = JSON.stringify([id]);
+    remove.dataset.customListDelete = 'true';
+    remove.className = 'list-file-delete px-2 text-slate-500 hover:text-rose-300 transition-colors';
+    remove.setAttribute('aria-label', `Удалить пользовательский список ${id}`);
+    remove.textContent = '×';
+    host.append(remove);
+  }
+}
+function requestDeleteCustomList(id: string) {
+  const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
+  if (standardIds.has(id) || !/^[A-Za-z0-9_.-]{1,128}\.list$/.test(id) || id.includes('..')) return;
+  const modal = $('#customListDeleteModal');
+  const name = $('#customListDeleteName');
+  const confirm = $('#confirmCustomListDelete');
+  if (!modal || !name || !(confirm instanceof HTMLButtonElement)) return;
+  name.textContent = id;
+  confirm.dataset.args = JSON.stringify([id]);
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+function closeCustomListDeleteModal() {
+  const modal = $('#customListDeleteModal');
+  modal?.classList.add('hidden');
+  modal?.classList.remove('flex');
+}
+async function deleteCustomList(id: string) {
+  const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
+  if (standardIds.has(id) || !/^[A-Za-z0-9_.-]{1,128}\.list$/.test(id) || id.includes('..')) return;
+  try {
+    const current = await nfqwsLists.get(id);
+    await nfqwsLists.delete(id, current.revision);
+    closeCustomListDeleteModal();
+    const index = await nfqwsLists.index();
+    renderCustomListTabs(index.files);
+    toast(`Список ${id} удалён.`);
+    const nextId = index.files.some((file) => file.id === activeListId) ? activeListId : index.files[0]?.id;
+    if (nextId) await loadList(nextId);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось удалить пользовательский список', 'error');
   }
 }
 async function saveActiveList() {
@@ -1452,7 +1503,7 @@ function renderReleaseNotes(target: HTMLElement, notes: string) {
   const lines = notes.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 8);
   if (!lines.length) return;
   const list = document.createElement('ul');
-  list.className = 'mt-2 list-disc pl-4 text-xs leading-5 text-slate-300';
+  list.className = 'mt-2 list-disc pl-4 font-sans text-xs leading-5 text-slate-100';
   for (const line of lines) {
     const item = document.createElement('li');
     item.textContent = line.replace(/^[-*# ]+/, '').slice(0, 240);
@@ -1479,7 +1530,7 @@ function renderReleases() {
     card.dataset.actionClick = 'selectVersionItem';
     card.dataset.args = JSON.stringify([release.tag]);
     card.setAttribute('aria-pressed', String(selected));
-    card.className = `relative block w-full rounded-xl border p-3 pr-10 text-left transition-colors ${selected ? 'border-blue-400 bg-blue-500/20' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`;
+    card.className = `relative block w-full rounded-xl border p-3 pr-10 text-left font-sans transition-colors ${selected ? 'border-blue-400 bg-[#172b4b]' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`;
     const title = document.createElement('span');
     title.className = 'block text-sm font-bold text-slate-100';
     title.textContent = release.tag;
@@ -1505,11 +1556,6 @@ function renderReleases() {
   setText('#updateModalTitle', updateTarget === 'core' ? 'Обновление nfqws2' : 'Обновление nfqws2-UI');
   setText('#updatePickerHint', updateTarget === 'core' ? 'Выберите версию ядра nfqws2' : 'Выберите версию панели');
   setText('#updateRepoSlug', updateTarget === 'core' ? 'nfqws/nfqws2-keenetic' : 'rangerxxyy/nfqws2-ui');
-  const uiTab = $('#updateTargetUi'); const coreTab = $('#updateTargetCore');
-  uiTab?.classList.toggle('bg-blue-500/20', updateTarget === 'ui');
-  uiTab?.classList.toggle('text-blue-300', updateTarget === 'ui');
-  coreTab?.classList.toggle('bg-blue-500/20', updateTarget === 'core');
-  coreTab?.classList.toggle('text-blue-300', updateTarget === 'core');
 }
 
 async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
@@ -1649,12 +1695,14 @@ function bindPrototypeActions() {
     dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
     selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { selectedReleaseTag = tag; renderReleases(); } },
     installSelectedRelease: () => void installSelectedRelease(),
-    switchUpdateTarget: (target: 'ui' | 'core') => { if (!updatePolling) void openUpdatePicker(target); },
     filterDocs: (query: string) => { const box = $('#docItemsContainer'); if (box) box.textContent = query ? 'Справочник флагов не подключён.' : 'Справочник флагов не загружен.'; },
     syncListLineNumbers: (editor?: HTMLTextAreaElement) => syncListLineNumbers(editor),
     syncListScroll: (editor: HTMLTextAreaElement) => syncListScroll(editor),
     syncCustomHostInput: () => undefined,
     selectListFile: (name: NfqwsListId) => void loadList(name),
+    requestDeleteCustomList: (id: string) => requestDeleteCustomList(id),
+    confirmDeleteCustomList: (id: string) => void deleteCustomList(id),
+    cancelDeleteCustomList: () => closeCustomListDeleteModal(),
     saveActiveListFile: () => void saveActiveList(),
     removeSelectedListLines: () => removeSelectedListLines(),
     findNextListEntry: () => findNextListEntry(),

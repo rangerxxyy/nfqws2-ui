@@ -9,6 +9,8 @@ const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8')
 const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8');
 const styledSelectSource = readFileSync(new URL('./styled-select.ts', import.meta.url), 'utf8');
 const monitoringSource = readFileSync(new URL('./monitoring.ts', import.meta.url), 'utf8');
+const actionTooltipSource = readFileSync(new URL('./action-tooltips.ts', import.meta.url), 'utf8');
+const viteSource = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
 const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8');
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
@@ -284,10 +286,39 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('set_literal_or_append(&request.key, &request.value)');
   });
 
-  it('places the UI release notice in its own bottom-left notification area', () => {
+  it('places the UI release notice in its own bottom-right notification area', () => {
     expect(template).toContain('id="uiUpdateNoticeWrapper"');
-    expect(template).toContain('fixed bottom-5 left-5');
+    expect(template).toContain('fixed bottom-5 right-5');
     expect(panelSource).toContain("const host = $('#uiUpdateNoticeWrapper')");
+  });
+
+  it('renders a concise nfqws2-UI browser title and themed favicon in all shells', () => {
+    expect(backendSource).toContain('<title>nfqws2-UI</title>');
+    expect(backendSource).toContain('rel="icon" type="image/svg+xml" href="/favicon.svg"');
+    expect(entrySource).toContain("document.title = 'nfqws2-UI'");
+    expect(viteSource).toContain('<title>nfqws2-UI</title>');
+    expect(existsSync(new URL('../public/favicon.svg', import.meta.url))).toBe(true);
+  });
+
+  it('only offers delete actions for custom lists and deletes with revision protection', () => {
+    expect(panelSource).toContain("remove.dataset.actionClick = 'requestDeleteCustomList'");
+    expect(panelSource).toContain('await nfqwsLists.delete(id, current.revision)');
+    expect(readFileSync(new URL('./api.ts', import.meta.url), 'utf8')).toContain('method: \'DELETE\'');
+    expect(backendSource).toContain('async fn delete_custom_list');
+    expect(backendSource).toContain('safe_custom_list_id(&id)');
+  });
+
+  it('supports accessible custom tooltips for navigation and all action buttons', () => {
+    expect(actionTooltipSource).toContain("'button[data-action-click], button[data-action-tooltip], .side-nav-btn'");
+    expect(actionTooltipSource).toContain('fallbackTooltipText');
+  });
+
+  it('uses fast batch reachability checks for monitoring instead of full site diagnostics', () => {
+    expect(panelSource).toContain('nfqwsDiagnostics.monitor(hosts)');
+    expect(backendSource).toContain('/api/nfqws2/diagnostics/monitor');
+    expect(panelSource).toContain("const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: 'Передача' }");
+    expect(panelStyles).toContain('.monitor-stage-list');
+    expect(template).toContain('DNS, TCP, TLS, HTTP');
   });
 
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
@@ -301,9 +332,9 @@ describe('TSX panel without authentication', () => {
     expect(template).toMatch(/id="navBtn-monitor" class="(?![^\"]*hidden)[^\"]*side-nav-btn/);
     expect(template).toContain('id="monitorHostInput"');
     expect(template).toContain('id="monitorSites"');
-    expect(panelSource).toContain('nfqwsDiagnostics.site(current)');
+    expect(panelSource).toContain('nfqwsDiagnostics.monitor(hosts)');
     expect(monitoringSource).toContain('MAX_MONITORING_SITES = 20');
-    expect(panelSource).toContain('Проверка ${completed + 1} из ${hosts.length}');
+    expect(panelSource).toContain('Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ');
     for (const route of ['community']) {
       expect(template).toMatch(new RegExp(`id="navBtn-${route}" class="[^"]*hidden`));
       expect(template).toMatch(new RegExp(`id="tabContent-${route}" class="hidden`));
@@ -432,15 +463,22 @@ describe('TSX panel without authentication', () => {
     expect(panelSource.indexOf('await nfqwsConfig.validate(editor.value)')).toBeLessThan(panelSource.indexOf('nfqwsApply.apply(editor.value, config.revision)'));
   });
 
-  it('keeps separate version pickers for the panel and the nfqws2 core', () => {
+  it('keeps separate entry points for UI and core releases without in-modal switching', () => {
     expect(template).toContain('data-action-click="openUpdateModal" data-args="[&quot;core&quot;]"');
     expect(template).toContain('data-action-click="openUpdateModal" data-args="[&quot;ui&quot;]"');
-    expect(template).toContain('data-action-click="switchUpdateTarget"');
-    expect(template).toContain('id="updateTargetCore"');
+    expect(template).not.toContain('data-action-click="switchUpdateTarget"');
+    expect(template).not.toContain('id="updateTargetCore"');
     expect(panelSource).toContain("nfqwsUpdates.coreReleases()");
     expect(panelSource).toContain("nfqwsUpdates.installCore(tag)");
     expect(panelSource).toContain("textContent = line.replace");
     expect(panelSource).not.toMatch(/installSelectedRelease.*toast\('Эта функция пока не подключена/);
+  });
+
+  it('does not register a beforeunload warning that blocks browser reload or close', () => {
+    expect(panelSource).not.toMatch(/beforeunload|returnValue/);
+    expect(entrySource).not.toMatch(/beforeunload|returnValue/);
+    const serviceActions = panelSource.slice(panelSource.indexOf('async function serviceAction'), panelSource.indexOf('async function loadList'));
+    expect(serviceActions).not.toContain('window.confirm(');
   });
 
   it('checks UI updates in the background and provides a persistent dismissible notice', () => {

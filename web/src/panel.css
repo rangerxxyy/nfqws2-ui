@@ -314,12 +314,21 @@ textarea { line-height: 1.7; tab-size: 4; }
 .styled-select-shell { position: relative; }
 .styled-select-native { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip-path: inset(50%) !important; }
 .action-tooltip { position: fixed; z-index: 200; max-width: min(22rem, calc(100vw - 1rem)); padding: .55rem .75rem; border: 1px solid #334155; border-radius: .65rem; background: #111c2e; color: #e2e8f0; box-shadow: 0 12px 28px #020617aa; font-size: .75rem; line-height: 1.2rem; pointer-events: none; animation: tooltip-appear .16s ease-out both; }
+.list-file-delete { min-width: 2rem; border-bottom: 2px solid transparent; font-size: 1.2rem; line-height: 1; }
+.list-file-delete:hover { border-bottom-color: rgb(251 113 133 / 75%); }
 @keyframes tooltip-appear { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 .monitor-site-card { border: 1px solid #263449; border-radius: .85rem; background: #080e1a; padding: .9rem 1rem; }
 .monitor-site-heading { display: flex; align-items: center; gap: .8rem; }
 .monitor-site-status { margin-left: auto; font-size: .8rem; font-weight: 700; }
 .monitor-status-ok { color: #6ee7b7; }.monitor-status-warning { color: #fcd34d; }.monitor-status-error { color: #fda4af; }.monitor-status-unavailable { color: #94a3b8; }
 .monitor-remove { border: 1px solid #334155; border-radius: .55rem; padding: .35rem .6rem; color: #cbd5e1; font-size: .75rem; transition: background-color .15s ease; }.monitor-remove:hover { background: #1e293b; }
+.monitor-stage-list { border-top: 1px solid #263449; padding-top: .5rem; color: #94a3b8; font-size: .72rem; }
+.monitor-stage-list > summary { cursor: pointer; font-weight: 650; color: #a8c8ff; }
+.monitor-stage-row { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .5rem; line-height: 1.45; }
+.monitor-stage-row[data-status="ok"] strong { color: #6ee7b7; }
+.monitor-stage-row[data-status="warning"] strong { color: #fcd34d; }
+.monitor-stage-row[data-status="error"] strong { color: #fda4af; }
+.monitor-stage-row[data-status="unavailable"] strong { color: #94a3b8; }
 .config-structure-toggle-active { border-color: #3b82f6; color: #bfdbfe; background: #1e3a8a55; }
 .config-outline-entry:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; }
 @media (min-width: 1100px) {

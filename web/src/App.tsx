@@ -347,7 +347,7 @@ export default function App() {
                   </svg>
                   {"\n                "}
                   <span>
-                    {"Мониторинг и Telegram"}
+                    {"Мониторинг"}
                   </span>
                   {"\n              "}
                 </div>
@@ -1198,13 +1198,13 @@ export default function App() {
         <section id={"tabContent-monitor"} className={"hidden view-animate space-y-5"}>
           <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-5"}>
             <div className={"flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-4"}>
-              <div><h2 className={"text-lg font-bold text-white"}>Мониторинг сайтов</h2><p className={"mt-1 text-sm text-slate-400"}>Ручная последовательная проверка через диагностику роутера. Последние 10 результатов на домен хранятся в этом браузере.</p></div>
+              <div><h2 className={"text-lg font-bold text-white"}>Мониторинг сайтов</h2><p className={"mt-1 text-sm text-slate-400"}>Ручная параллельная проверка с роутера: DNS, TCP, TLS, HTTP и объём ответа до 64 КиБ. Последние 10 результатов на домен хранятся в этом браузере.</p></div>
               <span className={"rounded-full border border-blue-400/30 bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-200"}>До 20 сайтов · вручную</span>
             </div>
             <div className={"flex flex-col gap-2 sm:flex-row"}>
               <input id={"monitorHostInput"} type={"text"} placeholder={"example.com"} aria-label={"Домен для мониторинга"} className={"min-w-0 flex-1 rounded-xl border border-slate-700 bg-[#060a12] px-3.5 py-2.5 font-mono text-sm text-white placeholder:text-slate-500"} />
               <button data-action-click={"addMonitoringSite"} title={"Добавить домен в список мониторинга"} className={"rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700"}>Добавить сайт</button>
-              <button data-action-click={"runMonitoring"} title={"Последовательно проверить все добавленные сайты"} className={"rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500 disabled:opacity-50"}>Проверить сайты</button>
+              <button data-action-click={"runMonitoring"} title={"Параллельно проверить HTTPS-ответ и этапы соединения всех добавленных сайтов"} className={"rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-500 disabled:opacity-50"}>Проверить сайты</button>
             </div>
             <p id={"monitoringStatus"} className={"text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Проверки запускаются только вручную.</p>
             <div id={"monitorSites"} className={"space-y-2.5"}></div>
@@ -1351,14 +1351,6 @@ export default function App() {
             {"Выберите версию панели"}
           </span>
           {"\n        "}
-          <div className={"flex items-center gap-2"}>
-            <button id={"updateTargetUi"} data-action-click={"switchUpdateTarget"} data-args={JSON.stringify(["ui"])} className={"rounded-lg border border-blue-500/40 px-2.5 py-1 text-xs font-semibold text-blue-300 transition-all"}>
-              {"nfqws2-UI"}
-            </button>
-            <button id={"updateTargetCore"} data-action-click={"switchUpdateTarget"} data-args={JSON.stringify(["core"])} className={"rounded-lg border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-400 transition-all"}>
-              {"nfqws2 (ядро)"}
-            </button>
-          </div>
           {"\n\n        "}
           <div className={"flex items-center gap-2"}>
             {"\n          "}
@@ -1431,8 +1423,18 @@ export default function App() {
     </div>
 {"\n\n  "}
 {"\n  "}
-    <div id={"toastWrapper"} className={"fixed bottom-5 right-5 z-50 space-y-2.5 pointer-events-none"}></div>
-    <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 left-5 z-50 space-y-2.5 pointer-events-none"}></div>
+    <div id={"toastWrapper"} className={"fixed bottom-5 left-5 z-50 space-y-2.5 pointer-events-none"}></div>
+    <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] space-y-2.5 pointer-events-none"}></div>
+    <div id={"customListDeleteModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
+      <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"customListDeleteTitle"}>
+        <h3 id={"customListDeleteTitle"} className={"text-base font-bold text-white"}>Удалить пользовательский список?</h3>
+        <p className={"mt-2 text-sm text-slate-300"}>Файл <code id={"customListDeleteName"} className={"text-sky-200"}></code> будет удалён из <code>/lists</code>. Несохранённый текст этого файла в редакторе тоже будет потерян.</p>
+        <div className={"mt-5 flex justify-end gap-2"}>
+          <button type={"button"} data-action-click={"cancelDeleteCustomList"} title={"Закрыть подтверждение и оставить список"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button>
+          <button id={"confirmCustomListDelete"} type={"button"} data-action-click={"confirmDeleteCustomList"} title={"Удалить только этот пользовательский файл списка"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Удалить</button>
+        </div>
+      </section>
+    </div>
 {"\n\n  "}
 {"\n  "}
 {"\n  "}

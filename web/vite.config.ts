@@ -2,13 +2,13 @@ import { defineConfig, type Plugin } from 'vite';
 
 const devHtml = `<!doctype html>
 <html lang="ru" class="dark">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>nfqws2-UI — Панель управления</title></head>
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>nfqws2-UI</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"></head>
   <body><div id="root"></div><script type="module" src="/@vite/client"></script><script type="module" src="/src/main.tsx"></script></body>
 </html>`;
 
 const previewHtml = `<!doctype html>
 <html lang="ru" class="dark">
-  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>nfqws2-UI — Панель управления</title><link rel="stylesheet" href="/nfqws2-ui.css"></head>
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>nfqws2-UI</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="stylesheet" href="/nfqws2-ui.css"></head>
   <body><div id="root"></div><script type="module" src="/nfqws2-ui.js"></script></body>
 </html>`;
 

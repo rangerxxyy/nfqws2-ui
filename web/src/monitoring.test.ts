@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendMonitoringResult, checkMonitoringHostsSequentially, loadMonitoringState, normalizeMonitoringHost, saveMonitoringState } from './monitoring';
+import { appendMonitoringResult, loadMonitoringState, normalizeMonitoringHost, saveMonitoringState } from './monitoring';
 
 describe('monitoring state', () => {
   it('accepts hostnames and rejects URLs, IP literals, and malformed input', () => {
@@ -12,26 +12,21 @@ describe('monitoring state', () => {
   it('bounds sites and recent result history and tolerates unavailable storage', () => {
     const state = loadMonitoringState(null);
     for (let i = 0; i < 25; i++) state.sites.push({ host: `site${i}.example`, results: [] });
-    const report = { host: 'site0.example', addresses: [], steps: [], summary: 'ok', limitations: [], direct: { id: 'direct', status: 'ok' as const, detail: '', durationMs: 12, httpCode: 200 }, current: { id: 'current', status: 'ok' as const, detail: '', durationMs: 13, httpCode: 200 }, quic: null };
+    const report = { host: 'site0.example', summary: 'ok', current: { status: 'ok' as const, detail: '', durationMs: 13, httpCode: 200 }, steps: [{ id: 'dns', status: 'ok' as const, detail: '8.8.8.8', durationMs: 2, httpCode: null }] };
     let updated = state;
     for (let i = 0; i < 12; i++) updated = appendMonitoringResult(updated, 'site0.example', report, i);
     expect(updated.sites).toHaveLength(20);
     expect(updated.sites[0].results).toHaveLength(10);
     expect(updated.sites[0].results[0].checkedAt).toBe(11);
+    expect(updated.sites[0].results[0].steps[0].id).toBe('dns');
     expect(() => saveMonitoringState(null, updated)).not.toThrow();
   });
 
-  it('checks hosts sequentially and continues after an individual failure', async () => {
-    const calls: string[] = [];
-    const failures: string[] = [];
-    await checkMonitoringHostsSequentially(['a.example', 'b.example', 'c.example'], async (host) => {
-      calls.push(`start:${host}`);
-      await Promise.resolve();
-      calls.push(`end:${host}`);
-      if (host === 'b.example') throw new Error('offline');
-      return { host, addresses: [], steps: [], summary: 'ok', limitations: [], direct: { id: 'direct', status: 'ok' as const, detail: '', durationMs: 1, httpCode: 200 }, current: { id: 'current', status: 'ok' as const, detail: '', durationMs: 1, httpCode: 200 }, quic: null };
-    }, () => undefined, (host) => failures.push(host));
-    expect(calls).toEqual(['start:a.example', 'end:a.example', 'start:b.example', 'end:b.example', 'start:c.example', 'end:c.example']);
-    expect(failures).toEqual(['b.example']);
+  it('keeps old version-1 monitoring history readable when it has no stage details', () => {
+    const storage = { getItem: () => JSON.stringify({ version: 1, sites: [{ host: 'old.example', results: [{ checkedAt: 1, status: 'ok', summary: 'ok', latencyMs: 20 }] }] }) } as unknown as Storage;
+    const state = loadMonitoringState(storage);
+    expect(state.sites[0].results[0].summary).toBe('ok');
+    expect(state.sites[0].results[0].steps).toEqual([]);
   });
+
 });

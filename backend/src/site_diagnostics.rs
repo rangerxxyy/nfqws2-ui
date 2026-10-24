@@ -27,6 +27,14 @@ pub struct DiagnosticStep {
     pub http_code: Option<u16>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorProbeResult {
+    pub summary: String,
+    pub current: DiagnosticStep,
+    pub steps: Vec<DiagnosticStep>,
+}
+
 impl DiagnosticStep {
     pub(crate) fn new(id: &str, status: &'static str, detail: impl Into<String>) -> Self {
         Self {
@@ -156,7 +164,7 @@ pub fn normalize_host(input: &str) -> Result<String, String> {
     }
 }
 
-pub(crate) fn public_ip(ip: IpAddr) -> bool {
+pub fn public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let [a, b, c, _] = ip.octets();
@@ -252,6 +260,216 @@ fn curl_args() -> Vec<String> {
     .into_iter()
     .map(str::to_owned)
     .collect()
+}
+
+fn monitor_curl_args(host: &str, ip: std::net::Ipv4Addr) -> Vec<String> {
+    let mut args = curl_args();
+    args.extend([
+        "--ipv4".into(),
+        "--insecure".into(),
+        "--resolve".into(),
+        format!("{host}:443:{ip}"),
+        "--range".into(),
+        "0-65535".into(),
+        "--max-filesize".into(),
+        "65536".into(),
+        "--output".into(),
+        if cfg!(windows) {
+            "NUL".into()
+        } else {
+            "/dev/null".into()
+        },
+        "--write-out".into(),
+        "\\nNFQWS2_MON|%{http_code}|%{time_connect}|%{time_appconnect}|%{time_starttransfer}|%{time_total}|%{size_download}".into(),
+        format!("https://{host}/"),
+    ]);
+    args
+}
+
+fn monitor_ms(value: Option<&&str>) -> Option<u64> {
+    value
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0 && *value <= 60.0)
+        .map(|value| (value * 1000.0).round() as u64)
+}
+
+fn parse_monitor_curl(exit_code: i32, stdout: &[u8]) -> MonitorProbeResult {
+    let text = String::from_utf8_lossy(stdout);
+    let fields = text
+        .rsplit_once("\nNFQWS2_MON|")
+        .map(|(_, tail)| tail.trim().split('|').collect::<Vec<_>>())
+        .unwrap_or_default();
+    let http_code = fields
+        .first()
+        .and_then(|field| field.parse::<u16>().ok())
+        .filter(|code| (100..600).contains(code));
+    let connect_ms = monitor_ms(fields.get(1));
+    let tls_ms = monitor_ms(fields.get(2));
+    let first_byte_ms = monitor_ms(fields.get(3));
+    let total_ms = monitor_ms(fields.get(4));
+    let received = fields
+        .get(5)
+        .and_then(|field| field.parse::<u64>().ok())
+        .unwrap_or_default();
+    let complete =
+        http_code.is_some() && (exit_code == 0 || (exit_code == 63 && received >= 65_536));
+    let after_response_timeout = http_code.is_some() && exit_code == 28;
+    let tcp_connected = connect_ms.is_some_and(|ms| ms > 0) || tls_ms.is_some_and(|ms| ms > 0);
+    let tls_connected = tls_ms.is_some_and(|ms| ms > 0);
+
+    let mut steps = vec![DiagnosticStep {
+        id: "tcp".into(),
+        status: if tcp_connected { "ok" } else { "error" },
+        detail: connect_ms.map_or_else(
+            || "TCP-соединение не установлено".into(),
+            |ms| format!("TCP connect: {ms} мс"),
+        ),
+        duration_ms: connect_ms,
+        http_code: None,
+    }];
+    steps.push(DiagnosticStep {
+        id: "tls".into(),
+        status: if tls_connected {
+            "ok"
+        } else if tcp_connected {
+            "error"
+        } else {
+            "unavailable"
+        },
+        detail: tls_ms.map_or_else(
+            || {
+                if exit_code == 35 {
+                    "Ошибка TLS handshake".into()
+                } else if tcp_connected {
+                    "TLS handshake не завершён".into()
+                } else {
+                    "TLS не проверен: TCP не установлено".into()
+                }
+            },
+            |ms| format!("TLS handshake: {ms} мс"),
+        ),
+        duration_ms: tls_ms,
+        http_code: None,
+    });
+    steps.push(DiagnosticStep {
+        id: "http".into(),
+        status: if http_code.is_some() {
+            "ok"
+        } else if tls_connected {
+            if exit_code == 28 { "warning" } else { "error" }
+        } else {
+            "unavailable"
+        },
+        detail: http_code.map_or_else(
+            || {
+                if tls_connected && exit_code == 28 {
+                    "Тайм-аут после TLS до получения HTTP-ответа; причина не установлена".into()
+                } else if tls_connected {
+                    "HTTP-ответ не получен".into()
+                } else {
+                    "HTTP не проверен: TLS не установлен".into()
+                }
+            },
+            |code| {
+                format!(
+                    "Получен HTTP {code}{}",
+                    first_byte_ms.map_or_else(String::new, |ms| format!(" · первый байт {ms} мс"))
+                )
+            },
+        ),
+        duration_ms: first_byte_ms,
+        http_code,
+    });
+    let transfer_status = if complete {
+        "ok"
+    } else if after_response_timeout || http_code.is_some() {
+        "warning"
+    } else {
+        "unavailable"
+    };
+    let transfer_detail = if complete {
+        format!(
+            "Получено {received} байт{}",
+            if received >= 65_536 {
+                " · лимит 64 КиБ достигнут"
+            } else {
+                ""
+            }
+        )
+    } else if after_response_timeout {
+        format!(
+            "Тайм-аут тела HTTP-ответа после {received} байт · возможный обрыв передачи, причина не доказана"
+        )
+    } else if http_code.is_some() {
+        format!("Передача ответа завершилась с ошибкой после {received} байт")
+    } else {
+        "Передача тела не проверена: HTTP-ответ не получен".into()
+    };
+    steps.push(DiagnosticStep {
+        id: "transfer".into(),
+        status: transfer_status,
+        detail: transfer_detail,
+        duration_ms: total_ms,
+        http_code,
+    });
+
+    let current_status = if complete {
+        "ok"
+    } else if after_response_timeout || (http_code.is_some() && exit_code != 0) {
+        "warning"
+    } else {
+        "error"
+    };
+    let detail = if complete {
+        format!(
+            "HTTPS ответ HTTP {}, получено {received} байт за {} мс",
+            http_code.unwrap_or_default(),
+            total_ms.unwrap_or_default()
+        )
+    } else if after_response_timeout {
+        format!(
+            "HTTP {} получен, тело ответа зависло после {received} байт за {} мс; возможный обрыв передачи",
+            http_code.unwrap_or_default(),
+            total_ms.unwrap_or_default()
+        )
+    } else if tls_connected && exit_code == 28 {
+        "Тайм-аут после TLS до HTTP-ответа; возможная проблема соединения, причина не доказана"
+            .into()
+    } else if exit_code == 35 {
+        "TCP установлено, TLS handshake не завершён".into()
+    } else if exit_code == 7 {
+        "Не удалось подключиться по TCP/443".into()
+    } else if exit_code == 6 {
+        "Не удалось разрешить домен при HTTPS-проверке".into()
+    } else if exit_code == 52 {
+        "Сервер закрыл соединение без HTTP-ответа".into()
+    } else if exit_code == 56 {
+        "Соединение сброшено до завершения HTTPS-проверки".into()
+    } else if exit_code == -1 {
+        "HTTPS-проверка превысила внутренний лимит времени".into()
+    } else {
+        format!("HTTPS-проверка не завершена (curl {exit_code}); причина не установлена")
+    };
+    let current = DiagnosticStep {
+        id: "current".into(),
+        status: current_status,
+        detail: detail.clone(),
+        duration_ms: total_ms,
+        http_code,
+    };
+    MonitorProbeResult {
+        summary: detail,
+        current,
+        steps,
+    }
+}
+
+pub async fn monitor_probe(host: &str, ip: std::net::Ipv4Addr) -> MonitorProbeResult {
+    let args = monitor_curl_args(host, ip);
+    match capture(curl_program(), &args, 10, 4096).await {
+        Ok((exit_code, output)) => parse_monitor_curl(exit_code, &output),
+        Err(_) => parse_monitor_curl(-1, b""),
+    }
 }
 
 fn parse_curl(id: &str, exit_code: i32, stdout: &[u8]) -> DiagnosticStep {
@@ -883,6 +1101,77 @@ mod tests {
                 .detail
                 .contains("время")
         );
+    }
+
+    #[test]
+    fn monitor_probe_distinguishes_response_timeout_from_completed_transfer() {
+        let complete = parse_monitor_curl(0, b"\nNFQWS2_MON|200|0.020|0.080|0.150|0.350|65536");
+        assert_eq!(complete.current.status, "ok");
+        assert_eq!(complete.current.http_code, Some(200));
+        assert_eq!(
+            complete
+                .steps
+                .iter()
+                .map(|step| step.id.as_str())
+                .collect::<Vec<_>>(),
+            ["tcp", "tls", "http", "transfer"]
+        );
+        assert!(complete.steps[3].detail.contains("65536"));
+
+        let incomplete = parse_monitor_curl(28, b"\nNFQWS2_MON|200|0.020|0.080|0.150|8.000|12000");
+        assert_eq!(incomplete.current.status, "warning");
+        assert!(incomplete.current.detail.contains("возможный обрыв"));
+        assert_eq!(incomplete.steps[3].status, "warning");
+        assert!(incomplete.steps[3].detail.contains("12000"));
+
+        let size_limited =
+            parse_monitor_curl(63, b"\nNFQWS2_MON|200|0.020|0.080|0.150|0.350|65536");
+        assert_eq!(size_limited.current.status, "ok");
+
+        let short_size_limited =
+            parse_monitor_curl(63, b"\nNFQWS2_MON|200|0.020|0.080|0.150|0.350|12000");
+        assert_eq!(short_size_limited.current.status, "warning");
+        assert!(short_size_limited.steps[3].detail.contains("12000"));
+    }
+
+    #[test]
+    fn monitor_probe_counts_http_errors_as_a_response_and_separates_connect_and_tls_failures() {
+        let http_error = parse_monitor_curl(0, b"\nNFQWS2_MON|404|0.010|0.060|0.100|0.120|512");
+        assert_eq!(http_error.current.status, "ok");
+        assert_eq!(http_error.current.http_code, Some(404));
+        assert!(http_error.steps[2].detail.contains("404"));
+
+        let connect_error = parse_monitor_curl(7, b"\nNFQWS2_MON|000|0|0|0|2.000|0");
+        assert_eq!(connect_error.steps[0].status, "error");
+        assert_eq!(connect_error.steps[1].status, "unavailable");
+        assert_eq!(connect_error.current.status, "error");
+
+        let tls_error = parse_monitor_curl(35, b"\nNFQWS2_MON|000|0.020|0|0|0.200|0");
+        assert_eq!(tls_error.steps[0].status, "ok");
+        assert_eq!(tls_error.steps[1].status, "error");
+        assert!(tls_error.current.detail.contains("TLS"));
+    }
+
+    #[test]
+    fn monitor_probe_uses_bounded_pinned_https_get_without_post_or_redirects() {
+        let args = monitor_curl_args("example.com", "8.8.8.8".parse().unwrap());
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--resolve", "example.com:443:8.8.8.8"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--range", "0-65535"]));
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--max-filesize", "65536"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--max-time", "8"]));
+        assert!(args.iter().any(|arg| arg == "--insecure"));
+        assert!(
+            !args
+                .iter()
+                .any(|arg| arg == "--location" || arg == "--data-binary" || arg == "--request")
+        );
+        assert!(args.iter().any(|arg| arg == "https://example.com/"));
     }
 
     #[test]
