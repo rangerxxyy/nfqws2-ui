@@ -2,7 +2,8 @@ const MAX_CUSTOM_STRATEGIES = 10;
 
 /** Extracts Lua desync steps from pasted nfqws2 arguments without running a shell. */
 export function parseCustomStrategies(input: string): string[][] {
-  const sections = input.split(/(?:^|\s)--new(?=\s|$)/);
+  const normalized = input.replace(/\\[ \t]*\r?\n/g, ' ');
+  const sections = normalized.split(/(?:\r?\n|(?:^|\s)--new(?=\s|$))/);
   const strategies = sections.flatMap((section) => {
     const steps: string[] = [];
     const argument = /--lua-desync=(?:"([^"]*)"|'([^']*)'|([^\s"']+))/g;

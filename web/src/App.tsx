@@ -1041,7 +1041,8 @@ export default function App() {
               {"\n\n            "}
               <div id={"strategyCustomInputPanel"} className={"hidden bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5 md:col-span-2"}>
                 <label htmlFor={"strategyCustomSteps"} className={"block text-xs font-mono text-slate-400"}>Свои параметры · для режима «Своя стратегия»</label>
-                <textarea id={"strategyCustomSteps"} rows={2} spellCheck={false} placeholder={"по одному аргументу на строку, например:\n--lua-desync=multisplit:pos=1,midsld"} className={"mt-1.5 w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
+                <textarea id={"strategyCustomSteps"} rows={3} spellCheck={false} placeholder={"одна стратегия на строку, например:\n--lua-desync=multisplit:pos=1,midsld\n--lua-desync=fakedsplit:pos=1"} className={"mt-1.5 w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
+                <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>{"Каждая строка — отдельный вариант. Несколько --lua-desync в одной строке — шаги одного варианта; \\ в конце строки продолжает его на следующей."}</p>
                 <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>Разрешены только параметры Lua desync, которые поддерживает установленный nfqws2. Backend проверит их до изолированного теста.</p>
               </div>
               <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5 flex flex-col justify-between"}>

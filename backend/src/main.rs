@@ -4215,7 +4215,7 @@ async fn start_strategy_pick(
     if custom_mode && request.custom_steps.is_none() {
         return error(
             StatusCode::BAD_REQUEST,
-            "Для режима собственной стратегии укажите от 1 до 8 строк --lua-desync=…",
+            "Для режима собственной стратегии укажите от 1 до 10 вариантов --lua-desync=…",
         );
     }
     let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
@@ -4264,6 +4264,7 @@ async fn start_strategy_pick(
         {
             return error(StatusCode::UNPROCESSABLE_ENTITY, message);
         }
+        strategy_picker::retain_custom_candidates(&mut plan);
     }
     {
         let history = load_confirmed_strategy_candidates(
@@ -4274,10 +4275,12 @@ async fn start_strategy_pick(
                 StrategyProtocol::Https => "https",
                 StrategyProtocol::Quic => "quic",
             },
-            request.include_other_history,
+            request.include_other_history && !custom_mode,
         )
         .await;
-        strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
+        if !custom_mode {
+            strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
+        }
     }
     let freeze_candidates = {
         load_confirmed_freeze_candidates(&state.data_dir.join("freeze-diagnostic-operations")).await
@@ -4344,9 +4347,9 @@ async fn start_strategy_pick(
     let task_repeats = repeats;
     let stop_after_first_confirmed = request.stop_after_first_confirmed;
     let refine_lighter = request.refine_lighter;
-    let include_community = request.include_community;
+    let include_community = request.include_community && !custom_mode;
     let community_cache_dir = state.data_dir.join("community-strategy-cache");
-    let include_catalog_sources = true;
+    let include_catalog_sources = !custom_mode;
     let binary = paths.binary.to_string_lossy().into_owned();
     let active_args_for_task = active_args.clone();
     let functions_for_task = functions.clone();
@@ -4376,22 +4379,12 @@ async fn start_strategy_pick(
             None,
         )
         .await;
-        let Some(baseline_ok) = baseline_report.without_nfqws2.ok else {
+        let baseline_ok = baseline_report.without_nfqws2.ok;
+        if control.load(Ordering::Acquire) {
             if let Ok(mut current) = shared.lock() {
-                current.state = if control.load(Ordering::Acquire) {
-                    "cancelled".into()
-                } else {
-                    "failed".into()
-                };
+                current.state = "cancelled".into();
                 current.stage = "baseline".into();
-                current.message = if control.load(Ordering::Acquire) {
-                    "Подбор отменён во время прямой проверки".into()
-                } else {
-                    format!(
-                        "Прямую проверку не удалось завершить; подбор не запускался: {}",
-                        baseline_report.without_nfqws2.reason
-                    )
-                };
+                current.message = "Подбор отменён во время прямой проверки".into();
                 current.updated_at = now_unix_seconds();
                 let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
             }
@@ -4404,13 +4397,18 @@ async fn start_strategy_pick(
         };
         if let Ok(mut current) = shared.lock() {
             current.stage = "baseline".into();
-            current.message = if baseline_ok {
-                format!(
+            current.message = match baseline_ok {
+                Some(true) => format!(
                     "Прямая проверка получила ответ ({}); продолжается проверка выбранных стратегий",
                     baseline_report.without_nfqws2.reason
-                )
-            } else {
-                "Прямая проверка не открыла сайт; собираются совместимые стратегии".into()
+                ),
+                Some(false) => {
+                    "Прямая проверка не открыла сайт; собираются совместимые стратегии".into()
+                }
+                None => format!(
+                    "Прямой запрос не дал однозначного результата ({}); продолжается изолированная проверка выбранных стратегий",
+                    baseline_report.without_nfqws2.reason
+                ),
             };
             current.updated_at = now_unix_seconds();
             let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
@@ -4522,7 +4520,7 @@ async fn start_strategy_pick(
                     binary,
                     cancel,
                     repeats,
-                    Some(baseline_ok),
+                    baseline_ok,
                     None,
                 )
                 .await;
@@ -4534,7 +4532,7 @@ async fn start_strategy_pick(
                 phases
                     .into_iter()
                     .map(|phase| strategy_picker::StrategyProbeResult {
-                        baseline_ok: Some(baseline_ok),
+                        baseline_ok,
                         candidate_ok: (phase.state == "complete").then_some(phase.ok).flatten(),
                         detail: format!("{}; {}", report.summary, phase.reason),
                     })
@@ -4602,10 +4600,12 @@ async fn start_strategy_pick(
             .await
         };
         let already_confirmed = plan_result.results.iter().any(|result| result.confirmed);
-        if !matches!(
-            plan_result.state.as_str(),
-            "cancelled" | "failed" | "site_unblocked"
-        ) && (plan_result.state == "no_match" || (refine_lighter && already_confirmed))
+        if !custom_mode
+            && !matches!(
+                plan_result.state.as_str(),
+                "cancelled" | "failed" | "site_unblocked"
+            )
+            && (plan_result.state == "no_match" || (refine_lighter && already_confirmed))
         {
             let initial_checked = plan_result.checked;
             let initial_total = plan_result.total;

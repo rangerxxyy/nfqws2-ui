@@ -953,6 +953,12 @@ pub fn prepend_custom_candidates(
     Ok(())
 }
 
+/// Keep only the variants entered by the user for the dedicated custom mode.
+pub fn retain_custom_candidates(plan: &mut StrategyPlan) {
+    plan.candidates
+        .retain(|candidate| candidate.source == "Пользовательская стратегия");
+}
+
 /// Build a one-profile test argv from the active process. Global options/Lua
 /// initializers are retained; every live profile is discarded so the tested
 /// candidate cannot silently coexist with the primary strategies.
@@ -1160,7 +1166,7 @@ pub fn build_domain_profile(
 mod application_tests {
     use super::{
         StrategyMode, StrategyProtocol, build_custom_plan, build_domain_profile, build_plan,
-        prepend_custom_candidates,
+        prepend_custom_candidates, retain_custom_candidates,
     };
     use std::collections::HashSet;
 
@@ -1274,6 +1280,29 @@ mod application_tests {
                 .iter()
                 .any(|candidate| candidate.source == "Текущий профиль")
         );
+    }
+
+    #[test]
+    fn custom_mode_retains_only_user_supplied_candidates() {
+        let mut plan = build_plan(
+            StrategyProtocol::Https,
+            StrategyMode::Quick,
+            &[],
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        );
+        prepend_custom_candidates(
+            &mut plan,
+            &[vec!["--lua-desync=multisplit:pos=1".into()]],
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .unwrap();
+
+        retain_custom_candidates(&mut plan);
+
+        assert_eq!(plan.candidates.len(), 1);
+        assert_eq!(plan.candidates[0].source, "Пользовательская стратегия");
     }
 }
 
