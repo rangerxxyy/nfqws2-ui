@@ -1,8 +1,8 @@
 use nfqws2_ui::freeze_diagnostic::{
     AsnVerification, FreezeNetworkResult, FreezeStrategyMatch, FreezeTargetKind, PAD_REQUESTS,
-    PadClassification, build_targets, candidate_confirmed, classify_padded_head,
-    confirmed_strategy_candidates, freeze_candidates, instantiate_template, network_has_freeze,
-    padded_head_curl_args, verify_asn_hint,
+    PadClassification, build_targets, candidate_confirmed, candidate_route_succeeded,
+    classify_padded_head, confirmed_strategy_candidates, freeze_candidates, instantiate_template,
+    is_freeze_classification, network_has_freeze, padded_head_curl_args, verify_asn_hint,
 };
 use nfqws2_ui::transfer_diagnostic::{TransferAttempt, TransferClass, classify_transfer};
 use std::net::Ipv4Addr;
@@ -141,13 +141,12 @@ fn padded_timeout_after_response_is_distinct_from_timeout_before_response() {
 }
 
 #[test]
-fn baseline_freeze_requires_repeatable_boundary_or_tcp_connected_stall() {
+fn baseline_freeze_requires_repeatable_boundary_not_only_a_tcp_connected_timeout() {
     let before_body = [
         attempt(0, Some("timeout"), 0),
         attempt(0, Some("timeout"), 0),
     ];
-    assert!(!network_has_freeze(&before_body, Some(65_536), false));
-    assert!(network_has_freeze(&before_body, Some(65_536), true));
+    assert!(!network_has_freeze(&before_body, Some(65_536)));
     let boundary = [
         attempt(18_000, Some("timeout"), 200),
         attempt(18_400, Some("timeout"), 200),
@@ -156,7 +155,32 @@ fn baseline_freeze_requires_repeatable_boundary_or_tcp_connected_stall() {
         classify_transfer(&boundary, Some(65_536)).classification,
         TransferClass::PossibleBoundaryStall
     );
-    assert!(network_has_freeze(&boundary, Some(65_536), false));
+    assert!(network_has_freeze(&boundary, Some(65_536)));
+}
+
+#[test]
+fn freeze_candidate_search_starts_only_after_a_response_or_upload_stall() {
+    for inconclusive in [
+        "TimeoutBeforeResponse",
+        "TimeoutBeforeBody",
+        "TimeoutAfterBody",
+        "ConnectFailure",
+        "TlsFailure",
+        "route_unavailable",
+        "Inconclusive",
+    ] {
+        assert!(
+            !is_freeze_classification(inconclusive),
+            "{inconclusive} must not trigger fake-SNI candidate search"
+        );
+    }
+    for confirmed_signal in [
+        "PossibleFreeze",
+        "PossibleBoundaryStall",
+        "PossibleUploadStall",
+    ] {
+        assert!(is_freeze_classification(confirmed_signal));
+    }
 }
 
 #[test]
@@ -173,6 +197,13 @@ fn strategy_candidate_needs_three_consecutive_successes() {
     assert!(candidate_confirmed(&[false, true, true, true]));
     assert!(!candidate_confirmed(&[true, true, false, true, true]));
     assert!(!candidate_confirmed(&[true, true]));
+}
+
+#[test]
+fn candidate_success_uses_the_current_route_probe_without_repeating_baseline() {
+    assert!(candidate_route_succeeded(Some(true)));
+    assert!(!candidate_route_succeeded(Some(false)));
+    assert!(!candidate_route_succeeded(None));
 }
 
 #[test]

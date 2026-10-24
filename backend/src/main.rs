@@ -95,6 +95,25 @@ struct SiteTraceOperation {
     updated_at: u64,
 }
 
+fn update_site_trace_progress(
+    operation: &mut SiteTraceOperation,
+    stage: &str,
+    report: site_trace::TraceReport,
+) {
+    operation.stage = stage.chars().take(32).collect();
+    operation.message = match stage {
+        "resolve" => format!(
+            "Определён адрес {}",
+            report.address.as_deref().unwrap_or("")
+        ),
+        "direct" => "Завершена проверка напрямую; проверяется текущая стратегия nfqws2".into(),
+        "route" => "Получен ответ через текущий маршрут; собирается журнал nfqws2 --debug".into(),
+        _ => "Трассировка выполняется".into(),
+    };
+    operation.report = Some(report);
+    operation.updated_at = now_unix_seconds();
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StrategyPickOperation {
@@ -180,6 +199,31 @@ struct FreezeScanOperation {
     updated_at: u64,
 }
 
+fn update_freeze_scan_progress(
+    operation: &mut FreezeScanOperation,
+    done: usize,
+    total: usize,
+    target: &str,
+    completed_results: &[freeze_diagnostic::FreezeNetworkResult],
+) {
+    operation.stage = if target.contains(": проверка SNI ") {
+        "strategy_search"
+    } else {
+        "baseline"
+    }
+    .into();
+    operation.done = done.min(total);
+    operation.total = total;
+    operation.current = Some(target.chars().take(128).collect());
+    operation.results = completed_results.to_vec();
+    operation.message = if operation.stage == "strategy_search" {
+        "Проверяется совместимое имя fake-SNI; требуется три последовательных успеха".into()
+    } else {
+        format!("Проверена сеть {} из {}", operation.done, total)
+    };
+    operation.updated_at = now_unix_seconds();
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct FreezeScanRequest {
@@ -202,6 +246,7 @@ type SiteTraceRunner = dyn Fn(
         String,
         Arc<AtomicBool>,
         Option<bool>,
+        Option<site_trace::TraceProgressCallback>,
     ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>>
     + Send
     + Sync;
@@ -213,10 +258,13 @@ fn router_site_trace_runner(
     binary: String,
     cancel: Arc<AtomicBool>,
     known_baseline: Option<bool>,
+    progress: Option<site_trace::TraceProgressCallback>,
 ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>> {
     Box::pin(async move {
         if let Some(baseline_ok) = known_baseline {
             site_trace::run_candidate(host, &proto, args, binary, baseline_ok, cancel).await
+        } else if let Some(progress) = progress {
+            site_trace::run_with_progress(host, &proto, args, binary, cancel, progress).await
         } else {
             site_trace::run(host, &proto, args, binary, cancel).await
         }
@@ -269,6 +317,32 @@ async fn write_site_trace_operation(
     if let Err(error) = tokio::fs::rename(&temporary, &destination).await {
         let _ = tokio::fs::remove_file(&temporary).await;
         return Err(format!("Не удалось обновить статус трассировки: {error}"));
+    }
+    Ok(())
+}
+
+fn write_site_trace_operation_sync(
+    directory: &Path,
+    operation: &SiteTraceOperation,
+) -> Result<(), String> {
+    if !valid_site_trace_id(&operation.id) {
+        return Err("Недопустимый идентификатор операции трассировки".into());
+    }
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec(operation).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_SITE_TRACE_STATE_BYTES {
+        return Err("Состояние трассировки превышает ограничение размера".into());
+    }
+    let destination = site_trace_operation_path(directory, &operation.id);
+    let temporary = directory.join(format!("{}.{}.tmp", operation.id, new_update_id()));
+    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    #[cfg(windows)]
+    if destination.exists() {
+        std::fs::remove_file(&destination).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = std::fs::rename(&temporary, &destination) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.to_string());
     }
     Ok(())
 }
@@ -2608,6 +2682,15 @@ async fn trace_site(
             updated_at: now_unix_seconds(),
         };
         let _ = write_site_trace_operation(&operation_dir, &running).await;
+        let partial_operation = Arc::new(std::sync::Mutex::new(running.clone()));
+        let progress_operation = partial_operation.clone();
+        let progress_directory = operation_dir.clone();
+        let progress: site_trace::TraceProgressCallback = Arc::new(move |stage, report| {
+            if let Ok(mut operation) = progress_operation.lock() {
+                update_site_trace_progress(&mut operation, stage, report);
+                let _ = write_site_trace_operation_sync(&progress_directory, &operation);
+            }
+        });
         let binary = if let Some(paths) = discover_system_paths() {
             paths.binary.to_string_lossy().into_owned()
         } else {
@@ -2623,8 +2706,12 @@ async fn trace_site(
             binary,
             control.clone(),
             None,
+            Some(progress),
         )
         .await;
+        if let Ok(partial) = partial_operation.lock() {
+            running = partial.clone();
+        }
         let cancelled = control.load(Ordering::Acquire);
         running.state = if cancelled { "cancelled" } else { "complete" }.into();
         running.stage = running.state.clone();
@@ -2836,6 +2923,7 @@ async fn start_strategy_pick(
             binary.clone(),
             control.clone(),
             None,
+            None,
         )
         .await;
         let Some(baseline_ok) = baseline_report.without_nfqws2.ok else {
@@ -2988,7 +3076,8 @@ async fn start_strategy_pick(
                             };
                         }
                     };
-                    let report = runner(host, proto, args, binary, cancel, Some(baseline_ok)).await;
+                    let report =
+                        runner(host, proto, args, binary, cancel, Some(baseline_ok), None).await;
                     let candidate = (report.with_nfqws2.state == "complete")
                         .then_some(report.with_nfqws2.ok)
                         .flatten();
@@ -3380,23 +3469,9 @@ async fn start_freeze_scan(
             binary,
             scan_functions,
             scan_blobs,
-            move |done, total, target| {
+            move |done, total, target, completed_results| {
                 if let Ok(mut value) = progress.lock() {
-                    value.stage = if target.contains(": проверка SNI ") {
-                        "strategy_search"
-                    } else {
-                        "baseline"
-                    }
-                    .into();
-                    value.done = done.min(total);
-                    value.total = total;
-                    value.current = Some(target.chars().take(128).collect());
-                    value.message = if value.stage == "strategy_search" {
-                        "Проверяется совместимое имя fake-SNI; требуется три последовательных успеха".into()
-                    } else {
-                        format!("Проверена сеть {} из {}", value.done, total)
-                    };
-                    value.updated_at = now_unix_seconds();
+                    update_freeze_scan_progress(&mut value, done, total, target, completed_results);
                     let _ = write_freeze_scan_operation(&progress_directory, &value);
                 }
             },
@@ -6029,6 +6104,63 @@ mod tests {
         assert_eq!(operation["state"], "partial");
     }
 
+    #[test]
+    fn freeze_scan_progress_persists_each_completed_target_row() {
+        let mut operation = FreezeScanOperation {
+            id: "abcdef0123456789abcdef0123456789".into(),
+            state: "running".into(),
+            stage: "baseline".into(),
+            current: None,
+            done: 0,
+            total: 20,
+            results: Vec::new(),
+            message: String::new(),
+            updated_at: 0,
+        };
+        let completed = freeze_diagnostic::FreezeNetworkResult {
+            label: "Hetzner".into(),
+            host: "hetzner.com".into(),
+            path: "/large.bin".into(),
+            address: Some(std::net::Ipv4Addr::new(91, 98, 156, 82)),
+            asn_hint: Some(24940),
+            asn: freeze_diagnostic::AsnVerification::Verified { asn: 24940 },
+            direct: freeze_diagnostic::FreezeMeasurement {
+                classification: "Complete".into(),
+                ok: true,
+                bytes_received: Some(65_536),
+                replies: None,
+                elapsed_ms: 75,
+                reason: "HTTP 206".into(),
+            },
+            current: freeze_diagnostic::FreezeMeasurement {
+                classification: "Complete".into(),
+                ok: true,
+                bytes_received: Some(65_536),
+                replies: None,
+                elapsed_ms: 80,
+                reason: "HTTP 206".into(),
+            },
+            freeze_detected: false,
+            tried_candidates: 0,
+            found_strategy: None,
+            candidate_attempts: Vec::new(),
+        };
+
+        update_freeze_scan_progress(
+            &mut operation,
+            1,
+            20,
+            "Hetzner",
+            std::slice::from_ref(&completed),
+        );
+
+        assert_eq!(operation.done, 1);
+        assert_eq!(operation.results.len(), 1);
+        assert_eq!(operation.results[0].host, "hetzner.com");
+        assert_eq!(operation.results[0].address, completed.address);
+        assert_eq!(operation.results[0].asn, completed.asn);
+    }
+
     #[tokio::test]
     async fn picker_reuses_confirmed_strategy_from_latest_completed_freeze_scan() {
         let dir = tempfile::tempdir().unwrap();
@@ -7097,6 +7229,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn site_trace_progress_keeps_the_resolved_ip_and_completed_direct_phase() {
+        let mut operation = SiteTraceOperation {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            state: "running".into(),
+            stage: "router_probe".into(),
+            message: "Выполняется проверка".into(),
+            report: None,
+            updated_at: 1,
+        };
+        let report = site_trace::TraceReport {
+            host: "example.com".into(),
+            address: Some("93.184.216.34".into()),
+            without_nfqws2: site_trace::TracePhase {
+                state: "complete".into(),
+                ok: Some(true),
+                code: Some(200),
+                duration_ms: Some(80),
+                reason: "HTTP 200".into(),
+            },
+            with_nfqws2: site_trace::TracePhase::unavailable("Проверка маршрута ещё выполняется"),
+            trace_lines: Vec::new(),
+            trace_truncated: false,
+            trace_hostname: None,
+            trace_profile: None,
+            trace_actions: Vec::new(),
+            trace_warnings: Vec::new(),
+            summary: "Проверка выполняется".into(),
+        };
+
+        update_site_trace_progress(&mut operation, "direct", report);
+
+        assert_eq!(operation.stage, "direct");
+        let partial = operation.report.unwrap();
+        assert_eq!(partial.address.as_deref(), Some("93.184.216.34"));
+        assert_eq!(partial.without_nfqws2.code, Some(200));
+        assert_eq!(partial.with_nfqws2.state, "unavailable");
+    }
+
     #[tokio::test]
     async fn site_trace_operation_reader_rejects_malformed_state_and_oversized_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -7162,29 +7333,49 @@ mod tests {
     #[tokio::test]
     async fn site_trace_start_returns_accepted_then_persists_runner_result() {
         let dir = tempfile::tempdir().unwrap();
-        let runner: Arc<SiteTraceRunner> = Arc::new(|host, _proto, _, _, _, _baseline| {
-            Box::pin(async move {
-                site_trace::TraceReport {
-                    host,
-                    address: Some("93.184.216.34".into()),
-                    without_nfqws2: site_trace::TracePhase {
-                        state: "complete".into(),
-                        ok: Some(true),
-                        code: Some(200),
-                        duration_ms: Some(12),
-                        reason: "HTTP 200".into(),
-                    },
-                    with_nfqws2: site_trace::TracePhase::unavailable("fake runner"),
-                    trace_lines: vec!["test log".into()],
-                    trace_truncated: false,
-                    trace_hostname: None,
-                    trace_profile: None,
-                    trace_actions: Vec::new(),
-                    trace_warnings: Vec::new(),
-                    summary: "Тестовый результат".into(),
-                }
-            })
-        });
+        let runner: Arc<SiteTraceRunner> =
+            Arc::new(|host, _proto, _, _, _, _baseline, progress| {
+                Box::pin(async move {
+                    let partial = site_trace::TraceReport {
+                        host: host.clone(),
+                        address: Some("93.184.216.34".into()),
+                        without_nfqws2: site_trace::TracePhase::unavailable(
+                            "Прямой запрос выполняется",
+                        ),
+                        with_nfqws2: site_trace::TracePhase::unavailable("Маршрут ещё не проверен"),
+                        trace_lines: Vec::new(),
+                        trace_truncated: false,
+                        trace_hostname: None,
+                        trace_profile: None,
+                        trace_actions: Vec::new(),
+                        trace_warnings: Vec::new(),
+                        summary: "Определён IP".into(),
+                    };
+                    if let Some(progress) = progress {
+                        progress("resolve", partial);
+                        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                    }
+                    site_trace::TraceReport {
+                        host,
+                        address: Some("93.184.216.34".into()),
+                        without_nfqws2: site_trace::TracePhase {
+                            state: "complete".into(),
+                            ok: Some(true),
+                            code: Some(200),
+                            duration_ms: Some(12),
+                            reason: "HTTP 200".into(),
+                        },
+                        with_nfqws2: site_trace::TracePhase::unavailable("fake runner"),
+                        trace_lines: vec!["test log".into()],
+                        trace_truncated: false,
+                        trace_hostname: None,
+                        trace_profile: None,
+                        trace_actions: Vec::new(),
+                        trace_warnings: Vec::new(),
+                        summary: "Тестовый результат".into(),
+                    }
+                })
+            });
         let app = api_router(
             test_state_with_trace_runner(dir.path().join("data"), runner),
             dir.path().join("web"),
@@ -7209,6 +7400,7 @@ mod tests {
         assert_eq!(started["state"], "queued");
         assert!(started["report"].is_null());
         let mut operation = serde_json::Value::Null;
+        let mut saw_partial = false;
         for _ in 0..20 {
             let response = app
                 .clone()
@@ -7221,11 +7413,19 @@ mod tests {
                 .await
                 .unwrap();
             operation = body_json(response).await;
+            if operation["stage"] == "resolve" && operation["report"]["address"] == "93.184.216.34"
+            {
+                saw_partial = true;
+            }
             if operation["state"] == "complete" {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
+        assert!(
+            saw_partial,
+            "resolved address should be persisted before trace completion"
+        );
         assert_eq!(operation["state"], "complete");
         assert_eq!(operation["report"]["host"], "example.com");
         assert_eq!(operation["report"]["withoutNfqws2"]["code"], 200);

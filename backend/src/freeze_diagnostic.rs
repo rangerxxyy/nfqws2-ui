@@ -14,11 +14,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::{
-    net::{TcpStream, lookup_host},
-    process::Command,
-    time::timeout,
-};
+use tokio::{net::lookup_host, process::Command, time::timeout};
 
 pub const PAD_REQUESTS: usize = 12;
 pub const PAD_HEADER_BYTES: usize = 4_000;
@@ -382,17 +378,19 @@ pub fn classify_padded_head(exit_code: i32, metadata: &str) -> PadProbeResult {
     }
 }
 
-pub fn network_has_freeze(
-    attempts: &[TransferAttempt],
-    expected_bytes: Option<u64>,
-    tcp_connected: bool,
-) -> bool {
+pub fn network_has_freeze(attempts: &[TransferAttempt], expected_bytes: Option<u64>) -> bool {
     let diagnosis = classify_transfer(attempts, expected_bytes);
     diagnosis.classification == TransferClass::PossibleBoundaryStall
-        || (tcp_connected
-            && attempts.iter().any(|attempt| {
-                attempt.transport_error.as_deref() == Some("timeout") && attempt.bytes_received == 0
-            }))
+}
+
+/// A successful connection or a timeout before any HTTP response does not
+/// establish a 16–20 KB transfer stall. Only an observed stall after response
+/// data (or the bounded upload-stall probe) is actionable evidence.
+pub fn is_freeze_classification(classification: &str) -> bool {
+    matches!(
+        classification,
+        "PossibleFreeze" | "PossibleBoundaryStall" | "PossibleUploadStall"
+    )
 }
 
 pub fn instantiate_template(template: &str, name: &str) -> Result<Vec<String>, String> {
@@ -420,6 +418,12 @@ pub fn candidate_confirmed(outcomes: &[bool]) -> bool {
     outcomes
         .windows(3)
         .any(|window| window.iter().all(|success| *success))
+}
+
+/// A strategy candidate is run only on the current isolated route. Its direct
+/// baseline has already been measured before candidate enumeration.
+pub fn candidate_route_succeeded(current_route_ok: Option<bool>) -> bool {
+    current_route_ok == Some(true)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -606,17 +610,6 @@ async fn probe_padded_head(
     Ok(result)
 }
 
-async fn tcp_connects_without_nfqws2(address: Ipv4Addr, port: u16) -> bool {
-    crate::site_trace::bypass_probe(
-        address,
-        port,
-        crate::site_trace::ProbeTransport::Tcp,
-        timeout(Duration::from_secs(4), TcpStream::connect((address, port))),
-    )
-    .await
-    .is_ok_and(|result| result.is_ok())
-}
-
 async fn measure_target(
     target: &FreezeTarget,
     address: Ipv4Addr,
@@ -671,7 +664,7 @@ pub async fn scan_network_baselines(
     binary: String,
     functions: HashSet<String>,
     blobs: Vec<String>,
-    mut progress: impl FnMut(usize, usize, &str) + Send,
+    mut progress: impl FnMut(usize, usize, &str, &[FreezeNetworkResult]) + Send,
 ) -> Result<FreezeScanOutcome, String> {
     let targets = build_targets(extra_hosts)?;
     let total = targets.len();
@@ -692,7 +685,7 @@ pub async fn scan_network_baselines(
             limited = true;
             break;
         }
-        progress(index, total, &target.label);
+        progress(index, total, &target.label, &results);
         let Some(address) = resolve_address(target).await else {
             let unavailable = FreezeMeasurement {
                 classification: "dns_failure".into(),
@@ -717,10 +710,35 @@ pub async fn scan_network_baselines(
                 candidate_attempts: Vec::new(),
             });
             baseline_done = index + 1;
-            progress(baseline_done, total, &target.label);
+            progress(baseline_done, total, &target.label, &results);
             continue;
         };
-        let asn = ripe_asn(address, target.asn_hint).await;
+        let pending = FreezeMeasurement {
+            classification: "pending".into(),
+            ok: false,
+            bytes_received: None,
+            replies: None,
+            elapsed_ms: 0,
+            reason: "Проверка выполняется".into(),
+        };
+        results.push(FreezeNetworkResult {
+            label: target.label.clone(),
+            host: target.host.clone(),
+            path: target.path.clone(),
+            address: Some(address),
+            asn_hint: target.asn_hint,
+            asn: AsnVerification::Unavailable,
+            direct: pending.clone(),
+            current: pending,
+            freeze_detected: false,
+            tried_candidates: 0,
+            found_strategy: None,
+            candidate_attempts: Vec::new(),
+        });
+        let result_index = results.len() - 1;
+        progress(index, total, &target.label, &results);
+        let asn_hint = target.asn_hint;
+        let asn_task = tokio::spawn(async move { ripe_asn(address, asn_hint).await });
         let direct = match measure_target(target, address, true, &cancel).await {
             Ok(direct) => direct,
             Err(_) if cancel.load(Ordering::Acquire) => {
@@ -736,26 +754,43 @@ pub async fn scan_network_baselines(
                 limited,
             });
         }
+        results[result_index].direct = direct.clone();
+        progress(
+            index,
+            total,
+            &format!("{}: прямой запрос завершён", target.label),
+            &results,
+        );
+        results[result_index].current.reason = "Проверяется текущий маршрут".into();
+        progress(
+            index,
+            total,
+            &format!("{}: проверка через текущий маршрут", target.label),
+            &results,
+        );
         let traced = if target.kind == FreezeTargetKind::PinnedAddress {
-            crate::site_trace::run_padded_target(
+            crate::site_trace::run_padded_target_with_baseline(
                 target.host.clone(),
                 address,
                 active_args.clone(),
                 binary.clone(),
+                direct.ok,
                 cancel.clone(),
             )
             .await
         } else {
-            crate::site_trace::run_transfer_target(
+            crate::site_trace::run_transfer_target_with_baseline(
                 target.host.clone(),
                 address,
                 target.path.clone(),
                 active_args.clone(),
                 binary.clone(),
+                direct.ok,
                 cancel.clone(),
             )
             .await
         };
+        let asn = asn_task.await.unwrap_or(AsnVerification::Unavailable);
         let phase = traced.with_nfqws2;
         let classification = if phase.ok == Some(true) {
             "Complete"
@@ -783,39 +818,13 @@ pub async fn scan_network_baselines(
             elapsed_ms: phase.duration_ms.unwrap_or_default(),
             reason: phase.reason,
         };
-        let tcp_connected = !direct.ok && tcp_connects_without_nfqws2(address, target.port).await;
-        let is_freeze_class = |measurement: &FreezeMeasurement| {
-            matches!(
-                measurement.classification.as_str(),
-                "PossibleFreeze" | "PossibleBoundaryStall" | "PossibleUploadStall"
-            )
-        };
-        let is_pre_response_timeout = |measurement: &FreezeMeasurement| {
-            matches!(
-                measurement.classification.as_str(),
-                "TimeoutBeforeResponse" | "TimeoutBeforeBody"
-            )
-        };
-        let freeze_detected = is_freeze_class(&direct)
-            || is_freeze_class(&current)
-            || (tcp_connected
-                && (is_pre_response_timeout(&direct) || is_pre_response_timeout(&current)));
-        results.push(FreezeNetworkResult {
-            label: target.label.clone(),
-            host: target.host.clone(),
-            path: target.path.clone(),
-            address: Some(address),
-            asn_hint: target.asn_hint,
-            asn,
-            direct,
-            current,
-            freeze_detected,
-            tried_candidates: 0,
-            found_strategy: None,
-            candidate_attempts: Vec::new(),
-        });
+        let freeze_detected = is_freeze_classification(&direct.classification)
+            || is_freeze_classification(&current.classification);
+        results[result_index].asn = asn;
+        results[result_index].current = current;
+        results[result_index].freeze_detected = freeze_detected;
         baseline_done = index + 1;
-        progress(baseline_done, total, &target.label);
+        progress(baseline_done, total, &target.label, &results);
     }
     let global_started = started;
     let candidates = freeze_candidates(&functions, &blobs);
@@ -857,6 +866,7 @@ pub async fn scan_network_baselines(
                 total + affected_index + 1,
                 candidate_total,
                 &format!("{}: найден вариант в той же AS", results[index].label),
+                &results,
             );
             candidate_done = affected_index + 1;
             continue;
@@ -881,6 +891,7 @@ pub async fn scan_network_baselines(
                     results[index].label,
                     index_attempt + 1
                 ),
+                &results,
             );
             let steps = vec![step.clone()];
             let candidate_args = match crate::strategy_picker::candidate_argv(
@@ -915,30 +926,31 @@ pub async fn scan_network_baselines(
                 }
                 let report = if results[index].asn_hint.is_some() && results[index].path == "/" {
                     let address = results[index].address.expect("address was resolved above");
-                    crate::site_trace::run_padded_target(
+                    crate::site_trace::run_padded_target_with_baseline(
                         results[index].host.clone(),
                         address,
                         candidate_args.clone(),
                         binary.clone(),
+                        results[index].direct.ok,
                         cancel.clone(),
                     )
                     .await
                 } else {
                     let address = results[index].address.expect("address was resolved above");
-                    crate::site_trace::run_transfer_target(
+                    crate::site_trace::run_transfer_target_with_baseline(
                         results[index].host.clone(),
                         address,
                         results[index].path.clone(),
                         candidate_args.clone(),
                         binary.clone(),
+                        results[index].direct.ok,
                         cancel.clone(),
                     )
                     .await
                 };
                 attempts += 1;
                 reason = Some(report.with_nfqws2.reason.clone());
-                let success =
-                    report.without_nfqws2.ok == Some(false) && report.with_nfqws2.ok == Some(true);
+                let success = candidate_route_succeeded(report.with_nfqws2.ok);
                 elapsed += report.with_nfqws2.duration_ms.unwrap_or_default();
                 if success {
                     successes += 1;
@@ -964,30 +976,31 @@ pub async fn scan_network_baselines(
                     }
                     let retry = if results[index].asn_hint.is_some() && results[index].path == "/" {
                         let address = results[index].address.expect("address was resolved above");
-                        crate::site_trace::run_padded_target(
+                        crate::site_trace::run_padded_target_with_baseline(
                             results[index].host.clone(),
                             address,
                             candidate_args.clone(),
                             binary.clone(),
+                            results[index].direct.ok,
                             cancel.clone(),
                         )
                         .await
                     } else {
                         let address = results[index].address.expect("address was resolved above");
-                        crate::site_trace::run_transfer_target(
+                        crate::site_trace::run_transfer_target_with_baseline(
                             results[index].host.clone(),
                             address,
                             results[index].path.clone(),
                             candidate_args.clone(),
                             binary.clone(),
+                            results[index].direct.ok,
                             cancel.clone(),
                         )
                         .await
                     };
                     attempts += 1;
                     reason = Some(retry.with_nfqws2.reason.clone());
-                    let retry_ok = retry.without_nfqws2.ok == Some(false)
-                        && retry.with_nfqws2.ok == Some(true);
+                    let retry_ok = candidate_route_succeeded(retry.with_nfqws2.ok);
                     elapsed += retry.with_nfqws2.duration_ms.unwrap_or_default();
                     if retry_ok {
                         successes += 1;
@@ -1031,6 +1044,7 @@ pub async fn scan_network_baselines(
             total + affected_index + 1,
             candidate_total,
             &format!("{}: подбор завершён", results[index].label),
+            &results,
         );
         candidate_done = affected_index + 1;
         if global_started.elapsed() > Duration::from_secs(900) {

@@ -694,15 +694,23 @@ async function runSiteTrace() {
     activeTraceOperationId = started.id;
     let current: SiteTraceOperation = started;
     const terminal = ['complete', 'cancelled', 'failed'];
+    let renderedReport = '';
     for (let attempt = 0; attempt < 90 && !terminal.includes(current.state); attempt += 1) {
       if (operationStatus) operationStatus.textContent = current.message || `Этап: ${current.stage}`;
+      if (current.report) {
+        const signature = JSON.stringify(current.report);
+        if (signature !== renderedReport) {
+          renderTraceReport(container, current.report);
+          renderedReport = signature;
+        }
+      }
       await new Promise((resolve) => window.setTimeout(resolve, 900));
       try { current = await nfqwsDiagnostics.traceStatus(started.id); }
       catch (error) {
         if (operationStatus) operationStatus.textContent = error instanceof Error ? `${current.message} · переподключение…` : 'Связь с роутером восстановится автоматически…';
       }
     }
-    if (current.report) renderTraceReport(container, current.report);
+    if (current.report && JSON.stringify(current.report) !== renderedReport) renderTraceReport(container, current.report);
     else {
       container.replaceChildren(); const row = document.createElement('p'); row.className = `col-span-full text-sm ${current.state === 'failed' ? 'text-rose-400' : 'text-amber-300'}`;
       row.textContent = current.message || 'Результат трассировки пока не получен'; container.append(row);
@@ -958,6 +966,9 @@ function renderFreezeScan(operation: FreezeScanOperation) {
   }
   const container = $('#freezeScanResults');
   if (!container) return;
+  const resultsSignature = JSON.stringify(operation.results);
+  if (container.dataset.resultsSignature === resultsSignature) return;
+  container.dataset.resultsSignature = resultsSignature;
   container.replaceChildren();
   if (!operation.results.length) { container.classList.add('hidden'); return; }
   container.classList.remove('hidden');
@@ -1013,7 +1024,9 @@ async function startFreezeScan() {
   if (!(input instanceof HTMLInputElement)) return;
   const extraHosts = input.value.split(',').map((host) => host.trim()).filter(Boolean);
   if (extraHosts.length > 20) return toast('Можно добавить не более 20 своих доменов.', 'error');
-  $('#freezeScanResults')?.replaceChildren();
+  const results = $('#freezeScanResults');
+  results?.replaceChildren();
+  if (results) delete results.dataset.resultsSignature;
   $('#freezeScanSummary')?.classList.add('hidden');
   try { const operation = await nfqwsDiagnostics.freezeScanStart(extraHosts); localStorage.setItem('nfqws2-ui-freeze-scan', operation.id); await pollFreezeScan(operation.id); }
   catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить проверку сетей', 'error'); }
