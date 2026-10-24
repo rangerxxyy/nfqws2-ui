@@ -3948,7 +3948,7 @@ async fn check_saved_sites(
         {
             let previous = site.results.first().map(|r| r.status.clone());
             let status = report.current.status.to_owned();
-            if let Some(previous) = previous.filter(|old| old != &status)
+            if previous.as_ref().is_some_and(|old| old != &status)
                 && !updated.telegram.chat_id.is_empty()
             {
                 let text = if status == "ok" {
