@@ -22,6 +22,14 @@ pub const MAX_TRACE_LINES: usize = 1_500;
 pub const MAX_TRACE_LINE_BYTES: usize = 2_048;
 pub const MAX_TRACE_BYTES: usize = 256 * 1024;
 
+pub type TraceProgressCallback = Arc<dyn Fn(&'static str, TraceReport) + Send + Sync>;
+
+#[derive(Default)]
+struct TraceRunContext {
+    known_baseline: Option<bool>,
+    progress: Option<TraceProgressCallback>,
+}
+
 #[derive(Clone, Copy)]
 pub enum ProbeTransport {
     Tcp,
@@ -1041,7 +1049,30 @@ pub async fn run(
         args,
         binary,
         cancel,
+        TraceRunContext::default(),
+    )
+    .await
+}
+
+pub async fn run_with_progress(
+    host: String,
+    proto: &str,
+    args: Vec<String>,
+    binary: String,
+    cancel: Arc<AtomicBool>,
+    progress: TraceProgressCallback,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::Http(proto.into()),
         None,
+        args,
+        binary,
+        cancel,
+        TraceRunContext {
+            known_baseline: None,
+            progress: Some(progress),
+        },
     )
     .await
 }
@@ -1064,7 +1095,10 @@ pub async fn run_candidate(
         args,
         binary,
         cancel,
-        Some(baseline_ok),
+        TraceRunContext {
+            known_baseline: Some(baseline_ok),
+            progress: None,
+        },
     )
     .await
 }
@@ -1085,7 +1119,32 @@ pub async fn run_padded_target(
         args,
         binary,
         cancel,
-        None,
+        TraceRunContext::default(),
+    )
+    .await
+}
+
+/// Same isolated padded-HEAD route probe, reusing a direct baseline measured
+/// by the caller instead of issuing a duplicate network request.
+pub async fn run_padded_target_with_baseline(
+    host: String,
+    address: Ipv4Addr,
+    args: Vec<String>,
+    binary: String,
+    baseline_ok: bool,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::PaddedHead,
+        Some(address),
+        args,
+        binary,
+        cancel,
+        TraceRunContext {
+            known_baseline: Some(baseline_ok),
+            progress: None,
+        },
     )
     .await
 }
@@ -1107,7 +1166,33 @@ pub async fn run_transfer_target(
         args,
         binary,
         cancel,
-        None,
+        TraceRunContext::default(),
+    )
+    .await
+}
+
+/// Same isolated transfer-volume route probe, reusing a direct baseline
+/// measured by the caller instead of issuing a duplicate network request.
+pub async fn run_transfer_target_with_baseline(
+    host: String,
+    address: Ipv4Addr,
+    path: String,
+    args: Vec<String>,
+    binary: String,
+    baseline_ok: bool,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::Transfer(path),
+        Some(address),
+        args,
+        binary,
+        cancel,
+        TraceRunContext {
+            known_baseline: Some(baseline_ok),
+            progress: None,
+        },
     )
     .await
 }
@@ -1119,8 +1204,12 @@ async fn run_inner(
     args: Vec<String>,
     binary: String,
     cancel: Arc<AtomicBool>,
-    known_baseline: Option<bool>,
+    context: TraceRunContext,
 ) -> TraceReport {
+    let TraceRunContext {
+        known_baseline,
+        progress,
+    } = context;
     let mut report = TraceReport {
         host: host.clone(),
         address: None,
@@ -1172,6 +1261,9 @@ async fn run_inner(
         return report;
     };
     report.address = Some(address.to_string());
+    if let Some(progress) = &progress {
+        progress("resolve", report.clone());
+    }
     if cancel.load(Ordering::Acquire) {
         report.summary = "Трассировка остановлена до изменения firewall".into();
         return report;
@@ -1255,6 +1347,9 @@ async fn run_inner(
         );
         report.summary = "Ошибка очистки временных правил".into();
         return report;
+    }
+    if let Some(progress) = &progress {
+        progress("direct", report.clone());
     }
     if cancel.load(Ordering::Acquire) {
         report.with_nfqws2 = TracePhase::unavailable("Трассировка остановлена пользователем");
@@ -1443,6 +1538,9 @@ async fn run_inner(
         report.trace_actions,
         report.trace_warnings,
     ) = trace_insights(&report.trace_lines);
+    if let Some(progress) = &progress {
+        progress("route", report.clone());
+    }
     let _ = tokio::fs::remove_file(debug_path).await;
     if cancelled {
         report.summary = "Трассировка остановлена; временный процесс и правила очищены".into();
