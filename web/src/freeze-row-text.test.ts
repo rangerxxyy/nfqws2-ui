@@ -16,7 +16,13 @@ describe('freeze row text', () => {
     expect(freezeRowDetails({
       foundStrategy: { sni: 'ya.ru', step: '--lua-desync=hostfakesplit repeats=4', successes: 3, attempts: 3 },
       triedCandidates: 4,
+      candidateTotal: 24,
       candidateAttempts: [{ sni: 'vk.com', successes: 1, attempts: 3, reason: 'тайм-аут' }],
-    })).toEqual({ summary: 'SNI ya.ru · 3/3', details: 'Стратегия: --lua-desync=hostfakesplit repeats=4\nПроверено имён: 4\nДругие попытки: vk.com · 1/3 · тайм-аут' });
+    })).toEqual({ summary: 'SNI ya.ru · 3/3', details: 'Стратегий проверено: 4 из 24\nПодтверждение варианта: 3/3\nПараметры: --lua-desync=hostfakesplit repeats=4\nДругие варианты: vk.com · 1/3 · тайм-аут' });
+  });
+
+  it('shows progress against the full catalog before the first strategy result', () => {
+    expect(freezeRowDetails({ foundStrategy: null, triedCandidates: 0, candidateTotal: 24, candidateAttempts: [] }))
+      .toEqual({ summary: 'Стратегий проверено: 0 из 24', details: 'Стратегий проверено: 0 из 24' });
   });
 });

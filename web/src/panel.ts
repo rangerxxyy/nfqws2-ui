@@ -30,6 +30,8 @@ let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
 let freezeScanRunning = false;
 let activeFreezeScanId: string | null = null;
+const freezeStrategyApplyPending = new Set<string>();
+const freezeStrategyApplyDone = new Set<string>();
 let activeStrategyPreview: { source: 'strategyPick' | 'freezeScan'; operationId: string; candidateIndex: number; revision: string; panel: 'autotune' | 'freeze' } | null = null;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
@@ -936,6 +938,8 @@ async function previewFreezeStrategy(operationId: string, resultIndex: string) {
 
 async function applyFreezeStrategyOneClick(operationId: string, resultIndex: string) {
   const index = Number(resultIndex);
+  const actionKey = `${operationId}:${resultIndex}`;
+  if (freezeStrategyApplyPending.has(actionKey) || freezeStrategyApplyDone.has(actionKey)) return;
   const rowButton = [...document.querySelectorAll<HTMLButtonElement>('[data-action-click="applyFreezeStrategyOneClick"]')]
     .find((button) => button.dataset.args === JSON.stringify([operationId, resultIndex]));
   if (!Number.isInteger(index) || index < 0) return toast('Индекс проверенного домена некорректен.', 'error');
@@ -943,6 +947,7 @@ async function applyFreezeStrategyOneClick(operationId: string, resultIndex: str
   if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) {
     return toast('Сначала примените или отмените черновик конфигурации.', 'error');
   }
+  freezeStrategyApplyPending.add(actionKey);
   if (rowButton) { rowButton.disabled = true; rowButton.textContent = 'Проверяю и применяю…'; }
   let appliedSuccessfully = false;
   try {
@@ -952,6 +957,7 @@ async function applyFreezeStrategyOneClick(operationId: string, resultIndex: str
     const preview = await nfqwsDiagnostics.freezeStrategyPreview(operationId, index);
     const applied = await nfqwsDiagnostics.applyStrategy('freezeScan', operationId, index, preview.originalRevision);
     appliedSuccessfully = true;
+    freezeStrategyApplyDone.add(actionKey);
     activeStrategyPreview = null;
     if (rowButton) { rowButton.textContent = 'Стратегия применена'; rowButton.title = `${preview.host}: профиль добавлен; резервная копия создана`; }
     toast(`${applied.message} Стратегия добавлена только для ${preview.host}; резервная копия сохранена.`, 'success');
@@ -960,6 +966,8 @@ async function applyFreezeStrategyOneClick(operationId: string, resultIndex: str
   } catch (error) {
     if (rowButton) { rowButton.disabled = appliedSuccessfully; rowButton.textContent = appliedSuccessfully ? 'Стратегия применена' : 'Применить к сайту'; }
     toast(error instanceof Error ? error.message : 'Не удалось применить подтверждённую стратегию.', 'error');
+  } finally {
+    freezeStrategyApplyPending.delete(actionKey);
   }
 }
 
@@ -1220,13 +1228,15 @@ function renderFreezeScan(operation: FreezeScanOperation) {
       } else {
         cell.textContent = value;
       }
-      if (index === 4 && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
+      const applyKey = `${operation.id}:${resultIndex}`;
+      if (index === 4 && !freezeStrategyApplyDone.has(applyKey) && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'mt-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-100 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300';
         button.dataset.actionClick = 'applyFreezeStrategyOneClick';
         button.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
-        button.textContent = 'Применить к сайту';
+        button.disabled = freezeStrategyApplyPending.has(applyKey);
+        button.textContent = button.disabled ? 'Проверяю и применяю…' : 'Применить к сайту';
         button.title = 'Проверенный вариант добавляется только этому домену; при ошибке конфигурация откатывается';
         cell.append(button);
       }

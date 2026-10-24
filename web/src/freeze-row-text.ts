@@ -2,6 +2,7 @@ type FreezeRowIdentity = { label: string; host: string; path: string; targetKind
 type FreezeRowDetail = {
   foundStrategy: { sni: string; step: string; successes: number; attempts: number } | null;
   triedCandidates: number;
+  candidateTotal: number;
   candidateAttempts: { sni: string; successes: number; attempts: number; reason: string | null }[];
 };
 
@@ -20,13 +21,19 @@ export function freezeRowDetails(result: FreezeRowDetail): { summary: string; de
   if (result.foundStrategy) {
     return {
       summary: `SNI ${result.foundStrategy.sni} · ${result.foundStrategy.successes}/${result.foundStrategy.attempts}`,
-      details: [`Стратегия: ${result.foundStrategy.step}`, `Проверено имён: ${result.triedCandidates}`, attempts ? `Другие попытки: ${attempts}` : ''].filter(Boolean).join('\n'),
+      details: [`Стратегий проверено: ${result.triedCandidates} из ${result.candidateTotal}`, `Подтверждение варианта: ${result.foundStrategy.successes}/${result.foundStrategy.attempts}`, `Параметры: ${result.foundStrategy.step}`, attempts ? `Другие варианты: ${attempts}` : ''].filter(Boolean).join('\n'),
     };
   }
   if (result.triedCandidates > 0) {
     return {
-      summary: `Проверено вариантов: ${result.triedCandidates} · рабочий не найден`,
-      details: attempts ? `Последние попытки: ${attempts}` : null,
+      summary: `Рабочий вариант не найден · ${result.triedCandidates}/${result.candidateTotal}`,
+      details: [`Стратегий проверено: ${result.triedCandidates} из ${result.candidateTotal}`, attempts ? `Последние варианты: ${attempts}` : ''].filter(Boolean).join('\n'),
+    };
+  }
+  if (result.candidateTotal > 0) {
+    return {
+      summary: `Стратегий проверено: 0 из ${result.candidateTotal}`,
+      details: `Стратегий проверено: 0 из ${result.candidateTotal}`,
     };
   }
   return { summary: '', details: null };

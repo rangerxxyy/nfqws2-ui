@@ -58,6 +58,7 @@ fn freeze_network_results_expose_domain_path_ip_and_asn_for_the_ui() {
         current: unreachable_measurement(),
         freeze_detected: false,
         tried_candidates: 0,
+        candidate_total: 0,
         found_strategy: None,
         candidate_attempts: Vec::new(),
     };
@@ -67,8 +68,10 @@ fn freeze_network_results_expose_domain_path_ip_and_asn_for_the_ui() {
     assert_eq!(result["asnHint"], 24940);
     let mut legacy = result.clone();
     legacy.as_object_mut().unwrap().remove("targetKind");
+    legacy.as_object_mut().unwrap().remove("candidateTotal");
     let old_result: FreezeNetworkResult = serde_json::from_value(legacy).unwrap();
     assert_eq!(old_result.target_kind, FreezeTargetKind::HostReference);
+    assert_eq!(old_result.candidate_total, 0);
 }
 
 fn unreachable_measurement() -> nfqws2_ui::freeze_diagnostic::FreezeMeasurement {
@@ -294,6 +297,7 @@ fn sample_freeze_result(label: &str, freeze_detected: bool) -> FreezeNetworkResu
             reason: "повторяемый тайм-аут после начала ответа".into(),
         },
         freeze_detected,
+        candidate_total: 0,
         tried_candidates: 3,
         found_strategy: None,
         candidate_attempts: Vec::new(),
