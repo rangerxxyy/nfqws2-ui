@@ -17,6 +17,8 @@ if sh "$SCRIPT" unknown >/dev/null 2>&1; then
 	echo 'panel command accepted an unknown action' >&2
 	exit 1
 fi
+# shellcheck disable=SC2016
 grep -Fq 'cp "$STAGE/scripts/nfqws2-ui-ctl" /opt/bin/nfqws2-ui-ctl' scripts/update-release.sh
 grep -Fq 'rm -f /opt/bin/nfqws2-ui-ctl' scripts/uninstall.sh
 echo 'nfqws2-ui-ctl preflight checks passed.'
+
