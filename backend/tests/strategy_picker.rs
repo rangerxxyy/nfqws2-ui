@@ -524,7 +524,7 @@ async fn strategy_is_confirmed_only_after_two_real_probe_successes() {
         |_, _, _| {},
     )
     .await;
-    assert_eq!(calls, 2);
+    assert_eq!(calls, 1);
     assert_eq!(result.results[0].successes, 2);
     assert!(result.results[0].confirmed);
 }
@@ -590,7 +590,7 @@ async fn automatic_mode_stops_after_the_first_candidate_passes_every_repeat() {
         |_, _, _| {},
     )
     .await;
-    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(result.checked, 1);
     assert_eq!(result.results.len(), 1);
     assert!(result.results[0].confirmed);
@@ -628,7 +628,7 @@ async fn inconclusive_network_probe_ends_as_persistable_failure() {
 }
 
 #[tokio::test]
-async fn cancellation_between_repeats_does_not_confirm_a_partial_success() {
+async fn cancellation_between_repeats_preserves_but_does_not_confirm_partial_success() {
     let mut plan = build_plan(
         StrategyProtocol::Https,
         StrategyMode::Quick,
@@ -660,7 +660,10 @@ async fn cancellation_between_repeats_does_not_confirm_a_partial_success() {
     .await;
     assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert_eq!(result.state, "cancelled");
-    assert!(result.results.is_empty());
+    assert_eq!(result.results.len(), 1);
+    assert_eq!(result.results[0].attempts, 1);
+    assert_eq!(result.results[0].successes, 1);
+    assert!(!result.results[0].confirmed);
 }
 
 #[tokio::test]

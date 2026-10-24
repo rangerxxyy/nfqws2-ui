@@ -143,6 +143,8 @@ struct StrategyPickRequest {
     include_community: bool,
     #[serde(default)]
     include_other_history: bool,
+    #[serde(default)]
+    refine_lighter: bool,
     custom_steps: Option<Vec<String>>,
 }
 
@@ -262,24 +264,36 @@ type SiteTraceRunner = dyn Fn(
         Vec<String>,
         String,
         Arc<AtomicBool>,
+        usize,
         Option<bool>,
         Option<site_trace::TraceProgressCallback>,
     ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>>
     + Send
     + Sync;
 
+#[allow(clippy::too_many_arguments)] // Keeps the injectable async runner boundary explicit.
 fn router_site_trace_runner(
     host: String,
     proto: String,
     args: Vec<String>,
     binary: String,
     cancel: Arc<AtomicBool>,
+    repeats: usize,
     known_baseline: Option<bool>,
     progress: Option<site_trace::TraceProgressCallback>,
 ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>> {
     Box::pin(async move {
         if let Some(baseline_ok) = known_baseline {
-            site_trace::run_candidate(host, &proto, args, binary, baseline_ok, cancel).await
+            site_trace::run_candidate_repeated(
+                host,
+                &proto,
+                args,
+                binary,
+                baseline_ok,
+                repeats,
+                cancel,
+            )
+            .await
         } else if let Some(progress) = progress {
             site_trace::run_with_progress(host, &proto, args, binary, cancel, progress).await
         } else {
@@ -951,6 +965,7 @@ fn freeze_result_as_strategy_operation(
             attempts: found.attempts,
             successes: found.successes,
             confirmed: true,
+            elapsed_ms: found.average_ms.unwrap_or_default(),
             detail: "Три последовательные проверки прошли на этом домене".into(),
         }],
         message: "Проверка 16 КБ завершена".into(),
@@ -3072,6 +3087,7 @@ async fn trace_site(
             args,
             binary,
             control.clone(),
+            1,
             None,
             Some(progress),
         )
@@ -3263,6 +3279,7 @@ async fn start_strategy_pick(
     let task_proto = operation.protocol.clone();
     let task_repeats = repeats;
     let stop_after_first_confirmed = request.stop_after_first_confirmed;
+    let refine_lighter = request.refine_lighter;
     let include_community = request.include_community && mode.is_some();
     let community_cache_dir = state.data_dir.join("community-strategy-cache");
     let include_catalog_sources = mode.is_some();
@@ -3289,6 +3306,7 @@ async fn start_strategy_pick(
             Vec::new(),
             binary.clone(),
             control.clone(),
+            1,
             None,
             None,
         )
@@ -3412,50 +3430,64 @@ async fn start_strategy_pick(
         }
         let progress_state = shared.clone();
         let progress_dir = operation_dir.clone();
-        let plan_result = strategy_picker::run_candidates_with_compaction(
+        let probe_candidate = move |candidate: &strategy_picker::StrategyCandidate, repeats| {
+            let steps = candidate.steps.clone();
+            let candidate_argv = strategy_picker::candidate_argv(
+                &active_args_for_task,
+                protocol,
+                &steps,
+                &functions_for_task,
+                &blobs_for_task,
+            );
+            let host = task_host.clone();
+            let proto = task_proto.clone();
+            let binary = binary.clone();
+            let runner = runner.clone();
+            let cancel = probe_cancel.clone();
+            async move {
+                let args = match candidate_argv {
+                    Ok(args) => strategy_probe_argv(&binary, &args),
+                    Err(message) => {
+                        return vec![strategy_picker::StrategyProbeResult {
+                            baseline_ok: None,
+                            candidate_ok: None,
+                            detail: message,
+                        }];
+                    }
+                };
+                let report = runner(
+                    host,
+                    proto,
+                    args,
+                    binary,
+                    cancel,
+                    repeats,
+                    Some(baseline_ok),
+                    None,
+                )
+                .await;
+                let phases = if report.candidate_attempts.is_empty() {
+                    vec![report.with_nfqws2.clone()]
+                } else {
+                    report.candidate_attempts
+                };
+                phases
+                    .into_iter()
+                    .map(|phase| strategy_picker::StrategyProbeResult {
+                        baseline_ok: Some(baseline_ok),
+                        candidate_ok: (phase.state == "complete").then_some(phase.ok).flatten(),
+                        detail: format!("{}; {}", report.summary, phase.reason),
+                    })
+                    .collect::<Vec<_>>()
+            }
+        };
+        let mut plan_result = strategy_picker::run_candidates_with_compaction(
             plan,
             control.clone(),
             task_repeats,
             stop_after_first_confirmed,
             mode == Some(StrategyMode::Full),
-            move |candidate, _repeat| {
-                let steps = candidate.steps.clone();
-                let candidate_argv = strategy_picker::candidate_argv(
-                    &active_args_for_task,
-                    protocol,
-                    &steps,
-                    &functions_for_task,
-                    &blobs_for_task,
-                );
-                let host = task_host.clone();
-                let proto = task_proto.clone();
-                let binary = binary.clone();
-                let runner = runner.clone();
-                let cancel = probe_cancel.clone();
-                async move {
-                    let args = match candidate_argv {
-                        Ok(args) => strategy_probe_argv(&binary, &args),
-                        Err(message) => {
-                            return strategy_picker::StrategyProbeResult {
-                                baseline_ok: None,
-                                candidate_ok: None,
-                                detail: message,
-                            };
-                        }
-                    };
-                    let report =
-                        runner(host, proto, args, binary, cancel, Some(baseline_ok), None).await;
-                    let candidate = (report.with_nfqws2.state == "complete")
-                        .then_some(report.with_nfqws2.ok)
-                        .flatten();
-                    let detail = format!("{}; {}", report.summary, report.with_nfqws2.reason);
-                    strategy_picker::StrategyProbeResult {
-                        baseline_ok: Some(baseline_ok),
-                        candidate_ok: candidate,
-                        detail,
-                    }
-                }
-            },
+            &probe_candidate,
             move |done, total, current| {
                 if let Ok(mut operation) = progress_state.lock() {
                     operation.current = Some(current.to_owned());
@@ -3469,6 +3501,55 @@ async fn start_strategy_pick(
             },
         )
         .await;
+        let already_confirmed = plan_result.results.iter().any(|result| result.confirmed);
+        if !matches!(
+            plan_result.state.as_str(),
+            "cancelled" | "failed" | "site_unblocked"
+        ) && (plan_result.state == "no_match" || (refine_lighter && already_confirmed))
+        {
+            let initial_checked = plan_result.checked;
+            let initial_total = plan_result.total;
+            let progress_state = shared.clone();
+            let progress_dir = operation_dir.clone();
+            let refinement = strategy_picker::refine_candidates(
+                strategy_picker::StrategyRefinementConfig {
+                    candidates: &plan_result.refinement_bases,
+                    protocol,
+                    repeats: task_repeats,
+                    already_confirmed,
+                    force: refine_lighter,
+                    cancel: control.clone(),
+                    available_functions: &functions,
+                    available_blobs: &blobs,
+                },
+                &probe_candidate,
+                move |done, total, current| {
+                    if let Ok(mut operation) = progress_state.lock() {
+                        operation.current = Some(current.to_owned());
+                        operation.done = initial_checked.saturating_add(done);
+                        operation.total = initial_total.saturating_add(total);
+                        operation.stage = "refining".into();
+                        operation.message = format!("Уточняется вариант: {current}");
+                        operation.updated_at = now_unix_seconds();
+                        let _ = write_strategy_pick_operation_sync(&progress_dir, &operation);
+                    }
+                },
+            )
+            .await;
+            plan_result.checked = initial_checked.saturating_add(refinement.checked);
+            plan_result.total = initial_total.saturating_add(refinement.total);
+            plan_result.results.extend(refinement.results);
+            if refinement.state == "cancelled" {
+                plan_result.state = "cancelled".into();
+            } else if refinement.state == "partial" {
+                plan_result.state = "partial".into();
+            } else if plan_result.results.iter().any(|result| result.confirmed) {
+                plan_result.state = "complete".into();
+            }
+            if refinement.message != "Уточнение не требуется" {
+                plan_result.message = format!("{} · {}", plan_result.message, refinement.message);
+            }
+        }
         if let Ok(mut operation) = shared.lock() {
             operation.state = plan_result.state;
             operation.stage = operation.state.clone();
@@ -5534,6 +5615,7 @@ mod tests {
                 attempts: 2,
                 successes: if confirmed { 2 } else { 1 },
                 confirmed,
+                elapsed_ms: 10,
                 detail: "two target probes".into(),
             }],
             message: state.into(),
@@ -7767,6 +7849,7 @@ mod tests {
                 ok: Some(true),
                 code: Some(200),
                 duration_ms: Some(80),
+                diagnostic_classification: None,
                 reason: "HTTP 200".into(),
             },
             with_nfqws2: site_trace::TracePhase::unavailable("Проверка маршрута ещё выполняется"),
@@ -7776,6 +7859,7 @@ mod tests {
             trace_profile: None,
             trace_actions: Vec::new(),
             trace_warnings: Vec::new(),
+            candidate_attempts: Vec::new(),
             summary: "Проверка выполняется".into(),
         };
 
@@ -7854,7 +7938,7 @@ mod tests {
     async fn site_trace_start_returns_accepted_then_persists_runner_result() {
         let dir = tempfile::tempdir().unwrap();
         let runner: Arc<SiteTraceRunner> =
-            Arc::new(|host, _proto, _, _, _, _baseline, progress| {
+            Arc::new(|host, _proto, _, _, _, _repeats, _baseline, progress| {
                 Box::pin(async move {
                     let partial = site_trace::TraceReport {
                         host: host.clone(),
@@ -7869,6 +7953,7 @@ mod tests {
                         trace_profile: None,
                         trace_actions: Vec::new(),
                         trace_warnings: Vec::new(),
+                        candidate_attempts: Vec::new(),
                         summary: "Определён IP".into(),
                     };
                     if let Some(progress) = progress {
@@ -7883,6 +7968,7 @@ mod tests {
                             ok: Some(true),
                             code: Some(200),
                             duration_ms: Some(12),
+                            diagnostic_classification: None,
                             reason: "HTTP 200".into(),
                         },
                         with_nfqws2: site_trace::TracePhase::unavailable("fake runner"),
@@ -7892,6 +7978,7 @@ mod tests {
                         trace_profile: None,
                         trace_actions: Vec::new(),
                         trace_warnings: Vec::new(),
+                        candidate_attempts: Vec::new(),
                         summary: "Тестовый результат".into(),
                     }
                 })

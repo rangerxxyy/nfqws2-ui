@@ -28,6 +28,7 @@ pub type TraceProgressCallback = Arc<dyn Fn(&'static str, TraceReport) + Send + 
 struct TraceRunContext {
     known_baseline: Option<bool>,
     progress: Option<TraceProgressCallback>,
+    candidate_repeats: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -54,6 +55,8 @@ pub struct TracePhase {
     pub ok: Option<bool>,
     pub code: Option<u16>,
     pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic_classification: Option<String>,
     pub reason: String,
 }
 
@@ -64,6 +67,7 @@ impl TracePhase {
             ok: None,
             code: None,
             duration_ms: None,
+            diagnostic_classification: None,
             reason: reason.into(),
         }
     }
@@ -82,6 +86,8 @@ pub struct TraceReport {
     pub trace_profile: Option<String>,
     pub trace_actions: Vec<String>,
     pub trace_warnings: Vec<String>,
+    #[serde(skip)]
+    pub candidate_attempts: Vec<TracePhase>,
     pub summary: String,
 }
 
@@ -927,7 +933,7 @@ async fn probe_padded_head(
     host: &str,
     address: Ipv4Addr,
     cancel: &AtomicBool,
-) -> Result<(Option<u16>, Option<u64>, String), String> {
+) -> Result<(Option<u16>, Option<u64>, String, Option<String>), String> {
     let args = crate::freeze_diagnostic::padded_head_curl_args(address, 443, host)?;
     let started = std::time::Instant::now();
     let mut child = Command::new(program_path("curl"))
@@ -947,7 +953,7 @@ async fn probe_padded_head(
         } => {
             let _ = child.start_kill();
             let _ = timeout(Duration::from_secs(2), child.wait()).await;
-            return Ok((None, Some(started.elapsed().as_millis() as u64), "Проверка отменена; тестовый curl остановлен".into()));
+            return Ok((None, Some(started.elapsed().as_millis() as u64), "Проверка отменена; тестовый curl остановлен".into(), None));
         }
     };
     let elapsed_ms = started.elapsed().as_millis() as u64;
@@ -968,10 +974,12 @@ async fn probe_padded_head(
             );
             let complete =
                 details.classification == crate::freeze_diagnostic::PadClassification::Complete;
+            let classification = format!("{:?}", details.classification);
             Ok((
                 complete.then_some(200),
                 Some(details.elapsed_ms.max(elapsed_ms)),
                 details.reason,
+                Some(classification),
             ))
         }
         Ok(Err(error)) => Err(format!("Не удалось выполнить padded curl-запрос: {error}")),
@@ -979,6 +987,7 @@ async fn probe_padded_head(
             None,
             Some(elapsed_ms),
             "Тайм-аут padded HEAD-проверки".into(),
+            Some("TimeoutBeforeResponse".into()),
         )),
     }
 }
@@ -988,7 +997,7 @@ async fn probe_mode(
     address: Ipv4Addr,
     mode: &TraceProbeMode,
     cancel: &AtomicBool,
-) -> Result<(Option<u16>, Option<u64>, String), String> {
+) -> Result<(Option<u16>, Option<u64>, String, Option<String>), String> {
     match mode {
         TraceProbeMode::PaddedHead => probe_padded_head(host, address, cancel).await,
         TraceProbeMode::Transfer(path) => {
@@ -1030,9 +1039,12 @@ async fn probe_mode(
                 crate::transfer_diagnostic::successful_http_response(&attempts).then_some(200),
                 Some(attempts.iter().map(|attempt| attempt.elapsed_ms).sum()),
                 reason,
+                Some(format!("{:?}", diagnosis.classification)),
             ))
         }
-        TraceProbeMode::Http(proto) => probe(host, address, proto).await,
+        TraceProbeMode::Http(proto) => probe(host, address, proto)
+            .await
+            .map(|(code, elapsed_ms, reason)| (code, elapsed_ms, reason, None)),
     }
 }
 
@@ -1079,6 +1091,7 @@ pub async fn run_with_progress(
         TraceRunContext {
             known_baseline: None,
             progress: Some(progress),
+            candidate_repeats: 1,
         },
     )
     .await
@@ -1105,6 +1118,34 @@ pub async fn run_candidate(
         TraceRunContext {
             known_baseline: Some(baseline_ok),
             progress: None,
+            candidate_repeats: 1,
+        },
+    )
+    .await
+}
+
+/// Reuse the isolated test process and its exact-host firewall rules for the
+/// requested consecutive candidate confirmations. Stops early on failure.
+pub async fn run_candidate_repeated(
+    host: String,
+    proto: &str,
+    args: Vec<String>,
+    binary: String,
+    baseline_ok: bool,
+    repeats: usize,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
+    run_inner(
+        host,
+        TraceProbeMode::Http(proto.into()),
+        None,
+        args,
+        binary,
+        cancel,
+        TraceRunContext {
+            known_baseline: Some(baseline_ok),
+            progress: None,
+            candidate_repeats: repeats.max(1),
         },
     )
     .await
@@ -1151,6 +1192,7 @@ pub async fn run_padded_target_with_baseline(
         TraceRunContext {
             known_baseline: Some(baseline_ok),
             progress: None,
+            candidate_repeats: 1,
         },
     )
     .await
@@ -1199,6 +1241,7 @@ pub async fn run_transfer_target_with_baseline(
         TraceRunContext {
             known_baseline: Some(baseline_ok),
             progress: None,
+            candidate_repeats: 1,
         },
     )
     .await
@@ -1216,6 +1259,7 @@ async fn run_inner(
     let TraceRunContext {
         known_baseline,
         progress,
+        candidate_repeats,
     } = context;
     let mut report = TraceReport {
         host: host.clone(),
@@ -1228,6 +1272,7 @@ async fn run_inner(
         trace_profile: None,
         trace_actions: Vec::new(),
         trace_warnings: Vec::new(),
+        candidate_attempts: Vec::new(),
         summary: String::new(),
     };
     let port = match &mode {
@@ -1304,10 +1349,11 @@ async fn run_inner(
             ok: Some(baseline_ok),
             code: None,
             duration_ms: None,
+            diagnostic_classification: None,
             reason: "Прямой базовый запрос выполнен отдельным этапом подбора".into(),
         };
     } else {
-        let (base_code, base_ms, base_reason) =
+        let (base_code, base_ms, base_reason, base_classification) =
             match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
                 Ok(rules) => {
                     if cancel.load(Ordering::Acquire) {
@@ -1325,11 +1371,12 @@ async fn run_inner(
                     let cleanup = remove_rules(&rules).await;
                     match (result, cleanup) {
                         (Ok(value), Ok(())) => value,
-                        (Err(e), Ok(())) => (None, None, e),
+                        (Err(e), Ok(())) => (None, None, e, None),
                         (_, Err(e)) => (
                             None,
                             None,
                             format!("Не удалось очистить временные правила: {e}"),
+                            None,
                         ),
                     }
                 }
@@ -1343,6 +1390,7 @@ async fn run_inner(
                 }
             };
         report.without_nfqws2 = phase_from_http(base_code, base_ms, base_reason);
+        report.without_nfqws2.diagnostic_classification = base_classification;
     }
     if report
         .without_nfqws2
@@ -1483,24 +1531,42 @@ async fn run_inner(
         Ok(mut child) => {
             tokio::time::sleep(Duration::from_millis(350)).await;
             let started = std::time::Instant::now();
-            let result = match child.try_wait() {
-                Ok(None) => probe_mode(&host, address, &mode, &cancel).await,
-                Ok(Some(status)) => Err(format!(
-                    "Тестовый nfqws2 завершился до запроса (код {})",
-                    status.code().unwrap_or(-1)
-                )),
-                Err(error) => Err(format!(
-                    "Не удалось проверить процесс тестового nfqws2: {error}"
-                )),
-            };
+            let mut result = Err("Проверка не запускалась".to_string());
+            for _ in 0..candidate_repeats.max(1) {
+                if cancel.load(Ordering::Acquire) {
+                    result = Err("Трассировка остановлена пользователем".into());
+                    break;
+                }
+                result = match child.try_wait() {
+                    Ok(None) => probe_mode(&host, address, &mode, &cancel).await,
+                    Ok(Some(status)) => Err(format!(
+                        "Тестовый nfqws2 завершился до запроса (код {})",
+                        status.code().unwrap_or(-1)
+                    )),
+                    Err(error) => Err(format!(
+                        "Не удалось проверить процесс тестового nfqws2: {error}"
+                    )),
+                };
+                let phase = result
+                    .as_ref()
+                    .map(|(code, ms, reason, _)| phase_from_http(*code, *ms, reason.clone()))
+                    .unwrap_or_else(|reason| TracePhase::unavailable(reason.clone()));
+                let ok = phase.ok == Some(true);
+                report.candidate_attempts.push(phase);
+                if !ok {
+                    break;
+                }
+            }
             stop_child(&mut child).await;
             report.with_nfqws2 = result
-                .map(|(code, ms, reason)| {
-                    phase_from_http(
+                .map(|(code, ms, reason, classification)| {
+                    let mut phase = phase_from_http(
                         code,
                         ms.or(Some(started.elapsed().as_millis() as u64)),
                         reason,
-                    )
+                    );
+                    phase.diagnostic_classification = classification;
+                    phase
                 })
                 .unwrap_or_else(TracePhase::unavailable);
         }
@@ -1583,6 +1649,7 @@ pub fn phase_from_http(
             ok: Some(true),
             code: Some(code),
             duration_ms,
+            diagnostic_classification: None,
             reason: reason.into(),
         },
         None => TracePhase {
@@ -1590,6 +1657,7 @@ pub fn phase_from_http(
             ok: Some(false),
             code: None,
             duration_ms,
+            diagnostic_classification: None,
             reason: reason.into(),
         },
     }

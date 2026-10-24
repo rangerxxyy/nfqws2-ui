@@ -514,9 +514,9 @@ textarea { line-height: 1.7; tab-size: 4; }
 #tabContent-diagnostic16k .freeze-result-row {
   border-inline-start: 3px solid transparent;
 }
-#tabContent-diagnostic16k .freeze-result-error { border-inline-start-color: #fb7185; background: rgb(127 29 29 / 10%); }
-#tabContent-diagnostic16k .freeze-result-success { border-inline-start-color: #34d399; background: rgb(6 78 59 / 9%); }
-#tabContent-diagnostic16k .freeze-result-warning { border-inline-start-color: #fbbf24; background: rgb(120 53 15 / 10%); }
+#tabContent-diagnostic16k .freeze-result-error { border-inline-start-color: #fb7185; background: rgb(127 29 29 / 16%); }
+#tabContent-diagnostic16k .freeze-result-success { border-inline-start-color: #34d399; background: rgb(6 78 59 / 14%); }
+#tabContent-diagnostic16k .freeze-result-warning { border-inline-start-color: #fbbf24; background: rgb(120 53 15 / 14%); }
 #tabContent-diagnostic16k .freeze-result-neutral { border-inline-start-color: #64748b; }
 #tabContent-diagnostic16k .freeze-result-error td:first-child { border-inline-start: 3px solid #fb7185; }
 #tabContent-diagnostic16k .freeze-result-success td:first-child { border-inline-start: 3px solid #34d399; }
@@ -526,10 +526,23 @@ textarea { line-height: 1.7; tab-size: 4; }
 #tabContent-diagnostic16k .freeze-result-success .freeze-result-summary { color: #6ee7b7; }
 #tabContent-diagnostic16k .freeze-result-warning .freeze-result-summary { color: #fde68a; }
 #tabContent-diagnostic16k .freeze-result-neutral .freeze-result-summary { color: #cbd5e1; }
+#tabContent-diagnostic16k .freeze-result-error .freeze-result-badge { border-color: rgb(251 113 133 / 40%); background: rgb(127 29 29 / 45%); color: #fecdd3; }
+#tabContent-diagnostic16k .freeze-result-success .freeze-result-badge { border-color: rgb(52 211 153 / 40%); background: rgb(6 78 59 / 42%); color: #a7f3d0; }
+#tabContent-diagnostic16k .freeze-result-warning .freeze-result-badge { border-color: rgb(251 191 36 / 42%); background: rgb(120 53 15 / 44%); color: #fde68a; }
+#tabContent-diagnostic16k .freeze-result-neutral .freeze-result-badge { border-color: rgb(148 163 184 / 30%); background: rgb(51 65 85 / 45%); color: #e2e8f0; }
 #tabContent-diagnostic16k .freeze-scan-table td {
   color: #f1f5f9;
   font-weight: 600;
 }
+#tabContent-diagnostic16k .freeze-result-details summary {
+  width: fit-content;
+  color: #a8c5f5;
+  cursor: pointer;
+  font-weight: 650;
+}
+#tabContent-diagnostic16k .freeze-result-details[open] { color: #cbd5e1; }
+#tabContent-diagnostic16k .freeze-scan-table td:nth-child(3),
+#tabContent-diagnostic16k .freeze-scan-table td:nth-child(4) { max-width: 15rem; }
 #tabContent-diagnostic16k .freeze-scan-table td:first-child,
 #tabContent-diagnostic16k .freeze-scan-table td:nth-child(2) {
   font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;

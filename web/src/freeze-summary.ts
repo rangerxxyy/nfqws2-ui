@@ -23,7 +23,7 @@ export function summarizeFreezeScan(operation: FreezeScanSummaryInput): FreezeSc
   if (operation.state === 'partial') {
     return {
       tone: 'neutral',
-      text: `Проверка частичная: возможный обрыв в ${affected} из ${scanned} проверенных сетей. ${operation.message}`,
+      text: `Частичная проверка · возможный обрыв в ${affected} из ${scanned} сетей · ${operation.message}`,
     };
   }
   if (affected === 0) {
