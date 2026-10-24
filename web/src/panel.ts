@@ -1110,9 +1110,9 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     return;
   }
   const confirmed = operation.results.filter((result) => result.confirmed);
-  const resultSummary = document.createElement(''p'');
-  resultSummary.className = ''rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-sm text-slate-200'';
-  if (operation.state === ''running'') {
+  const resultSummary = document.createElement('p');
+  resultSummary.className = 'rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-sm text-slate-200';
+  if (operation.state === 'running') {
     resultSummary.textContent = `Проверено ${operation.results.length} из ${operation.total} стратегий · подтверждено ${confirmed.length}`;
   } else if (confirmed.length) {
     const fastest = [...confirmed].sort((a, b) => a.elapsedMs - b.elapsedMs)[0];
