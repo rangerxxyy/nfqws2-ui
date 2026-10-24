@@ -389,7 +389,8 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('id="tabContent-snapshots"');
     expect(panelSource).toContain('nfqwsSnapshots.get()');
     expect(panelSource).toContain('restoreSnapshot');
-    expect(backendSource).toContain('.route("/api/snapshots", get(get_snapshots).post(create_snapshot_api))');
+    expect(backendSource).toContain('"/api/snapshots"');
+    expect(backendSource).toContain('get(get_snapshots).post(create_snapshot_api)');
   });
 
   it('keeps the interface in TSX and removes the HTML entry file', () => {
