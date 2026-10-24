@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines } from './list-editor';
 
 describe('list editor helpers', () => {
   it('resolves each list tab from its element id so availability checks match backend ids', () => {
@@ -8,7 +8,19 @@ describe('list editor helpers', () => {
     expect(listIdFromTabElementId('listTab-exclude.list')).toBe('exclude.list');
     expect(listIdFromTabElementId('listTab-ipset.list')).toBe('ipset.list');
     expect(listIdFromTabElementId('listTab-ipset_exclude.list')).toBe('ipset_exclude.list');
+    expect(listIdFromTabElementId('listTab-google.list')).toBe('google.list');
     expect(listIdFromTabElementId('listTab-../../nfqws2.conf')).toBeNull();
+  });
+
+  it('keeps safe custom list IDs from the backend inventory and filters invalid or duplicate IDs', () => {
+    expect(listTabIdsFromInventory([
+      { id: 'user.list' },
+      { id: 'google.list' },
+      { id: '../outside.list' },
+      { id: 'google.list' },
+      { id: 'nested/other.list' },
+      { id: 'not-a-list.txt' },
+    ])).toEqual(['user.list', 'google.list']);
   });
 
   it('selects the active list tab by its DOM id', () => {

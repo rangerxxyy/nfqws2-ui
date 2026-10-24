@@ -5,18 +5,21 @@ import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentati
 import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
-import { configAssignmentValue, configEditorLayout, configOutlineEntries } from './config-values';
+import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries } from './config-values';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, removeListLines } from './list-editor';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
+import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
+import { installStyledSelects } from './styled-select';
+import { installActionTooltips } from './action-tooltips';
+import { appendMonitoringResult, checkMonitoringHostsSequentially, loadMonitoringState, normalizeMonitoringHost, saveMonitoringState, type MonitoringState } from './monitoring';
 import type { UiUpdateStatus } from './api';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community';
-export const UNAVAILABLE_PANEL_ROUTES = ['monitor', 'community'] as const;
+export const UNAVAILABLE_PANEL_ROUTES = ['community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
@@ -27,6 +30,8 @@ let activeListId: NfqwsListId = 'user.list';
 let busy = false;
 let statusPolling = false;
 let diagnosisRunning = false;
+let monitoringRunning = false;
+let monitoringState: MonitoringState | null = null;
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -46,14 +51,14 @@ let uiUpdateStatusPolling = false;
 let uiUpdateNoticeOpenedTag: string | null = null;
 const UPDATE_NOTICE_KEY = 'nfqws2-ui-update-notice';
 const UI_UPDATE_DISMISSED_TAG_KEY = 'nfqws2-ui-update-dismissed-tag';
-const LIST_DISPLAY_NAMES: Record<NfqwsListId, string> = {
+const LIST_DISPLAY_NAMES: Partial<Record<NfqwsListId, string>> = {
   'user.list': 'Пользовательские домены',
   'auto.list': 'Домены для автообучения',
   'exclude.list': 'Исключённые домены',
   'ipset.list': 'IP-адреса',
   'ipset_exclude.list': 'Исключённые IP-адреса',
 };
-export const listDisplayName = (id: NfqwsListId) => LIST_DISPLAY_NAMES[id];
+export const listDisplayName = (id: NfqwsListId) => LIST_DISPLAY_NAMES[id] ?? id;
 const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
 const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
@@ -207,6 +212,67 @@ function showRoute(route: Route) {
     button.classList.toggle('text-slate-400', !active);
   });
   if (route === 'lists') void loadList(activeListId);
+}
+function renderMonitoringSites() {
+  const host = $('#monitorSites'); if (!host || !monitoringState) return;
+  host.replaceChildren();
+  if (!monitoringState.sites.length) {
+    const empty = document.createElement('p'); empty.className = 'rounded-xl border border-slate-800 bg-[#060a12] p-4 text-sm text-slate-400'; empty.textContent = 'Добавьте домены, которые хотите проверять вручную.'; host.append(empty); return;
+  }
+  for (const site of monitoringState.sites) {
+    const card = document.createElement('article'); card.className = 'monitor-site-card';
+    const heading = document.createElement('div'); heading.className = 'monitor-site-heading';
+    const name = document.createElement('strong'); name.className = 'font-mono text-sm text-white'; name.textContent = site.host;
+    const latest = site.results[0];
+    const summary = document.createElement('span'); summary.className = `monitor-site-status monitor-status-${latest?.status ?? 'unavailable'}`;
+    summary.textContent = latest ? `${latest.status === 'ok' ? 'Доступен' : latest.status === 'error' ? 'Ошибка' : latest.status === 'warning' ? 'Есть предупреждение' : 'Нет результата'}${latest.latencyMs === null ? '' : ` · ${latest.latencyMs} мс`}` : 'Ещё не проверялся';
+    heading.append(name, summary);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'monitor-remove'; remove.dataset.actionClick = 'removeMonitoringSite'; remove.dataset.args = JSON.stringify([site.host]); remove.textContent = 'Убрать'; remove.title = `Убрать ${site.host} из мониторинга`;
+    heading.append(remove); card.append(heading);
+    if (latest) { const detail = document.createElement('p'); detail.className = 'mt-2 text-xs text-slate-400'; detail.textContent = `${new Date(latest.checkedAt).toLocaleString()} · ${latest.summary}`; card.append(detail); }
+    if (site.results.length > 1) { const history = document.createElement('p'); history.className = 'mt-1 text-[11px] text-slate-500'; history.textContent = `Последние проверки: ${site.results.slice(0, 10).map((result) => `${new Date(result.checkedAt).toLocaleTimeString()} ${result.latencyMs === null ? '—' : `${result.latencyMs} мс`}`).join(' · ')}`; card.append(history); }
+    host.append(card);
+  }
+}
+function getMonitoringStorage(): Storage | null { try { return window.localStorage; } catch { return null; } }
+function persistMonitoring() { if (!monitoringState) return; saveMonitoringState(getMonitoringStorage(), monitoringState); renderMonitoringSites(); }
+async function runMonitoring(host?: string) {
+  if (monitoringRunning || !monitoringState) return;
+  const hosts = host ? monitoringState.sites.filter((site) => site.host === host).map((site) => site.host) : monitoringState.sites.map((site) => site.host);
+  if (!hosts.length) return toast('Сначала добавьте домен для проверки.', 'error');
+  monitoringRunning = true;
+  const button = $('[data-action-click="runMonitoring"]'); if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Проверяем…'; }
+  const statusNode = $('#monitoringStatus'); if (statusNode) { statusNode.textContent = `Проверка 0 из ${hosts.length}`; statusNode.setAttribute('aria-busy', 'true'); }
+  try {
+    let completed = 0;
+    await checkMonitoringHostsSequentially(hosts, async (current) => {
+      if (statusNode) statusNode.textContent = `Проверка ${completed + 1} из ${hosts.length}: ${current}`;
+      return nfqwsDiagnostics.site(current);
+    }, (current, report) => {
+      completed++;
+      if (monitoringState) monitoringState = appendMonitoringResult(monitoringState, current, report, Date.now());
+      persistMonitoring();
+    }, (current, error) => {
+      completed++;
+      if (monitoringState) monitoringState = appendMonitoringResult(monitoringState, current, null, Date.now(), error instanceof Error ? error.message : 'Не удалось выполнить запрос');
+      persistMonitoring();
+    });
+    toast(`Мониторинг завершён: ${hosts.length} сайтов проверено.`);
+  } finally {
+    monitoringRunning = false;
+    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Проверить сайты'; }
+    if (statusNode) { statusNode.textContent = 'Проверка завершена'; statusNode.removeAttribute('aria-busy'); }
+  }
+}
+function addMonitoringSite() {
+  const input = $('#monitorHostInput');
+  if (!(input instanceof HTMLInputElement) || !monitoringState) return;
+  const host = normalizeMonitoringHost(input.value);
+  if (!host) return toast('Введите доменное имя без https://, пути или IP-адреса.', 'error');
+  if (monitoringState.sites.some((site) => site.host === host)) return toast('Этот домен уже добавлен.', 'error');
+  if (monitoringState.sites.length >= 20) return toast('Можно добавить не более 20 доменов.', 'error');
+  monitoringState = { ...monitoringState, sites: [{ host, results: [] }, ...monitoringState.sites] };
+  input.value = ''; persistMonitoring();
 }
 async function fetchStatus() {
   if (statusPolling) return;
@@ -407,19 +473,22 @@ function renderNfqwsArgumentEditors(content: string) {
     field.rows = minimumRows;
     field.spellcheck = false;
     field.dataset.configArgument = 'true';
-    field.className = 'min-w-0 flex-1 resize-y border-0 bg-transparent px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none focus:ring-0 disabled:opacity-60';
+    field.className = 'min-h-0 min-w-0 flex-1 resize-y border-0 bg-transparent px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none focus:ring-0 disabled:opacity-60';
     field.value = configAssignmentValue(content, key);
     field.placeholder = key === 'NFQWS_ARGS_CUSTOM' ? '--new --filter-tcp=443 --hostlist-domains=example.com …' : 'Введите аргументы для этой группы';
     field.title = 'Изменение обновит черновик; сохранить его можно кнопкой «Применить конфигурацию».';
     const editor = document.createElement('div');
     editor.className = 'config-argument-editor flex min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20';
     const gutter = document.createElement('div');
-    gutter.className = 'config-argument-line-numbers line-numbers-col shrink-0 overflow-hidden border-r border-slate-800 bg-[#05080f] px-2.5 py-2 font-mono text-xs leading-5 text-slate-500';
+    gutter.className = 'config-argument-line-numbers line-numbers-col min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[#05080f] px-2.5 py-2 font-mono text-xs leading-5 text-slate-500';
     gutter.setAttribute('aria-hidden', 'true');
     editor.append(gutter, field);
     const syncEditor = () => {
       const layout = configEditorLayout(field.value, minimumRows);
+      const viewportHeight = configEditorViewportHeight(layout.visibleRows);
       field.rows = layout.visibleRows;
+      field.style.maxHeight = viewportHeight;
+      gutter.style.maxHeight = viewportHeight;
       gutter.textContent = layout.lineNumbers;
       gutter.scrollTop = field.scrollTop;
     };
@@ -602,6 +671,7 @@ async function loadList(id: NfqwsListId) {
 
   try {
     const index = await nfqwsLists.index();
+    renderCustomListTabs(index.files);
     const summary = index.files.find((file) => file.id === id);
     const availableListIds = new Set(index.files.map((file) => file.id));
     for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
@@ -646,6 +716,29 @@ async function loadList(id: NfqwsListId) {
     if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !summary.writable || busy;
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось прочитать список', 'error');
+  }
+}
+function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
+  const host = $('#listFileTabs');
+  if (!host) return;
+  all<HTMLButtonElement>('[data-custom-list-tab="true"]').forEach((tab) => tab.remove());
+  const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
+  const fileById = new Map(files.map((file) => [file.id, file]));
+  for (const id of listTabIdsFromInventory(files).filter((candidate) => !standardIds.has(candidate))) {
+    const summary = fileById.get(id);
+    if (!summary) continue;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = `listTab-${id}`;
+    button.dataset.actionClick = 'selectListFile';
+    button.dataset.args = JSON.stringify([id]);
+    button.dataset.customListTab = 'true';
+    button.className = 'list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap';
+    button.title = `${listDisplayName(id)} — ${summary.path}`;
+    const label = document.createElement('span');
+    label.textContent = id;
+    button.append(label);
+    host.append(button);
   }
 }
 async function saveActiveList() {
@@ -1515,6 +1608,13 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
+    addMonitoringSite: () => addMonitoringSite(),
+    runMonitoring: () => runMonitoring(),
+    removeMonitoringSite: (host: string) => {
+      if (!monitoringState || monitoringRunning) return;
+      monitoringState = { ...monitoringState, sites: monitoringState.sites.filter((site) => site.host !== host) };
+      persistMonitoring();
+    },
     switchConfigSection: (section: 'editor' | 'settings' | 'scripts') => switchConfigSection(section),
     refreshLuaScripts: () => void loadLuaScripts(),
     runSiteDiagnosis: () => void runSiteDiagnosis(),
@@ -1610,6 +1710,10 @@ function bindPrototypeActions() {
 }
 
 function boot() {
+  installStyledSelects(document);
+  installActionTooltips(document);
+  monitoringState = loadMonitoringState(getMonitoringStorage());
+  renderMonitoringSites();
   bindPrototypeActions();
   document.documentElement.classList.add('dark');
   const initialStrategyMode = ($('#strategyModeSelect') as HTMLSelectElement | null)?.value ?? 'quick';
