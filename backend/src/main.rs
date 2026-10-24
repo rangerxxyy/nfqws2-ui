@@ -6849,12 +6849,11 @@ async fn put_ui_appearance(
         return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
     }
     let path = state.data_dir.join("appearance.json");
-    if path.is_file() {
-        if let Err(message) =
+    if path.is_file()
+        && let Err(message) =
             create_ui_change_snapshot(&state, "перед изменением оформления UI", true).await
-        {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
-        }
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
     }
     let temp = path.with_extension("json.tmp");
     let bytes = match serde_json::to_vec(&settings) {
@@ -7227,10 +7226,9 @@ async fn push_remote_snapshots_inner(data_dir: &Path) -> Result<usize, String> {
         let file = snapshots::snapshot_dir(data_dir).join(format!("{id}.tar.gz"));
         if let Err(error) =
             remote_call(data_dir, "put", &format!("{id}.tar.gz"), Some(&file), None).await
+            && !error.contains("уже существует")
         {
-            if !error.contains("уже существует") {
-                return Err(error);
-            }
+            return Err(error);
         }
         if let Some(item) = store.items.iter_mut().find(|item| item.id == id) {
             item.remote = true;

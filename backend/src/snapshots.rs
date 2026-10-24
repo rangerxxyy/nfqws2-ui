@@ -243,10 +243,7 @@ fn safe_archive_name(path: &str) -> bool {
             "opt/etc/nfqws2/blobs/",
         ]
         .iter()
-        .any(|prefix| {
-            path.strip_prefix(prefix)
-                .is_some_and(|name| safe_archive_leaf(name))
-        })
+        .any(|prefix| path.strip_prefix(prefix).is_some_and(safe_archive_leaf))
 }
 
 fn safe_archive_leaf(name: &str) -> bool {
@@ -381,12 +378,11 @@ pub fn create_snapshot(
         hashes.insert(name.clone(), hex::encode(Sha256::digest(content)));
     }
     let mut store = load_store(data_dir);
-    if reason == "перед изменением" {
-        if let Some(previous) = store.items.iter().rev().find(|item| item.reason == reason) {
-            if now_seconds().saturating_sub(previous.ts) < 900 {
-                return Ok(previous.clone());
-            }
-        }
+    if reason == "перед изменением"
+        && let Some(previous) = store.items.iter().rev().find(|item| item.reason == reason)
+        && now_seconds().saturating_sub(previous.ts) < 900
+    {
+        return Ok(previous.clone());
     }
     if !force && store.items.last().is_some_and(|last| last.files == hashes) {
         return Ok(store.items.last().unwrap().clone());
