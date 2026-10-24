@@ -19,8 +19,18 @@ describe('custom strategy input', () => {
       .toEqual([['--lua-desync=fake:blob=tls_clienthello'], ['--lua-desync=multisplit:pos=1']]);
   });
 
+  it('ignores full-line comments from pasted profiles', () => {
+    expect(parseCustomStrategies('# --lua-desync=multisplit:pos=0\n--lua-desync=fakedsplit:pos=1'))
+      .toEqual([['--lua-desync=fakedsplit:pos=1']]);
+  });
+
+  it('accepts a bare Lua desync function copied from strategy notes', () => {
+    expect(parseCustomStrategies('multisplit:pos=1,midsld'))
+      .toEqual([['--lua-desync=multisplit:pos=1,midsld']]);
+  });
+
   it('keeps multiple steps on one line together and supports explicit continuations', () => {
-    expect(parseCustomStrategies('--lua-desync=fake:blob=tls_clienthello --lua-desync=multisplit:pos=1\n--lua-desync=fakedsplit:pos=2 \\\n+--lua-desync=hostfakesplit:host=example.com'))
+    expect(parseCustomStrategies('--lua-desync=fake:blob=tls_clienthello --lua-desync=multisplit:pos=1\n--lua-desync=fakedsplit:pos=2 \\\n--lua-desync=hostfakesplit:host=example.com'))
       .toEqual([
         ['--lua-desync=fake:blob=tls_clienthello', '--lua-desync=multisplit:pos=1'],
         ['--lua-desync=fakedsplit:pos=2', '--lua-desync=hostfakesplit:host=example.com'],
