@@ -5,7 +5,7 @@ export type MonitoringSite = { host: string; results: MonitoringResult[] };
 export type MonitoringState = { version: 1; sites: MonitoringSite[] };
 export const MONITORING_STORAGE_KEY = 'nfqws2-ui:monitoring:v1';
 export const MAX_MONITORING_SITES = 20;
-export const MAX_MONITORING_RESULTS = 10;
+export const MAX_MONITORING_RESULTS = 96;
 
 export function normalizeMonitoringHost(input: string): string | null {
   const host = input.trim().toLowerCase().replace(/\.$/, '');
@@ -61,3 +61,4 @@ export function appendMonitoringResult(state: MonitoringState, host: string, rep
   sites.unshift({ host: normalized, results: [result, ...previous.results].slice(0, MAX_MONITORING_RESULTS) });
   return { version: 1, sites: sites.slice(0, MAX_MONITORING_SITES) };
 }
+

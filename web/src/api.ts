@@ -26,6 +26,8 @@ export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolea
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
 export type MonitoringProbeStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type MonitoringProbeReport = { host: string; summary: string; current: { status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null }; steps: MonitoringProbeStep[] };
+export type MonitoringSettings = { enabled: boolean; intervalMinutes: number; lastAutoCheck: number | null; sites: Array<{ host: string; results: Array<{ checkedAt: number; status: 'ok' | 'warning' | 'error' | 'unavailable'; summary: string; latencyMs: number | null; steps: MonitoringProbeStep[] }> }> };
+export type TelegramSettings = { tokenSet: boolean; chatId: string; sendVia: 'direct' | 'interface' | 'proxy'; interface: string; proxy: string };
 export type InstallationPath = {
   path: string;
   exists: boolean;
@@ -153,6 +155,16 @@ export const nfqwsDiagnostics = {
   applyStrategy: (source: 'strategyPick' | 'freezeScan', operationId: string, candidateIndex: number, expectedRevision: string) => api<{ config: ConfigResponse; message: string }>('/api/nfqws2/strategies/apply', { method: 'POST', body: JSON.stringify({ source, operationId, candidateIndex, expectedRevision }) }),
 };
 
+export const nfqwsMonitoring = {
+  get: () => api<MonitoringSettings>('/api/nfqws2/monitoring'),
+  save: (settings: Pick<MonitoringSettings, 'enabled' | 'intervalMinutes' | 'sites'>) => api<{ saved: boolean }>('/api/nfqws2/monitoring', { method: 'PUT', body: JSON.stringify(settings) }),
+  run: () => api<MonitoringProbeReport[]>('/api/nfqws2/monitoring/run', { method: 'POST' }),
+  telegram: () => api<TelegramSettings>('/api/nfqws2/telegram'),
+  saveTelegram: (settings: { token?: string; chatId: string; sendVia: string; interface: string; proxy: string }) => api<{ saved: boolean; tokenSet: boolean }>('/api/nfqws2/telegram', { method: 'PUT', body: JSON.stringify(settings) }),
+  testTelegram: () => api<{ sent: boolean }>('/api/nfqws2/telegram/test', { method: 'POST' }),
+  findTelegramChats: () => api<{ chats: Array<{ id: string; title: string }> }>('/api/nfqws2/telegram/find-chats', { method: 'POST' }),
+};
+
 export const nfqwsUpdates = {
   uiStatus: () => api<UiUpdateStatus>('/api/updates/status'),
   releases: () => api<{ releases: PanelRelease[]; updateStatus: UiUpdateStatus }>('/api/updates/releases'),
@@ -165,3 +177,4 @@ export const nfqwsUpdates = {
     method: 'POST', body: JSON.stringify({ tag }),
   }),
 };
+

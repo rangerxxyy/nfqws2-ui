@@ -10,7 +10,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
+import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -33,6 +33,7 @@ let statusPolling = false;
 let diagnosisRunning = false;
 let monitoringRunning = false;
 let monitoringState: MonitoringState | null = null;
+let monitoringIntervalMinutes = 30;
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -223,9 +224,13 @@ function renderMonitoringSites() {
     const summary = document.createElement('span'); summary.className = `monitor-site-status monitor-status-${latest?.status ?? 'unavailable'}`;
     summary.textContent = latest ? `${latest.status === 'ok' ? 'Доступен' : latest.status === 'error' ? 'Ошибка' : latest.status === 'warning' ? 'Есть предупреждение' : 'Нет результата'}${latest.latencyMs === null ? '' : ` · ${latest.latencyMs} мс`}` : 'Ещё не проверялся';
     heading.append(name, summary);
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'monitor-remove'; remove.dataset.actionClick = 'removeMonitoringSite'; remove.dataset.args = JSON.stringify([site.host]); remove.textContent = 'Убрать'; remove.title = `Убрать ${site.host} из мониторинга`;
-    heading.append(remove); card.append(heading);
+    const check = document.createElement('button'); check.type = 'button'; check.className = 'monitor-row-action'; check.dataset.actionClick = 'checkMonitoringSite'; check.dataset.args = JSON.stringify([site.host]); check.textContent = '⟳ Проверить'; check.title = `Проверить ${site.host}`;
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'monitor-remove'; remove.dataset.actionClick = 'removeMonitoringSite'; remove.dataset.args = JSON.stringify([site.host]); remove.textContent = '×'; remove.title = `Убрать ${site.host} из мониторинга`;
+    heading.append(check, remove); card.append(heading);
     if (latest) {
+      const bars = document.createElement('div'); bars.className = 'monitor-history-bars'; bars.setAttribute('aria-label', `История ${site.results.length} проверок`);
+      for (const result of [...site.results].slice(0, 30).reverse()) { const bar = document.createElement('span'); bar.dataset.status = result.status; bar.title = `${new Date(result.checkedAt).toLocaleString()}: ${result.summary}`; bars.append(bar); }
+      card.append(bars);
       const detail = document.createElement('p'); detail.className = 'mt-2 text-xs text-slate-400'; detail.textContent = `${new Date(latest.checkedAt).toLocaleString()} · ${latest.summary}`; card.append(detail);
       if (latest.steps.length) {
         const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: 'Передача' };
@@ -242,12 +247,73 @@ function renderMonitoringSites() {
         stageDetails.append(stageSummary, stageList); card.append(stageDetails);
       }
     }
-    if (site.results.length > 1) { const history = document.createElement('p'); history.className = 'mt-1 text-[11px] text-slate-500'; history.textContent = `Последние проверки: ${site.results.slice(0, 10).map((result) => `${new Date(result.checkedAt).toLocaleTimeString()} ${result.latencyMs === null ? '—' : `${result.latencyMs} мс`}`).join(' · ')}`; card.append(history); }
+    if (site.results.length > 1) { const history = document.createElement('p'); history.className = 'mt-1 text-[11px] text-slate-500'; history.textContent = `Доступность: ${Math.round(site.results.filter((r) => r.status === 'ok').length * 100 / site.results.length)}% за ${site.results.length} проверок`; card.append(history); }
     host.append(card);
   }
 }
 function getMonitoringStorage(): Storage | null { try { return window.localStorage; } catch { return null; } }
-function persistMonitoring() { if (!monitoringState) return; saveMonitoringState(getMonitoringStorage(), monitoringState); renderMonitoringSites(); }
+function currentMonitoringInterval() {
+  const choice = ($('#monitoringInterval') as HTMLSelectElement | null)?.value ?? String(monitoringIntervalMinutes);
+  if (choice !== 'custom') return Number(choice) || 30;
+  const hours = Number(($('#monitoringHours') as HTMLInputElement | null)?.value ?? 0);
+  const minutes = Number(($('#monitoringMinutes') as HTMLInputElement | null)?.value ?? 30);
+  return Math.max(1, Math.min(1440, hours * 60 + minutes));
+}
+function persistMonitoring() {
+  if (!monitoringState) return;
+  saveMonitoringState(getMonitoringStorage(), monitoringState); renderMonitoringSites();
+  const enabled = ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? true;
+  void nfqwsMonitoring.save({ enabled, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) }).catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить мониторинг на роутере.', 'error'));
+}
+async function loadBackendMonitoring() {
+  const saved = await nfqwsMonitoring.get();
+  monitoringIntervalMinutes = saved.intervalMinutes;
+  const select = $('#monitoringInterval') as HTMLSelectElement | null; const custom = $('#monitoringCustom');
+  const quick = [30, 60, 120].includes(saved.intervalMinutes);
+  if (select) select.value = quick ? String(saved.intervalMinutes) : 'custom';
+  if (custom) custom.classList.toggle('hidden', quick);
+  if (!quick) { const hours = $('#monitoringHours') as HTMLInputElement | null; const minutes = $('#monitoringMinutes') as HTMLInputElement | null; if (hours) hours.value = String(Math.floor(saved.intervalMinutes / 60)); if (minutes) minutes.value = String(saved.intervalMinutes % 60); }
+  const enabled = $('#monitoringEnabled') as HTMLInputElement | null; if (enabled) enabled.checked = saved.enabled;
+  const legacy = monitoringState?.sites ?? [];
+  monitoringState = { version: 1, sites: (saved.sites.length ? saved.sites : legacy).map((site) => ({ host: site.host, results: site.results.slice(0, 96) })) };
+  if (!saved.sites.length && legacy.length) await nfqwsMonitoring.save({ enabled: saved.enabled, intervalMinutes: saved.intervalMinutes, sites: monitoringState.sites });
+  renderMonitoringSites();
+  const last = saved.lastAutoCheck ? new Date(saved.lastAutoCheck * 1000).toLocaleString() : 'ещё не запускалась';
+  setText('#monitoringStatus', `Последняя автоматическая проверка: ${last}. Интервал: ${saved.intervalMinutes} мин.`);
+}
+function showMonitorSection(section: 'sites' | 'telegram') {
+  $('#monitorSection-sites')?.classList.toggle('hidden', section !== 'sites');
+  $('#monitorSection-telegram')?.classList.toggle('hidden', section !== 'telegram');
+  all<HTMLButtonElement>('.monitor-subtab').forEach((button) => button.classList.toggle('active', button.textContent?.includes(section === 'sites' ? 'Мониторинг' : 'Telegram') ?? false));
+}
+async function saveMonitoringSettings() {
+  if (!monitoringState) return;
+  monitoringIntervalMinutes = currentMonitoringInterval();
+  await nfqwsMonitoring.save({ enabled: ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? false, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) });
+  toast('Настройки мониторинга сохранены на роутере.');
+}
+async function loadTelegramSettings() {
+  const cfg = await nfqwsMonitoring.telegram();
+  const via = $('#telegramVia') as HTMLSelectElement | null; if (via) via.value = cfg.sendVia;
+  const iface = $('#telegramInterface') as HTMLInputElement | null; if (iface) iface.value = cfg.interface;
+  const proxy = $('#telegramProxy') as HTMLInputElement | null; if (proxy) proxy.value = cfg.proxy;
+  const chat = $('#telegramChatId') as HTMLInputElement | null; if (chat) chat.value = cfg.chatId;
+  setText('#telegramStatus', cfg.tokenSet ? 'Токен бота сохранён на роутере.' : 'Токен ещё не задан.');
+}
+async function saveTelegramSettings() {
+  const token = ($('#telegramToken') as HTMLInputElement | null)?.value ?? '';
+  const result = await nfqwsMonitoring.saveTelegram({ ...(token ? { token } : {}), chatId: ($('#telegramChatId') as HTMLInputElement | null)?.value ?? '', sendVia: ($('#telegramVia') as HTMLSelectElement | null)?.value ?? 'direct', interface: ($('#telegramInterface') as HTMLInputElement | null)?.value ?? '', proxy: ($('#telegramProxy') as HTMLInputElement | null)?.value ?? '' });
+  const field = $('#telegramToken') as HTMLInputElement | null; if (field) field.value = '';
+  setText('#telegramStatus', result.tokenSet ? 'Настройки и токен сохранены на роутере.' : 'Настройки сохранены. Укажите токен бота.'); toast('Настройки Telegram сохранены.');
+}
+async function findTelegramChatId() {
+  await saveTelegramSettings();
+  const result = await nfqwsMonitoring.findTelegramChats();
+  if (!result.chats.length) return toast('Чаты не найдены. Напишите боту любое сообщение и нажмите «Найти» ещё раз.', 'error');
+  const chat = result.chats[0]; const field = $('#telegramChatId') as HTMLInputElement | null; if (field) field.value = chat.id;
+  setText('#telegramStatus', `Найден чат: ${chat.title} (${chat.id}). Сохраните настройки.`);
+}
+async function sendTestTelegram() { await saveTelegramSettings(); await nfqwsMonitoring.testTelegram(); toast('Проверочное сообщение отправлено в Telegram.'); }
 async function runMonitoring(host?: string) {
   if (monitoringRunning || !monitoringState) return;
   const hosts = host ? monitoringState.sites.filter((site) => site.host === host).map((site) => site.host) : monitoringState.sites.map((site) => site.host);
@@ -257,7 +323,7 @@ async function runMonitoring(host?: string) {
   const statusNode = $('#monitoringStatus'); if (statusNode) { statusNode.textContent = `Проверка 0 из ${hosts.length}`; statusNode.setAttribute('aria-busy', 'true'); }
   try {
     if (statusNode) statusNode.textContent = `Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ`;
-    const reports = await nfqwsDiagnostics.monitor(hosts);
+    const reports = host ? await nfqwsDiagnostics.monitor(hosts) : await nfqwsMonitoring.run();
     const reportByHost = new Map(reports.map((report) => [report.host, report]));
     for (const current of hosts) {
       const report = reportByHost.get(current);
@@ -1498,7 +1564,7 @@ async function cancelFreezeScan() {
   finally { if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.textContent = 'Остановить'; } }
 }
 
-export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','sendTestTelegram','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain','findTelegramChatId'] as const;
+export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain'] as const;
 
 function renderReleaseNotes(target: HTMLElement, notes: string) {
   const lines = notes.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 8);
@@ -1652,6 +1718,13 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
+    showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
+    checkMonitoringSite: (host: string) => void runMonitoring(host),
+    saveMonitoringSettings: () => void saveMonitoringSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить расписание.', 'error')),
+    toggleMonitoringCustom: (select: HTMLSelectElement) => { $('#monitoringCustom')?.classList.toggle('hidden', select.value !== 'custom'); $('#monitoringCustom')?.classList.toggle('inline-flex', select.value === 'custom'); },
+    saveTelegramSettings: () => void saveTelegramSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить Telegram.', 'error')),
+    sendTestTelegram: () => void sendTestTelegram().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось отправить сообщение Telegram.', 'error')),
+    findTelegramChatId: () => void findTelegramChatId().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось найти чаты Telegram.', 'error')),
     addMonitoringSite: () => addMonitoringSite(),
     runMonitoring: () => runMonitoring(),
     removeMonitoringSite: (host: string) => {
@@ -1760,6 +1833,8 @@ function boot() {
   installActionTooltips(document);
   monitoringState = loadMonitoringState(getMonitoringStorage());
   renderMonitoringSites();
+  void loadBackendMonitoring().catch(() => setText('#monitoringStatus', 'Не удалось загрузить настройки мониторинга с роутера.'));
+  void loadTelegramSettings().catch(() => setText('#telegramStatus', 'Не удалось загрузить настройки Telegram с роутера.'));
   bindPrototypeActions();
   document.documentElement.classList.add('dark');
   const initialStrategyMode = ($('#strategyModeSelect') as HTMLSelectElement | null)?.value ?? 'quick';
@@ -1796,3 +1871,4 @@ export function bootPanel() {
   booted = true;
   boot();
 }
+

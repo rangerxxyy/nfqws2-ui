@@ -20,6 +20,8 @@ use nfqws2_ui::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -84,6 +86,101 @@ struct AppState {
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     freeze_scan_controls: Mutex<HashMap<String, Arc<freeze_diagnostic::FreezeScanPause>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoringStore {
+    enabled: bool,
+    interval_minutes: u64,
+    last_auto_check: Option<u64>,
+    sites: Vec<MonitoredSite>,
+    telegram: TelegramSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoredSite {
+    host: String,
+    #[serde(default)]
+    results: Vec<MonitoredResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoredResult {
+    checked_at: u64,
+    status: String,
+    summary: String,
+    latency_ms: Option<u64>,
+    steps: Vec<MonitoringStepRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoringStepRecord {
+    id: String,
+    status: String,
+    detail: String,
+    duration_ms: Option<u64>,
+    http_code: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramSettings {
+    #[serde(default)]
+    token: String,
+    #[serde(default)]
+    chat_id: String,
+    #[serde(default)]
+    send_via: String,
+    #[serde(default)]
+    interface: String,
+    #[serde(default)]
+    proxy: String,
+}
+
+impl Default for TelegramSettings {
+    fn default() -> Self {
+        Self {
+            token: String::new(),
+            chat_id: String::new(),
+            send_via: "direct".into(),
+            interface: String::new(),
+            proxy: String::new(),
+        }
+    }
+}
+
+impl Default for MonitoringStore {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_minutes: 30,
+            last_auto_check: None,
+            sites: Vec::new(),
+            telegram: TelegramSettings::default(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MonitoringStoreUpdate {
+    enabled: bool,
+    interval_minutes: u64,
+    sites: Vec<MonitoredSite>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TelegramSettingsUpdate {
+    token: Option<String>,
+    chat_id: String,
+    send_via: String,
+    interface: String,
+    proxy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3562,6 +3659,360 @@ async fn monitor_sites(Json(request): Json<MonitoringRequest>) -> Response {
     Json(results).into_response()
 }
 
+fn monitoring_store_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("monitoring.json")
+}
+
+async fn load_monitoring_store(data_dir: &Path) -> Result<MonitoringStore, String> {
+    let path = monitoring_store_path(data_dir);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|e| format!("Некорректный файл мониторинга: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MonitoringStore::default()),
+        Err(e) => Err(format!("Не удалось прочитать настройки мониторинга: {e}")),
+    }
+}
+
+async fn save_monitoring_store(data_dir: &Path, value: &MonitoringStore) -> Result<(), String> {
+    tokio::fs::create_dir_all(data_dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    let path = monitoring_store_path(data_dir);
+    let tmp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec(value).map_err(|e| e.to_string())?;
+    tokio::fs::write(&tmp, bytes)
+        .await
+        .map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+        .await
+        .map_err(|e| e.to_string())?;
+    tokio::fs::rename(&tmp, &path)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn get_monitoring_store(State(state): State<Arc<AppState>>) -> Response {
+    match load_monitoring_store(&state.data_dir).await {
+        Ok(store) => Json(serde_json::json!({"enabled":store.enabled,"intervalMinutes":store.interval_minutes,"lastAutoCheck":store.last_auto_check,"sites":store.sites})).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn put_monitoring_store(
+    State(state): State<Arc<AppState>>,
+    Json(update): Json<MonitoringStoreUpdate>,
+) -> Response {
+    if ![30, 60, 120].contains(&update.interval_minutes)
+        && !(1..=1440).contains(&update.interval_minutes)
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Интервал должен быть 30, 60, 120 минут или от 1 до 1440 минут",
+        );
+    }
+    if update.sites.len() > 20 {
+        return error(StatusCode::BAD_REQUEST, "Можно добавить не более 20 сайтов");
+    }
+    let mut normalized = Vec::new();
+    for mut site in update.sites {
+        site.host = match site_diagnostics::normalize_host(&site.host) {
+            Ok(host) => host,
+            Err(message) => return error(StatusCode::BAD_REQUEST, message),
+        };
+        site.results.truncate(96);
+        if !normalized
+            .iter()
+            .any(|existing: &MonitoredSite| existing.host == site.host)
+        {
+            normalized.push(site);
+        }
+    }
+    let mut store = match load_monitoring_store(&state.data_dir).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    store.enabled = update.enabled;
+    store.interval_minutes = update.interval_minutes;
+    store.sites = normalized;
+    match save_monitoring_store(&state.data_dir, &store).await {
+        Ok(()) => Json(serde_json::json!({"saved":true})).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn get_telegram_settings(State(state): State<Arc<AppState>>) -> Response {
+    match load_monitoring_store(&state.data_dir).await {
+        Ok(store) => Json(serde_json::json!({"tokenSet":!store.telegram.token.is_empty(),"chatId":store.telegram.chat_id,"sendVia":store.telegram.send_via,"interface":store.telegram.interface,"proxy":store.telegram.proxy})).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn put_telegram_settings(
+    State(state): State<Arc<AppState>>,
+    Json(update): Json<TelegramSettingsUpdate>,
+) -> Response {
+    if !["direct", "interface", "proxy"].contains(&update.send_via.as_str()) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Неизвестный способ отправки Telegram",
+        );
+    }
+    if update.send_via == "proxy"
+        && !update.proxy.starts_with("http://")
+        && !update.proxy.starts_with("socks5h://")
+    {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Прокси должен начинаться с http:// или socks5h://",
+        );
+    }
+    let mut store = match load_monitoring_store(&state.data_dir).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    if let Some(token) = update.token {
+        if !token.trim().is_empty() {
+            store.telegram.token = token.trim().to_owned();
+        }
+    }
+    store.telegram.chat_id = update.chat_id.trim().to_owned();
+    store.telegram.send_via = update.send_via;
+    store.telegram.interface = update.interface;
+    store.telegram.proxy = update.proxy;
+    match save_monitoring_store(&state.data_dir, &store).await {
+        Ok(()) => {
+            Json(serde_json::json!({"saved":true,"tokenSet":!store.telegram.token.is_empty()}))
+                .into_response()
+        }
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn telegram_api(
+    settings: &TelegramSettings,
+    method: &str,
+    form: &[(&str, &str)],
+) -> Result<serde_json::Value, String> {
+    if settings.token.trim().is_empty() {
+        return Err("Сначала укажите токен бота".into());
+    }
+    let url = format!(
+        "https://api.telegram.org/bot{}/{method}",
+        settings.token.trim()
+    );
+    let mut cmd = tokio::process::Command::new(if Path::new("/opt/bin/curl").is_file() {
+        "/opt/bin/curl"
+    } else {
+        "curl"
+    });
+    cmd.args([
+        "--disable",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "12",
+        "--request",
+        "POST",
+    ]);
+    match settings.send_via.as_str() {
+        "interface" if !settings.interface.is_empty() => {
+            cmd.arg("--interface").arg(&settings.interface);
+        }
+        "proxy" if !settings.proxy.is_empty() => {
+            cmd.arg("--proxy").arg(&settings.proxy);
+        }
+        "proxy" => return Err("Укажите адрес прокси".into()),
+        _ => {}
+    }
+    for (key, value) in form {
+        cmd.arg("--data-urlencode").arg(format!("{key}={value}"));
+    }
+    cmd.arg(url).stdout(Stdio::piped()).stderr(Stdio::null());
+    let output = cmd
+        .output()
+        .await
+        .map_err(|_| "Не удалось запустить curl для Telegram".to_string())?;
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| {
+        "Telegram Bot API не вернул JSON; проверьте сеть и способ отправки".to_string()
+    })?;
+    if value.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        return Err(value
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Telegram отклонил запрос")
+            .to_owned());
+    }
+    Ok(value)
+}
+
+async fn telegram_test(State(state): State<Arc<AppState>>) -> Response {
+    let store = match load_monitoring_store(&state.data_dir).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    if store.telegram.chat_id.trim().is_empty() {
+        return error(StatusCode::BAD_REQUEST, "Сначала укажите ID чата");
+    }
+    match telegram_api(
+        &store.telegram,
+        "sendMessage",
+        &[
+            ("chat_id", &store.telegram.chat_id),
+            (
+                "text",
+                "Проверочное сообщение nfqws2-ui: уведомления Telegram настроены.",
+            ),
+        ],
+    )
+    .await
+    {
+        Ok(_) => Json(serde_json::json!({"sent":true})).into_response(),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn telegram_find_chats(State(state): State<Arc<AppState>>) -> Response {
+    let store = match load_monitoring_store(&state.data_dir).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    match telegram_api(&store.telegram, "getUpdates", &[]).await {
+        Ok(value) => {
+            let mut chats = Vec::<serde_json::Value>::new();
+            if let Some(updates) = value.get("result").and_then(|v| v.as_array()) {
+                for update in updates {
+                    for key in [
+                        "message",
+                        "edited_message",
+                        "channel_post",
+                        "edited_channel_post",
+                    ] {
+                        if let Some(chat) = update.get(key).and_then(|v| v.get("chat")) {
+                            if let Some(id) = chat.get("id") {
+                                let item = serde_json::json!({"id":id.to_string().trim_matches('"'),"title":chat.get("title").or_else(||chat.get("username")).or_else(||chat.get("first_name")).cloned().unwrap_or_default()});
+                                if !chats.contains(&item) {
+                                    chats.push(item);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Json(serde_json::json!({"chats":chats})).into_response()
+        }
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn check_saved_sites(
+    data_dir: &Path,
+    force: bool,
+) -> Result<Vec<MonitoringHostResult>, String> {
+    let mut store = load_monitoring_store(data_dir).await?;
+    if !force && (!store.enabled || store.sites.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let now = now_unix_seconds();
+    if !force
+        && store
+            .last_auto_check
+            .is_some_and(|last| now.saturating_sub(last) < store.interval_minutes * 60)
+    {
+        return Ok(Vec::new());
+    }
+    let sites = store
+        .sites
+        .iter()
+        .map(|site| site.host.clone())
+        .collect::<Vec<_>>();
+    if sites.is_empty() {
+        return Ok(Vec::new());
+    }
+    store.last_auto_check = Some(now);
+    save_monitoring_store(data_dir, &store).await?;
+    let mut tasks = tokio::task::JoinSet::new();
+    for host in sites {
+        tasks.spawn(check_monitoring_host(host));
+    }
+    let mut reports = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        reports.push(result.map_err(|e| e.to_string())?);
+    }
+    let mut updated = load_monitoring_store(data_dir).await?;
+    for report in &reports {
+        if let Some(site) = updated
+            .sites
+            .iter_mut()
+            .find(|site| site.host == report.host)
+        {
+            let previous = site.results.first().map(|r| r.status.clone());
+            let status = report.current.status.to_owned();
+            if let Some(previous) = previous.filter(|old| old != &status) {
+                if !updated.telegram.chat_id.is_empty() {
+                    let text = if status == "ok" {
+                        format!("✅ {} снова открывается: {}", report.host, report.summary)
+                    } else {
+                        format!(
+                            "❌ {} перестал открываться: {}",
+                            report.host, report.summary
+                        )
+                    };
+                    let _ = telegram_api(
+                        &updated.telegram,
+                        "sendMessage",
+                        &[("chat_id", &updated.telegram.chat_id), ("text", &text)],
+                    )
+                    .await;
+                    let _ = previous;
+                }
+            }
+            site.results.insert(
+                0,
+                MonitoredResult {
+                    checked_at: now,
+                    status,
+                    summary: report.summary.clone(),
+                    latency_ms: report.current.duration_ms,
+                    steps: report
+                        .steps
+                        .iter()
+                        .map(|step| MonitoringStepRecord {
+                            id: step.id.to_owned(),
+                            status: step.status.to_owned(),
+                            detail: step.detail.clone(),
+                            duration_ms: step.duration_ms,
+                            http_code: step.http_code,
+                        })
+                        .collect(),
+                },
+            );
+            site.results.truncate(96);
+        }
+    }
+    save_monitoring_store(data_dir, &updated).await?;
+    Ok(reports)
+}
+
+async fn run_saved_monitoring(State(state): State<Arc<AppState>>) -> Response {
+    match check_saved_sites(&state.data_dir, true).await {
+        Ok(results) => Json(results).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+fn start_monitoring_scheduler(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            if let Err(message) = check_saved_sites(&state.data_dir, false).await {
+                tracing::warn!("monitoring scheduler: {message}");
+            }
+        }
+    });
+}
+
 async fn trace_site(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SiteTraceRequest>,
@@ -3915,28 +4366,16 @@ async fn start_strategy_pick(
                 .remove(&task_id);
             return;
         };
-        if baseline_ok {
-            if let Ok(mut current) = shared.lock() {
-                current.state = "site_unblocked".into();
-                current.stage = "complete".into();
-                current.message = format!(
-                    "Прямой запрос открыл сайт ({}); подбор стратегий не требуется",
-                    baseline_report.without_nfqws2.reason
-                );
-                current.updated_at = now_unix_seconds();
-                let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
-            }
-            task_state
-                .strategy_pick_controls
-                .lock()
-                .await
-                .remove(&task_id);
-            return;
-        }
         if let Ok(mut current) = shared.lock() {
             current.stage = "baseline".into();
-            current.message =
-                "Прямая проверка не открыла сайт; собираются совместимые стратегии".into();
+            current.message = if baseline_ok {
+                format!(
+                    "Прямая проверка получила ответ ({}); продолжается проверка выбранных стратегий",
+                    baseline_report.without_nfqws2.reason
+                )
+            } else {
+                "Прямая проверка не открыла сайт; собираются совместимые стратегии".into()
+            };
             current.updated_at = now_unix_seconds();
             let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
         }
@@ -5975,6 +6414,17 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
         .route("/api/nfqws2/diagnostics/monitor", post(monitor_sites))
         .route(
+            "/api/nfqws2/monitoring",
+            get(get_monitoring_store).put(put_monitoring_store),
+        )
+        .route("/api/nfqws2/monitoring/run", post(run_saved_monitoring))
+        .route(
+            "/api/nfqws2/telegram",
+            get(get_telegram_settings).put(put_telegram_settings),
+        )
+        .route("/api/nfqws2/telegram/test", post(telegram_test))
+        .route("/api/nfqws2/telegram/find-chats", post(telegram_find_chats))
+        .route(
             "/api/nfqws2/diagnostics/transfer",
             post(start_transfer_diagnostic),
         )
@@ -6111,6 +6561,7 @@ async fn main() {
         freeze_scan_controls: Mutex::new(HashMap::new()),
     });
     start_ui_update_checker(state.clone());
+    start_monitoring_scheduler(state.clone());
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/opt/share/nfqws2-ui/current/public"));
@@ -9261,3 +9712,4 @@ mod tests {
         assert!(original.starts_with(&script.content));
     }
 }
+

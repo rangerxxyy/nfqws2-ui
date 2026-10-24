@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2] — Автоматический мониторинг и Telegram
+
+- Подбор стратегий теперь запускает выбранные проверки и после прямого HTTP-ответа, в том числе 301.
+- Мониторинг сайтов, 96 последних результатов и расписание проверок сохраняются на роутере; доступны интервалы 30 минут, 1 час, 2 часа и пользовательский интервал.
+- Добавлены автоматические проверки, уведомления Telegram о смене доступности, тестовое сообщение, поиск чатов и отправка через интерфейс или прокси.
+- Экран мониторинга оформлен отдельными панелями для сайтов и уведомлений.
+
 ## [0.5.1] — Автоподбор и оформление панели
 
 - Исправлена перерисовка вкладок пользовательских `.list` файлов: кнопки удаления больше не дублируются; вместо крестика используется красная иконка корзины.
@@ -351,3 +358,4 @@
 - Added RAM/CPU status, config editing with SHA revision checks and backups, backup restore, bounded logs, and responsive RU/EN/ZH/TR UI with light/dark themes.
 - Added an ARM64 Entware installer with archive checksum/path validation, explicit `sha256sum` prerequisite (no implicit Entware package changes), automatic port selection from 1002, health check, update rollback, plus a panel-only uninstaller.
 - Real Keenetic service actions are not yet claimed as tested because SSH authentication to the available router failed.
+

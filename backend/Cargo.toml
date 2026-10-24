@@ -1,6 +1,6 @@
 [package]
 name = "nfqws2-ui"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 license = "MIT"
 
@@ -29,3 +29,4 @@ getrandom = "0.4.3"
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+

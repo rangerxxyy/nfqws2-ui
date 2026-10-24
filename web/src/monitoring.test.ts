@@ -14,10 +14,11 @@ describe('monitoring state', () => {
     for (let i = 0; i < 25; i++) state.sites.push({ host: `site${i}.example`, results: [] });
     const report = { host: 'site0.example', summary: 'ok', current: { status: 'ok' as const, detail: '', durationMs: 13, httpCode: 200 }, steps: [{ id: 'dns', status: 'ok' as const, detail: '8.8.8.8', durationMs: 2, httpCode: null }] };
     let updated = state;
-    for (let i = 0; i < 12; i++) updated = appendMonitoringResult(updated, 'site0.example', report, i);
+    for (let i = 0; i < 110; i++) updated = appendMonitoringResult(updated, 'site0.example', report, i);
     expect(updated.sites).toHaveLength(20);
-    expect(updated.sites[0].results).toHaveLength(10);
-    expect(updated.sites[0].results[0].checkedAt).toBe(11);
+    expect(updated.sites[0].results).toHaveLength(96);
+    expect(updated.sites[0].results[0].checkedAt).toBe(109);
+    expect(updated.sites[0].results.at(-1)?.checkedAt).toBe(14);
     expect(updated.sites[0].results[0].steps[0].id).toBe('dns');
     expect(() => saveMonitoringState(null, updated)).not.toThrow();
   });
@@ -30,3 +31,4 @@ describe('monitoring state', () => {
   });
 
 });
+

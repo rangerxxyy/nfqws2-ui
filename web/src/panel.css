@@ -324,6 +324,14 @@ textarea { line-height: 1.7; tab-size: 4; }
 .monitor-site-status { margin-left: auto; font-size: .8rem; font-weight: 700; }
 .monitor-status-ok { color: #6ee7b7; }.monitor-status-warning { color: #fcd34d; }.monitor-status-error { color: #fda4af; }.monitor-status-unavailable { color: #94a3b8; }
 .monitor-remove { border: 1px solid #334155; border-radius: .55rem; padding: .35rem .6rem; color: #cbd5e1; font-size: .75rem; transition: background-color .15s ease; }.monitor-remove:hover { background: #1e293b; }
+.monitor-history-bars { display: flex; gap: 2px; height: .8rem; margin-top: .7rem; overflow: hidden; }
+.monitor-history-bars span { flex: 1 1 0; min-width: 2px; border-radius: 2px; background: #64748b; }
+.monitor-history-bars span[data-status="ok"] { background: #34d399; }
+.monitor-history-bars span[data-status="warning"] { background: #fbbf24; }
+.monitor-history-bars span[data-status="error"] { background: #fb7185; }
+.monitor-history-bars span[data-status="unavailable"] { background: #64748b; }
+.monitor-row-action { margin-left: auto; border-radius: .5rem; padding: .35rem .45rem; color: #a8c8ff; font-size: .75rem; }
+.monitor-row-action:hover { background: #1d4ed833; color: #dbeafe; }
 .monitor-stage-list { border-top: 1px solid #263449; padding-top: .5rem; color: #94a3b8; font-size: .72rem; }
 .monitor-stage-list > summary { cursor: pointer; font-weight: 650; color: #a8c8ff; }
 .monitor-stage-row { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); gap: .5rem; line-height: 1.45; }
@@ -683,3 +691,9 @@ textarea { line-height: 1.7; tab-size: 4; }
   .strategy-mode-help.mode-help-enter { animation: none; }
   .strategy-result-enter { animation: none; }
 }
+.monitor-subtab { color: #94a3b8; transition: color .15s ease, background-color .15s ease; }
+.monitor-subtab:hover { color: #e2e8f0; background: #1e293b; }
+.monitor-subtab.active { color: #bfdbfe; background: #1d4ed833; box-shadow: inset 0 -2px #60a5fa; }
+.monitor-site-card { background: linear-gradient(145deg, #121c2b, #0b111c); border-color: #29374b; }
+.monitor-site-card:hover { border-color: #3b82f680; }
+

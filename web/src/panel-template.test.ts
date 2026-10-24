@@ -66,7 +66,7 @@ describe('TSX panel without authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(11);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(13);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -322,7 +322,8 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('/api/nfqws2/diagnostics/monitor');
     expect(panelSource).toContain("const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: 'Передача' }");
     expect(panelStyles).toContain('.monitor-stage-list');
-    expect(template).toContain('DNS, TCP, TLS, HTTP');
+    expect(template).toContain('История последних 96 проверок хранится на роутере');
+    expect(panelSource).toContain('nfqwsMonitoring.run()');
   });
 
   it('shows an honest compact bottom status while a domain diagnosis is running', () => {
@@ -544,7 +545,8 @@ describe('TSX panel without authentication', () => {
   it('does not show invented router metrics, monitoring, provider, or update progress', () => {
     expect(template).toMatch(/id="ramProgressBar"[^>]*style="width:0%"/);
     expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);
-    expect(template).toContain('До 20 сайтов · вручную');
+    expect(template).toContain('Уведомления Telegram');
+    expect(template).toContain('каждые 30 мин');
     expect(template).toContain('Провайдер не определён');
     expect(template).toContain('Нет данных сообщества из backend.');
     expect(template).toContain('0%');
@@ -606,3 +608,5 @@ describe('TSX panel without authentication', () => {
     }
   });
 });
+
+

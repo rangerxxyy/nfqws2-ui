@@ -1,7 +1,7 @@
 {
   "name": "nfqws2-ui-web",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
@@ -27,3 +27,4 @@
     "react-dom": "19.2.0"
   }
 }
+
