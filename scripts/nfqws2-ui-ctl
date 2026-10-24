@@ -4,7 +4,6 @@ set -eu
 
 ROOT=/opt/share/nfqws2-ui
 APP=$ROOT/current
-BIN=/opt/bin/nfqws2-ui-ctl
 PORT_FILE=/opt/var/run/nfqws2-ui.port
 REPO_API=https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases/latest
 
@@ -85,3 +84,4 @@ case "$cmd" in
 	help|-h|--help) usage ;;
 	*) usage >&2; exit 2 ;;
 esac
+
