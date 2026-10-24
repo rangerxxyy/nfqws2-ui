@@ -21,4 +21,3 @@ fi
 grep -Fq 'cp "$STAGE/scripts/nfqws2-ui-ctl" /opt/bin/nfqws2-ui-ctl' scripts/update-release.sh
 grep -Fq 'rm -f /opt/bin/nfqws2-ui-ctl' scripts/uninstall.sh
 echo 'nfqws2-ui-ctl preflight checks passed.'
-
