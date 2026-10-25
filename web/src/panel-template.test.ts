@@ -480,6 +480,7 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('[data-layout="right"] .app-main-layout');
     expect(panelStyles).toContain('[data-layout="top"] .app-main-layout');
     expect(panelStyles).toContain('[data-layout="tiles"] .app-main-layout');
+    expect(template).toContain('Синий (стандартная)');
   });
 
   it('removes the selection overlay across appearance palettes', () => {
