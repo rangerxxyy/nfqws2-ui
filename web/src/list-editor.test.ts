@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines, toggleListComments } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, listRowsFromContent, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 
 describe('list editor helpers', () => {
+  it('builds searchable rows without losing source line indexes or comment identity', () => {
+    expect(listRowsFromContent('one.example\n# note\n\ntwo.example', 'TWO')).toEqual([
+      { index: 3, text: 'two.example', comment: false },
+    ]);
+    expect(listRowsFromContent('one.example\n# note\n\ntwo.example')).toEqual([
+      { index: 0, text: 'one.example', comment: false },
+      { index: 1, text: '# note', comment: true },
+      { index: 3, text: 'two.example', comment: false },
+    ]);
+  });
+
+  it('removes selected source rows while retaining line endings and unselected comments', () => {
+    expect(removeListLinesByIndices('one.example\r\n# keep\r\ntwo.example\r\n', [0, 2])).toEqual({
+      content: '# keep\r\n',
+      removed: 2,
+    });
+  });
+
   it('comments selected list lines and removes comment markers when all selected lines are commented', () => {
     expect(toggleListComments('one.example\ntwo.example\n', 0, 22)).toEqual({ content: '# one.example\n# two.example\n', selectionStart: 0, selectionEnd: 27 });
     expect(toggleListComments('  # one.example\n# two.example', 0, 30)).toEqual({ content: '  one.example\ntwo.example', selectionStart: 0, selectionEnd: 25 });

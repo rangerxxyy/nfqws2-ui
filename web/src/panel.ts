@@ -11,7 +11,7 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines, toggleListComments } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
@@ -33,6 +33,12 @@ let activeLuaScript: string | null = null;
 let discoveredNetworkInterfaces: string[] = [];
 let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
+const LIST_EDITOR_VIEW_KEY = 'nfqws2-ui-list-editor-view';
+let listEditorView: 'text' | 'rows' = (() => {
+  try { return localStorage.getItem(LIST_EDITOR_VIEW_KEY) === 'rows' ? 'rows' : 'text'; }
+  catch { return 'text'; }
+})();
+const selectedListRows = new Set<number>();
 let busy = false;
 let statusPolling = false;
 let diagnosisRunning = false;
@@ -1088,6 +1094,7 @@ async function loadList(id: NfqwsListId) {
     const result = await nfqwsLists.get(id);
     activeList = result;
     activeListId = id;
+    selectedListRows.clear();
     const editor = $('#listEditorTextarea');
     if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
     const locationLabel = $('#currentListFilePath');
@@ -1113,6 +1120,80 @@ async function loadList(id: NfqwsListId) {
     toast(error instanceof Error ? error.message : 'Не удалось прочитать список', 'error');
   }
 }
+
+function setListEditorView(view: 'text' | 'rows') {
+  listEditorView = view === 'rows' ? 'rows' : 'text';
+  try { localStorage.setItem(LIST_EDITOR_VIEW_KEY, view); } catch { /* The view preference is optional. */ }
+  const textView = $('#listTextView');
+  const rowsView = $('#listRowsView');
+  textView?.classList.toggle('hidden', listEditorView !== 'text');
+  rowsView?.classList.toggle('hidden', listEditorView !== 'rows');
+  for (const [id, active] of [['listViewTextButton', listEditorView === 'text'], ['listViewRowsButton', listEditorView === 'rows']] as const) {
+    const button = $(`#${id}`);
+    button?.setAttribute('aria-pressed', String(active));
+    button?.classList.toggle('active', active);
+  }
+  const remove = $('[data-action-click="removeSelectedListLines"]');
+  if (remove) remove.textContent = listEditorView === 'rows' ? `Удалить выбранные (${selectedListRows.size})` : 'Удалить строку/выделение';
+  $('#findNextListEntryButton')?.classList.toggle('hidden', listEditorView === 'rows');
+  if (listEditorView === 'rows') renderListRows();
+}
+
+function removeListRows(indices: readonly number[]) {
+  const editor = $('#listEditorTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return;
+  const result = removeListLinesByIndices(editor.value, indices);
+  if (!result.removed) return toast('Выберите строки для удаления.', 'error');
+  editor.value = result.content;
+  selectedListRows.clear();
+  syncListLineNumbers(editor);
+  toast(`Удалено строк: ${result.removed}. Изменён только черновик.`);
+}
+
+function renderListRows() {
+  const root = $('#listRowsView');
+  const editor = $('#listEditorTextarea');
+  if (!root || !(editor instanceof HTMLTextAreaElement)) return;
+  const search = $('#listSearchInput');
+  const query = search instanceof HTMLInputElement ? search.value : '';
+  const rows = listRowsFromContent(editor.value, query);
+  root.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'px-3 py-6 text-center text-sm text-slate-400';
+    empty.textContent = query.trim() ? 'Совпадений не найдено.' : 'Список пуст.';
+    root.append(empty);
+  }
+  for (const row of rows) {
+    const item = document.createElement('div');
+    item.className = `list-editor-row${row.comment ? ' is-comment' : ''}`;
+    item.setAttribute('role', 'listitem');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = selectedListRows.has(row.index);
+    checkbox.setAttribute('aria-label', `Выбрать строку ${row.index + 1}: ${row.text}`);
+    checkbox.addEventListener('change', () => {
+      checkbox.checked ? selectedListRows.add(row.index) : selectedListRows.delete(row.index);
+      const remove = $('[data-action-click="removeSelectedListLines"]');
+      if (remove) remove.textContent = `Удалить выбранные (${selectedListRows.size})`;
+    });
+    const line = document.createElement('span');
+    line.className = 'list-editor-row-number';
+    line.textContent = String(row.index + 1);
+    const text = document.createElement('span');
+    text.className = 'min-w-0 flex-1 break-all font-mono';
+    text.textContent = row.text;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'list-editor-row-remove';
+    remove.setAttribute('aria-label', `Удалить строку ${row.index + 1}`);
+    remove.textContent = 'Удалить';
+    remove.addEventListener('click', () => removeListRows([row.index]));
+    item.append(checkbox, line, text, remove);
+    root.append(item);
+  }
+}
+
 function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
   const host = $('#customListTabs');
   if (!host) return;
@@ -1190,6 +1271,7 @@ async function saveActiveList() {
   try {
     activeList = await nfqwsLists.save(activeList.id, editor.value, activeList.revision);
     editor.value = activeList.content;
+    selectedListRows.clear();
     syncListLineNumbers(editor);
     toast('Список записан, резервная копия создана, повторное чтение подтверждено. Служба не перезапускалась.');
   } catch (error) {
@@ -1205,6 +1287,11 @@ function syncListLineNumbers(editor = $('#listEditorTextarea')) {
   gutter.scrollTop = editor.scrollTop;
   const entries = editor.value.split(/\r?\n/).filter((line) => line.trim() && !line.trimStart().startsWith('#')).length;
   setText('#listFooterCount', `Всего записей: ${entries}`);
+  if (listEditorView === 'rows') {
+    const remove = $('[data-action-click="removeSelectedListLines"]');
+    if (remove) remove.textContent = `Удалить выбранные (${selectedListRows.size})`;
+    renderListRows();
+  }
 }
 function syncListScroll(editor: HTMLTextAreaElement) {
   const gutter = $('#listLineNumbers');
@@ -1214,6 +1301,10 @@ function removeSelectedListLines() {
   if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
   const editor = $('#listEditorTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return;
+  if (listEditorView === 'rows') {
+    if (!selectedListRows.size) return toast('Отметьте строки, которые нужно удалить.', 'error');
+    return removeListRows([...selectedListRows]);
+  }
   const result = removeListLines(editor.value, editor.selectionStart, editor.selectionEnd);
   if (!result.removed) return toast('Список пуст.');
   editor.value = result.content;
@@ -2225,6 +2316,7 @@ function bindPrototypeActions() {
     syncListScroll: (editor: HTMLTextAreaElement) => syncListScroll(editor),
     syncCustomHostInput: () => undefined,
     selectListFile: (name: NfqwsListId) => void loadList(name),
+    setListEditorView: (view: 'text' | 'rows') => setListEditorView(view),
     requestDeleteCustomList: (id: string) => requestDeleteCustomList(id),
     confirmDeleteCustomList: (id: string) => void deleteCustomList(id),
     cancelDeleteCustomList: () => closeCustomListDeleteModal(),
@@ -2241,6 +2333,7 @@ function bindPrototypeActions() {
       const result = deduplicateListContent(editor.value, activeList.id);
       if (!result.removed) return toast('Дубликаты не найдены.');
       editor.value = result.content;
+      selectedListRows.clear();
       syncListLineNumbers(editor);
       toast(`Удалено дубликатов: ${result.removed}. Черновик изменён; нажмите «Сохранить» для записи.`);
     },
@@ -2284,6 +2377,7 @@ function bindPrototypeActions() {
 
 function boot() {
   initializeAppearanceSettings();
+  setListEditorView(listEditorView);
   installStyledSelects(document);
   installActionTooltips(document);
   monitoringState = loadMonitoringState(getMonitoringStorage());
@@ -2326,6 +2420,7 @@ function boot() {
     editor.setSelectionRange(result.selectionStart, result.selectionEnd);
     editor.dispatchEvent(new Event('input', { bubbles: true }));
   });
+  $('#listSearchInput')?.addEventListener('input', () => { if (listEditorView === 'rows') renderListRows(); });
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigLines);
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();

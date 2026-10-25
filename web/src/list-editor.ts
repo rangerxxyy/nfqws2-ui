@@ -2,6 +2,30 @@ import type { NfqwsListId } from './api';
 
 const STANDARD_LIST_IDS: readonly NfqwsListId[] = ['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list'];
 
+export interface ListEditorRow {
+  index: number;
+  text: string;
+  comment: boolean;
+}
+
+export function listRowsFromContent(content: string, query = ''): ListEditorRow[] {
+  const needle = query.trim().toLocaleLowerCase('en-US');
+  return content.split(/\r\n|\n/).flatMap((line, index) => {
+    const text = line.trim();
+    if (!text || (needle && !text.toLocaleLowerCase('en-US').includes(needle))) return [];
+    return [{ index, text, comment: text.startsWith('#') }];
+  });
+}
+
+export function removeListLinesByIndices(content: string, indices: readonly number[]): { content: string; removed: number } {
+  const selected = new Set(indices.filter((index) => Number.isInteger(index) && index >= 0));
+  if (!selected.size) return { content, removed: 0 };
+  const lines = content.split(/\r\n|\n/);
+  const remaining = lines.filter((_, index) => !selected.has(index));
+  const removed = lines.length - remaining.length;
+  return removed ? { content: remaining.join(content.includes('\r\n') ? '\r\n' : '\n'), removed } : { content, removed: 0 };
+}
+
 export function isSafeNfqwsListId(id: string): id is NfqwsListId {
   return id.length <= 128
     && /^[A-Za-z0-9._-]+\.list$/.test(id)

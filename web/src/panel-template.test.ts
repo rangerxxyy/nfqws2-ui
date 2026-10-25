@@ -534,6 +534,19 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.strategy-copy-success');
   });
 
+  it('offers list and text editor views while keeping list-row tools accessible', () => {
+    const lists = template.slice(template.indexOf('id="tabContent-lists"'), template.indexOf('id="tabContent-check"'));
+    expect(lists).toContain('id="listTextView"');
+    expect(lists).toContain('id="listRowsView"');
+    expect(lists).toContain('data-args="[&quot;rows&quot;]"');
+    expect(panelSource).toContain("localStorage.setItem(LIST_EDITOR_VIEW_KEY, view)");
+    expect(panelSource).toContain('listRowsFromContent(editor.value');
+    expect(panelSource).toContain('removeListLinesByIndices(editor.value');
+    expect(panelSource).toContain("$('#findNextListEntryButton')?.classList.toggle('hidden', listEditorView === 'rows')");
+    expect(panelStyles).toContain('.list-editor-row');
+    expect(panelStyles).toContain('[data-theme="light"] .list-editor-row');
+  });
+
   it('places config actions in the same row as its section tabs', () => {
     const navStart = appSource.indexOf('<nav aria-label={"Раздел конфигурации"}');
     const navEnd = appSource.indexOf('</nav>', navStart);

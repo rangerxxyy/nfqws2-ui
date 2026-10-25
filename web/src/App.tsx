@@ -865,10 +865,17 @@ export default function App() {
               {"\n          "}
             </div>
             {"\n\n          "}
+            <div className={"flex items-center justify-between gap-3 px-4 py-2 border-b border-slate-800 bg-[#080d18]"}>
+              <span className={"text-xs text-slate-400"}>Вид списка</span>
+              <div className={"flex gap-1 rounded-lg border border-slate-700 bg-slate-950 p-1"} role={"group"} aria-label={"Вид списка"}>
+                <button id={"listViewTextButton"} type={"button"} aria-pressed={"true"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["text"])} className={"list-view-button active rounded-md px-3 py-1 text-xs text-slate-300 transition-colors"}>Текстом</button>
+                <button id={"listViewRowsButton"} type={"button"} aria-pressed={"false"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["rows"])} className={"list-view-button rounded-md px-3 py-1 text-xs text-slate-300 transition-colors"}>Списком</button>
+              </div>
+            </div>
             <div className={"p-4 bg-[#090f1b] border-b border-slate-800 grid grid-cols-1 xl:grid-cols-[minmax(220px,1fr)_auto] gap-2 items-center"}>
               <div className={"flex gap-2"}>
                 <input id={"listSearchInput"} type={"search"} placeholder={"Найти в списке"} className={"min-w-0 flex-1 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500"} />
-                <button data-action-click={"findNextListEntry"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Найти далее"}</button>
+                <button id={"findNextListEntryButton"} data-action-click={"findNextListEntry"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Найти далее"}</button>
               </div>
               <div className={"flex flex-wrap gap-2"}>
                 <button data-action-click={"removeSelectedListLines"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Удалить строку/выделение"}</button>
@@ -878,7 +885,7 @@ export default function App() {
               </div>
             </div>
             {"\n          "}
-            <div className={"mobile-list-editor flex h-[610px] bg-[#060a12] font-mono text-[14.5px] leading-7 overflow-hidden"}>
+            <div id={"listTextView"} className={"mobile-list-editor flex h-[610px] bg-[#060a12] font-mono text-[14.5px] leading-7 overflow-hidden"}>
               {"\n            "}
               <div id={"listLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3.5 w-14 overflow-hidden select-none text-xs leading-7"}>
                 {"\n              1\n            "}
@@ -887,8 +894,9 @@ export default function App() {
               <textarea id={"listEditorTextarea"} data-action-input={"syncListLineNumbers"} data-action-scroll={"syncListScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"flex-1 bg-transparent text-slate-100 py-4 px-6 outline-none resize-none leading-7 font-mono overflow-y-auto border-none"}></textarea>
               {"\n          "}
             </div>
+            <div id={"listRowsView"} className={"hidden list-rows-view h-[610px] overflow-y-auto bg-[#060a12] p-3"} role={"list"} aria-label={"Записи списка"}></div>
             {"\n\n          "}
-            <div className={"px-5 py-2.5 bg-[#080d18] border-t border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400"}>
+            <div className={"list-editor-footer px-5 py-2.5 bg-[#080d18] border-t border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400"}>
               {"\n            "}
               <span id={"listFooterCount"}>
                 {"Всего записей: —"}
