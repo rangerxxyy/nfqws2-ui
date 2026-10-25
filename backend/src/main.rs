@@ -498,6 +498,160 @@ fn foreign_config_should_retry(
     outcome == Some(true) && completed_attempt + 1 < repeats
 }
 
+fn append_foreign_config_assignment(
+    source: &str,
+    name: &str,
+    raw_value: &str,
+) -> Result<String, String> {
+    if source.contains('\0') || raw_value.contains(['\0', '\n', '\r']) {
+        return Err("Невозможно безопасно добавить значения по умолчанию для конфигурации".into());
+    }
+    let separator = if source.is_empty() || source.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    Ok(format!("{source}{separator}{name}={raw_value}\n"))
+}
+
+fn insert_foreign_config_assignments_before_extra(source: &str, assignments: &str) -> String {
+    let offset = source
+        .split_inclusive('\n')
+        .scan(0usize, |offset, line| {
+            let start = *offset;
+            *offset += line.len();
+            Some((start, line))
+        })
+        .find_map(|(start, line)| {
+            let mut statement = line.trim_start();
+            if let Some(rest) = statement.strip_prefix("export")
+                && rest.starts_with([' ', '\t'])
+            {
+                statement = rest.trim_start();
+            }
+            statement.starts_with("NFQWS_EXTRA_ARGS=").then_some(start)
+        });
+    if let Some(offset) = offset {
+        format!("{}{}{}", &source[..offset], assignments, &source[offset..])
+    } else if source.is_empty() || source.ends_with('\n') {
+        format!("{source}{assignments}")
+    } else {
+        format!("{source}\n{assignments}")
+    }
+}
+
+fn foreign_config_install_root(lists_directory: &Path) -> &'static str {
+    let path = lists_directory.to_string_lossy();
+    if path == "/etc/nfqws2/lists" || path.starts_with("/etc/nfqws2/lists/") {
+        ""
+    } else {
+        "/opt"
+    }
+}
+
+fn foreign_config_with_zemidala_defaults(
+    source: &str,
+    lua_directory: &Path,
+    blobs_directory: &Path,
+    lists_directory: &Path,
+) -> Result<String, String> {
+    let document = ConfigDocument::parse(source)?;
+    let mut adapted = source.to_owned();
+    let install_root = foreign_config_install_root(lists_directory);
+    if !document.contains_assignment("NFQWS_BASE_ARGS") {
+        let mut defaults = Vec::new();
+        for module in ["zapret-lib.lua", "zapret-antidpi.lua", "zapret-auto.lua"] {
+            let source_path = format!("{install_root}/etc/nfqws2/lua/{module}");
+            if resolve_foreign_lua_path(&source_path, lua_directory).is_ok() {
+                defaults.push(format!("--lua-init=@{source_path}"));
+            }
+        }
+        for blob in ["quic_initial", "tls_clienthello"] {
+            let source_path = format!("{install_root}/etc/nfqws2/blobs/{blob}.bin");
+            if resolve_foreign_blob_path(&source_path, blobs_directory).is_ok() {
+                defaults.push(format!("--blob={blob}:@{source_path}"));
+            }
+        }
+        let value = defaults.join(" ");
+        adapted =
+            append_foreign_config_assignment(&adapted, "NFQWS_BASE_ARGS", &format!("\"{value}\""))?;
+    }
+
+    let mut missing_modes = String::new();
+    for name in ["MODE_LIST", "MODE_ALL", "MODE_AUTO"] {
+        let current = ConfigDocument::parse(&adapted)?;
+        if !current.contains_assignment(name) {
+            let raw_value = match name {
+                "MODE_LIST" => format!("\"--hostlist={install_root}/etc/nfqws2/lists/user.list\""),
+                "MODE_ALL" => {
+                    format!("\"--hostlist-exclude={install_root}/etc/nfqws2/lists/exclude.list\"")
+                }
+                "MODE_AUTO" => format!(
+                    "\"$MODE_LIST --hostlist-auto={install_root}/etc/nfqws2/lists/auto.list --hostlist-auto-debug={install_root}/var/log/nfqws2.log $MODE_ALL\""
+                ),
+                _ => unreachable!("only stock modes are listed"),
+            };
+            missing_modes.push_str(&format!("{name}={raw_value}\n"));
+        }
+    }
+    if !missing_modes.is_empty() {
+        adapted = insert_foreign_config_assignments_before_extra(&adapted, &missing_modes);
+    }
+    let current = ConfigDocument::parse(&adapted)?;
+    if !current.contains_assignment("NFQWS_EXTRA_ARGS") {
+        adapted = append_foreign_config_assignment(&adapted, "NFQWS_EXTRA_ARGS", "\"$MODE_LIST\"")?;
+    }
+    Ok(adapted)
+}
+
+fn foreign_config_dry_run_argv(
+    binary: &str,
+    source: &str,
+    args: &[String],
+) -> Result<Vec<String>, String> {
+    let document = ConfigDocument::parse(source)?;
+    let value = |name: &str, fallback: &str| -> Result<String, String> {
+        if document.contains_assignment(name) {
+            document.literal_or_mode_value(name)
+        } else {
+            Ok(fallback.to_owned())
+        }
+    };
+    let queue = value("NFQUEUE_NUM", "300")?;
+    let queue = if queue.is_empty() { "300" } else { &queue };
+    if !queue.bytes().all(|byte| byte.is_ascii_digit()) || queue.parse::<u16>().is_err() {
+        return Err("NFQUEUE_NUM должен быть числом от 0 до 65535".into());
+    }
+    let user = value("USER", "nobody")?;
+    let user = if user.is_empty() { "nobody" } else { &user };
+    if user.is_empty()
+        || !user
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+    {
+        return Err("USER содержит неподдерживаемые символы".into());
+    }
+    let base_args = if document.contains_assignment("NFQWS_BASE_ARGS") {
+        document.literal_or_mode_value("NFQWS_BASE_ARGS")?
+    } else {
+        String::new()
+    };
+    let mut argv = vec![
+        binary.to_owned(),
+        "--dry-run".into(),
+        format!("--user={user}"),
+        format!("--qnum={queue}"),
+    ];
+    if !base_args
+        .split_whitespace()
+        .any(|argument| argument.starts_with("--fastpath-workaround="))
+    {
+        argv.push("--fastpath-workaround=auto".into());
+    }
+    argv.extend(args.iter().cloned());
+    Ok(argv)
+}
+
 fn foreign_config_memory_warning(meminfo: &str) -> Option<String> {
     let available_kb = parse_meminfo_kb_key(meminfo, "MemAvailable")?;
     let available_mb = available_kb / 1024;
@@ -4890,20 +5044,21 @@ fn external_config_test_args(
         "NFQWS_ARGS_CUSTOM",
         &read_group("NFQWS_ARGS_CUSTOM")?.join(" "),
     )?;
-    let mut custom_profile = Vec::new();
-    for argument in custom {
-        if argument == "--new" || argument.starts_with("--new=") {
-            if !custom_profile.is_empty() {
+    if !custom.is_empty() {
+        let mut custom_profile = Vec::new();
+        for argument in custom {
+            if argument == "--new" || argument.starts_with("--new=") {
                 profiles.push(std::mem::take(&mut custom_profile));
+                if let Some(name) = argument
+                    .strip_prefix("--new=")
+                    .filter(|name| !name.is_empty())
+                {
+                    custom_profile.push(format!("--name={name}"));
+                }
+            } else {
+                custom_profile.push(argument);
             }
-            if let Some(name) = argument.strip_prefix("--new=") {
-                custom_profile.push(format!("--name={name}"));
-            }
-        } else {
-            custom_profile.push(argument);
         }
-    }
-    if !custom_profile.is_empty() {
         profiles.push(custom_profile);
     }
 
@@ -5656,8 +5811,17 @@ async fn start_foreign_config_check(
             );
         }
         let isolated_auto_list = auto_list_directory.join(format!("config-{index}.list"));
-        let args = match external_config_test_args(
+        let adapted_content = match foreign_config_with_zemidala_defaults(
             &content,
+            &paths.lua_dir,
+            &paths.blobs_dir,
+            &paths.lists_dir,
+        ) {
+            Ok(content) => content,
+            Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+        };
+        let args = match external_config_test_args(
+            &adapted_content,
             &isolated_auto_list,
             &paths.lua_dir,
             &paths.blobs_dir,
@@ -5665,6 +5829,10 @@ async fn start_foreign_config_check(
             &mut prepared_auto_lists,
         ) {
             Ok(args) => args,
+            Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+        };
+        let dry_run = match foreign_config_dry_run_argv(&binary, &adapted_content, &args) {
+            Ok(argv) => argv,
             Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
         };
         let name = input.name.trim().chars().take(48).collect::<String>();
@@ -5681,7 +5849,7 @@ async fn start_foreign_config_check(
             "Текст"
         }
         .to_owned();
-        prepared.push((name, source, args));
+        prepared.push((name, source, args, dry_run));
     }
     let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
         return error(
@@ -5703,7 +5871,7 @@ async fn start_foreign_config_check(
     let control = Arc::new(AtomicBool::new(false));
     let comparisons = prepared
         .iter()
-        .map(|(name, source, _)| ForeignConfigComparison {
+        .map(|(name, source, _, _)| ForeignConfigComparison {
             name: name.clone(),
             source: source.clone(),
             sites: hosts
@@ -5754,10 +5922,8 @@ async fn start_foreign_config_check(
             operation.updated_at = now_unix_seconds();
             let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
         }
-        for (name, _, args) in &prepared {
-            let mut dry_run = vec![binary.clone(), "--dry-run".into()];
-            dry_run.extend(args.iter().cloned());
-            if let Err(message) = validate_strategy_dry_run(&dry_run).await {
+        for (name, _, _, dry_run) in &prepared {
+            if let Err(message) = validate_strategy_dry_run(dry_run).await {
                 if let Ok(mut operation) = progress.lock() {
                     operation.state = "failed".into();
                     operation.stage = "failed".into();
@@ -5841,7 +6007,7 @@ async fn start_foreign_config_check(
                 operation.updated_at = now_unix_seconds();
                 let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
             }
-            for (config_index, (_, _, args)) in prepared.iter().enumerate() {
+            for (config_index, (_, _, args, _)) in prepared.iter().enumerate() {
                 if control.load(Ordering::Acquire) {
                     stopped = true;
                     break;
@@ -9469,7 +9635,7 @@ mod tests {
             &mut auto_lists,
         )
         .unwrap();
-        assert_eq!(args.len(), 10, "{args:#?}");
+        assert_eq!(args.len(), 11, "{args:#?}");
         assert!(args.contains(&"--new".to_string()));
         assert!(args.contains(&format!(
             "--lua-init=@{}",
@@ -9562,6 +9728,210 @@ mod tests {
             auto_lists[0].1.as_deref(),
             Some(lists.join("auto.list").canonicalize().unwrap().as_path())
         );
+    }
+
+    #[test]
+    fn foreign_config_parser_preserves_empty_custom_profile_boundaries_like_zemidala() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        let blobs = directory.path().join("blobs");
+        let lua = directory.path().join("lua");
+        std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&blobs).unwrap();
+        std::fs::create_dir(&lua).unwrap();
+        let source = concat!(
+            "NFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80 --lua-desync=first --new --new=video --filter-tcp=443 --lua-desync=second --new= --new\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --lua-desync=base\"\n",
+        );
+        let args = external_config_test_args(
+            source,
+            Path::new("/tmp/config-check/empty-profile.list"),
+            &lua,
+            &blobs,
+            &lists,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        let profiles = args
+            .split(|argument| argument == "--new")
+            .map(|profile| profile.join(" "))
+            .collect::<Vec<_>>();
+        assert_eq!(profiles.len(), 7, "{profiles:#?}");
+        assert!(profiles[0].is_empty());
+        assert!(profiles[1].contains("--filter-tcp=80 --lua-desync=first"));
+        assert!(profiles[2].is_empty());
+        assert!(profiles[3].contains("--name=video"));
+        assert!(profiles[3].contains("--lua-desync=second"));
+        assert!(profiles[4].is_empty());
+        assert!(profiles[5].is_empty());
+        assert!(profiles[6].contains("--filter-tcp=443 --lua-desync=base"));
+    }
+
+    #[test]
+    fn foreign_config_defaults_use_the_detected_entware_or_openwrt_root() {
+        assert_eq!(
+            foreign_config_install_root(Path::new("/opt/etc/nfqws2/lists")),
+            "/opt"
+        );
+        assert_eq!(
+            foreign_config_install_root(Path::new("/etc/nfqws2/lists")),
+            ""
+        );
+        assert_eq!(
+            foreign_config_install_root(Path::new("C:/temp/lists")),
+            "/opt"
+        );
+    }
+
+    #[test]
+    fn foreign_config_defaults_missing_variables_like_zemidala() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        let blobs = directory.path().join("blobs");
+        let lua = directory.path().join("lua");
+        std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&blobs).unwrap();
+        std::fs::create_dir(&lua).unwrap();
+        for file in ["user.list", "exclude.list", "auto.list"] {
+            std::fs::write(lists.join(file), "example.com\n").unwrap();
+        }
+        for file in ["zapret-lib.lua", "zapret-antidpi.lua", "zapret-auto.lua"] {
+            std::fs::write(lua.join(file), "-- fixture\n").unwrap();
+        }
+        for file in ["quic_initial.bin", "tls_clienthello.bin"] {
+            std::fs::write(blobs.join(file), b"blob").unwrap();
+        }
+        let source =
+            "NFQWS_ARGS=\"--filter-tcp=80,443 --payload=tls_client_hello --lua-desync=fake\"\n";
+        let adapted = foreign_config_with_zemidala_defaults(source, &lua, &blobs, &lists)
+            .expect("stock defaults should be safely added");
+        assert!(adapted.contains("MODE_LIST=\"--hostlist=/opt/etc/nfqws2/lists/user.list\""));
+        assert!(
+            adapted.contains("MODE_ALL=\"--hostlist-exclude=/opt/etc/nfqws2/lists/exclude.list\"")
+        );
+        assert!(
+            adapted
+                .contains("MODE_AUTO=\"$MODE_LIST --hostlist-auto=/opt/etc/nfqws2/lists/auto.list")
+        );
+        assert!(adapted.contains("NFQWS_EXTRA_ARGS=\"$MODE_LIST\""));
+        assert!(
+            adapted.contains("NFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua")
+        );
+        assert!(adapted.contains("--blob=quic_initial:@/opt/etc/nfqws2/blobs/quic_initial.bin"));
+        assert!(
+            adapted.contains("--blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin")
+        );
+
+        let openwrt = foreign_config_with_zemidala_defaults(
+            source,
+            &lua,
+            &blobs,
+            Path::new("/etc/nfqws2/lists"),
+        )
+        .unwrap();
+        assert!(openwrt.contains("MODE_LIST=\"--hostlist=/etc/nfqws2/lists/user.list\""));
+        assert!(openwrt.contains("MODE_ALL=\"--hostlist-exclude=/etc/nfqws2/lists/exclude.list\""));
+        assert!(openwrt.contains("--hostlist-auto=/etc/nfqws2/lists/auto.list"));
+        assert!(openwrt.contains("--hostlist-auto-debug=/var/log/nfqws2.log"));
+        assert!(openwrt.contains("NFQWS_BASE_ARGS=\"--lua-init=@/etc/nfqws2/lua/zapret-lib.lua"));
+
+        let args = external_config_test_args(
+            &adapted,
+            &directory.path().join("isolated-auto.list"),
+            &lua,
+            &blobs,
+            &lists,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(
+            args.iter()
+                .any(|argument| argument.starts_with("--hostlist="))
+        );
+        assert!(
+            args.iter()
+                .any(|argument| argument.starts_with("--blob=quic_initial:@"))
+        );
+        assert!(
+            args.iter()
+                .any(|argument| argument.starts_with("--blob=tls_clienthello:@"))
+        );
+
+        let auto_source = concat!(
+            "NFQWS_ARGS=\"--filter-tcp=80,443 --payload=tls_client_hello --lua-desync=fake\"\n",
+            "NFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n",
+        );
+        let auto_adapted =
+            foreign_config_with_zemidala_defaults(auto_source, &lua, &blobs, &lists).unwrap();
+        let auto_args = external_config_test_args(
+            &auto_adapted,
+            &directory.path().join("isolated-auto-mode.list"),
+            &lua,
+            &blobs,
+            &lists,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(
+            auto_args
+                .iter()
+                .any(|argument| argument.starts_with("--hostlist-auto="))
+        );
+
+        let explicitly_empty = concat!(
+            "NFQWS_BASE_ARGS=\"\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443\"\n",
+            "NFQWS_EXTRA_ARGS=\"\"\n",
+        );
+        let unchanged =
+            foreign_config_with_zemidala_defaults(explicitly_empty, &lua, &blobs, &lists).unwrap();
+        assert!(unchanged.contains("MODE_LIST="));
+        assert!(!unchanged.contains("--lua-init=@/opt/etc/nfqws2/lua/"));
+        assert!(unchanged.contains("NFQWS_BASE_ARGS=\"\""));
+        assert!(unchanged.contains("NFQWS_EXTRA_ARGS=\"\""));
+    }
+
+    #[test]
+    fn foreign_config_dry_run_adds_required_queue_user_and_fastpath_defaults() {
+        let args = vec![
+            "--filter-tcp=443".to_string(),
+            "--lua-desync=fake".to_string(),
+        ];
+        let argv =
+            foreign_config_dry_run_argv("/usr/bin/nfqws2", "NFQUEUE_NUM=317\nUSER=daemon\n", &args)
+                .unwrap();
+        assert_eq!(argv[0], "/usr/bin/nfqws2");
+        assert!(argv.contains(&"--dry-run".into()));
+        assert!(argv.contains(&"--user=daemon".into()));
+        assert!(argv.contains(&"--qnum=317".into()));
+        assert!(argv.contains(&"--fastpath-workaround=auto".into()));
+        assert!(argv.ends_with(&args));
+
+        let defaulted = foreign_config_dry_run_argv("nfqws2", "", &args).unwrap();
+        assert!(defaulted.contains(&"--user=nobody".into()));
+        assert!(defaulted.contains(&"--qnum=300".into()));
+        assert!(defaulted.contains(&"--fastpath-workaround=auto".into()));
+
+        let empty_values =
+            foreign_config_dry_run_argv("nfqws2", "NFQUEUE_NUM=\"\"\nUSER=\"\"\n", &args).unwrap();
+        assert!(empty_values.contains(&"--user=nobody".into()));
+        assert!(empty_values.contains(&"--qnum=300".into()));
+        assert!(
+            foreign_config_dry_run_argv("nfqws2", "NFQUEUE_NUM=not-a-number\n", &args).is_err()
+        );
+        assert!(foreign_config_dry_run_argv("nfqws2", "USER=\"nobody --bad\"\n", &args).is_err());
+
+        let profile_fastpath = vec!["--fastpath-workaround=none".to_string()];
+        let profile_only = foreign_config_dry_run_argv("nfqws2", "", &profile_fastpath).unwrap();
+        assert!(profile_only.contains(&"--fastpath-workaround=auto".into()));
+
+        let base_fastpath = foreign_config_dry_run_argv(
+            "nfqws2",
+            "NFQWS_BASE_ARGS=\"--fastpath-workaround=none\"\n",
+            &args,
+        )
+        .unwrap();
+        assert!(!base_fastpath.contains(&"--fastpath-workaround=auto".into()));
     }
 
     #[test]
