@@ -91,6 +91,12 @@ const all = <T extends HTMLElement>(selector: string) => [...document.querySelec
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
 const setWidth = (selector: string, value: number | null) => { const node = $(selector); if (node) node.style.width = `${Math.min(100, Math.max(0, value ?? 0))}%`; };
 const recentToastTimes = new Map<string, number>();
+function dismissToast(item: HTMLElement) {
+  if (!item.isConnected || item.dataset.removing === 'true') return;
+  item.dataset.removing = 'true';
+  item.classList.add('is-removing');
+  window.setTimeout(() => item.remove(), 220);
+}
 function toast(message: string, type: 'success' | 'error' = 'success') {
   const host = $('#toastWrapper'); if (!host) return;
   if (!message.trim() || !canShowToast(message, type, Date.now(), recentToastTimes)) return;
@@ -132,8 +138,10 @@ function toast(message: string, type: 'success' | 'error' = 'success') {
   const copy = document.createElement('span'); copy.className = 'toast-card-copy';
   const title = document.createElement('strong'); title.textContent = presentation.title;
   const detail = document.createElement('span'); detail.textContent = message;
-  copy.append(title, detail); item.append(icon, copy); host.append(item);
-  window.setTimeout(() => item.remove(), 5200);
+  copy.append(title, detail); item.append(icon, copy);
+  while (host.children.length >= 4) host.firstElementChild?.remove();
+  host.append(item);
+  window.setTimeout(() => dismissToast(item), 5200);
 }
 function schedulePanelRefreshAfterUpdate(message: string) {
   try { window.sessionStorage.setItem(UPDATE_NOTICE_KEY, message); }

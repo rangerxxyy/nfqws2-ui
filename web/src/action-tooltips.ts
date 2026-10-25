@@ -107,6 +107,7 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
     }
   });
   root.addEventListener('pointerover', (event) => {
+    if ((event as PointerEvent).pointerType === 'touch' || window.matchMedia('(hover: none)').matches) return;
     const button = findButton(event.target);
     if (button && !button.contains(event.relatedTarget as Node | null)) schedule(button);
   });
@@ -119,5 +120,7 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
     const button = findButton(event.target);
     if (button && button === active) clear();
   });
+  root.addEventListener('scroll', clear, true);
+  root.defaultView?.addEventListener('resize', clear);
   observer.observe(root.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['title', 'aria-label'] });
 }

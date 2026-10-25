@@ -21,3 +21,19 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 | Monitoring and Telegram | Responsive cards and status bars | Field labels and history remain readable on narrow screens |
 | Appearance and backups | Theme/layout cards and grouped settings | Existing light/neon overrides stay scoped to their theme |
 | About and release controls | Monospace commands and version pills | Focus, hover, and select states use the same shared interaction language |
+
+## v1.0.5 interface pass — 2026-10-25
+
+- Updated the shared custom select to match the compact dark menu reference: selected values keep a blue highlight, readable white text and a checkmark; hover/focus use the same blue family. Opening and closing animate, and reduced-motion disables the motion.
+- Lifecycle toasts now remain deduplicated across their enter, visible and exit periods. The stack is capped at four, accounts for mobile safe areas and can scroll if several long notices need more room. Dismissal is idempotent and animated.
+- Delayed action tooltips keep the existing two-second delay, skip touch-only pointers, and clear when the page scrolls or resizes so a tooltip cannot linger over a different control.
+- Release notes retain safe Markdown links and formatting; strong text is white in the dark theme and follows the foreground in the light theme. Version action icons use a 3 px alignment adjustment.
+- Site diagnosis now includes active host/IP lists used by the running process, in addition to standard lists. Only files that resolve inside the configuration directory are read; symlinks and paths outside it are ignored.
+- The panel continues to use its bundled Inter Variable and JetBrains Mono files. No remote font dependency or new UI framework was added.
+
+### Verification
+
+- Frontend: 29 test files, 241 tests passed; TypeScript production build completed.
+- Backend: Rust formatting and the full Cargo test suite completed successfully.
+- Chromium desktop and mobile captures were reviewed. The local preview has no router backend, so it displays the designed “Нет связи с панелью” state instead of populated panels; this does not verify interactive routes. Firefox’s headless capture remained on the initial loading screen, so its interactive rendering still needs a backend-connected browser session.
+- No physical router was available for deployment checks. The release workflow’s aarch64-musl build remains the router-target verification gate.

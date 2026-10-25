@@ -11,9 +11,16 @@ describe('lifecycle notifications', () => {
 
   it('suppresses the same toast briefly without suppressing a different event', () => {
     const seen = new Map<string, number>();
+    expect(canShowToast('nfqws2 остановлен', 'success', 1000, seen, 1200)).toBe(true);
+    expect(canShowToast('nfqws2 остановлен', 'success', 1200, seen, 1200)).toBe(false);
+    expect(canShowToast('nfqws2 перезапущен', 'success', 1200, seen, 1200)).toBe(true);
+    expect(canShowToast('nfqws2 остановлен', 'success', 2500, seen, 1200)).toBe(true);
+  });
+
+  it('keeps an identical event suppressed for the full visible toast lifetime', () => {
+    const seen = new Map<string, number>();
     expect(canShowToast('nfqws2 остановлен', 'success', 1000, seen)).toBe(true);
-    expect(canShowToast('nfqws2 остановлен', 'success', 1200, seen)).toBe(false);
-    expect(canShowToast('nfqws2 перезапущен', 'success', 1200, seen)).toBe(true);
-    expect(canShowToast('nfqws2 остановлен', 'success', 2500, seen)).toBe(true);
+    expect(canShowToast('nfqws2 остановлен', 'success', 6300, seen)).toBe(false);
+    expect(canShowToast('nfqws2 остановлен', 'success', 6500, seen)).toBe(true);
   });
 });

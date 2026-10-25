@@ -1,5 +1,6 @@
 export type ToastTone = 'success' | 'error';
 export type LifecycleEvent = 'start' | 'stop' | 'restart' | 'panel-update' | 'core-update';
+export const TOAST_DEDUPLICATION_WINDOW_MS = 5500;
 
 export function lifecycleMessage(event: LifecycleEvent, version?: string): string {
   const base = {
@@ -18,7 +19,7 @@ export function toastPresentation(tone: ToastTone) {
     : { title: 'Готово', icon: '✓', role: 'status' as const };
 }
 
-export function canShowToast(message: string, tone: ToastTone, now: number, seen: Map<string, number>, windowMs = 1200): boolean {
+export function canShowToast(message: string, tone: ToastTone, now: number, seen: Map<string, number>, windowMs = TOAST_DEDUPLICATION_WINDOW_MS): boolean {
   const key = `${tone}\u0000${message}`;
   const previous = seen.get(key);
   if (previous !== undefined && now - previous < windowMs) return false;

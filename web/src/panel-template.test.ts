@@ -110,7 +110,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('font-size: max(0.75rem, 1em);');
     expect(panelStyles).toContain('html[data-theme="light"] { color-scheme: light; }');
     expect(panelStyles).toContain('backdrop-filter: blur(14px);');
-    expect(panelStyles).toContain('animation: styled-select-in 150ms var(--ease-out) both;');
+    expect(panelStyles).toContain('animation: select-menu-in 150ms var(--ease-out) both;');
+    expect(panelStyles).toContain('#toastWrapper > .toast-card.is-removing { animation: toast-out');
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
     expect(panelStyles).toContain('[data-theme="dark"] [class*="text-purple-"]');
     expect(panelStyles).toContain('[data-theme="light"] [class*="bg-purple-600"]');

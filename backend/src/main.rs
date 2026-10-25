@@ -4018,6 +4018,129 @@ fn list_reference_from_argv(args: &[String], id: &str) -> Option<PathBuf> {
     list_reference_from_argv_for_flag(args, list_flag(id)?)
 }
 
+fn runtime_list_references(args: &[String]) -> Vec<(PathBuf, bool)> {
+    const FLAGS: [(&str, bool); 5] = [
+        ("--hostlist", false),
+        ("--hostlist-auto", false),
+        ("--hostlist-exclude", false),
+        ("--ipset", true),
+        ("--ipset-exclude", true),
+    ];
+    let mut references = Vec::new();
+    for (index, arg) in args.iter().take(16_384).enumerate() {
+        for (flag, is_ipset) in FLAGS {
+            let value = arg
+                .strip_prefix(flag)
+                .and_then(|suffix| suffix.strip_prefix('='))
+                .or_else(|| {
+                    (arg == flag)
+                        .then(|| args.get(index + 1).map(String::as_str))
+                        .flatten()
+                });
+            let Some(value) = value.map(|value| value.trim_start_matches('@')) else {
+                continue;
+            };
+            if value.is_empty()
+                || value.len() > 4096
+                || value.contains(['$', '`', '\0'])
+                || value.starts_with('~')
+            {
+                continue;
+            }
+            let reference = (PathBuf::from(value), is_ipset);
+            if !references.contains(&reference) {
+                references.push(reference);
+                if references.len() >= 512 {
+                    return references;
+                }
+            }
+        }
+    }
+    references
+}
+
+fn resolve_runtime_list_references(config: &Path, args: &[String]) -> Vec<(PathBuf, bool)> {
+    let Some(config) = config.canonicalize().ok() else {
+        return Vec::new();
+    };
+    let Some(root) = config.parent() else {
+        return Vec::new();
+    };
+    let mut resolved = Vec::new();
+    for (reference, is_ipset) in runtime_list_references(args) {
+        let candidate = if reference.is_absolute() {
+            reference
+        } else {
+            root.join(reference)
+        };
+        let Ok(relative) = candidate.strip_prefix(root) else {
+            continue;
+        };
+        if relative.as_os_str().is_empty()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            continue;
+        }
+        let mut cursor = root.to_path_buf();
+        let mut safe = true;
+        for component in relative.components() {
+            cursor.push(component.as_os_str());
+            match std::fs::symlink_metadata(&cursor) {
+                Ok(metadata) if !metadata.file_type().is_symlink() => {}
+                _ => {
+                    safe = false;
+                    break;
+                }
+            }
+        }
+        if !safe {
+            continue;
+        }
+        let Some(path) = cursor
+            .canonicalize()
+            .ok()
+            .filter(|path| path.starts_with(root) && path.is_file())
+        else {
+            continue;
+        };
+        let entry = (path, is_ipset);
+        if !resolved.contains(&entry) {
+            resolved.push(entry);
+        }
+    }
+    resolved
+}
+
+fn diagnostic_list_candidates(config: &Path, args: &[String]) -> Vec<(String, PathBuf, bool)> {
+    let mut candidates = LIST_IDS
+        .iter()
+        .filter_map(|id| {
+            list_file_path(config, id)
+                .map(|path| ((*id).to_string(), path, id.starts_with("ipset")))
+        })
+        .collect::<Vec<_>>();
+    let Some(root) = config
+        .canonicalize()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    else {
+        return candidates;
+    };
+    for (path, is_ipset) in resolve_runtime_list_references(config, args) {
+        if candidates.iter().any(|(_, existing, _)| existing == &path) {
+            continue;
+        }
+        let label = path
+            .strip_prefix(&root)
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| "активный список".into());
+        candidates.push((label, path, is_ipset));
+    }
+    candidates
+}
+
 fn active_process_arguments() -> Option<Vec<String>> {
     active_process_snapshot().map(|(_, args)| args)
 }
@@ -4400,10 +4523,8 @@ async fn diagnose_site(
     let mut matches = Vec::new();
     let mut unreadable = Vec::new();
     if let Some(config) = config_path_for_state(&state) {
-        for id in LIST_IDS {
-            let Some(path) = list_file_path(&config, id) else {
-                continue;
-            };
+        let active_args = active_process_arguments().unwrap_or_default();
+        for (id, path, is_ipset) in diagnostic_list_candidates(&config, &active_args) {
             let mut bytes = Vec::new();
             let read = match tokio::fs::File::open(&path).await {
                 Ok(file) => file
@@ -4422,7 +4543,7 @@ async fn diagnose_site(
                     &report.host,
                     &report.addresses,
                     line,
-                    id.starts_with("ipset"),
+                    is_ipset,
                 ) {
                     matches.push(format!(
                         "{id}: {}",
@@ -14696,6 +14817,94 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn active_list_inventory_reads_custom_profile_lists_and_keeps_their_kind() {
+        let args = [
+            "nfqws2",
+            "--hostlist=lists/custom-domains.txt",
+            "--new",
+            "--ipset",
+            "lists/as15169.list",
+            "--hostlist-auto-debug=/tmp/auto.log",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            runtime_list_references(&args),
+            [
+                (PathBuf::from("lists/custom-domains.txt"), false),
+                (PathBuf::from("lists/as15169.list"), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn diagnostic_list_candidates_include_active_custom_lists_without_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        let standard = lists.join("user.list");
+        let custom = lists.join("custom-domains.txt");
+        let ipset = lists.join("as15169.list");
+        std::fs::write(&config, "").unwrap();
+        std::fs::write(&standard, "example.com\n").unwrap();
+        std::fs::write(&custom, "custom.example.org\n").unwrap();
+        std::fs::write(&ipset, "8.8.8.0/24\n").unwrap();
+        let args = [
+            "nfqws2".to_owned(),
+            "--hostlist=lists/user.list".to_owned(),
+            "--hostlist=lists/custom-domains.txt".to_owned(),
+            "--ipset".to_owned(),
+            "lists/as15169.list".to_owned(),
+        ];
+
+        let candidates = diagnostic_list_candidates(&config, &args);
+        assert_eq!(candidates.len(), 3);
+        assert!(candidates.iter().any(|(label, path, ip)| {
+            label == "lists/custom-domains.txt" && path == &custom.canonicalize().unwrap() && !ip
+        }));
+        assert!(candidates.iter().any(|(label, path, ip)| {
+            label == "lists/as15169.list" && path == &ipset.canonicalize().unwrap() && *ip
+        }));
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|(_, path, _)| path == &standard.canonicalize().unwrap())
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn active_list_inventory_rejects_paths_outside_the_config_root_and_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let config = root.join("nfqws2.conf");
+        let lists = root.join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        std::fs::write(&config, "").unwrap();
+        std::fs::write(lists.join("safe.txt"), "example.com\n").unwrap();
+        let outside = dir.path().parent().unwrap().join("outside-list.txt");
+        std::fs::write(&outside, "example.com\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, lists.join("linked.txt")).unwrap();
+
+        let args = vec![
+            "nfqws2".to_owned(),
+            "--hostlist=lists/safe.txt".to_owned(),
+            format!("--hostlist={}", outside.display()),
+            "--hostlist=lists/linked.txt".to_owned(),
+        ];
+
+        let resolved = resolve_runtime_list_references(&config, &args);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].0,
+            lists.join("safe.txt").canonicalize().unwrap()
+        );
+        assert!(!resolved[0].1);
     }
 
     #[cfg(unix)]

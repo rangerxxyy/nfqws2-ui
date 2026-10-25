@@ -28,6 +28,7 @@ type StyledSelectState = {
   open: boolean;
   search: string;
   searchTimer: number | null;
+  menuClosingTimer: number | null;
   observer: MutationObserver;
 };
 
@@ -62,7 +63,13 @@ function setActiveOption(state: StyledSelectState, index: number) {
 
 function closeMenu(state: StyledSelectState) {
   state.open = false;
-  state.menu.hidden = true;
+  if (state.menuClosingTimer !== null) window.clearTimeout(state.menuClosingTimer);
+  state.menu.dataset.closing = 'true';
+  state.menuClosingTimer = window.setTimeout(() => {
+    state.menuClosingTimer = null;
+    if (!state.open) state.menu.hidden = true;
+    delete state.menu.dataset.closing;
+  }, 150);
   state.trigger.setAttribute('aria-expanded', 'false');
   state.trigger.removeAttribute('aria-activedescendant');
   state.trigger.classList.remove('styled-select-trigger-open');
@@ -94,11 +101,15 @@ function refreshState(state: StyledSelectState) {
     item.setAttribute('aria-selected', String(index === select.selectedIndex));
     item.setAttribute('aria-disabled', String(option.disabled));
     item.dataset.active = String(state.open && index === state.activeIndex);
+    item.dataset.selected = String(index === select.selectedIndex);
     item.textContent = option.label;
     if (!option.disabled) item.addEventListener('click', () => chooseOption(state, index));
     menu.append(item);
   });
   if (state.open) {
+    if (state.menuClosingTimer !== null) window.clearTimeout(state.menuClosingTimer);
+    state.menuClosingTimer = null;
+    delete menu.dataset.closing;
     menu.hidden = false;
     const active = models[state.activeIndex];
     if (!active || active.disabled) {
@@ -187,7 +198,7 @@ function installOne(select: HTMLSelectElement) {
   const chevron = wrapper.nextElementSibling;
   if (chevron instanceof SVGElement && chevron.classList.contains('trace-protocol-chevron')) chevron.setAttribute('hidden', '');
 
-  const state: StyledSelectState = { select, wrapper, trigger, menu, activeIndex: select.selectedIndex, open: false, search: '', searchTimer: null, observer: new MutationObserver(() => refreshState(state)) };
+  const state: StyledSelectState = { select, wrapper, trigger, menu, activeIndex: select.selectedIndex, open: false, search: '', searchTimer: null, menuClosingTimer: null, observer: new MutationObserver(() => refreshState(state)) };
   states.set(select, state);
   activeStates.add(state);
   state.observer.observe(select, { attributes: true, childList: true, subtree: true, characterData: true, attributeFilter: ['disabled', 'label', 'value', 'selected'] });
