@@ -83,6 +83,8 @@ impl Default for SnapshotSettings {
 pub struct SnapshotItem {
     pub id: String,
     pub ts: u64,
+    #[serde(default)]
+    pub version: Option<String>,
     pub reason: String,
     #[serde(default)]
     pub note: String,
@@ -139,6 +141,7 @@ pub struct SnapshotOverview {
 pub struct SnapshotHistoryEntry {
     pub id: String,
     pub ts: u64,
+    pub version: Option<String>,
     pub reason: String,
     pub note: String,
     pub changed_files: Vec<String>,
@@ -440,6 +443,7 @@ pub fn create_snapshot(
     store.items.push(SnapshotItem {
         id,
         ts: now_seconds(),
+        version: Some(env!("CARGO_PKG_VERSION").to_owned()),
         reason: reason.to_owned(),
         note: note.chars().take(300).collect(),
         size,
@@ -543,6 +547,7 @@ pub fn change_history(data_dir: &Path, limit: usize) -> Vec<SnapshotHistoryEntry
         entries.push(SnapshotHistoryEntry {
             id: item.id,
             ts: item.ts,
+            version: item.version,
             reason: item.reason,
             note: item.note,
             changed_files,
@@ -894,6 +899,7 @@ mod manual_operations_tests {
         SnapshotItem {
             id: id.into(),
             ts,
+            version: None,
             reason: "вручную".into(),
             note: String::new(),
             size: 3,
@@ -957,5 +963,29 @@ mod manual_operations_tests {
         let history = change_history(dir.path(), 20);
         assert_eq!(history[1].changed_files, vec!["a", "b"]);
         assert_eq!(history[2].changed_files, vec!["a"]);
+    }
+
+    #[test]
+    fn change_history_keeps_snapshot_versions_and_accepts_legacy_items_without_one() {
+        let dir = tempdir().unwrap();
+        let legacy: SnapshotItem = serde_json::from_str(
+            r#"{"id":"legacy","ts":1,"reason":"вручную","note":"старый","size":3,"files":{},"local":true,"remote":false,"pinned":false}"#,
+        )
+        .unwrap();
+        assert_eq!(legacy.version, None);
+        let mut current = item("current", 2, &[]);
+        current.version = Some("1.1.0".into());
+        save_store(
+            dir.path(),
+            &SnapshotStore {
+                items: vec![legacy, current],
+                last_daily_date: None,
+            },
+        )
+        .unwrap();
+
+        let history = change_history(dir.path(), 20);
+        assert_eq!(history[0].version.as_deref(), Some("1.1.0"));
+        assert_eq!(history[1].version, None);
     }
 }

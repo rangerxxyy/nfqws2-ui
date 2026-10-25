@@ -491,12 +491,12 @@ async function loadChangeHistory(query = '') {
 function renderChangeHistory(query = '') {
   const host = $('#changeHistoryList'); if (!host) return;
   const needle = query.trim().toLocaleLowerCase();
-  const visible = changeHistoryCache.filter((item) => !needle || [item.reason, item.note, ...item.changedFiles].join(' ').toLocaleLowerCase().includes(needle));
+  const visible = changeHistoryCache.filter((item) => !needle || [item.version ?? '', item.reason, item.note, ...item.changedFiles].join(' ').toLocaleLowerCase().includes(needle));
   host.replaceChildren();
   for (const item of visible) {
     const row = document.createElement('article'); row.className = 'backup-row';
     const title = document.createElement('strong'); title.className = 'block text-sm text-white'; title.textContent = item.note || snapshotReason(item.reason);
-    const meta = document.createElement('span'); meta.className = 'mt-1 block text-xs text-slate-400'; meta.textContent = `${new Date(item.ts * 1000).toLocaleString()} · снимок ${item.id}`;
+    const meta = document.createElement('span'); meta.className = 'mt-1 block text-xs text-slate-400'; meta.textContent = `${new Date(item.ts * 1000).toLocaleString()} · ${item.version ? `версия UI ${item.version}` : 'версия UI не указана'} · снимок ${item.id}`;
     const files = document.createElement('p'); files.className = 'mt-2 break-all text-xs text-slate-300'; files.textContent = item.changedFiles.length ? `Изменено: ${item.changedFiles.join(', ')}` : 'Нет предыдущего снимка для сравнения';
     row.append(title, meta, files); host.append(row);
   }

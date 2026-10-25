@@ -309,17 +309,18 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response('{"id":"p1","name":"Home","updatedAt":1,"content":"NFQWS_ARGS=\\\"--filter-tcp=443\\\""}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"id":"p1","name":"Home 2","updatedAt":2,"bytes":12}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"deleted":true}', { status: 200 }))
-      .mockResolvedValueOnce(new Response('{"items":[]}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"items":[{"id":"snap-1","ts":2,"version":"1.1.0","reason":"apply","note":"","changedFiles":["nfqws2.conf"]}]}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"content":"line"}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     await nfqwsProfiles.create('Home', 'NFQWS_ARGS="--filter-tcp=443"');
     const saved = await nfqwsProfiles.get('p1');
     const updated = await nfqwsProfiles.update('p1', 'Home 2', 'NFQWS_ARGS="--filter-tcp=80"');
     await nfqwsSnapshots.delete('snap-1');
-    await nfqwsChangeHistory.list();
+    const history = await nfqwsChangeHistory.list();
     await nfqwsLogs.get('nfqws2-ui', 20);
     expect(saved.content).toContain('443');
     expect(updated.name).toBe('Home 2');
+    expect(history.items[0]?.version).toBe('1.1.0');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/profiles', '/api/profiles/p1', '/api/profiles/p1', '/api/snapshots/snap-1', '/api/change-history', '/api/logs?source=nfqws2-ui&tail=20',
     ]);
