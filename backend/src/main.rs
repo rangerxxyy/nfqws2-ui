@@ -2654,6 +2654,8 @@ struct UiAppearanceSettings {
     status_bar: String,
     #[serde(default = "default_true")]
     remind_windows_tcp_timestamps: bool,
+    #[serde(default)]
+    simplified_navigation: bool,
 }
 
 fn default_accent() -> String {
@@ -11564,6 +11566,7 @@ mod tests {
         assert_eq!(serialized["remindWindowsTcpTimestamps"], true);
         assert_eq!(serialized["accent"], "blue");
         assert_eq!(serialized["statusBar"], "standard");
+        assert_eq!(serialized["simplifiedNavigation"], false);
     }
 
     #[test]
@@ -11573,13 +11576,16 @@ mod tests {
             "layout": "tiles",
             "accent": "cyan",
             "statusBar": "stacked",
-            "remindWindowsTcpTimestamps": false
+            "remindWindowsTcpTimestamps": false,
+            "simplifiedNavigation": true
         }))
         .unwrap();
         assert_eq!(settings.layout, "tiles");
         assert_eq!(settings.accent, "cyan");
         assert_eq!(settings.status_bar, "stacked");
         assert!(!settings.remind_windows_tcp_timestamps);
+        let serialized = serde_json::to_value(settings).unwrap();
+        assert_eq!(serialized["simplifiedNavigation"], true);
     }
 
     #[test]

@@ -2,6 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+.simplified-nav { display: grid; gap: .5rem; }
+.simplified-nav-groups, .simplified-nav-pages { display: flex; gap: .4rem; overflow-x: auto; scrollbar-width: thin; }
+.simplified-nav-pages { border-top: 1px solid rgb(51 65 85 / 55%); padding-top: .5rem; }
+.simplified-nav-button { flex: 0 0 auto; border: 1px solid #263247; border-radius: .65rem; padding: .45rem .7rem; color: #cbd5e1; background: #101827; font-size: .78rem; font-weight: 600; transition: color .15s ease, background-color .15s ease, border-color .15s ease; }
+.simplified-nav-button:hover { color: #fff; border-color: #475569; }
+.simplified-nav-button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
+.simplified-nav-button.simplified-nav-active { color: #eff6ff; border-color: rgb(96 165 250 / 55%); background: rgb(37 99 235 / 24%); }
+[data-simplified-navigation="true"] .app-main-layout > aside { display: none; }
+[data-simplified-navigation="true"] .app-main-layout > main { width: 100%; }
+@media (max-width: 640px) { .simplified-nav { padding: .6rem; } .simplified-nav-button { padding: .4rem .55rem; font-size: .72rem; } }
+
 @layer base {
   html {
     font-synthesis: none;

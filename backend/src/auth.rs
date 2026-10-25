@@ -35,11 +35,13 @@ pub struct AuthManager {
     attempts: Arc<Mutex<HashMap<String, (u32, Instant)>>>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AuthStore {
     enabled: bool,
     password_hash: Option<String>,
+    #[serde(default = "default_remember_days")]
+    remember_days: u32,
     #[serde(default)]
     sessions: Vec<StoredSession>,
 }
@@ -57,8 +59,6 @@ pub struct LoginRequest {
     password: String,
     #[serde(default)]
     remember: bool,
-    #[serde(default)]
-    remember_days: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -67,6 +67,8 @@ pub struct SettingsRequest {
     enabled: bool,
     password: Option<String>,
     current_password: Option<String>,
+    #[serde(default)]
+    remember_days: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -75,6 +77,26 @@ struct AuthStatus {
     enabled: bool,
     has_password: bool,
     authenticated: bool,
+    remember_days: u32,
+}
+
+fn default_remember_days() -> u32 {
+    30
+}
+
+impl Default for AuthStore {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            password_hash: None,
+            remember_days: default_remember_days(),
+            sessions: Vec::new(),
+        }
+    }
+}
+
+fn valid_remember_days(days: u32) -> bool {
+    matches!(days, 0 | 1 | 7 | 30 | 90 | 365)
 }
 
 impl AuthManager {
@@ -208,6 +230,11 @@ impl AuthManager {
             enabled: store.enabled,
             has_password: store.password_hash.is_some(),
             authenticated: manager.valid_session(&headers, &store).await,
+            remember_days: if valid_remember_days(store.remember_days) {
+                store.remember_days
+            } else {
+                default_remember_days()
+            },
         })
         .into_response()
     }
@@ -277,18 +304,18 @@ impl AuthManager {
         store
             .sessions
             .retain(|session| session.expires_at.is_none_or(|expires_at| expires_at > now));
-        let remember_days = if request.remember {
-            match request.remember_days.unwrap_or(30) {
-                days @ (1 | 7 | 30 | 90 | 365) => Some(days),
-                0 => Some(0),
-                _ => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Выберите срок запоминания: 1, 7, 30, 90, 365 дней или никогда."}))).into_response(),
-            }
+        let remember_days = if valid_remember_days(store.remember_days) {
+            store.remember_days
         } else {
-            None
+            default_remember_days()
         };
-        let ttl = remember_days
-            .map(|days| u64::from(days) * 24 * 60 * 60)
-            .unwrap_or(SESSION_TTL);
+        let ttl = if request.remember && remember_days > 0 {
+            u64::from(remember_days) * 24 * 60 * 60
+        } else if request.remember {
+            0
+        } else {
+            SESSION_TTL
+        };
         let cookie_age = request
             .remember
             .then_some(if ttl == 0 { 2_147_483_647 } else { ttl });
@@ -379,6 +406,12 @@ impl AuthManager {
                 Json(serde_json::json!({"error":"Сначала задайте пароль панели."})),
             )
                 .into_response();
+        }
+        if let Some(days) = request.remember_days {
+            if !valid_remember_days(days) {
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error":"Выберите срок: 1, 7, 30, 90, 365 дней или никогда."}))).into_response();
+            }
+            store.remember_days = days;
         }
         let was_enabled = store.enabled;
         store.enabled = request.enabled;
@@ -540,7 +573,11 @@ fn verify_password(password: &str, hash: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Router, body::Body, routing::get};
+    use axum::{
+        Router,
+        body::Body,
+        routing::{get, post},
+    };
     use tower::ServiceExt;
     #[test]
     fn password_policy_accepts_short_passwords_and_caps_input_size() {
@@ -586,6 +623,53 @@ mod tests {
             expires_at: None,
         };
         assert!(session_matches(&session, "opaque-token", u64::MAX));
+    }
+
+    #[test]
+    fn existing_auth_store_defaults_remember_duration_to_thirty_days() {
+        assert_eq!(AuthStore::default().remember_days, 30);
+        let store: AuthStore =
+            serde_json::from_str(r#"{"enabled":true,"passwordHash":null}"#).unwrap();
+        assert_eq!(store.remember_days, 30);
+        assert!(!valid_remember_days(2));
+        assert!(valid_remember_days(0));
+    }
+
+    #[tokio::test]
+    async fn login_checkbox_uses_the_saved_remember_duration() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = Arc::new(AuthManager::new(dir.path().to_path_buf()));
+        manager
+            .save(&AuthStore {
+                enabled: true,
+                password_hash: Some(hash_password("test").unwrap()),
+                remember_days: 7,
+                ..AuthStore::default()
+            })
+            .await
+            .unwrap();
+        let app = Router::new()
+            .route("/api/auth/login", post(AuthManager::login))
+            .with_state(manager);
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/auth/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"password":"test","remember":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(cookie.contains("Max-Age=604800"));
     }
 
     #[tokio::test]

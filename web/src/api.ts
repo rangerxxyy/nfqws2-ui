@@ -72,8 +72,8 @@ export type SnapshotItem = { id: string; ts: number; reason: string; note: strin
 export type SnapshotRemoteSettings = { enabled: boolean; host: string; port: number; user: string; dir: string; keepLocal: number };
 export type SnapshotSettings = { maxCount: number; maxDays: number; remote: SnapshotRemoteSettings };
 export type SnapshotOverview = { items: SnapshotItem[]; settings: SnapshotSettings; directory: string; totalBytes: number; localCount: number; remote: { tool: string | null; publicKey: string; on: boolean; pending: number; stored: number; lastOk: number | null; error: string | null; setupCommand: string } };
-export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean };
-export type PanelAuthStatus = { enabled: boolean; hasPassword: boolean; authenticated: boolean };
+export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean; simplifiedNavigation: boolean };
+export type PanelAuthStatus = { enabled: boolean; hasPassword: boolean; authenticated: boolean; rememberDays: number };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
 export type UiUpdateStatus = { currentVersion: string; latestVersion: string | null; updateAvailable: boolean; releaseUrl: string | null; checkedAt: number | null };
 export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null };
@@ -176,9 +176,9 @@ export const nfqwsAppearance = {
 
 export const nfqwsAuth = {
   status: () => api<PanelAuthStatus>('/api/auth/status'),
-  login: (password: string, remember: boolean, rememberDays = 30) => api<{ success: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ password, remember, rememberDays }) }),
+  login: (password: string, remember: boolean) => api<{ success: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ password, remember }) }),
   logout: () => api<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
-  save: (enabled: boolean, password: string, currentPassword: string) => api<{ saved: boolean }>('/api/auth/settings', { method: 'PUT', body: JSON.stringify({ enabled, password, currentPassword }) }),
+  save: (enabled: boolean, password: string, currentPassword: string, rememberDays: number) => api<{ saved: boolean }>('/api/auth/settings', { method: 'PUT', body: JSON.stringify({ enabled, password, currentPassword, rememberDays }) }),
 };
 
 export const nfqwsApply = {

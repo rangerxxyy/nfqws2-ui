@@ -98,7 +98,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(15);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(16);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -552,7 +552,7 @@ describe('TSX panel with optional server-side authentication', () => {
       expect(template).not.toContain(`id="navBtn-${route}"`);
       expect(template).not.toContain(`id="tabContent-${route}"`);
     }
-    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['community', 'snapshots', 'supportReport']");
+    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport']");
     expect(panelSource).toContain('nfqwsSnapshots.create(');
     expect(backendSource).toContain('"/api/snapshots"');
     expect(backendSource).toContain('get(get_snapshots).post(create_snapshot_api)');
@@ -580,11 +580,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('Настройки и оформление UI');
     expect(template).toContain('id="settingsAppearancePanel"');
     expect(template).toContain('id="settingsSecurityPanel"');
+    expect(template).toContain('id="simplifiedNavigation"');
+    expect(template).toContain('data-appearance-simplified-navigation="true"');
+    expect(template).toContain('data-simplified-group="site-check"');
+    expect(template).toContain('data-simplified-route="community"');
+    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport']");
     expect(template).toContain('id="panelAuthEnabled"');
     expect(template).toContain('data-action-click="savePanelAuthSettings"');
     expect(entrySource).toContain('nfqwsAuth.status()');
-    expect(entrySource).toContain('Забыть через');
-    expect(entrySource).toContain('<option value="0">Никогда</option>');
+    expect(appSource).toContain('Забывать вход через');
+    expect(appSource).toContain('Никогда');
+    expect(entrySource).toContain('checked={remember}');
     expect(backendSource).toContain('/api/auth/login');
     expect(backendSource).toContain('auth::AuthManager::middleware');
   });
@@ -766,10 +772,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).not.toContain('7194028410:AAH8x9kLmP2qW_nfqws2_router_bot');
   });
 
-  it('keeps remember-me duration visible and removes the obsolete password minimum', () => {
-    expect(entrySource).toContain('id="rememberDays"');
-    expect(entrySource).toContain('disabled={!remember}');
-    expect(entrySource).toContain('<option value="0">Никогда</option>');
+  it('keeps remember-me duration in panel settings and uses only a checkbox at login', () => {
+    expect(entrySource).not.toContain('id="rememberDays"');
+    expect(entrySource).toContain('Запомнить меня');
+    expect(appSource).toContain('id={"panelAuthRememberDays"}');
+    expect(appSource).toContain('option value={"0"}>Никогда');
     expect(appSource).not.toContain('minLength={12}');
     expect(appSource).not.toContain('Не менее 12 символов');
     expect(appSource).toContain('даже из одного символа');

@@ -29,17 +29,17 @@ describe('API client used by the source-based panel', () => {
   it('sends login credentials and the remember-me choice to the Rust auth API', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"success":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(nfqwsAuth.login('safe password', true, 90)).resolves.toEqual({ success: true });
+    await expect(nfqwsAuth.login('safe password', true)).resolves.toEqual({ success: true });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/auth/login');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ password: 'safe password', remember: true, rememberDays: 90 });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ password: 'safe password', remember: true });
   });
 
   it('saves panel auth policy and password through the same-origin API', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(nfqwsAuth.save(true, 'long enough password', '')).resolves.toEqual({ saved: true });
+    await expect(nfqwsAuth.save(true, 'long enough password', '', 90)).resolves.toEqual({ saved: true });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/auth/settings');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ enabled: true, password: 'long enough password', currentPassword: '' });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ enabled: true, password: 'long enough password', currentPassword: '', rememberDays: 90 });
   });
 
   it('requests a bounded ASN prefix lookup from the Rust API', async () => {
@@ -70,7 +70,7 @@ describe('API client used by the source-based panel', () => {
   it('persists the selected appearance layout and palette with the standard status bar', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const settings = { theme: 'light', layout: 'tiles', accent: 'cyan', statusBar: 'stacked', remindWindowsTcpTimestamps: true } as const;
+    const settings = { theme: 'light', layout: 'tiles', accent: 'cyan', statusBar: 'stacked', remindWindowsTcpTimestamps: true, simplifiedNavigation: false } as const;
     await nfqwsAppearance.save(settings);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/ui/appearance');
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual(settings);

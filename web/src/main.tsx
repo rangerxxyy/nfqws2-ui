@@ -8,7 +8,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<'loading' | 'open' | 'login' | 'error'>('loading');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
-  const [rememberDays, setRememberDays] = useState('30');
+  const [rememberDays, setRememberDays] = useState(30);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -23,7 +23,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('nfqws-auth-expired', handleSessionExpired);
   }, []);
   useEffect(() => {
-    void nfqwsAuth.status().then((auth) => setState(auth.enabled && !auth.authenticated ? 'login' : 'open'))
+    void nfqwsAuth.status().then((auth) => { setRememberDays(auth.rememberDays); setState(auth.enabled && !auth.authenticated ? 'login' : 'open'); })
       .catch(() => setState('error'));
   }, []);
   if (state === 'loading') return <main className="grid min-h-screen place-items-center bg-slate-950 text-slate-200">Загрузка панели…</main>;
@@ -31,7 +31,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   if (state === 'open') return children;
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError('');
-    try { await nfqwsAuth.login(password, remember, Number(rememberDays)); setState('open'); }
+    try { await nfqwsAuth.login(password, remember); setState('open'); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Не удалось войти.'); }
     finally { setBusy(false); }
   };
@@ -40,7 +40,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       <div><h1 className="text-xl font-bold">Вход в nfqws2-UI</h1><p className="mt-1 text-sm text-slate-400">Введите пароль панели.</p></div>
       <label className="block text-sm text-slate-300">Пароль<input autoFocus required type="password" value={password} onChange={(event) => setPassword(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white" /></label>
       <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} className="accent-blue-500" /> Запомнить меня</label>
-      <label className="block text-sm text-slate-300">Забыть через<select id="rememberDays" value={rememberDays} disabled={!remember} onChange={(event) => setRememberDays(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white disabled:cursor-not-allowed disabled:opacity-50"><option value="1">1 день</option><option value="7">7 дней</option><option value="30">30 дней</option><option value="90">90 дней</option><option value="365">365 дней</option><option value="0">Никогда</option></select><small className="mt-1 block text-xs text-slate-500">Срок применяется, когда включено «Запомнить меня».</small></label>
+      <p className="text-xs text-slate-500">{remember ? (rememberDays === 0 ? 'Отмеченный вход не будет иметь срока истечения.' : `Отмеченный вход сохранится на ${rememberDays} ${rememberDays === 1 ? 'день' : 'дней'}.`) : 'Без галочки вход действует 24 часа.'}</p>
       {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
       <button disabled={busy} className="w-full rounded-lg bg-blue-600 px-4 py-2.5 font-semibold hover:bg-blue-500 disabled:opacity-50">{busy ? 'Входим…' : 'Войти'}</button>
     </form>

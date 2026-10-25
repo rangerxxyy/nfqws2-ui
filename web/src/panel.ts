@@ -28,7 +28,7 @@ import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterv
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'community' | 'snapshots' | 'supportReport' | 'appearance' | 'about';
-export const UNAVAILABLE_PANEL_ROUTES = ['community', 'snapshots', 'supportReport'] as const;
+export const UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
@@ -49,7 +49,7 @@ let diagnosisRunning = false;
 let monitoringRunning = false;
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
-let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
+let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, simplifiedNavigation: false };
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -281,6 +281,7 @@ function showRoute(route: Route) {
     button.classList.toggle('active', active);
     button.classList.toggle('text-slate-400', !active);
   });
+  syncSimplifiedNavigation(route);
   if (route === 'lists') void loadList(activeListId);
   if (route === 'about') void loadAboutStatus();
 }
@@ -367,18 +368,38 @@ function syncAppearanceControls() {
   all<HTMLInputElement>('input[name="appearanceAccent"]').forEach((input) => { input.checked = input.value === appearanceSettings.accent; });
   all<HTMLInputElement>('input[name="appearanceStatusBar"]').forEach((input) => { input.checked = input.value === appearanceSettings.statusBar; });
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
+  all<HTMLInputElement>('[data-appearance-simplified-navigation]').forEach((input) => { input.checked = appearanceSettings.simplifiedNavigation; });
+}
+function syncSimplifiedNavigation(route?: Route) {
+  const routeToGroup: Record<string, string> = { conf: 'configuration', check: 'site-check', trace: 'site-check', diagnostic16k: 'site-check', configCheck: 'site-check', autotune: 'tuning', community: 'tuning', monitor: 'monitoring', lists: 'lists', appearance: 'system', about: 'system' };
+  const activeRoute = route ?? (Object.keys(routeToGroup).find((key) => !document.getElementById(`tabContent-${key}`)?.classList.contains('hidden')) as Route | undefined);
+  const group = activeRoute ? routeToGroup[activeRoute] : undefined;
+  const navigation = $('#simplifiedNavigation');
+  navigation?.classList.toggle('hidden', !appearanceSettings.simplifiedNavigation);
+  all<HTMLButtonElement>('[data-simplified-group]').forEach((button) => {
+    const active = button.dataset.simplifiedGroup === group;
+    button.setAttribute('aria-pressed', String(active));
+    button.classList.toggle('simplified-nav-active', active);
+  });
+  all<HTMLButtonElement>('[data-simplified-route]').forEach((button) => {
+    const active = button.dataset.simplifiedRoute === activeRoute;
+    button.setAttribute('aria-pressed', String(active));
+    button.classList.toggle('simplified-nav-active', active);
+    button.classList.toggle('hidden', routeToGroup[button.dataset.simplifiedRoute ?? ''] !== group);
+  });
 }
 function updateAppearance(change: Partial<AppearanceSettings>) {
   let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Apply for this session without persistent storage. */ }
   appearanceSettings = saveAppearance(storage, { ...appearanceSettings, ...change });
   applyAppearance(appearanceSettings);
   syncAppearanceControls();
+  syncSimplifiedNavigation();
   void nfqwsAppearance.save(appearanceSettings).catch((error) => toast(error instanceof Error ? `Оформление сохранено только в этом браузере: ${error.message}` : 'Оформление сохранено только в этом браузере.', 'error'));
 }
 async function syncAppearanceFromRouter() {
   const saved = await nfqwsAppearance.get(); if (!saved) return;
   let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Use the restored settings for this session. */ }
-  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
+  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncSimplifiedNavigation();
 }
 function initializeAppearanceSettings() {
   let storage: Storage | null = null;
@@ -388,7 +409,7 @@ function initializeAppearanceSettings() {
   syncAppearanceControls();
   void nfqwsAppearance.get().then((saved) => {
     if (!saved) { void nfqwsAppearance.save(appearanceSettings).catch(() => undefined); return; }
-    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
+    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncSimplifiedNavigation();
   }).catch(() => undefined);
 }
 async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
@@ -2795,6 +2816,8 @@ async function loadPanelAuthSettings() {
     const status = await nfqwsAuth.status();
     const enabled = $('#panelAuthEnabled');
     if (enabled instanceof HTMLInputElement) enabled.checked = status.enabled;
+    const rememberDays = $('#panelAuthRememberDays');
+    if (rememberDays instanceof HTMLSelectElement) rememberDays.value = String(status.rememberDays);
     $('#panelAuthCurrentWrap')?.classList.toggle('hidden', !status.enabled);
     setText('#panelAuthState', status.enabled ? 'Защита включена' : status.hasPassword ? 'Пароль сохранён, вход пока открыт' : 'Защита выключена');
   } catch (error) { setText('#panelAuthState', error instanceof Error ? error.message : 'Не удалось загрузить настройки'); }
@@ -2802,11 +2825,12 @@ async function loadPanelAuthSettings() {
 
 async function savePanelAuthSettings() {
   const enabled = $('#panelAuthEnabled'); const password = $('#panelAuthPassword'); const current = $('#panelAuthCurrentPassword');
-  if (!(enabled instanceof HTMLInputElement) || !(password instanceof HTMLInputElement) || !(current instanceof HTMLInputElement)) return;
+  const rememberDays = $('#panelAuthRememberDays');
+  if (!(enabled instanceof HTMLInputElement) || !(password instanceof HTMLInputElement) || !(current instanceof HTMLInputElement) || !(rememberDays instanceof HTMLSelectElement)) return;
   const button = $('[data-action-click="savePanelAuthSettings"]');
   if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Сохраняю…'; }
   try {
-    await nfqwsAuth.save(enabled.checked, password.value, current.value);
+    await nfqwsAuth.save(enabled.checked, password.value, current.value, Number(rememberDays.value));
     password.value = ''; current.value = '';
     setText('#panelAuthFeedback', 'Настройки входа сохранены.');
     toast('Настройки входа сохранены.');
@@ -2862,6 +2886,8 @@ function bindPrototypeActions() {
     setAppearanceAccent: (accent: AppearanceSettings['accent']) => updateAppearance({ accent }),
     setAppearanceStatusBar: (statusBar: AppearanceSettings['statusBar']) => updateAppearance({ statusBar }),
     setAppearanceTimestampReminder: (remindWindowsTcpTimestamps: boolean) => updateAppearance({ remindWindowsTcpTimestamps }),
+    setAppearanceSimplifiedNavigation: (simplifiedNavigation: boolean) => updateAppearance({ simplifiedNavigation }),
+    switchSimplifiedNavGroup: (group: string) => { const routes: Record<string, Route> = { configuration: 'conf', 'site-check': 'check', tuning: 'autotune', monitoring: 'monitor', lists: 'lists', system: 'appearance' }; const route = routes[group]; if (route) showRoute(route); },
     checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
     fetchAsnPrefixes: () => void fetchAsnPrefixes(),
