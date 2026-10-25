@@ -15,7 +15,7 @@ const viteSource = readFileSync(new URL('../vite.config.ts', import.meta.url), '
 const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8');
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
-describe('TSX panel without authentication', () => {
+describe('TSX panel with optional server-side authentication', () => {
   it('opens the full configuration editor first and separates configuration settings', () => {
     expect(template).toContain('id="configTabEditor"');
     expect(template).toContain('aria-pressed="true"');
@@ -98,7 +98,7 @@ describe('TSX panel without authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(13);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(15);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -388,6 +388,27 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('/api/nfqws2/strategies/pick/history');
   });
 
+  it('offers single-site and two-to-fifteen-site strategy picker modes backed by the multi-site API', () => {
+    expect(template).toContain('data-action-click="setStrategyTargetMode"');
+    expect(template).toContain('id="strategyMultiTargetPanel"');
+    expect(template).toContain('id="strategyMultiHostList"');
+    expect(template).toContain('id="strategyMultiListSelect"');
+    expect(template).toContain('id="pickRandomMultiSitesButton"');
+    expect(template).toContain('От 2 до 15 сайтов');
+    expect(panelSource).toContain('nfqwsDiagnostics.strategyMultiStart');
+    expect(panelSource).toContain('operation.multiSiteResults');
+    expect(panelSource).toContain('domain.successes}/${domain.attempts}');
+  });
+
+  it('synchronizes config editor scrolling once per animation frame without rebuilding syntax highlighting', () => {
+    const scrollSync = panelSource.slice(panelSource.indexOf('function syncConfigScroll'), panelSource.indexOf('function escapeConfigHtml'));
+    expect(scrollSync).toContain('requestAnimationFrame');
+    expect(scrollSync).toContain('scrollTop');
+    expect(scrollSync).toContain('scrollLeft');
+    expect(scrollSync).not.toContain('syncConfigLines(');
+    expect(panelSource).toContain("addEventListener('scroll', syncConfigScroll, { passive: true })");
+  });
+
   it('clears stale candidate cards when a selected operation has no candidate results', () => {
     const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('async function loadStrategyPickHistory'));
     expect(renderer).toContain('container.replaceChildren()');
@@ -499,10 +520,10 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('renderTelegramNotifications(cfg.notifications)');
     expect(monitoringSource).toContain('MAX_MONITORING_SITES = 20');
     expect(panelSource).toContain('Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ');
-    for (const route of ['community']) {
-      expect(template).toMatch(new RegExp(`id="navBtn-${route}" class="[^"]*hidden`));
-      expect(template).toMatch(new RegExp(`id="tabContent-${route}" class="hidden`));
-    }
+    expect(template).toMatch(/id="navBtn-community" class="(?![^"]*hidden)[^"]*side-nav-btn/);
+    expect(template).toMatch(/id="tabContent-community" class="hidden/);
+    expect(template).toContain('data-action-click="loadCommunityStrategies"');
+    expect(panelSource).toContain('nfqwsDiagnostics.communityStrategies');
     expect(template).toMatch(/id="navBtn-autotune" class="(?![^"]*hidden)[^"]*side-nav-btn/);
     expect(template).toContain('data-action-click="startStrategyPick"');
     expect(template).toContain('id="tabContent-diagnostic16k"');
@@ -553,11 +574,27 @@ describe('TSX panel without authentication', () => {
     expect(template.toLowerCase()).not.toContain('zemidala');
   });
 
-  it('keeps the supplied panel structure and has no authorization screen', () => {
+  it('keeps the panel structure and exposes the two settings subsections', () => {
     expect(template).toContain('id="tabContent-conf"');
     expect(template).toContain('id="tabContent-lists"');
-    expect(template).not.toContain('authForm');
-    expect(template).not.toContain('navBtn-auth');
+    expect(template).toContain('Настройки и оформление UI');
+    expect(template).toContain('id="settingsAppearancePanel"');
+    expect(template).toContain('id="settingsSecurityPanel"');
+    expect(template).toContain('id="panelAuthEnabled"');
+    expect(template).toContain('data-action-click="savePanelAuthSettings"');
+    expect(entrySource).toContain('nfqwsAuth.status()');
+    expect(entrySource).toContain('Забыть через');
+    expect(entrySource).toContain('<option value="0">Никогда</option>');
+    expect(backendSource).toContain('/api/auth/login');
+    expect(backendSource).toContain('auth::AuthManager::middleware');
+  });
+
+  it('copies the exact About command from its row and confirms the result accessibly', () => {
+    expect(template).toContain('id="aboutCopyStatus"');
+    expect(template).toContain('aria-label="Копировать команду"');
+    expect(appSource).toContain('JSON.stringify([{source:"self"}])');
+    expect(panelSource).toContain("closest('.about-command-row')?.querySelector('code')?.textContent?.trim()");
+    expect(panelSource).toContain("setText('#aboutCopyStatus', 'Команда скопирована в буфер обмена.')");
   });
 
   it('shows the configuration structure panel enabled on first render', () => {
@@ -723,8 +760,9 @@ describe('TSX panel without authentication', () => {
     expect(template).not.toContain('Резервные копии');
   });
 
-  it('does not ship login controls or example credentials', () => {
+  it('does not ship example credentials in login controls', () => {
     expect(template).not.toContain('authPassword');
+    expect(appSource).toContain('id={"panelAuthPassword"}');
     expect(template).not.toContain('7194028410:AAH8x9kLmP2qW_nfqws2_router_bot');
   });
 
@@ -875,8 +913,8 @@ describe('TSX panel without authentication', () => {
     expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);
     expect(template).toContain('Уведомления Telegram');
     expect(template).toContain('каждые 30 мин');
-    expect(template).toContain('Провайдер не определён');
-    expect(template).toContain('Нет данных сообщества из backend.');
+    expect(template).toContain('ASN не определён');
+    expect(template).toContain('Варианты пока не загружены.');
     expect(template).toContain('0%');
     expect(template).not.toContain('Ростелеком (AS12389)');
     expect(template).not.toContain('Рейтинг успешности: 96%');

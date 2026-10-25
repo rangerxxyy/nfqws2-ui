@@ -363,7 +363,7 @@ export default function App() {
               </button>
               {"\n\n            "}
               {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["community"])} id={"navBtn-community"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["community"])} id={"navBtn-community"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 {"\n              "}
                 <div className={"flex items-center gap-3"}>
                   {"\n                "}
@@ -396,7 +396,7 @@ export default function App() {
             <nav className={"space-y-1"}>
 
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["appearance"])} id={"navBtn-appearance"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>Оформление UI</span>
+                <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>Настройки и оформление UI</span>
               </button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>О nfqws2-UI</span>
@@ -1016,8 +1016,12 @@ export default function App() {
             {"\n          "}
             <div className={"grid grid-cols-1 gap-1 mt-2 strategy-settings-grid"}>
               {"\n            "}
+              <div className={"strategy-target-mode-switch"} role={"group"} aria-label={"Область автоподбора"}>
+                <button type={"button"} data-action-click={"setStrategyTargetMode"} data-arg={"single"} className={"active"}>Один сайт</button>
+                <button type={"button"} data-action-click={"setStrategyTargetMode"} data-arg={"multi"}>От 2 до 15 сайтов</button>
+              </div>
               <div className={"strategy-target-transport-row"}>
-                <label htmlFor={"scanCustomHost"} className={"text-xs font-mono text-slate-400"}>
+                <label htmlFor={"scanCustomHost"} className={"text-xs font-mono text-slate-400 strategy-target-single-input"}>
                   {"Домен или публичный IPv4"}
                   <input id={"scanCustomHost"} type={"text"} placeholder={"example.com или 8.8.8.8"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
                 </label>
@@ -1028,6 +1032,19 @@ export default function App() {
                   </select>
                 </label>
                 <p className={"strategy-target-transport-help"}>{"QUIC Initial проверяется в разделе «Проверка сайта»; перебор QUIC-стратегий пока не подключён."}</p>
+              </div>
+
+              <div id={"strategyMultiTargetPanel"} className={"hidden strategy-multi-target-panel"}>
+                <div className={"strategy-multi-list-toolbar"}>
+                  <label htmlFor={"strategyMultiListSelect"}>Список сайтов</label>
+                  <select id={"strategyMultiListSelect"} defaultValue={"user.list"}>
+                    <option value={"user.list"}>Пользовательские домены</option>
+                  </select>
+                  <button id={"pickRandomMultiSitesButton"} type={"button"} data-action-click={"pickRandomMultiSites"}>↻ Другие случайные</button>
+                </div>
+                <label htmlFor={"strategyMultiHostList"}>Домены для общего профиля</label>
+                <textarea id={"strategyMultiHostList"} rows={5} spellCheck={false} autoCapitalize={"none"} placeholder={"youtube.com\ndiscord.com\nexample.org"}></textarea>
+                <p>Укажите от 2 до 15 уникальных доменов. Сначала проверим их напрямую, затем будем искать один общий профиль.</p>
               </div>
 
               <div className={"strategy-setting-row"}>
@@ -1059,7 +1076,7 @@ export default function App() {
               </div>
               {"\n\n            "}
               {"\n\n            "}
-              <div className={"strategy-setting-row strategy-mode-tile"}>
+              <div className={"strategy-setting-row strategy-mode-tile strategy-mode-specific"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
                   {"Режим тестирования"}
@@ -1256,7 +1273,12 @@ export default function App() {
           </section>
         </section>
         <section id={"tabContent-appearance"} className={"hidden view-animate space-y-5"}>
-          <div><h1 className={"text-xl font-bold text-white"}>Оформление UI</h1><p className={"mt-1 text-sm text-slate-400"}>Настройки сохраняются в этом браузере.</p></div>
+          <div><h1 className={"text-xl font-bold text-white"}>Настройки и оформление UI</h1><p className={"mt-1 text-sm text-slate-400"}>Управляйте внешним видом панели и доступом к ней.</p></div>
+          <div className={"flex flex-wrap gap-2 border-b border-slate-800 pb-3"} role={"tablist"} aria-label={"Настройки UI"}>
+            <button type={"button"} data-action-click={"showSettingsSection"} data-args={JSON.stringify(["appearance"])} aria-pressed={"true"} className={"settings-subtab settings-subtab-active rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100"}>Оформление UI</button>
+            <button type={"button"} data-action-click={"showSettingsSection"} data-args={JSON.stringify(["security"])} aria-pressed={"false"} className={"settings-subtab rounded-lg border border-slate-800 px-3 py-2 text-sm font-semibold text-slate-400"}>Настройки UI</button>
+          </div>
+          <div id={"settingsAppearancePanel"} className={"settings-section-panel space-y-5"}>
           <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
             <div><h2 className={"font-bold text-white"}>Цветовая тема</h2><p className={"mt-1 text-xs text-slate-400"}>Выберите подходящее оформление панели.</p></div>
             <div className={"grid gap-3 sm:grid-cols-3"}>
@@ -1275,15 +1297,25 @@ export default function App() {
               {[["standard", "Стандартный", "Слева, вертикальный список"], ["compact", "Компактный", "Скрывает группу диагностики"], ["dense", "Плотный", "Меньше отступов"], ["wide", "Широкий", "Расширенная боковая панель"], ["right", "Справа", "Навигация у правого края"], ["top", "Верхнее меню", "Разделы в горизонтальной строке"], ["tiles", "Плитки", "Разделы в виде карточек"]].map(([value, label, description]) => <label key={value} className={`appearance-layout-choice appearance-layout-${value}`}><input type={"radio"} name={"appearanceLayout"} value={value} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span className={"appearance-layout-preview"} aria-hidden={"true"}><i></i><i></i><i></i><i></i></span><span><strong>{label}</strong><small>{description}</small></span></label>)}
             </div></div>
           </section>
+          </div>
+          <section id={"settingsSecurityPanel"} className={"settings-section-panel hidden ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
+            <div><h2 className={"font-bold text-white"}>Защита входа в панель</h2><p className={"mt-1 text-sm text-slate-400"}>Пароль хранится на роутере в виде стойкого хэша. Без отметки сеанс действует 24 часа; срок «Запомнить меня» выбирается при входе: 1, 7, 30, 90, 365 дней или без срока истечения.</p></div>
+            <label className={"flex items-center gap-3 text-sm text-slate-200"}><input id={"panelAuthEnabled"} type={"checkbox"} className={"accent-blue-500"} /><span><strong>Требовать пароль при открытии панели</strong><small id={"panelAuthState"} className={"mt-1 block text-xs text-slate-400"}>Загрузка состояния…</small></span></label>
+            <label className={"block text-sm text-slate-300"}>Новый пароль <input id={"panelAuthPassword"} type={"password"} autoComplete={"new-password"} minLength={12} maxLength={1024} placeholder={"Не менее 12 символов"} className={"mt-1.5 w-full max-w-lg rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white"} /></label>
+            <label id={"panelAuthCurrentWrap"} className={"hidden block text-sm text-slate-300"}>Текущий пароль <input id={"panelAuthCurrentPassword"} type={"password"} autoComplete={"current-password"} className={"mt-1.5 w-full max-w-lg rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white"} /></label>
+            <p className={"text-xs text-slate-500"}>Чтобы включить защиту, задайте пароль. При изменении уже включённых настроек потребуется текущий пароль.</p>
+            <div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"savePanelAuthSettings"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить настройки</button><button type={"button"} data-action-click={"logoutPanel"} className={"rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:bg-slate-800"}>Выйти из панели</button></div>
+            <p id={"panelAuthFeedback"} className={"text-sm text-slate-400"} role={"status"} aria-live={"polite"}></p>
+          </section>
         </section>
         <section id={"tabContent-about"} className={"hidden view-animate space-y-5"}>
           <div><h1 className={"text-xl font-bold text-white"}>О nfqws2-UI</h1><p className={"mt-1 text-sm text-slate-400"}>Версия панели, обновления и команды управления на роутере.</p></div>
           <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
             <div className={"flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4"}><div><h2 className={"font-bold text-white"}>nfqws2-UI</h2><a href={"https://github.com/rangerxxyy/nfqws2-ui"} target={"_blank"} rel={"noreferrer"} className={"mt-1 inline-block text-sm text-blue-400 hover:text-blue-300"}>github.com/rangerxxyy/nfqws2-ui ↗</a></div><div className={"flex items-center gap-3"}><p className={"text-sm text-slate-300"}>Установлена: <strong id={"aboutCurrentVersion"} className={"font-mono text-white"}>—</strong><br />Последняя: <strong id={"aboutLatestVersion"} className={"font-mono text-white"}>—</strong></p><button data-action-click={"checkUiUpdate"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↻ Проверить обновление</button></div></div>
             <p id={"aboutUpdateStatus"} className={"text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Загрузка сведений о версии…</p>
-            <div><h2 className={"font-bold text-white"}>Команды в терминале роутера</h2><div className={"mt-3 grid gap-2"}>
-              {[["nfqws2-ui-ctl update", "Обновить до последнего релиза"], ["nfqws2-ui-ctl update --check", "Только проверить доступную версию"], ["nfqws2-ui-ctl update v1.0.0 --force", "Установить версию или выполнить откат"], ["nfqws2-ui-ctl status", "Показать состояние панели и nfqws2"], ["nfqws2-ui-ctl help", "Показать полный список команд"]].map(([command, description]) => <div key={command} className={"about-command-row"}><div className={"min-w-0"}><code>{command}</code><small>{description}</small></div><button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify([command])} className={"rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"}>Копировать</button></div>)}
-            </div><p className={"mt-3 text-xs text-slate-500"}><code>nfqws2-ui-ctl</code> — отдельная команда панели rangerxxyy; штатное управление nfqws2 не меняется.</p></div>
+            <div><h2 className={"font-bold text-white"}>Команды в терминале роутера</h2><p className={"mt-1 text-sm text-slate-400"}>Подключитесь к роутеру по SSH, затем скопируйте нужную команду целиком. Кнопка подтвердит копирование.</p><div className={"mt-3 grid gap-2"}>
+              {[["nfqws2-ui-ctl update", "Обновить панель до последней стабильной версии"], ["nfqws2-ui-ctl update --check", "Проверить наличие обновления без установки"], ["nfqws2-ui-ctl update v1.0.0 --force", "Установить эту версию или откатиться к ней"], ["nfqws2-ui-ctl status", "Посмотреть состояние панели и nfqws2"], ["nfqws2-ui-ctl help", "Открыть справку по командам управления"]].map(([command, description]) => <div key={command} className={"about-command-row"}><div className={"min-w-0"}><code>{command}</code><small>{description}</small></div><button aria-label={"Копировать команду"} title={"Копировать команду"} data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify([{source:"self"}])} className={"rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"}>Копировать</button></div>)}
+            </div><p id={"aboutCopyStatus"} className={"mt-2 text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p><p className={"mt-3 text-xs text-slate-500"}><code>nfqws2-ui-ctl</code> — отдельная команда панели rangerxxyy; штатное управление nfqws2 не меняется.</p></div>
           </section>
         </section>
         {"\n\n      "}
@@ -1292,6 +1324,19 @@ export default function App() {
         {"\n      "}
         <section id={"tabContent-community"} className={"hidden view-animate space-y-5"}>
           {"\n        "}
+          <div><h1 className={"text-xl font-bold text-white"}>Стратегии сообщества</h1><p className={"mt-1 text-sm text-slate-400"}>Получите ограниченный набор вариантов для провайдера и сайта; применить можно только после проверки на роутере.</p></div>
+          <section className={"ui-card rounded-2xl p-4 sm:p-5"}>
+            <div className={"grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end"}>
+              <label htmlFor={"communityHostInput"} className={"text-xs font-mono text-slate-400"}>Домен для подбора
+                <input id={"communityHostInput"} type={"text"} placeholder={"example.com"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-white"} />
+              </label>
+              <label htmlFor={"communityProtocolSelect"} className={"text-xs font-mono text-slate-400"}>Транспорт
+                <select id={"communityProtocolSelect"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-white"}><option value={"https"}>HTTPS · TCP 443</option><option value={"http"}>HTTP · TCP 80</option></select>
+              </label>
+              <button type={"button"} data-action-click={"loadCommunityStrategies"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Загрузить варианты</button>
+            </div>
+            <p id={"communityCatalogStatus"} className={"mt-3 text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Backend проверит ASN провайдера, совместимость Lua-функций и кэш каталога.</p>
+          </section>
           <div className={"grid grid-cols-1 lg:grid-cols-12 gap-5"}>
             {"\n          \n          "}
             {"\n          "}
@@ -1302,23 +1347,23 @@ export default function App() {
                 <div>
                   {"\n                "}
                   <h2 className={"text-base sm:text-lg font-bold text-white"}>
-                    {"Примеры стратегий сообщества"}
+                    {"Совместимые варианты"}
                   </h2>
                   {"\n                "}
                   <p className={"text-xs text-slate-400"}>
-                    {"Провайдер не определён. Источник и совместимость примеров backend не подтвердил."}
+                    {"Загрузите каталог для домена, чтобы увидеть варианты от вашего провайдера."}
                   </p>
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <span className={"px-3 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 text-xs font-mono font-bold"}>
-                    {"\n                Провайдер не определён\n              "}
+                <span id={"communityProviderBadge"} className={"px-3 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 text-xs font-mono font-bold"}>
+                    {"\n                ASN не определён\n              "}
                 </span>
                 {"\n            "}
               </div>
               {"\n\n            "}
               <div id={"communityPresetsEmptyState"} className={"p-4 rounded-xl bg-[#060a12] border border-slate-800 text-sm text-slate-400"}>
-                {"Нет данных сообщества из backend."}
+                {"Варианты пока не загружены."}
               </div>
               {"\n          "}
             </div>

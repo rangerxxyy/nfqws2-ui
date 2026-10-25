@@ -13,8 +13,12 @@ export type SiteTracePhase = { state: 'complete' | 'error' | 'unavailable'; ok: 
 export type SiteTraceReport = { host: string; address: string | null; withoutNfqws2: SiteTracePhase; withNfqws2: SiteTracePhase; traceLines: string[]; traceTruncated: boolean; traceHostname: string | null; traceProfile: string | null; traceActions: string[]; traceWarnings: string[]; summary: string };
 export type SiteTraceOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; message: string; report: SiteTraceReport | null; updatedAt: number };
 export type StrategyPickResult = { candidate: { name: string; source: string; steps: string[] }; attempts: number; successes: number; confirmed: boolean; elapsedMs: number; detail: string };
-export type StrategyPickOperation = { id: string; host: string; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; message: string; updatedAt: number };
+export type MultiSiteBaselineResult = { host: string; eligible: boolean; reason: string };
+export type MultiSiteDomainResult = { host: string; eligible: boolean; baselineReason: string; attempts: number; successes: number; elapsedMs: number; confirmed: boolean };
+export type MultiSiteCandidateResult = { candidate: StrategyPickResult['candidate']; openedDomains: number; domains: MultiSiteDomainResult[] };
+export type StrategyPickOperation = { id: string; host: string; hosts?: string[]; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; multiSiteBaseline?: MultiSiteBaselineResult[]; multiSiteResults?: MultiSiteCandidateResult[]; message: string; updatedAt: number };
 export type StrategyPickPreview = { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickResult['candidate']; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
+export type CommunityStrategyCatalog = { host: string; protocol: 'http' | 'https'; providerAsn: number; targetAsn: number | null; candidates: StrategyPickResult['candidate'][] };
 export type FreezeStrategyMatch = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; reusedFrom: string | null };
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
 export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
@@ -69,6 +73,7 @@ export type SnapshotRemoteSettings = { enabled: boolean; host: string; port: num
 export type SnapshotSettings = { maxCount: number; maxDays: number; remote: SnapshotRemoteSettings };
 export type SnapshotOverview = { items: SnapshotItem[]; settings: SnapshotSettings; directory: string; totalBytes: number; localCount: number; remote: { tool: string | null; publicKey: string; on: boolean; pending: number; stored: number; lastOk: number | null; error: string | null; setupCommand: string } };
 export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean };
+export type PanelAuthStatus = { enabled: boolean; hasPassword: boolean; authenticated: boolean };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
 export type UiUpdateStatus = { currentVersion: string; latestVersion: string | null; updateAvailable: boolean; releaseUrl: string | null; checkedAt: number | null };
 export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null };
@@ -166,6 +171,13 @@ export const nfqwsAppearance = {
   save: (settings: UiAppearanceSettings) => api<{ saved: boolean }>('/api/ui/appearance', { method: 'PUT', body: JSON.stringify(settings) }),
 };
 
+export const nfqwsAuth = {
+  status: () => api<PanelAuthStatus>('/api/auth/status'),
+  login: (password: string, remember: boolean, rememberDays = 30) => api<{ success: boolean }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ password, remember, rememberDays }) }),
+  logout: () => api<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
+  save: (enabled: boolean, password: string, currentPassword: string) => api<{ saved: boolean }>('/api/auth/settings', { method: 'PUT', body: JSON.stringify({ enabled, password, currentPassword }) }),
+};
+
 export const nfqwsApply = {
   apply: (content: string, revision: string) => api<{ config: ConfigResponse; message: string }>(
     '/api/nfqws2/apply',
@@ -203,6 +215,8 @@ export const nfqwsDiagnostics = {
   freezeScanStatus: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}`),
   freezeScanCancel: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended' | 'full' | 'custom', repeats = 3, customSteps?: string[][], stopAfterFirstConfirmed = false, includeCommunity = false, includeOtherHistory = false, refineLighter = false) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode, repeats, stopAfterFirstConfirmed, includeCommunity, includeOtherHistory, refineLighter, ...(customSteps ? { customSteps } : {}) }) }),
+  strategyMultiStart: (hosts: string[], protocol: 'http' | 'https', repeats = 3, includeCommunity = false, includeOtherHistory = true) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick/multi', { method: 'POST', body: JSON.stringify({ hosts, protocol, repeats, includeCommunity, includeOtherHistory }) }),
+  communityStrategies: (host: string, protocol: 'http' | 'https') => api<CommunityStrategyCatalog>('/api/nfqws2/strategies/community', { method: 'POST', body: JSON.stringify({ host, protocol }) }),
   strategyStatus: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}`),
   strategyCancel: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   strategyHistory: () => api<StrategyPickOperation[]>('/api/nfqws2/strategies/pick/history'),

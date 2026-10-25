@@ -11,7 +11,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategyCatalog, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -54,6 +54,9 @@ let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
+let strategyTargetMode: 'single' | 'multi' = 'single';
+let configScrollFramePending = false;
+let communityStrategyCatalog: CommunityStrategyCatalog | null = null;
 type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
 let foreignConfigInputs: ForeignConfigInput[] = [];
 let activeForeignConfigCheckId: string | null = null;
@@ -834,7 +837,7 @@ function renderNfqwsArgumentEditors(content: string) {
       gutter.scrollTop = field.scrollTop;
     };
     field.addEventListener('input', syncEditor);
-    field.addEventListener('scroll', syncEditor);
+    field.addEventListener('scroll', () => { gutter.scrollTop = field.scrollTop; });
     syncEditor();
     field.addEventListener('change', () => void updateConfigVariable(key, field.value));
     card.append(heading, editor);
@@ -904,6 +907,22 @@ function syncConfigLines() {
   gutter.scrollTop = editor.scrollTop;
   syncConfigHighlight(editor);
   setText('#confLinesBadge', `${count} строк`);
+}
+function syncConfigScroll() {
+  if (configScrollFramePending) return;
+  configScrollFramePending = true;
+  window.requestAnimationFrame(() => {
+    configScrollFramePending = false;
+    const editor = $('#nfqwsConfTextarea');
+    if (!(editor instanceof HTMLTextAreaElement)) return;
+    const gutter = $('#confLineNumbers');
+    const highlight = $('#confSyntaxHighlight');
+    if (gutter) gutter.scrollTop = editor.scrollTop;
+    if (highlight) {
+      highlight.scrollTop = editor.scrollTop;
+      highlight.scrollLeft = editor.scrollLeft;
+    }
+  });
 }
 function escapeConfigHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character);
@@ -1852,6 +1871,7 @@ async function cancelForeignConfigCheck() {
 
 const STRATEGY_PICK_STORAGE = 'nfqws2-ui-strategy-pick-id';
 function renderStrategyPick(operation: StrategyPickOperation) {
+  if (operation.hosts && operation.hosts.length > 1 && strategyTargetMode !== 'multi') setStrategyTargetMode('multi');
   localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
   setText('#scanProgressLabel', operation.current ? `${operation.stage === 'refining' ? 'Уточнение' : 'Проверка'} · ${operation.done}/${operation.total} · ${operation.current}` : operation.message);
   const bar = $('#scanProgressBar');
@@ -1883,6 +1903,16 @@ function renderStrategyPick(operation: StrategyPickOperation) {
   resultMeta.textContent = `Проверено ${operation.done} из ${operation.total} стратегий · результатов: ${operation.results.length}`;
   const resultMessage = document.createElement('p'); resultMessage.className = 'strategy-pick-summary-message'; resultMessage.textContent = operation.message;
   resultSummary.append(resultTitle, resultMeta, resultMessage);
+  if (operation.multiSiteBaseline?.length) {
+    const baseline = document.createElement('div'); baseline.className = 'strategy-multi-domain-results';
+    for (const domain of operation.multiSiteBaseline) {
+      const row = document.createElement('div'); row.className = 'strategy-multi-domain-result';
+      const host = document.createElement('span'); host.textContent = domain.host;
+      const outcome = document.createElement('strong'); outcome.textContent = domain.eligible ? 'участвует в подборе' : domain.reason;
+      row.append(host, outcome); baseline.append(row);
+    }
+    resultSummary.append(baseline);
+  }
   if (!operation.results.length) {
     if (operation.state === 'site_unblocked') resultTitle.textContent = 'Без обхода сайт уже отвечает';
     resultMeta.textContent = operation.total ? `Проверено ${operation.done} из ${operation.total} стратегий` : 'Стратегии не запускались';
@@ -1926,6 +1956,17 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     }
     const meta = document.createElement('p'); meta.className = 'strategy-pick-result-meta'; meta.textContent = `${result.candidate.source} · ${result.successes}/${result.attempts} успешных · ${result.elapsedMs} мс`;
     const detail = document.createElement('p'); detail.className = 'strategy-pick-result-detail'; detail.textContent = result.detail;
+    const multiResult = operation.multiSiteResults?.[index];
+    if (multiResult) {
+      const domainRows = document.createElement('div'); domainRows.className = 'strategy-multi-domain-results';
+      for (const domain of multiResult.domains) {
+        const row = document.createElement('div'); row.className = 'strategy-multi-domain-result';
+        const host = document.createElement('span'); host.textContent = domain.host;
+        const outcome = document.createElement('strong'); outcome.textContent = `${domain.successes}/${domain.attempts} · ${domain.elapsedMs} мс${domain.confirmed ? ' · подтверждён' : ''}`;
+        row.append(host, outcome); domainRows.append(row);
+      }
+      body.append(domainRows);
+    }
     const details = document.createElement('details'); details.className = 'strategy-pick-steps';
     const candidateKey = JSON.stringify([result.candidate.name, result.candidate.steps]);
     details.dataset.candidateKey = candidateKey;
@@ -2155,6 +2196,7 @@ async function pollStrategyPick(id: string, notifyOnCompletion = true) {
   activeStrategyPickId = id; strategyPickRunning = true;
   const input = $('#scanCustomHost'); const start = $('#startScanBtn'); const stop = $('#strategyPickCancel');
   if (input instanceof HTMLInputElement) input.disabled = true;
+  const multiInput = $('#strategyMultiHostList'); if (multiInput instanceof HTMLTextAreaElement) multiInput.disabled = true;
   if (start instanceof HTMLButtonElement) { start.disabled = true; start.textContent = 'Подбор…'; }
   stop?.classList.remove('hidden');
   try {
@@ -2187,6 +2229,7 @@ async function pollStrategyPick(id: string, notifyOnCompletion = true) {
   } finally {
     strategyPickRunning = false; activeStrategyPickId = null;
     if (input instanceof HTMLInputElement) input.disabled = false;
+    if (multiInput instanceof HTMLTextAreaElement) multiInput.disabled = false;
     if (start instanceof HTMLButtonElement) { start.disabled = false; start.textContent = 'Подобрать стратегию'; }
     stop?.classList.add('hidden');
   }
@@ -2195,6 +2238,26 @@ async function pollStrategyPick(id: string, notifyOnCompletion = true) {
 async function startStrategyPick() {
   if (strategyPickRunning) return;
   const input = $('#scanCustomHost'); const proto = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect'); const repeatsInput = $('#strategyRepeatsSelect'); const customInput = $('#strategyCustomSteps');
+  if (strategyTargetMode === 'multi') {
+    const list = $('#strategyMultiHostList');
+    if (!(list instanceof HTMLTextAreaElement)) return toast('Поле списка сайтов недоступно.', 'error');
+    const hosts = list.value.split(/[\s,;]+/).map((host) => host.trim()).filter(Boolean);
+    if (hosts.length < 2 || hosts.length > 15) return toast('Для общего профиля укажите от 2 до 15 доменов.', 'error');
+    const protocol = proto instanceof HTMLSelectElement && ['http', 'https'].includes(proto.value) ? proto.value as 'http' | 'https' : 'https';
+    const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
+    if (!Number.isInteger(repeats) || repeats < 2 || repeats > 5) return toast('Число повторов должно быть от 2 до 5.', 'error');
+    const container = $('#autotuneStrategiesList'); container?.replaceChildren();
+    $('#autotunePreviewPanel')?.classList.add('hidden'); activeStrategyPreview = null;
+    const applyButton = $('#applyStrategyPickButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
+    try {
+      const includeCommunity = ($('#strategyIncludeCommunity') as HTMLInputElement | null)?.checked ?? false;
+      const includeHistory = ($('#strategyIncludeOtherHistory') as HTMLInputElement | null)?.checked ?? true;
+      const operation = await nfqwsDiagnostics.strategyMultiStart(hosts, protocol, repeats, includeCommunity, includeHistory);
+      activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
+      await pollStrategyPick(operation.id);
+    } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить многосайтовый подбор.', 'error'); }
+    return;
+  }
   if (!(input instanceof HTMLInputElement) || !input.value.trim()) return toast('Введите домен или публичный IPv4 для подбора.', 'error');
   const protocol = proto instanceof HTMLSelectElement && ['http', 'https'].includes(proto.value) ? proto.value as 'http' | 'https' : 'https';
   const selectedMode = mode instanceof HTMLSelectElement && ['extended', 'full', 'custom'].includes(mode.value) ? mode.value as 'extended' | 'full' | 'custom' : 'quick';
@@ -2217,6 +2280,111 @@ async function startStrategyPick() {
     activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
     await pollStrategyPick(operation.id);
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить автоподбор', 'error'); }
+}
+
+function setStrategyTargetMode(mode: string) {
+  strategyTargetMode = mode === 'multi' ? 'multi' : 'single';
+  const multi = strategyTargetMode === 'multi';
+  $('#strategyMultiTargetPanel')?.classList.toggle('hidden', !multi);
+  $('.strategy-target-single-input')?.classList.toggle('hidden', multi);
+  all<HTMLElement>('.strategy-mode-specific').forEach((control) => control.classList.toggle('hidden', multi));
+  for (const id of ['strategyStopAfterFirst', 'strategyRefineLighter']) $('#'+id)?.closest('label')?.classList.toggle('hidden', multi);
+  all<HTMLButtonElement>('[data-action-click="setStrategyTargetMode"]').forEach((button) => button.classList.toggle('active', button.dataset.arg === strategyTargetMode));
+}
+
+function extractPublicDomains(content: string) {
+  const result = new Set<string>();
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.split(/[#!]/, 1)[0] ?? '';
+    for (const raw of line.split(/[\s,;]+/)) {
+      const host = raw.trim().replace(/^\*\./, '').replace(/\.$/, '').toLowerCase();
+      if (host.length <= 253 && host.includes('.') && !/^\d+(?:\.\d+){3}$/.test(host)
+          && host.split('.').every((label) => label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) result.add(host);
+    }
+  }
+  return [...result];
+}
+
+async function pickRandomMultiSites() {
+  const select = $('#strategyMultiListSelect');
+  const button = $('#pickRandomMultiSitesButton');
+  if (!(select instanceof HTMLSelectElement)) return;
+  if (button instanceof HTMLButtonElement) button.disabled = true;
+  try {
+    const { content } = await nfqwsLists.get(select.value);
+    const candidates = extractPublicDomains(content);
+    for (let index = candidates.length - 1; index > 0; index -= 1) {
+      const swap = Math.floor(Math.random() * (index + 1));
+      [candidates[index], candidates[swap]] = [candidates[swap]!, candidates[index]!];
+    }
+    const chosen = candidates.slice(0, 15);
+    if (chosen.length < 2) return toast('В выбранном списке найдено меньше двух доменов для проверки.', 'error');
+    const textarea = $('#strategyMultiHostList');
+    if (textarea instanceof HTMLTextAreaElement) textarea.value = chosen.join('\n');
+    toast(`Выбрано доменов: ${chosen.length}.`);
+  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить домены из списка.', 'error'); }
+  finally { if (button instanceof HTMLButtonElement) button.disabled = false; }
+}
+
+async function loadStrategyDomainLists() {
+  const select = $('#strategyMultiListSelect');
+  if (!(select instanceof HTMLSelectElement)) return;
+  try {
+    const inventory = await nfqwsLists.index();
+    const lists = inventory.files.filter((file) => file.readable && /\.list$|\.txt$/i.test(file.id));
+    select.replaceChildren();
+    for (const list of lists) {
+      const option = document.createElement('option'); option.value = list.id; option.textContent = listDisplayName(list.id); select.append(option);
+    }
+    if (!lists.some((list) => list.id === 'user.list') && lists[0]) select.value = lists[0].id;
+  } catch { /* manual multi-site input stays available */ }
+}
+
+async function loadCommunityStrategies() {
+  const host = $('#communityHostInput');
+  const protocol = $('#communityProtocolSelect');
+  const status = $('#communityCatalogStatus');
+  const results = $('#communityPresetsEmptyState');
+  if (!(host instanceof HTMLInputElement) || !host.value.trim()) return toast('Введите домен, для которого нужны варианты сообщества.', 'error');
+  if (!(results instanceof HTMLElement)) return;
+  const button = $('[data-action-click="loadCommunityStrategies"]');
+  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Загружаю…'; }
+  results.replaceChildren();
+  if (status) status.textContent = 'Backend определяет провайдера и загружает совместимые варианты…';
+  try {
+    const selectedProtocol = protocol instanceof HTMLSelectElement && protocol.value === 'http' ? 'http' : 'https';
+    communityStrategyCatalog = await nfqwsDiagnostics.communityStrategies(host.value.trim(), selectedProtocol);
+    const badge = $('#communityProviderBadge');
+    if (badge) badge.textContent = `AS${communityStrategyCatalog.providerAsn}`;
+    if (status) status.textContent = `${communityStrategyCatalog.candidates.length} вариантов · провайдер AS${communityStrategyCatalog.providerAsn}${communityStrategyCatalog.targetAsn ? ` · сайт AS${communityStrategyCatalog.targetAsn}` : ''}. Все варианты нужно проверить на этом роутере.`;
+    if (!communityStrategyCatalog.candidates.length) { results.textContent = 'Для этого провайдера и домена совместимых вариантов пока нет.'; return; }
+    for (const candidate of communityStrategyCatalog.candidates) {
+      const card = document.createElement('article'); card.className = 'community-candidate-card';
+      const title = document.createElement('strong'); title.textContent = candidate.name;
+      const source = document.createElement('span'); source.textContent = candidate.source;
+      const steps = document.createElement('code'); steps.textContent = candidate.steps.join('\n');
+      card.append(title, source, steps); results.append(card);
+    }
+    const probe = document.createElement('button'); probe.type = 'button'; probe.className = 'mt-3 rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/25'; probe.dataset.actionClick = 'probeCommunityStrategies'; probe.textContent = 'Проверить стратегии на этом домене'; results.append(probe);
+  } catch (error) {
+    if (status) status.textContent = error instanceof Error ? error.message : 'Каталог стратегий недоступен.';
+    toast(error instanceof Error ? error.message : 'Не удалось загрузить каталог стратегий сообщества.', 'error');
+  } finally {
+    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Загрузить варианты'; }
+  }
+}
+
+function probeCommunityStrategies() {
+  if (!communityStrategyCatalog) return toast('Сначала загрузите варианты сообщества.', 'error');
+  const host = $('#scanCustomHost');
+  const protocol = $('#strategyProtocolSelect');
+  const includeCommunity = $('#strategyIncludeCommunity');
+  if (host instanceof HTMLInputElement) host.value = communityStrategyCatalog.host;
+  if (protocol instanceof HTMLSelectElement) protocol.value = communityStrategyCatalog.protocol;
+  if (includeCommunity instanceof HTMLInputElement) includeCommunity.checked = true;
+  setStrategyTargetMode('single');
+  showRoute('autotune');
+  void startStrategyPick();
 }
 
 async function cancelStrategyPick() {
@@ -2609,6 +2777,51 @@ async function writeTextToClipboard(text: string) {
   if (!copied) throw new Error('Буфер обмена недоступен');
 }
 
+function showSettingsSection(section: 'appearance' | 'security') {
+  const selected = section === 'security' ? 'settingsSecurityPanel' : 'settingsAppearancePanel';
+  all<HTMLElement>('.settings-section-panel').forEach((panel) => panel.classList.toggle('hidden', panel.id !== selected));
+  all<HTMLButtonElement>('.settings-subtab').forEach((button) => {
+    const active = button.dataset.args?.includes(`"${section}"`) ?? false;
+    button.setAttribute('aria-pressed', String(active));
+    button.classList.toggle('settings-subtab-active', active);
+    button.classList.toggle('text-slate-100', active);
+    button.classList.toggle('text-slate-400', !active);
+  });
+  if (section === 'security') void loadPanelAuthSettings();
+}
+
+async function loadPanelAuthSettings() {
+  try {
+    const status = await nfqwsAuth.status();
+    const enabled = $('#panelAuthEnabled');
+    if (enabled instanceof HTMLInputElement) enabled.checked = status.enabled;
+    $('#panelAuthCurrentWrap')?.classList.toggle('hidden', !status.enabled);
+    setText('#panelAuthState', status.enabled ? 'Защита включена' : status.hasPassword ? 'Пароль сохранён, вход пока открыт' : 'Защита выключена');
+  } catch (error) { setText('#panelAuthState', error instanceof Error ? error.message : 'Не удалось загрузить настройки'); }
+}
+
+async function savePanelAuthSettings() {
+  const enabled = $('#panelAuthEnabled'); const password = $('#panelAuthPassword'); const current = $('#panelAuthCurrentPassword');
+  if (!(enabled instanceof HTMLInputElement) || !(password instanceof HTMLInputElement) || !(current instanceof HTMLInputElement)) return;
+  const button = $('[data-action-click="savePanelAuthSettings"]');
+  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Сохраняю…'; }
+  try {
+    await nfqwsAuth.save(enabled.checked, password.value, current.value);
+    password.value = ''; current.value = '';
+    setText('#panelAuthFeedback', 'Настройки входа сохранены.');
+    toast('Настройки входа сохранены.');
+    await loadPanelAuthSettings();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Не удалось сохранить настройки входа.';
+    setText('#panelAuthFeedback', message); toast(message, 'error');
+  } finally { if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Сохранить настройки'; } }
+}
+
+async function logoutPanel() {
+  try { await nfqwsAuth.logout(); window.location.reload(); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось выйти.', 'error'); }
+}
+
 function bindPrototypeActions() {
   const showDiff = () => {
     if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
@@ -2629,6 +2842,9 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
+    showSettingsSection: (section: 'appearance' | 'security') => showSettingsSection(section),
+    savePanelAuthSettings: () => void savePanelAuthSettings(),
+    logoutPanel: () => void logoutPanel(),
     createBackup: () => void createSnapshot(),
     createSnapshot: () => void createSnapshot(),
     refreshBackups: () => void loadBackups(),
@@ -2681,6 +2897,10 @@ function bindPrototypeActions() {
     runForeignConfigCheck: () => void runForeignConfigCheck(),
     cancelForeignConfigCheck: () => void cancelForeignConfigCheck(),
     startStrategyPick: () => void startStrategyPick(),
+    setStrategyTargetMode: (mode: string) => setStrategyTargetMode(mode),
+    pickRandomMultiSites: () => void pickRandomMultiSites(),
+    loadCommunityStrategies: () => void loadCommunityStrategies(),
+    probeCommunityStrategies: () => probeCommunityStrategies(),
     cancelStrategyPick: () => void cancelStrategyPick(),
     toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
     copyStrategyParams: (button: HTMLButtonElement) => {
@@ -2708,9 +2928,23 @@ function bindPrototypeActions() {
     toggleConfigEditorFullscreen: () => toggleConfigEditorFullscreen(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
-    copySnippetToClipboard: (value: string) => void navigator.clipboard.writeText(String(value)).then(() => toast('Фрагмент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')),
+    copySnippetToClipboard: (value: string | HTMLButtonElement) => void (async () => {
+      const button = value instanceof HTMLButtonElement ? value : null;
+      const command = button?.closest('.about-command-row')?.querySelector('code')?.textContent?.trim();
+      const text = typeof value === 'string' ? value : command;
+      if (!text) return toast('Команда не найдена.', 'error');
+      try {
+        await writeTextToClipboard(text);
+        if (button) {
+          const original = button.textContent ?? 'Копировать';
+          button.textContent = 'Скопировано'; button.classList.add('strategy-copy-success');
+          setText('#aboutCopyStatus', 'Команда скопирована в буфер обмена.');
+          window.setTimeout(() => { if (button.isConnected) { button.textContent = original; button.classList.remove('strategy-copy-success'); } }, 1500);
+        } else toast('Фрагмент скопирован');
+      } catch { toast('Буфер обмена недоступен', 'error'); }
+    })(),
     handleConfInput: () => { syncConfigLines(); renderConfigOutline(); },
-    syncConfScroll: () => syncConfigLines(),
+    syncConfScroll: () => syncConfigScroll(),
     toggleWordWrapConf: (enabled: boolean) => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) { editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre'; syncConfigHighlight(editor); } },
     toggleConfigOutline: () => toggleConfigOutline(),
     scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); editor.scrollTop = editor.value.slice(0, offset).split('\n').length * 23; },
@@ -2794,6 +3028,7 @@ function boot() {
   monitoringState = loadMonitoringState(getMonitoringStorage());
   renderMonitoringSites();
   void loadBackendMonitoring().catch(() => setText('#monitoringStatus', 'Не удалось загрузить настройки мониторинга с роутера.'));
+  void loadPanelAuthSettings();
   void loadTelegramSettings().catch(() => setText('#telegramStatus', 'Не удалось загрузить настройки Telegram с роутера.'));
   window.setInterval(() => {
     if (document.visibilityState === 'visible' && $('#tabContent-monitor:not(.hidden) #monitorSection-telegram:not(.hidden)')) {
@@ -2809,9 +3044,11 @@ function boot() {
     foreignFileInput.value = '';
   });
   renderForeignConfigInputs();
+  void loadStrategyDomainLists();
   document.documentElement.classList.add('dark');
   const initialStrategyMode = ($('#strategyModeSelect') as HTMLSelectElement | null)?.value ?? 'quick';
   updateStrategyMode(initialStrategyMode);
+  setStrategyTargetMode('single');
   showPendingUpdateNotice();
   showRoute('conf');
   const savedPick = localStorage.getItem(STRATEGY_PICK_STORAGE);
@@ -2842,7 +3079,7 @@ function boot() {
     editor.dispatchEvent(new Event('input', { bubbles: true }));
   });
   $('#listSearchInput')?.addEventListener('input', () => { if (listEditorView === 'rows') renderListRows(); });
-  $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigLines);
+  $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigScroll, { passive: true });
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();
   void refreshUiUpdateStatus();

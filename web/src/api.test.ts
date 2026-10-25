@@ -1,7 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsAppearance, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('sends login credentials and the remember-me choice to the Rust auth API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"success":true}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsAuth.login('safe password', true, 90)).resolves.toEqual({ success: true });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/auth/login');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ password: 'safe password', remember: true, rememberDays: 90 });
+  });
+
+  it('saves panel auth policy and password through the same-origin API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsAuth.save(true, 'long enough password', '')).resolves.toEqual({ saved: true });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/auth/settings');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ enabled: true, password: 'long enough password', currentPassword: '' });
+  });
+
   it('requests a bounded ASN prefix lookup from the Rust API', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"asn":15169,"resolvedFrom":"example.com → 8.8.8.8","prefixes":["8.8.8.0/24"]}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -83,6 +99,24 @@ describe('API client used by the source-based panel', () => {
     expect(await nfqwsDiagnostics.strategyCancel(started.id)).toMatchObject({ state: 'stopping' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick');
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeCommunity: true, includeOtherHistory: true, refineLighter: true, customSteps: [['--lua-desync=multisplit:pos=1']] });
+  });
+
+  it('starts a shared strategy pick for a bounded list of sites', async () => {
+    const queued = { id: '0123456789abcdef0123456789abcdef', host: 'one.example, two.example', hosts: ['one.example', 'two.example'], protocol: 'https', state: 'queued', stage: 'queued', current: null, done: 0, total: 12, results: [], multiSiteBaseline: [], multiSiteResults: [], message: 'queued', updatedAt: 100 };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(queued), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsDiagnostics.strategyMultiStart(['one.example', 'two.example'], 'https', 4, true, true)).resolves.toMatchObject({ hosts: ['one.example', 'two.example'] });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/multi');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ hosts: ['one.example', 'two.example'], protocol: 'https', repeats: 4, includeCommunity: true, includeOtherHistory: true });
+  });
+
+  it('loads provider community strategies through the Rust service', async () => {
+    const result = { host: 'example.com', protocol: 'https', providerAsn: 12345, targetAsn: 64496, candidates: [{ name: 'Example strategy', source: 'community', steps: ['--lua-desync=multisplit:pos=1'] }] };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(result), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsDiagnostics.communityStrategies('example.com', 'https')).resolves.toEqual(result);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/community');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https' });
   });
 
   it('starts, polls, and cancels a foreign configuration comparison', async () => {

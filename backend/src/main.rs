@@ -42,6 +42,7 @@ use std::{
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::{services::ServeDir, trace::TraceLayer};
+mod auth;
 
 const MAX_CONFIG_BYTES: usize = 512 * 1024;
 const MAX_LIST_BYTES: usize = 512 * 1024;
@@ -82,6 +83,7 @@ const LIST_IDS: [&str; 5] = [
 
 struct AppState {
     data_dir: PathBuf,
+    auth: Arc<auth::AuthManager>,
     port: u16,
     cpu_previous: Arc<Mutex<Option<(u64, u64)>>>,
     config_write_lock: Mutex<()>,
@@ -419,8 +421,42 @@ struct StrategyPickOperation {
     done: usize,
     total: usize,
     results: Vec<strategy_picker::StrategyCandidateResult>,
+    #[serde(default)]
+    hosts: Vec<String>,
+    #[serde(default)]
+    multi_site_results: Vec<MultiSiteCandidateResult>,
+    #[serde(default)]
+    multi_site_baseline: Vec<MultiSiteBaselineResult>,
     message: String,
     updated_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultiSiteDomainResult {
+    host: String,
+    eligible: bool,
+    baseline_reason: String,
+    attempts: usize,
+    successes: usize,
+    elapsed_ms: u64,
+    confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultiSiteCandidateResult {
+    candidate: strategy_picker::StrategyCandidate,
+    opened_domains: usize,
+    domains: Vec<MultiSiteDomainResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultiSiteBaselineResult {
+    host: String,
+    eligible: bool,
+    reason: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -439,6 +475,25 @@ struct StrategyPickRequest {
     #[serde(default)]
     refine_lighter: bool,
     custom_steps: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultiStrategyPickRequest {
+    hosts: Vec<String>,
+    protocol: Option<String>,
+    repeats: Option<usize>,
+    #[serde(default)]
+    include_community: bool,
+    #[serde(default)]
+    include_other_history: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunityStrategyRequest {
+    host: String,
+    protocol: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -776,6 +831,71 @@ type SiteTraceRunner = dyn Fn(
     ) -> Pin<Box<dyn Future<Output = site_trace::TraceReport> + Send>>
     + Send
     + Sync;
+
+struct MultiSiteProbeRequest<'a> {
+    hosts: &'a [String],
+    protocol: String,
+    args: Vec<String>,
+    binary: String,
+    control: Arc<AtomicBool>,
+    repeats: usize,
+    known_baseline: Option<bool>,
+}
+
+async fn run_multi_site_probes(
+    runner: Arc<SiteTraceRunner>,
+    request: MultiSiteProbeRequest<'_>,
+) -> Vec<(String, Vec<site_trace::TracePhase>)> {
+    let permits = Arc::new(tokio::sync::Semaphore::new(
+        nfqws2_ui::probe_lanes::MAX_BATCH_LANES,
+    ));
+    let mut tasks = tokio::task::JoinSet::new();
+    for host in request.hosts {
+        let host = host.clone();
+        let protocol = request.protocol.clone();
+        let args = request.args.clone();
+        let binary = request.binary.clone();
+        let control = request.control.clone();
+        let repeats = request.repeats;
+        let known_baseline = request.known_baseline;
+        let runner = runner.clone();
+        let permits = permits.clone();
+        tasks.spawn(async move {
+            let _permit = permits.acquire_owned().await.ok()?;
+            let report = runner(
+                host.clone(),
+                protocol,
+                args,
+                binary,
+                control,
+                repeats,
+                known_baseline,
+                None,
+            )
+            .await;
+            let phases = if report.candidate_attempts.is_empty() {
+                vec![report.with_nfqws2]
+            } else {
+                report.candidate_attempts
+            };
+            Some((host, phases))
+        });
+    }
+    let mut results = Vec::with_capacity(request.hosts.len());
+    while let Some(joined) = tasks.join_next().await {
+        if let Ok(Some(result)) = joined {
+            results.push(result);
+        }
+    }
+    results.sort_by_key(|(host, _)| {
+        request
+            .hosts
+            .iter()
+            .position(|expected| expected == host)
+            .unwrap_or(usize::MAX)
+    });
+    results
+}
 
 #[allow(clippy::too_many_arguments)] // Keeps the injectable async runner boundary explicit.
 fn router_site_trace_runner(
@@ -1175,6 +1295,16 @@ fn build_strategy_pick_preview(
     if !result.confirmed || result.attempts < 2 || result.successes < 2 {
         return Err("Кандидат не прошёл повторное подтверждение; preview недоступен".into());
     }
+    if operation.hosts.len() > 1 {
+        return build_multi_site_strategy_preview(
+            operation,
+            candidate_index,
+            original_content,
+            original_revision,
+            functions,
+            blobs,
+        );
+    }
     let _validated_profile = strategy_picker::build_domain_profile(
         &operation.host,
         protocol,
@@ -1206,6 +1336,96 @@ fn build_strategy_pick_preview(
         original_content: original_content.to_owned(),
         proposed_content,
         summary: "Подтверждённая стратегия станет Strategy #1 в NFQWS_ARGS; существующие номера сдвинутся вниз. Это общая группа правил для всех сайтов. NFQWS_BASE_ARGS не меняется.".into(),
+    })
+}
+
+fn build_multi_site_strategy_preview(
+    operation: &StrategyPickOperation,
+    candidate_index: usize,
+    original_content: &str,
+    original_revision: String,
+    functions: &HashSet<String>,
+    blobs: &[String],
+) -> Result<StrategyPickPreview, String> {
+    let protocol = match operation.protocol.as_str() {
+        "http" => StrategyProtocol::Http,
+        "https" => StrategyProtocol::Https,
+        _ => return Err("Применение этой версии протокола не поддерживается".into()),
+    };
+    let strategy = operation
+        .results
+        .get(candidate_index)
+        .ok_or_else(|| "Индекс кандидата вне сохранённого результата подбора".to_string())?;
+    let candidate = operation
+        .multi_site_results
+        .get(candidate_index)
+        .ok_or_else(|| "Для кандидата отсутствуют результаты по доменам".to_string())?;
+    if !strategy.confirmed || candidate.candidate != strategy.candidate {
+        return Err("Общий профиль не подтверждён или результаты доменов не совпадают".into());
+    }
+    let confirmed_hosts = candidate
+        .domains
+        .iter()
+        .filter(|domain| {
+            domain.eligible
+                && domain.confirmed
+                && domain.attempts >= 2
+                && domain.successes == domain.attempts
+        })
+        .map(|domain| domain.host.as_str())
+        .collect::<Vec<_>>();
+    if confirmed_hosts.len() < 2 {
+        return Err(
+            "Для применения нужны минимум два домена, подтверждённых всеми повторами".into(),
+        );
+    }
+    let document = ConfigDocument::parse(original_content)?;
+    let custom_args = document.literal_value("NFQWS_ARGS_CUSTOM")?;
+    let mut profiles = Vec::with_capacity(confirmed_hosts.len());
+    for host in &confirmed_hosts {
+        let profile = strategy_picker::build_domain_profile(
+            host,
+            protocol,
+            &strategy.candidate.steps,
+            functions,
+            blobs,
+        )?;
+        let selector = format!("--hostlist-domains={host}");
+        if custom_args
+            .split_whitespace()
+            .any(|argument| argument == selector)
+        {
+            return Err(format!(
+                "Для домена {host} уже задан пользовательский профиль; сначала проверьте его вручную"
+            ));
+        }
+        profiles.push(profile);
+    }
+    let proposed_content =
+        document.append_literal_words("NFQWS_ARGS_CUSTOM", &profiles.join(" "))?;
+    let diagnostics = validate_nfqws2_config(&proposed_content)?;
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
+        return Err("Сформированный профиль не прошёл статическую проверку конфигурации".into());
+    }
+    if proposed_content.len() > MAX_CONFIG_BYTES {
+        return Err("Изменённая конфигурация превышает лимит размера".into());
+    }
+    Ok(StrategyPickPreview {
+        operation_id: operation.id.clone(),
+        candidate_index,
+        host: confirmed_hosts.join(", "),
+        protocol: operation.protocol.clone(),
+        candidate: strategy.candidate.clone(),
+        original_revision,
+        original_content: original_content.to_owned(),
+        proposed_content,
+        summary: format!(
+            "Общий профиль добавлен в NFQWS_ARGS_CUSTOM только для {} доменов, на которых он прошёл все повторы. NFQWS_BASE_ARGS и остальные сайты не меняются.",
+            confirmed_hosts.len()
+        ),
     })
 }
 
@@ -1638,6 +1858,9 @@ fn freeze_result_as_strategy_operation(
             elapsed_ms: found.average_ms.unwrap_or_default(),
             detail: "Три последовательные проверки прошли на этом домене".into(),
         }],
+        hosts: Vec::new(),
+        multi_site_results: Vec::new(),
+        multi_site_baseline: Vec::new(),
         message: "Проверка 16 КБ завершена".into(),
         updated_at: operation.updated_at,
     })
@@ -6478,6 +6701,538 @@ fn picker_mode_uses_catalog_candidates(custom_mode: bool) -> bool {
     !custom_mode
 }
 
+async fn get_community_strategies(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CommunityStrategyRequest>,
+) -> Response {
+    let host = match site_diagnostics::normalize_site_target(&request.host) {
+        Ok(host) if host.parse::<std::net::IpAddr>().is_err() => host,
+        Ok(_) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Введите доменное имя, а не IP-адрес",
+            );
+        }
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let protocol = match request.protocol.as_deref().unwrap_or("https") {
+        "http" => StrategyProtocol::Http,
+        "https" => StrategyProtocol::Https,
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Протокол должен быть http или https",
+            );
+        }
+    };
+    let Some((_, args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Не найден однозначно работающий nfqws2",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let functions = active_lua_functions(&args, &paths.lua_dir);
+    let blobs = active_blob_names(&args);
+    match nfqws2_ui::community_strategies::discover_candidates(
+        &host, protocol, &functions, &blobs, &state.data_dir.join("community-strategy-cache"),
+    ).await {
+        Ok(discovery) => Json(serde_json::json!({
+            "host": host,
+            "protocol": match protocol { StrategyProtocol::Http => "http", StrategyProtocol::Https => "https", StrategyProtocol::Quic => "quic" },
+            "providerAsn": discovery.provider_asn,
+            "targetAsn": discovery.target_asn,
+            "candidates": discovery.candidates,
+        })).into_response(),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+fn normalize_multi_strategy_hosts(hosts: &[String]) -> Result<Vec<String>, String> {
+    if !(2..=15).contains(&hosts.len()) {
+        return Err("Укажите от 2 до 15 доменов".into());
+    }
+    let mut normalized = Vec::with_capacity(hosts.len());
+    for raw in hosts {
+        let host = site_diagnostics::normalize_site_target(raw)?;
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            return Err("В многосайтовом подборе указываются домены, не IP-адреса".into());
+        }
+        if normalized.iter().any(|existing| existing == &host) {
+            return Err(format!("Домен «{host}» указан несколько раз"));
+        }
+        normalized.push(host);
+    }
+    Ok(normalized)
+}
+
+async fn start_multi_strategy_pick(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<MultiStrategyPickRequest>,
+) -> Response {
+    let hosts = match normalize_multi_strategy_hosts(&request.hosts) {
+        Ok(hosts) => hosts,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let repeats = request.repeats.unwrap_or(3);
+    if !(2..=5).contains(&repeats) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Число повторов должно быть от 2 до 5",
+        );
+    }
+    let protocol = match request.protocol.as_deref().unwrap_or("https") {
+        "http" => StrategyProtocol::Http,
+        "https" => StrategyProtocol::Https,
+        _ => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "Протокол должен быть http или https",
+            );
+        }
+    };
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Сейчас выполняется другая сетевая диагностика или трассировка",
+        );
+    };
+    let Some((_, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Подбор остановлен: не найден однозначно работающий nfqws2",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let functions = active_lua_functions(&active_args, &paths.lua_dir);
+    if functions.is_empty() {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Не удалось прочитать Lua-функции работающего nfqws2",
+        );
+    }
+    let blobs = active_blob_names(&active_args);
+    let configured = strategy_picker::configured_candidates(&active_args, protocol);
+    let mut plan = strategy_picker::build_plan(
+        protocol,
+        StrategyMode::Quick,
+        &configured,
+        &functions,
+        &blobs,
+    );
+    if request.include_other_history {
+        let protocol_name = match protocol {
+            StrategyProtocol::Http => "http",
+            StrategyProtocol::Https => "https",
+            StrategyProtocol::Quic => unreachable!(),
+        };
+        let history = load_confirmed_strategy_candidates(
+            &state.data_dir.join("strategy-pick-operations"),
+            &hosts[0],
+            protocol_name,
+            true,
+        )
+        .await;
+        strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
+    }
+    plan.candidates.truncate(128);
+    if plan.candidates.is_empty() {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Не найдено совместимых стратегий для проверки",
+        );
+    }
+    let operation_dir = state.data_dir.join("strategy-pick-operations");
+    if let Err(io_error) = tokio::fs::create_dir_all(&operation_dir).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    prune_finished_json_operations(
+        &operation_dir,
+        MAX_STRATEGY_PICK_OPERATIONS.saturating_sub(1),
+    );
+    let id = new_update_id();
+    let control = Arc::new(AtomicBool::new(false));
+    let proto = match protocol {
+        StrategyProtocol::Http => "http",
+        StrategyProtocol::Https => "https",
+        StrategyProtocol::Quic => unreachable!(),
+    }
+    .to_owned();
+    let operation = StrategyPickOperation {
+        id: id.clone(),
+        host: hosts.join(", "),
+        protocol: proto.clone(),
+        state: "queued".into(),
+        stage: "queued".into(),
+        current: None,
+        done: 0,
+        total: plan.candidates.len(),
+        results: Vec::new(),
+        hosts: hosts.clone(),
+        multi_site_results: Vec::new(),
+        multi_site_baseline: Vec::new(),
+        message: "Подбор общего профиля поставлен в очередь; исходный конфиг не меняется".into(),
+        updated_at: now_unix_seconds(),
+    };
+    if let Err(message) = write_strategy_pick_operation_sync(&operation_dir, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    state
+        .strategy_pick_controls
+        .lock()
+        .await
+        .insert(id.clone(), control.clone());
+    let accepted = operation.clone();
+    let task_state = state.clone();
+    let task_id = id;
+    let runner = state.site_trace_runner.clone();
+    let binary = paths.binary.to_string_lossy().into_owned();
+    let task_args = active_args.clone();
+    let task_functions = functions.clone();
+    let task_blobs = blobs.clone();
+    let task_hosts = hosts.clone();
+    let task_protocol = protocol;
+    let include_community = request.include_community;
+    let community_cache = state.data_dir.join("community-strategy-cache");
+    tokio::spawn(async move {
+        let _guard = guard;
+        run_multi_strategy_pick(
+            task_state,
+            task_id,
+            operation,
+            plan.candidates,
+            task_hosts,
+            proto,
+            task_protocol,
+            repeats,
+            runner,
+            binary,
+            task_args,
+            task_functions,
+            task_blobs,
+            control,
+            include_community,
+            community_cache,
+        )
+        .await;
+    });
+    (StatusCode::ACCEPTED, Json(accepted)).into_response()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_multi_strategy_pick(
+    state: Arc<AppState>,
+    id: String,
+    mut operation: StrategyPickOperation,
+    candidates: Vec<strategy_picker::StrategyCandidate>,
+    hosts: Vec<String>,
+    proto: String,
+    protocol: StrategyProtocol,
+    repeats: usize,
+    runner: Arc<SiteTraceRunner>,
+    binary: String,
+    active_args: Vec<String>,
+    functions: HashSet<String>,
+    blobs: Vec<String>,
+    control: Arc<AtomicBool>,
+    include_community: bool,
+    community_cache: PathBuf,
+) {
+    let directory = state.data_dir.join("strategy-pick-operations");
+    operation.state = "running".into();
+    operation.stage = "baseline".into();
+    operation.updated_at = now_unix_seconds();
+    let _ = write_strategy_pick_operation_sync(&directory, &operation);
+    let mut eligible_hosts = Vec::new();
+    for host in &hosts {
+        if control.load(Ordering::Acquire) {
+            break;
+        }
+        let report = runner(
+            host.clone(),
+            proto.clone(),
+            Vec::new(),
+            binary.clone(),
+            control.clone(),
+            1,
+            None,
+            None,
+        )
+        .await;
+        let eligible = report.without_nfqws2.ok == Some(false);
+        let reason = if eligible {
+            "Прямой запрос не открыл домен".into()
+        } else if report.without_nfqws2.ok == Some(true) {
+            format!("Домен доступен напрямую ({})", report.without_nfqws2.reason)
+        } else {
+            format!(
+                "Базовая проверка не дала результата ({})",
+                report.without_nfqws2.reason
+            )
+        };
+        if eligible {
+            eligible_hosts.push(host.clone());
+        }
+        operation.multi_site_baseline.push(MultiSiteBaselineResult {
+            host: host.clone(),
+            eligible,
+            reason,
+        });
+        operation.current = Some(host.clone());
+        operation.message = format!(
+            "Прямая проверка доменов: {}/{}",
+            operation.multi_site_baseline.len(),
+            hosts.len()
+        );
+        operation.updated_at = now_unix_seconds();
+        let _ = write_strategy_pick_operation_sync(&directory, &operation);
+    }
+    if control.load(Ordering::Acquire) || eligible_hosts.len() < 2 {
+        operation.state = if control.load(Ordering::Acquire) {
+            "cancelled"
+        } else {
+            "site_unblocked"
+        }
+        .into();
+        operation.stage = "baseline".into();
+        operation.current = None;
+        operation.message = if control.load(Ordering::Acquire) {
+            "Подбор отменён во время прямой проверки".into()
+        } else {
+            "Менее двух доменов требуют обхода; общий профиль не подбирался".into()
+        };
+        operation.updated_at = now_unix_seconds();
+        let _ = write_strategy_pick_operation_sync(&directory, &operation);
+        state.strategy_pick_controls.lock().await.remove(&id);
+        return;
+    }
+    let mut candidate_plan = strategy_picker::StrategyPlan {
+        protocol,
+        candidates,
+    };
+    if include_community {
+        for host in &eligible_hosts {
+            if control.load(Ordering::Acquire) {
+                break;
+            }
+            if let Ok(discovery) = nfqws2_ui::community_strategies::discover_candidates(
+                host,
+                protocol,
+                &functions,
+                &blobs,
+                &community_cache,
+            )
+            .await
+            {
+                strategy_picker::insert_reusable_candidates(
+                    &mut candidate_plan,
+                    discovery.candidates,
+                    &functions,
+                    &blobs,
+                );
+            }
+        }
+    }
+    let mut candidates = candidate_plan.candidates;
+    candidates.truncate(128);
+    let total = candidates.len();
+    operation.total = total;
+    let mut ranked = Vec::<(
+        usize,
+        strategy_picker::StrategyCandidate,
+        Vec<MultiSiteDomainResult>,
+    )>::new();
+    for (index, candidate) in candidates.into_iter().enumerate() {
+        if control.load(Ordering::Acquire) {
+            break;
+        }
+        let args = match strategy_picker::candidate_argv(
+            &active_args,
+            protocol,
+            &candidate.steps,
+            &functions,
+            &blobs,
+        ) {
+            Ok(args) => strategy_probe_argv(&binary, &args),
+            Err(_) => continue,
+        };
+        let probes = run_multi_site_probes(
+            runner.clone(),
+            MultiSiteProbeRequest {
+                hosts: &eligible_hosts,
+                protocol: proto.clone(),
+                args,
+                binary: binary.clone(),
+                control: control.clone(),
+                repeats: 1,
+                known_baseline: Some(false),
+            },
+        )
+        .await;
+        let mut domains = Vec::new();
+        let mut opened = 0usize;
+        for (host, phases) in probes {
+            let successes = phases
+                .iter()
+                .filter(|phase| phase.ok == Some(true) && phase.state == "complete")
+                .count();
+            opened += usize::from(successes > 0);
+            domains.push(MultiSiteDomainResult {
+                host,
+                eligible: true,
+                baseline_reason: String::new(),
+                attempts: phases.len(),
+                successes,
+                elapsed_ms: phases
+                    .iter()
+                    .map(|phase| phase.duration_ms.unwrap_or_default())
+                    .sum(),
+                confirmed: false,
+            });
+        }
+        ranked.push((opened, candidate.clone(), domains));
+        operation.current = Some(candidate.name);
+        operation.done = index + 1;
+        operation.stage = "testing".into();
+        operation.message = format!("Первичный проход: {}/{} стратегий", index + 1, total);
+        operation.updated_at = now_unix_seconds();
+        operation.multi_site_results = ranked
+            .iter()
+            .map(|(n, c, d)| MultiSiteCandidateResult {
+                candidate: c.clone(),
+                opened_domains: *n,
+                domains: d.clone(),
+            })
+            .collect();
+        operation.results = ranked
+            .iter()
+            .map(
+                |(_, candidate, domains)| strategy_picker::StrategyCandidateResult {
+                    candidate: candidate.clone(),
+                    attempts: domains.iter().map(|domain| domain.attempts).sum(),
+                    successes: domains.iter().map(|domain| domain.successes).sum(),
+                    confirmed: false,
+                    elapsed_ms: domains.iter().map(|domain| domain.elapsed_ms).sum(),
+                    detail: format!("Первичная проверка на {} доменах", domains.len()),
+                },
+            )
+            .collect();
+        let _ = write_strategy_pick_operation_sync(&directory, &operation);
+    }
+    ranked.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    for (_, candidate, domains) in ranked.iter_mut().take(5) {
+        if control.load(Ordering::Acquire) {
+            break;
+        }
+        let args = strategy_picker::candidate_argv(
+            &active_args,
+            protocol,
+            &candidate.steps,
+            &functions,
+            &blobs,
+        )
+        .map(|args| strategy_probe_argv(&binary, &args))
+        .unwrap_or_default();
+        let hosts = domains
+            .iter()
+            .map(|domain| domain.host.clone())
+            .collect::<Vec<_>>();
+        let confirmations = run_multi_site_probes(
+            runner.clone(),
+            MultiSiteProbeRequest {
+                hosts: &hosts,
+                protocol: proto.clone(),
+                args,
+                binary: binary.clone(),
+                control: control.clone(),
+                repeats,
+                known_baseline: Some(false),
+            },
+        )
+        .await;
+        for (domain, (_, phases)) in domains.iter_mut().zip(confirmations) {
+            domain.attempts = 0;
+            domain.successes = 0;
+            domain.elapsed_ms = 0;
+            domain.attempts = phases.len();
+            domain.successes = phases
+                .iter()
+                .filter(|phase| phase.ok == Some(true) && phase.state == "complete")
+                .count();
+            domain.elapsed_ms = phases
+                .iter()
+                .map(|phase| phase.duration_ms.unwrap_or_default())
+                .sum();
+            domain.confirmed = !control.load(Ordering::Acquire)
+                && domain.attempts == repeats
+                && domain.successes == repeats;
+        }
+    }
+    ranked.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    operation.multi_site_results = ranked
+        .iter()
+        .map(|(n, c, d)| MultiSiteCandidateResult {
+            candidate: c.clone(),
+            opened_domains: *n,
+            domains: d.clone(),
+        })
+        .collect();
+    operation.results = ranked
+        .iter()
+        .map(|(_, candidate, domains)| {
+            let attempts = domains.iter().map(|d| d.attempts).sum();
+            let successes = domains.iter().map(|d| d.successes).sum();
+            let confirmed = !domains.is_empty() && domains.iter().all(|d| d.confirmed);
+            strategy_picker::StrategyCandidateResult {
+                candidate: candidate.clone(),
+                attempts,
+                successes,
+                confirmed,
+                elapsed_ms: domains.iter().map(|d| d.elapsed_ms).sum(),
+                detail: format!("Подтверждение по {} доменам", domains.len()),
+            }
+        })
+        .collect();
+    operation.state = if control.load(Ordering::Acquire) {
+        "cancelled"
+    } else if operation.results.iter().any(|r| r.confirmed) {
+        "complete"
+    } else if operation
+        .multi_site_results
+        .iter()
+        .any(|r| r.opened_domains > 0)
+    {
+        "partial"
+    } else {
+        "no_match"
+    }
+    .into();
+    operation.stage = operation.state.clone();
+    operation.current = None;
+    operation.message = if operation.results.iter().any(|r| r.confirmed) {
+        "Найден общий профиль, подтверждённый на всех выбранных доменах".into()
+    } else if operation.state == "partial" {
+        "Есть частичные результаты; общего подтверждённого профиля нет".into()
+    } else if operation.state == "cancelled" {
+        "Подбор отменён; результаты сохранены".into()
+    } else {
+        "Общий профиль не прошёл проверку на выбранных доменах".into()
+    };
+    operation.updated_at = now_unix_seconds();
+    let _ = write_strategy_pick_operation_sync(&directory, &operation);
+    state.strategy_pick_controls.lock().await.remove(&id);
+}
+
 async fn start_strategy_pick(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StrategyPickRequest>,
@@ -6636,6 +7391,9 @@ async fn start_strategy_pick(
         done: 0,
         total: plan.candidates.len(),
         results: Vec::new(),
+        hosts: Vec::new(),
+        multi_site_results: Vec::new(),
+        multi_site_baseline: Vec::new(),
         message: "Подбор поставлен в очередь; основной конфиг не изменяется".into(),
         updated_at: now_unix_seconds(),
     };
@@ -9705,7 +10463,19 @@ async fn bind_port() -> Result<(TcpListener, u16), String> {
 }
 
 fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
+    let auth_state = state.auth.clone();
     Router::new()
+        .merge(
+            Router::new()
+                .route("/api/auth/status", get(auth::AuthManager::status))
+                .route("/api/auth/login", post(auth::AuthManager::login))
+                .route("/api/auth/logout", post(auth::AuthManager::logout))
+                .route(
+                    "/api/auth/settings",
+                    axum::routing::put(auth::AuthManager::update_settings),
+                )
+                .with_state(auth_state.clone()),
+        )
         .route("/", get(panel_shell))
         .route("/api/health", get(health))
         .route("/api/nfqws2/installation", get(get_installation))
@@ -9781,6 +10551,14 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         )
         .route("/api/nfqws2/diagnostics/trace", post(trace_site))
         .route("/api/nfqws2/strategies/pick", post(start_strategy_pick))
+        .route(
+            "/api/nfqws2/strategies/pick/multi",
+            post(start_multi_strategy_pick),
+        )
+        .route(
+            "/api/nfqws2/strategies/community",
+            post(get_community_strategies),
+        )
         .route(
             "/api/nfqws2/strategies/pick/history",
             get(get_strategy_pick_history).delete(clear_strategy_pick_history),
@@ -9862,6 +10640,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .with_state(state)
         .fallback_service(ServeDir::new(web_root).append_index_html_on_directories(true))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn_with_state(
+            auth_state,
+            auth::AuthManager::middleware,
+        ))
         .layer(middleware::from_fn(security_headers))
 }
 
@@ -9905,6 +10687,7 @@ async fn main() {
         std::process::exit(1);
     }
     let state = Arc::new(AppState {
+        auth: Arc::new(auth::AuthManager::new(data_dir.clone())),
         data_dir,
         port,
         cpu_previous: Arc::new(Mutex::new(None)),
@@ -9929,9 +10712,12 @@ async fn main() {
         .unwrap_or_else(|| PathBuf::from("/opt/share/nfqws2-ui/current/public"));
     let app = api_router(state, web_root);
     tracing::info!("nfqws2-ui listening on 0.0.0.0:{port}");
-    if let Err(error) = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+    if let Err(error) = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
     {
         eprintln!("nfqws2-ui server error: {error}");
     }
@@ -10968,6 +11754,7 @@ mod tests {
         config_override: Option<PathBuf>,
     ) -> Arc<AppState> {
         Arc::new(AppState {
+            auth: Arc::new(auth::AuthManager::new(data_dir.clone())),
             data_dir,
             port: 1002,
             cpu_previous: Arc::new(Mutex::new(None)),
@@ -11113,6 +11900,7 @@ mod tests {
         runner: Arc<SiteTraceRunner>,
     ) -> Arc<AppState> {
         Arc::new(AppState {
+            auth: Arc::new(auth::AuthManager::new(data_dir.clone())),
             data_dir,
             port: 1002,
             cpu_previous: Arc::new(Mutex::new(None)),
@@ -11147,6 +11935,50 @@ mod tests {
         assert!(result.contains(&"--lua-desync=hostfakesplit:host=ya.ru".into()));
     }
 
+    #[test]
+    fn multi_strategy_hosts_require_two_to_fifteen_unique_domains() {
+        let hosts = vec![" Example.com ".to_string(), "example.org".to_string()];
+        assert_eq!(
+            normalize_multi_strategy_hosts(&hosts).unwrap(),
+            vec!["example.com", "example.org"]
+        );
+        assert!(normalize_multi_strategy_hosts(&["one.example".into()]).is_err());
+        assert!(normalize_multi_strategy_hosts(&vec!["example.com".into(); 16]).is_err());
+        assert!(
+            normalize_multi_strategy_hosts(&["example.com".into(), "EXAMPLE.COM".into()]).is_err()
+        );
+        assert!(normalize_multi_strategy_hosts(&["1.1.1.1".into(), "example.com".into()]).is_err());
+    }
+
+    #[tokio::test]
+    async fn multi_strategy_route_rejects_invalid_host_sets_before_scheduling() {
+        let invalid_sets = vec![
+            vec!["one.example".to_string()],
+            vec!["example.com".to_string(); 16],
+            vec!["example.com".to_string(), "EXAMPLE.COM".to_string()],
+            vec!["1.1.1.1".to_string(), "example.com".to_string()],
+        ];
+        for hosts in invalid_sets {
+            let dir = tempfile::tempdir().unwrap();
+            let app = api_router(test_state(dir.path().join("data")), dir.path().join("web"));
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/nfqws2/strategies/pick/multi")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            serde_json::json!({"hosts": hosts, "protocol": "https"}).to_string(),
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            assert!(!dir.path().join("data/strategy-pick-operations").exists());
+        }
+    }
+
     fn confirmed_strategy_pick(
         state: &str,
         protocol: &str,
@@ -11173,6 +12005,9 @@ mod tests {
                 elapsed_ms: 10,
                 detail: "two target probes".into(),
             }],
+            hosts: Vec::new(),
+            multi_site_results: Vec::new(),
+            multi_site_baseline: Vec::new(),
             message: state.into(),
             updated_at: now_unix_seconds(),
         }
@@ -11244,6 +12079,83 @@ mod tests {
                 .proposed_content
                 .contains("--hostlist-domains=example.com")
         );
+    }
+
+    #[test]
+    fn multi_site_preview_scopes_the_shared_candidate_only_to_confirmed_domains() {
+        let mut operation = confirmed_strategy_pick("complete", "https", true);
+        operation.host = "one.example, two.example, open.example".into();
+        operation.hosts = vec![
+            "one.example".into(),
+            "two.example".into(),
+            "open.example".into(),
+        ];
+        operation.multi_site_baseline = vec![
+            MultiSiteBaselineResult {
+                host: "one.example".into(),
+                eligible: true,
+                reason: "blocked".into(),
+            },
+            MultiSiteBaselineResult {
+                host: "two.example".into(),
+                eligible: true,
+                reason: "blocked".into(),
+            },
+            MultiSiteBaselineResult {
+                host: "open.example".into(),
+                eligible: false,
+                reason: "direct".into(),
+            },
+        ];
+        operation.multi_site_results = vec![MultiSiteCandidateResult {
+            candidate: operation.results[0].candidate.clone(),
+            opened_domains: 2,
+            domains: vec![
+                MultiSiteDomainResult {
+                    host: "one.example".into(),
+                    eligible: true,
+                    baseline_reason: String::new(),
+                    attempts: 3,
+                    successes: 3,
+                    elapsed_ms: 110,
+                    confirmed: true,
+                },
+                MultiSiteDomainResult {
+                    host: "two.example".into(),
+                    eligible: true,
+                    baseline_reason: String::new(),
+                    attempts: 3,
+                    successes: 3,
+                    elapsed_ms: 120,
+                    confirmed: true,
+                },
+            ],
+        }];
+        let preview = build_strategy_pick_preview(
+            &operation,
+            0,
+            "NFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80\"\n",
+            "rev-multi".into(),
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .unwrap();
+        assert!(
+            preview
+                .proposed_content
+                .contains("--hostlist-domains=one.example")
+        );
+        assert!(
+            preview
+                .proposed_content
+                .contains("--hostlist-domains=two.example")
+        );
+        assert!(
+            !preview
+                .proposed_content
+                .contains("--hostlist-domains=open.example")
+        );
+        assert!(preview.proposed_content.contains("NFQWS_ARGS_CUSTOM"));
     }
 
     #[test]
@@ -12682,6 +13594,9 @@ mod tests {
             done: 0,
             total: 1,
             results: Vec::new(),
+            hosts: Vec::new(),
+            multi_site_results: Vec::new(),
+            multi_site_baseline: Vec::new(),
             message: "running".into(),
             updated_at: now_unix_seconds(),
         };
@@ -12790,6 +13705,9 @@ mod tests {
                     done: 0,
                     total: 1,
                     results: Vec::new(),
+                    hosts: Vec::new(),
+                    multi_site_results: Vec::new(),
+                    multi_site_baseline: Vec::new(),
                     message: state.into(),
                     updated_at,
                 },
@@ -12835,6 +13753,9 @@ mod tests {
                     done: 0,
                     total: 1,
                     results: Vec::new(),
+                    hosts: Vec::new(),
+                    multi_site_results: Vec::new(),
+                    multi_site_baseline: Vec::new(),
                     message: state.into(),
                     updated_at: index as u64,
                 },
