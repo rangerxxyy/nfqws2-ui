@@ -3,6 +3,7 @@
 @tailwind utilities;
 
 .simplified-nav { display: grid; gap: .5rem; }
+.simplified-nav.hidden, .simplified-nav-button.hidden { display: none; }
 .simplified-nav-groups, .simplified-nav-pages { display: flex; gap: .4rem; overflow-x: auto; scrollbar-width: thin; }
 .simplified-nav-pages { border-top: 1px solid rgb(51 65 85 / 55%); padding-top: .5rem; }
 .simplified-nav-button { flex: 0 0 auto; border: 1px solid #263247; border-radius: .65rem; padding: .45rem .7rem; color: #cbd5e1; background: #101827; font-size: .78rem; font-weight: 600; transition: color .15s ease, background-color .15s ease, border-color .15s ease; }

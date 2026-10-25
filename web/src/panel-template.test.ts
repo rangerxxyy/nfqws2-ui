@@ -951,6 +951,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).not.toContain('fonts.googleapis.com');
     expect(template).toMatch(/data-action(?:-(?:click|input|change|scroll|submit))=/);
     expect(panelSource).toContain("import './panel.css'");
+    expect(panelStyles).toContain('.simplified-nav.hidden, .simplified-nav-button.hidden { display: none; }');
     expect(panelSource).toContain("import '@fontsource-variable/inter'");
     expect(panelSource).toContain("import '@fontsource-variable/jetbrains-mono'");
   });
