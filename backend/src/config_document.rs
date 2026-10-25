@@ -377,16 +377,78 @@ impl<'a> ConfigDocument<'a> {
                 format!("Значение {name} не является литералом или одной ссылкой $MODE_*")
             })?;
         let variable = format!("MODE_{reference}");
-        if reference.is_empty()
-            || !reference
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-        {
+        if !["MODE_LIST", "MODE_AUTO", "MODE_ALL"].contains(&variable.as_str()) {
             return Err(format!("Недопустимая статическая ссылка в {name}"));
         }
-        self.literal_value(&variable).map_err(|message| {
-            format!("{name}: не удалось безопасно прочитать {variable}: {message}")
-        })
+        self.expand_mode_value(&variable, &mut Vec::new(), &mut 0)
+            .map_err(|message| {
+                format!("{name}: не удалось безопасно раскрыть {variable}: {message}")
+            })
+    }
+
+    fn expand_mode_value(
+        &self,
+        name: &str,
+        active: &mut Vec<String>,
+        expansion_count: &mut usize,
+    ) -> Result<String, String> {
+        const MAX_MODE_EXPANSIONS: usize = 32;
+        if active.iter().any(|current| current == name) {
+            return Err(format!("обнаружен цикл в переменной {name}"));
+        }
+        active.push(name.to_owned());
+        let assignment = self.unique(name)?;
+        let raw = &self.source[assignment.value.clone()];
+        let value = if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+            let value = &raw[1..raw.len() - 1];
+            if value.contains(['\\', '"', '`']) {
+                return Err(format!(
+                    "переменная {name} содержит неподдерживаемое shell-экранирование"
+                ));
+            }
+            value
+        } else {
+            let value = self.literal_value(name)?;
+            active.pop();
+            return Ok(value);
+        };
+
+        let mut expanded = String::with_capacity(value.len());
+        let mut cursor = 0;
+        while cursor < value.len() {
+            let rest = &value[cursor..];
+            if let Some(rest) = rest.strip_prefix('$') {
+                let (mode_name, consumed) = if let Some(rest) = rest.strip_prefix('{') {
+                    let Some(end) = rest.find('}') else {
+                        return Err(format!("незакрытая ссылка в {name}"));
+                    };
+                    (&rest[..end], end + 3)
+                } else {
+                    let length = rest
+                        .bytes()
+                        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+                        .count();
+                    (&rest[..length], length + 1)
+                };
+                if !["MODE_LIST", "MODE_AUTO", "MODE_ALL"].contains(&mode_name) {
+                    return Err(format!(
+                        "недопустимая shell-переменная ${mode_name} в {name}"
+                    ));
+                }
+                *expansion_count = expansion_count.saturating_add(1);
+                if *expansion_count > MAX_MODE_EXPANSIONS {
+                    return Err("превышен лимит вложенных ссылок MODE_*".into());
+                }
+                expanded.push_str(&self.expand_mode_value(mode_name, active, expansion_count)?);
+                cursor += consumed;
+            } else {
+                let character = rest.chars().next().expect("cursor is before end");
+                expanded.push(character);
+                cursor += character.len_utf8();
+            }
+        }
+        active.pop();
+        Ok(expanded)
     }
 
     /// Append a sequence of plain nfqws2 argument tokens to a literal variable.
@@ -534,6 +596,46 @@ mod tests {
             ConfigDocument::parse("MODE_ALL='  '\nNFQWS_EXTRA_ARGS=''\n")
                 .unwrap()
                 .set_mode("$MODE_ALL")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn foreign_config_expands_nested_zemidala_mode_assignments_safely() {
+        let source = concat!(
+            "MODE_LIST=\"--hostlist=lists/user.list\"\n",
+            "MODE_ALL=\"--hostlist-exclude=lists/exclude.list\"\n",
+            "MODE_AUTO=\"$MODE_LIST --hostlist-auto=lists/auto.list $MODE_ALL\"\n",
+            "NFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n",
+        );
+        let document = ConfigDocument::parse(source).unwrap();
+        assert_eq!(
+            document.literal_or_mode_value("NFQWS_EXTRA_ARGS").unwrap(),
+            "--hostlist=lists/user.list --hostlist-auto=lists/auto.list --hostlist-exclude=lists/exclude.list"
+        );
+
+        let braced = ConfigDocument::parse(
+            "MODE_LIST='--hostlist=lists/user.list'\nMODE_AUTO=\"${MODE_LIST}\"\nNFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            braced.literal_or_mode_value("NFQWS_EXTRA_ARGS").unwrap(),
+            "--hostlist=lists/user.list"
+        );
+
+        let cycle = ConfigDocument::parse(
+            "MODE_LIST=\"$MODE_AUTO\"\nMODE_AUTO=\"$MODE_LIST\"\nNFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n",
+        )
+        .unwrap();
+        assert!(cycle.literal_or_mode_value("NFQWS_EXTRA_ARGS").is_err());
+
+        let unsupported = ConfigDocument::parse(
+            "MODE_AUTO=\"$HOME --hostlist=lists/user.list\"\nNFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n",
+        )
+        .unwrap();
+        assert!(
+            unsupported
+                .literal_or_mode_value("NFQWS_EXTRA_ARGS")
                 .is_err()
         );
     }

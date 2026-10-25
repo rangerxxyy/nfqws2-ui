@@ -9495,6 +9495,53 @@ mod tests {
     }
 
     #[test]
+    fn foreign_config_parser_resolves_nested_zemidala_modes_and_isolates_auto_list() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        let blobs = directory.path().join("blobs");
+        let lua = directory.path().join("lua");
+        std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&blobs).unwrap();
+        std::fs::create_dir(&lua).unwrap();
+        std::fs::write(lists.join("user.list"), "example.org\n").unwrap();
+        std::fs::write(lists.join("exclude.list"), "excluded.example.org\n").unwrap();
+        std::fs::write(lists.join("auto.list"), "learned.example.org\n").unwrap();
+        let source = concat!(
+            "MODE_LIST=\"--hostlist=lists/user.list\"\n",
+            "MODE_ALL=\"--hostlist-exclude=lists/exclude.list\"\n",
+            "MODE_AUTO=\"$MODE_LIST --hostlist-auto=lists/auto.list $MODE_ALL\"\n",
+            "NFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake\"\n",
+        );
+        let isolated_auto_list = Path::new("/tmp/config-check/nested-mode-auto.list");
+        let mut auto_lists = Vec::new();
+        let args = external_config_test_args(
+            source,
+            isolated_auto_list,
+            &lua,
+            &blobs,
+            &lists,
+            &mut auto_lists,
+        )
+        .unwrap();
+
+        assert!(args.contains(&format!(
+            "--hostlist={}",
+            lists.join("user.list").canonicalize().unwrap().display()
+        )));
+        assert!(args.contains(&format!(
+            "--hostlist-exclude={}",
+            lists.join("exclude.list").canonicalize().unwrap().display()
+        )));
+        assert!(args.contains(&format!("--hostlist-auto={}", isolated_auto_list.display())));
+        assert_eq!(auto_lists.len(), 1);
+        assert_eq!(
+            auto_lists[0].1.as_deref(),
+            Some(lists.join("auto.list").canonicalize().unwrap().as_path())
+        );
+    }
+
+    #[test]
     fn foreign_config_parser_builds_zemidala_runtime_profiles_for_all_argument_groups() {
         let directory = tempfile::tempdir().unwrap();
         let lists = directory.path().join("lists");
