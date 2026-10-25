@@ -4763,8 +4763,8 @@ async fn prune_foreign_config_operations(directory: &Path) {
 
 fn external_config_test_args(
     source: &str,
-    active_args: &[String],
     isolated_auto_list: &Path,
+    lua_directory: &Path,
     blobs_directory: &Path,
     lists_directory: &Path,
     auto_list_sources: &mut Vec<(PathBuf, Option<PathBuf>)>,
@@ -4777,16 +4777,6 @@ fn external_config_test_args(
         return Err(format!("{}: {}", diagnostic.code, diagnostic.message));
     }
     let document = ConfigDocument::parse(source)?;
-    let active_lua_init = active_args
-        .iter()
-        .filter(|argument| argument.starts_with("--lua-init="))
-        .filter_map(|argument| {
-            argument
-                .strip_prefix("--lua-init=")
-                .and_then(|path| path.trim_start_matches('@').rsplit('/').next())
-                .map(|filename| (filename.to_owned(), argument.as_str()))
-        })
-        .collect::<HashMap<_, _>>();
     let mut auto_list_index = 0usize;
     let mut map_arguments = |name: &str, value: &str| -> Result<Vec<String>, String> {
         let mut mapped = Vec::new();
@@ -4835,17 +4825,14 @@ fn external_config_test_args(
             {
                 mapped.push(argument);
             } else if let Some(path) = argument.strip_prefix("--lua-init=") {
-                let filename = path
-                    .trim_start_matches('@')
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or_default();
-                let Some(active_path) = active_lua_init.get(filename) else {
+                let Some(path) = path.strip_prefix('@') else {
                     return Err(format!(
-                        "{name}: проверка отклонена: Lua-файл «{filename}» не подключён в текущем nfqws2"
+                        "{name}: --lua-init должен ссылаться на локальный файл через @путь"
                     ));
                 };
-                mapped.push((*active_path).to_owned());
+                let path = resolve_foreign_lua_path(path, lua_directory)
+                    .map_err(|message| format!("{name}: {message}"))?;
+                mapped.push(format!("--lua-init=@{}", path.display()));
             } else if let Some(argument) = rewrite_foreign_blob_argument(argument, blobs_directory)
                 .map_err(|message| format!("{name}: {message}"))?
             {
@@ -4947,6 +4934,34 @@ fn external_config_test_args(
     let mut profile = tcp;
     profile.extend(extra);
     profiles.push(profile);
+
+    let has_module = |argument: &str, module: &str| {
+        argument
+            .strip_prefix("--lua-init=@")
+            .and_then(|path| Path::new(path).file_name())
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.strip_suffix(".gz").unwrap_or(name) == module)
+    };
+    let has_zapret_lib = base_args
+        .iter()
+        .any(|argument| has_module(argument, "zapret-lib.lua"));
+    if profiles
+        .iter()
+        .flatten()
+        .any(|argument| argument.starts_with("--lua-desync="))
+        && !has_zapret_lib
+    {
+        for module in ["zapret-lib.lua", "zapret-antidpi.lua", "zapret-auto.lua"] {
+            if let Ok(path) =
+                resolve_foreign_lua_path(&format!("/opt/etc/nfqws2/lua/{module}"), lua_directory)
+                && !base_args
+                    .iter()
+                    .any(|argument| has_module(argument, module))
+            {
+                base_args.push(format!("--lua-init=@{}", path.display()));
+            }
+        }
+    }
 
     let mut arguments = base_args;
     for (index, profile) in profiles.into_iter().enumerate() {
@@ -5135,6 +5150,96 @@ fn rewrite_foreign_blob_argument(
     }
     let path = resolve_foreign_blob_path(path, blobs_directory)?;
     Ok(Some(format!("--blob={name}:{offset}@{}", path.display())))
+}
+
+fn resolve_foreign_lua_path(value: &str, lua_directory: &Path) -> Result<PathBuf, String> {
+    const SOURCE_PREFIXES: [&str; 6] = [
+        "/opt/etc/nfqws2/lua/",
+        "/etc/nfqws2/lua/",
+        "/opt/etc/nfqws/lua/",
+        "/etc/nfqws/lua/",
+        "/opt/zapret2/lua/",
+        "/opt/zapret/lua/",
+    ];
+    if value.is_empty() || value.contains(['\\', '\0']) {
+        return Err("Путь к Lua-файлу пустой или содержит недопустимые символы".into());
+    }
+    let value = value.trim_start_matches('@');
+    let relative = if value.starts_with('/') {
+        if let Ok(relative) = Path::new(value).strip_prefix(lua_directory) {
+            relative.to_path_buf()
+        } else if let Some(relative) = SOURCE_PREFIXES
+            .iter()
+            .find_map(|prefix| value.strip_prefix(prefix))
+        {
+            PathBuf::from(relative)
+        } else {
+            return Err(format!(
+                "путь Lua-файла «{value}» не относится к поддерживаемой раскладке nfqws2/zapret"
+            ));
+        }
+    } else {
+        Path::new(value)
+            .strip_prefix("lua")
+            .unwrap_or_else(|_| Path::new(value))
+            .to_path_buf()
+    };
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("путь Lua-файла «{value}» выходит за каталог Lua"));
+    }
+    let root = lua_directory
+        .canonicalize()
+        .map_err(|error| format!("каталог Lua не найден: {error}"))?;
+    let mut candidates = vec![relative.clone()];
+    if relative
+        .extension()
+        .is_some_and(|extension| extension == "lua")
+    {
+        candidates.push(relative.with_extension("lua.gz"));
+    }
+    for relative in candidates {
+        let candidate = root.join(&relative);
+        let mut cursor = root.clone();
+        let mut symlink_found = false;
+        let mut missing = false;
+        for component in relative.components() {
+            cursor.push(component.as_os_str());
+            match std::fs::symlink_metadata(&cursor) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    symlink_found = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    missing = true;
+                    break;
+                }
+            }
+        }
+        if symlink_found {
+            return Err(format!(
+                "путь Lua-файла «{value}» содержит символическую ссылку"
+            ));
+        }
+        if missing {
+            continue;
+        }
+        let metadata = std::fs::metadata(&candidate)
+            .map_err(|_| format!("не удалось проверить Lua-файл «{value}»"))?;
+        let canonical = candidate
+            .canonicalize()
+            .map_err(|_| format!("не удалось проверить Lua-файл «{value}»"))?;
+        if metadata.is_file() && canonical.starts_with(&root) {
+            return Ok(canonical);
+        }
+    }
+    Err(format!(
+        "Lua-файл «{value}» отсутствует в установленном каталоге"
+    ))
 }
 
 struct ForeignAutoListCleanup {
@@ -5536,8 +5641,8 @@ async fn start_foreign_config_check(
         let isolated_auto_list = auto_list_directory.join(format!("config-{index}.list"));
         let args = match external_config_test_args(
             &content,
-            &active_args,
             &isolated_auto_list,
+            &paths.lua_dir,
             &paths.blobs_dir,
             &paths.lists_dir,
             &mut prepared_auto_lists,
@@ -9317,35 +9422,36 @@ mod tests {
     }
 
     #[test]
-    fn foreign_config_parser_extracts_only_literal_tcp_groups_and_active_lua_paths() {
+    fn foreign_config_parser_resolves_installed_lua_paths_and_active_list_paths() {
         let directory = tempfile::tempdir().unwrap();
         let lists = directory.path().join("lists");
         let blobs = directory.path().join("blobs");
+        let lua = directory.path().join("lua");
         std::fs::create_dir(&lists).unwrap();
         std::fs::create_dir(&blobs).unwrap();
+        std::fs::create_dir(&lua).unwrap();
         std::fs::write(lists.join("user.list"), "example.org\n").unwrap();
         std::fs::write(lists.join("auto.list"), "auto.example.org\n").unwrap();
         std::fs::write(blobs.join("tls_clienthello.bin"), b"tls hello").unwrap();
-        let active = vec![
-            "--lua-init=@/opt/nfqws/lua/zapret-lib.lua".to_string(),
-            "--blob=tls_clienthello:@/opt/nfqws/blobs/tls_clienthello.bin".to_string(),
-            "--hostlist-auto=/opt/nfqws/lists/auto.list".to_string(),
-        ];
+        std::fs::write(lua.join("zapret-lib.lua"), "-- installed library\n").unwrap();
         let source = "NFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua --blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin --hostlist-auto=/opt/zapret/ipset/auto.list --hostlist-auto-debug=/var/log/auto.log\"\nNFQWS_ARGS=\"--filter-tcp=80,443 --hostlist=/opt/zapret/ipset/user.list --payload=tls_client_hello --lua-desync=fake\"\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443 --lua-desync=multisplit:pos=1\"\n";
         let isolated_auto_list = Path::new("/tmp/config-check/auto.list");
         let mut auto_lists = Vec::new();
         let args = external_config_test_args(
             source,
-            &active,
             isolated_auto_list,
+            &lua,
             &blobs,
             &lists,
             &mut auto_lists,
         )
         .unwrap();
-        assert_eq!(args.len(), 10);
+        assert_eq!(args.len(), 10, "{args:#?}");
         assert!(args.contains(&"--new".to_string()));
-        assert!(args.contains(&active[0]));
+        assert!(args.contains(&format!(
+            "--lua-init=@{}",
+            lua.join("zapret-lib.lua").canonicalize().unwrap().display()
+        )));
         assert!(args.contains(&format!(
             "--blob=tls_clienthello:@{}",
             blobs.join("tls_clienthello.bin").canonicalize().unwrap().display()
@@ -9374,8 +9480,8 @@ mod tests {
         let mut auto_lists = Vec::new();
         let args = external_config_test_args(
             mode_reference,
-            &active,
             Path::new("/tmp/config-check/mode-auto.list"),
+            &lua,
             &blobs,
             &lists,
             &mut auto_lists,
@@ -9392,9 +9498,12 @@ mod tests {
     fn foreign_config_parser_builds_zemidala_runtime_profiles_for_all_argument_groups() {
         let directory = tempfile::tempdir().unwrap();
         let lists = directory.path().join("lists");
+        let lua = directory.path().join("lua");
         std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&lua).unwrap();
+        std::fs::write(lua.join("safe.lua"), "-- safe module\n").unwrap();
         let source = concat!(
-            "NFQWS_BASE_ARGS=\"--qnum=17 --daemon --debug=/tmp/foreign.log --lua-init=@/safe.lua\"\n",
+            "NFQWS_BASE_ARGS=\"--qnum=17 --daemon --debug=/tmp/foreign.log --lua-init=@/opt/etc/nfqws2/lua/safe.lua\"\n",
             "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --lua-desync=custom --new=video --filter-tcp=80 --lua-desync=custom2\"\n",
             "NFQWS_ARGS_UDP=\"--filter-udp=443 --payload=quic_initial\"\n",
             "NFQWS_ARGS_QUIC=\"--filter-udp=443 --payload=quic_initial --lua-desync=quic\"\n",
@@ -9403,12 +9512,11 @@ mod tests {
             "NFQWS_ARGS=\"--filter-tcp=443 --lua-desync=tcp\"\n",
         );
         std::fs::write(lists.join("ips.txt"), "192.0.2.1\n").unwrap();
-        let active = vec!["--lua-init=@/opt/etc/nfqws2/lua/safe.lua".to_string()];
         let mut auto_lists = Vec::new();
         let args = external_config_test_args(
             source,
-            &active,
             Path::new("/tmp/config-check/auto.list"),
+            &lua,
             &lists,
             &lists,
             &mut auto_lists,
@@ -9440,17 +9548,70 @@ mod tests {
     }
 
     #[test]
+    fn foreign_config_parser_maps_installed_lua_and_adds_available_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        let blobs = directory.path().join("blobs");
+        let lua = directory.path().join("lua");
+        std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&blobs).unwrap();
+        std::fs::create_dir(&lua).unwrap();
+        std::fs::write(lua.join("custom.lua"), "-- local custom module\n").unwrap();
+        std::fs::write(lua.join("zapret-lib.lua"), "-- lib\n").unwrap();
+        std::fs::write(lua.join("zapret-antidpi.lua.gz"), b"gzip content").unwrap();
+        std::fs::write(lua.join("zapret-auto.lua"), "-- auto\n").unwrap();
+
+        let source = concat!(
+            "NFQWS_BASE_ARGS=\"--lua-init=@/opt/zapret2/lua/custom.lua\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake\"\n",
+        );
+        let args = external_config_test_args(
+            source,
+            Path::new("/tmp/config-check/auto.list"),
+            &lua,
+            &blobs,
+            &lists,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(args.contains(&format!(
+            "--lua-init=@{}",
+            lua.join("custom.lua").canonicalize().unwrap().display()
+        )));
+        for module in ["zapret-lib.lua", "zapret-antidpi.lua.gz", "zapret-auto.lua"] {
+            assert!(args.contains(&format!(
+                "--lua-init=@{}",
+                lua.join(module).canonicalize().unwrap().display()
+            )));
+        }
+
+        let missing = concat!(
+            "NFQWS_BASE_ARGS=\"--lua-init=@/etc/passwd\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443\"\n",
+        );
+        assert!(
+            external_config_test_args(
+                missing,
+                Path::new("/tmp/config-check/auto.list"),
+                &lua,
+                &blobs,
+                &lists,
+                &mut Vec::new(),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn foreign_config_parser_rejects_unmapped_blob_files_and_keeps_inline_blobs() {
         let directory = tempfile::tempdir().unwrap();
         let lists = directory.path().join("lists");
         let blobs = directory.path().join("blobs");
+        let lua = directory.path().join("lua");
         std::fs::create_dir(&lists).unwrap();
         std::fs::create_dir(&blobs).unwrap();
+        std::fs::create_dir(&lua).unwrap();
         std::fs::write(blobs.join("tls.bin"), b"tls blob").unwrap();
-        let active = vec![
-            "--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua".to_string(),
-            "--blob=inline:@/opt/etc/nfqws2/blobs/tls.bin".to_string(),
-        ];
         let unknown_file = concat!(
             "NFQWS_BASE_ARGS=\"--blob=foreign:@/etc/shadow\"\n",
             "NFQWS_ARGS=\"--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=foreign\"\n",
@@ -9458,8 +9619,8 @@ mod tests {
         assert!(
             external_config_test_args(
                 unknown_file,
-                &active,
                 Path::new("/tmp/config-check/auto.list"),
+                &lua,
                 &blobs,
                 &lists,
                 &mut Vec::new(),
@@ -9473,8 +9634,8 @@ mod tests {
         );
         let args = external_config_test_args(
             inline,
-            &active,
             Path::new("/tmp/config-check/auto.list"),
+            &lua,
             &blobs,
             &lists,
             &mut Vec::new(),
@@ -9491,8 +9652,8 @@ mod tests {
         );
         let args = external_config_test_args(
             offset,
-            &active,
             Path::new("/tmp/config-check/auto.list"),
+            &lua,
             &blobs,
             &lists,
             &mut Vec::new(),
@@ -9509,9 +9670,10 @@ mod tests {
 
     #[test]
     fn foreign_config_parser_rejects_dynamic_values_new_lua_files_and_missing_tcp_filter() {
-        let active = vec!["--lua-init=@/safe.lua".to_string()];
         let directory = tempfile::tempdir().unwrap();
         let lists = directory.path().join("lists");
+        let lua = directory.path().join("lua");
+        std::fs::create_dir(&lua).unwrap();
         std::fs::create_dir(&lists).unwrap();
         for source in [
             "NFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n",
@@ -9522,8 +9684,8 @@ mod tests {
             assert!(
                 external_config_test_args(
                     source,
-                    &active,
                     Path::new("/tmp/config-check/auto.list"),
+                    &lua,
                     &lists,
                     &lists,
                     &mut Vec::new()
