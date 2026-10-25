@@ -504,6 +504,19 @@ fn monitor_upload_stall_confirmed(exit_code: i32, appconnect_seconds: Option<f64
         && appconnect_seconds.is_some_and(|seconds| seconds.is_finite() && seconds > 0.0)
 }
 
+fn unavailable_monitor_result(detail: String) -> MonitorProbeResult {
+    let steps = ["tcp", "tls", "http", "transfer"]
+        .into_iter()
+        .map(|id| DiagnosticStep::new(id, "unavailable", detail.clone()))
+        .collect();
+    MonitorProbeResult {
+        summary: detail.clone(),
+        current: DiagnosticStep::new("current", "unavailable", detail),
+        steps,
+        received_bytes: 0,
+    }
+}
+
 fn parse_monitor_curl(exit_code: i32, stdout: &[u8]) -> MonitorProbeResult {
     let text = String::from_utf8_lossy(stdout);
     let fields = text
@@ -676,11 +689,15 @@ fn parse_monitor_curl(exit_code: i32, stdout: &[u8]) -> MonitorProbeResult {
     }
 }
 
-pub async fn monitor_probe(host: &str, ip: std::net::Ipv4Addr) -> MonitorProbeResult {
+async fn monitor_probe_with_program(
+    program: &str,
+    host: &str,
+    ip: std::net::Ipv4Addr,
+) -> MonitorProbeResult {
     let args = monitor_curl_args(host, ip);
-    let mut result = match capture(curl_program(), &args, 10, 4096).await {
+    let mut result = match capture(program, &args, 10, 4096).await {
         Ok((exit_code, output)) => parse_monitor_curl(exit_code, &output),
-        Err(_) => parse_monitor_curl(-1, b""),
+        Err(error) => return unavailable_monitor_result(error),
     };
     if monitor_should_test_upload(result.received_bytes, result.current.status) {
         match monitor_upload_stalled(host, ip).await {
@@ -708,6 +725,10 @@ pub async fn monitor_probe(host: &str, ip: std::net::Ipv4Addr) -> MonitorProbeRe
         }
     }
     result
+}
+
+pub async fn monitor_probe(host: &str, ip: std::net::Ipv4Addr) -> MonitorProbeResult {
+    monitor_probe_with_program(curl_program(), host, ip).await
 }
 
 async fn monitor_upload_stalled(host: &str, ip: std::net::Ipv4Addr) -> Option<bool> {
@@ -1604,6 +1625,25 @@ mod tests {
         assert_eq!(tls_error.steps[0].status, "ok");
         assert_eq!(tls_error.steps[1].status, "error");
         assert!(tls_error.current.detail.contains("TLS"));
+    }
+
+    #[tokio::test]
+    async fn monitor_probe_keeps_curl_launch_errors_as_unavailable_instead_of_network_failures() {
+        let program = "nfqws2-ui-test-curl-that-does-not-exist";
+        let unavailable =
+            monitor_probe_with_program(program, "example.com", "8.8.8.8".parse().unwrap()).await;
+
+        let message = format!("Утилита {program} недоступна");
+        assert_eq!(unavailable.summary, message);
+        assert_eq!(unavailable.current.status, "unavailable");
+        assert_eq!(unavailable.current.detail, message);
+        assert_eq!(unavailable.steps.len(), 4);
+        assert!(
+            unavailable
+                .steps
+                .iter()
+                .all(|step| step.status == "unavailable")
+        );
     }
 
     #[test]
