@@ -281,6 +281,15 @@ mod tests {
     }
 
     #[test]
+    fn preserves_ipv4_prefixes_above_the_signed_32_bit_boundary() {
+        let json = br#"{"data":{"prefixes":[{"prefix":"128.0.0.0/8"},{"prefix":"192.0.2.0/24"},{"prefix":"255.255.255.0/24"}]}}"#;
+        assert_eq!(
+            parse_announced_ipv4_prefixes(json).unwrap(),
+            ["128.0.0.0/8", "192.0.2.0/24", "255.255.255.0/24"]
+        );
+    }
+
+    #[test]
     fn rejects_missing_or_empty_prefix_lists() {
         assert!(parse_announced_ipv4_prefixes(br#"{"data":{}}"#).is_err());
         assert!(parse_announced_ipv4_prefixes(br#"{"data":{"prefixes":[]}}"#).is_err());
