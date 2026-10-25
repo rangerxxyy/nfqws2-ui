@@ -19,6 +19,40 @@ COMMITTED=0
 SWITCHED=0
 
 fail() { echo "nfqws2-ui installer: $*" >&2; exit 1; }
+
+download_and_verify_release_archive() {
+	DR_BASE=$1
+	DR_ASSET=$2
+	DR_SHA_ASSET=$3
+	DR_DIRECTORY=$4
+	DR_MAX_ATTEMPTS=3
+	DR_ATTEMPT=1
+	DR_DOWNLOAD_ERROR='could not verify release archive SHA256'
+	while [ "$DR_ATTEMPT" -le "$DR_MAX_ATTEMPTS" ]; do
+		DR_CACHE_BUSTER="$VERSION-$(date +%s)-$$-$DR_ATTEMPT"
+		if ! "$WGET" -q -O "$DR_DIRECTORY/$DR_ASSET" "$DR_BASE/$DR_ASSET?nfqws2-ui-cache=$DR_CACHE_BUSTER"; then
+			DR_DOWNLOAD_ERROR='cannot download release archive'
+		elif ! "$WGET" -q -O "$DR_DIRECTORY/$DR_SHA_ASSET" "$DR_BASE/$DR_SHA_ASSET?nfqws2-ui-cache=$DR_CACHE_BUSTER"; then
+			DR_DOWNLOAD_ERROR='cannot download SHA256 file'
+		else
+			DR_EXPECTED=$(awk 'NR==1 { print $1 }' "$DR_DIRECTORY/$DR_SHA_ASSET")
+			case "$DR_EXPECTED" in
+				''|*[!0-9a-fA-F]*) DR_DOWNLOAD_ERROR='invalid SHA256 manifest' ;;
+				*)
+					DR_ACTUAL=$(sha256sum "$DR_DIRECTORY/$DR_ASSET" | awk '{print $1}')
+					if [ "$DR_EXPECTED" = "$DR_ACTUAL" ]; then
+						return 0
+					fi
+					DR_DOWNLOAD_ERROR='release archive SHA256 mismatch'
+					;;
+			esac
+		fi
+		DR_ATTEMPT=$((DR_ATTEMPT + 1))
+	done
+	DR_DOWNLOAD_ERROR="$DR_DOWNLOAD_ERROR after $DR_MAX_ATTEMPTS cache-busted attempts"
+	return 1
+}
+
 # cleanup is called by EXIT/HUP/INT/TERM traps.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
@@ -69,12 +103,7 @@ case "$ARCH" in aarch64|arm64) ;; *) fail "unsupported architecture: $ARCH (rele
 mkdir -p "$TMP" "$ROOT/releases" "$DATA" "$RUN" /opt/var/log
 chmod 700 "$DATA" "$RUN"
 WGET=$(command -v wget)
-"$WGET" -q -O "$TMP/$ASSET" "$BASE/$ASSET" || fail 'cannot download release archive'
-"$WGET" -q -O "$TMP/$SHA_ASSET" "$BASE/$SHA_ASSET" || fail 'cannot download SHA256 file'
-EXPECTED=$(awk 'NR==1 { print $1 }' "$TMP/$SHA_ASSET")
-case "$EXPECTED" in ''|*[!0-9a-fA-F]*) fail 'invalid SHA256 manifest' ;; esac
-ACTUAL=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')
-[ "$EXPECTED" = "$ACTUAL" ] || fail 'release archive SHA256 mismatch'
+download_and_verify_release_archive "$BASE" "$ASSET" "$SHA_ASSET" "$TMP" || fail "$DR_DOWNLOAD_ERROR"
 
 # Reject absolute/traversal tar names before extracting.
 tar -tzf "$TMP/$ASSET" > "$TMP/entries" || fail 'release archive is invalid'

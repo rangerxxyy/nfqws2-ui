@@ -52,6 +52,11 @@ const GITHUB_RELEASES_API: &str =
 const NFQWS2_RELEASES_API: &str =
     "https://api.github.com/repos/nfqws/nfqws2-keenetic/releases?per_page=100";
 static UPDATE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn github_wget_candidates() -> [&'static str; 2] {
+    ["/opt/bin/wget", "wget"]
+}
+
 const PANEL_SHELL_HTML: &str = r##"<!doctype html>
 <html lang="ru" class="dark">
 <head>
@@ -2684,19 +2689,38 @@ fn installed_core_tag_from_output(output: &[u8]) -> Option<String> {
         .map(|version| format!("v{version}"))
 }
 
+async fn spawn_github_wget(url: &str) -> Result<tokio::process::Child, std::io::Error> {
+    spawn_github_wget_with_candidates(url, &github_wget_candidates()).await
+}
+
+async fn spawn_github_wget_with_candidates(
+    url: &str,
+    candidates: &[&str],
+) -> Result<tokio::process::Child, std::io::Error> {
+    let mut last_error = None;
+    for executable in candidates {
+        match tokio::process::Command::new(executable)
+            .args(["-q", "-T", "10", "-O", "-", url])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+        {
+            Ok(child) => return Ok(child),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no GitHub download client candidates configured",
+        )
+    }))
+}
+
 async fn fetch_github_url(url: &'static str) -> Result<String, String> {
-    let mut child = tokio::process::Command::new("/opt/bin/wget")
-        .args(["-q", "-T", "10", "-O", "-", url])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .or_else(|_| {
-            tokio::process::Command::new("wget")
-                .args(["-q", "-T", "10", "-O", "-", url])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-        })
+    let mut child = spawn_github_wget(url)
+        .await
         .map_err(|error| format!("Не удалось запустить wget: {error}"))?;
     let mut bytes = Vec::new();
     let stdout = child
@@ -2893,41 +2917,8 @@ fn release_is_eligible(releases: &[PanelRelease], tag: &str) -> bool {
 }
 
 async fn fetch_github_releases() -> Result<Vec<PanelRelease>, String> {
-    let mut child = tokio::process::Command::new("wget")
-        .args(["-q", "-T", "10", "-O", "-", GITHUB_RELEASES_API])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|error| format!("Не удалось запустить wget для GitHub Releases: {error}"))?;
-    let Some(stdout) = child.stdout.take() else {
-        let _ = child.kill().await;
-        return Err("Не удалось прочитать ответ GitHub Releases".into());
-    };
-    let mut bytes = Vec::new();
-    let read = tokio::time::timeout(
-        std::time::Duration::from_secs(12),
-        stdout
-            .take((MAX_RELEASE_RESPONSE_BYTES + 1) as u64)
-            .read_to_end(&mut bytes),
-    )
-    .await;
-    if read.is_err() || bytes.len() > MAX_RELEASE_RESPONSE_BYTES {
-        let _ = child.kill().await;
-        return Err("Ответ GitHub Releases превысил лимит или время ожидания".into());
-    }
-    read.unwrap()
-        .map_err(|error| format!("Ошибка чтения GitHub Releases: {error}"))?;
-    let status = tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
-        .await
-        .map_err(|_| "GitHub Releases не завершил запрос вовремя".to_string())?
-        .map_err(|error| format!("Ошибка wget: {error}"))?;
-    if !status.success() {
-        return Err("GitHub Releases недоступен; проверь подключение роутера к GitHub".into());
-    }
-    let json =
-        std::str::from_utf8(&bytes).map_err(|_| "Ответ GitHub Releases не UTF-8".to_string())?;
-    eligible_panel_releases(json)
+    let json = fetch_github_url(GITHUB_RELEASES_API).await?;
+    eligible_panel_releases(&json)
 }
 
 fn update_operation_path(state: &AppState, id: &str) -> PathBuf {
@@ -10849,6 +10840,11 @@ mod tests {
         assert!(!current.update_available);
         let newer_current = ui_update_status("0.3.11", &releases, 789);
         assert!(!newer_current.update_available);
+    }
+
+    #[test]
+    fn github_release_requests_try_entware_wget_before_path_wget() {
+        assert_eq!(github_wget_candidates(), ["/opt/bin/wget", "wget"]);
     }
 
     #[test]
