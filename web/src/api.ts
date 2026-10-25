@@ -80,13 +80,30 @@ export class ApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); this.name = 'ApiError'; }
 }
 
+async function readApiResponse(response: Response): Promise<unknown> {
+  const text = await response.text();
+  let payload: unknown;
+  try {
+    payload = text.trim() ? JSON.parse(text) as unknown : {};
+  } catch {
+    const preview = text.replace(/\s+/g, ' ').trim().slice(0, 240);
+    throw new ApiError(response.status, `Сервер вернул не JSON${preview ? `: ${preview}` : ': пустой ответ'}`);
+  }
+
+  if (!response.ok) {
+    const message = payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+      ? payload.error
+      : `HTTP ${response.status}`;
+    throw new ApiError(response.status, message);
+  }
+  return payload;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
-  const payload = await response.json().catch(() => ({})) as { error?: string };
-  if (!response.ok) throw new ApiError(response.status, payload.error || `HTTP ${response.status}`);
-  return payload as T;
+  return await readApiResponse(response) as T;
 }
 
 export const nfqwsLists = {
@@ -129,9 +146,7 @@ export const nfqwsSnapshots = {
   restore: (id: string) => api<{ changed: string[]; message: string }>(`/api/snapshots/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
   restoreFile: async (file: File) => {
     const response = await fetch('/api/snapshots/restore-file', { method: 'POST', body: file, headers: { 'Content-Type': 'application/gzip' }, credentials: 'same-origin' });
-    const payload = await response.json().catch(() => ({})) as { error?: string; message?: string; changed?: string[] };
-    if (!response.ok) throw new ApiError(response.status, payload.error || `HTTP ${response.status}`);
-    return payload;
+    return await readApiResponse(response) as { message?: string; changed?: string[] };
   },
   createKey: () => api<{ publicKey: string }>('/api/snapshots/remote/key', { method: 'POST' }),
   testRemote: () => api<{ ok: boolean; count: number }>('/api/snapshots/remote/test', { method: 'POST' }),

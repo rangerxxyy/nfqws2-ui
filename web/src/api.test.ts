@@ -2,6 +2,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, nfqwsApply, nfqwsAppearance, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('reports the beginning of a non-JSON success response instead of silently returning an empty object', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>upstream gateway failed</html>', { status: 200 })));
+    const error = await api('/api/status').catch((value: unknown) => value);
+    expect(error).toMatchObject({ name: 'ApiError', status: 200 });
+    expect(error).toHaveProperty('message', expect.stringContaining('Сервер вернул не JSON'));
+    expect(error).toHaveProperty('message', expect.stringContaining('upstream gateway failed'));
+  });
+
+  it('keeps plain-text error response details when the API fails outside JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('PHP Fatal error: missing module', { status: 500 })));
+    await expect(api('/api/status')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 500,
+      message: expect.stringContaining('PHP Fatal error: missing module'),
+    });
+  });
+
   it('persists the selected appearance layout, accent and status-bar mode on the router', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
