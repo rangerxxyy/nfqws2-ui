@@ -27,7 +27,7 @@ import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterv
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'community' | 'snapshots' | 'supportReport' | 'appearance' | 'about';
-export const UNAVAILABLE_PANEL_ROUTES = ['community'] as const;
+export const UNAVAILABLE_PANEL_ROUTES = ['community', 'snapshots', 'supportReport'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
@@ -277,7 +277,6 @@ function showRoute(route: Route) {
     button.classList.toggle('text-slate-400', !active);
   });
   if (route === 'lists') void loadList(activeListId);
-  if (route === 'snapshots') void loadBackups();
   if (route === 'about') void loadAboutStatus();
 }
 let snapshotOverview: SnapshotOverview | null = null;
@@ -698,6 +697,32 @@ function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
     button.classList.toggle('config-subtab-active', selected);
   }
   if (section === 'scripts') void loadLuaScripts();
+}
+function setConfigClearModal(open: boolean) {
+  const modal = $('#configClearModal');
+  if (!modal) return;
+  modal.classList.toggle('hidden', !open);
+  modal.classList.toggle('flex', open);
+  if (open) modal.querySelector<HTMLButtonElement>('[data-action-click="cancelClearConfig"]')?.focus();
+}
+function confirmClearConfig() {
+  const editor = $('#nfqwsConfTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return;
+  editor.value = '';
+  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  setConfigClearModal(false);
+  editor.focus();
+  toast('Черновик конфигурации очищен.');
+}
+function toggleConfigEditorFullscreen() {
+  const panel = $('#configEditorPanel');
+  const button = $('#configEditorFullscreenToggle');
+  if (!panel || !(button instanceof HTMLButtonElement)) return;
+  const fullscreen = panel.classList.toggle('config-editor-fullscreen');
+  button.setAttribute('aria-pressed', String(fullscreen));
+  button.setAttribute('aria-label', fullscreen ? 'Свернуть редактор' : 'Развернуть редактор');
+  button.title = fullscreen ? 'Свернуть редактор' : 'Развернуть редактор';
+  if (fullscreen) $('#nfqwsConfTextarea')?.focus({ preventScroll: true });
 }
 
 function renderLuaScriptTabs() {
@@ -2578,6 +2603,10 @@ function bindPrototypeActions() {
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(serviceControlPresentation(status?.service.state).action),
     applyConfigAndRestart: () => void saveConfigAndApply(),
+    requestClearConfig: () => setConfigClearModal(true),
+    cancelClearConfig: () => setConfigClearModal(false),
+    confirmClearConfig: () => confirmClearConfig(),
+    toggleConfigEditorFullscreen: () => toggleConfigEditorFullscreen(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string) => void navigator.clipboard.writeText(String(value)).then(() => toast('Фрагмент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')),

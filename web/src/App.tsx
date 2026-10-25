@@ -395,12 +395,6 @@ export default function App() {
             <div className={"px-3 pt-3 pb-1 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>Система</div>
             <nav className={"space-y-1"}>
 
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-emerald-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 7h16M6 4h12v16H6zM9 11h6m-6 4h6"}></path></svg><span>Резервные копии</span>
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["supportReport"])} id={"navBtn-supportReport"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-cyan-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M8 3h7l5 5v13H8zM15 3v6h5M4 7v14h12M11 13h5m-5 4h5"}></path></svg><span>Отчёт для помощи</span>
-              </button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["appearance"])} id={"navBtn-appearance"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>Оформление UI</span>
               </button>
@@ -468,9 +462,17 @@ export default function App() {
                   </span>
                   {"\n              "}
                 </label>
-                <button id={"configStructureToggle"} type={"button"} aria-pressed={"true"} aria-expanded={"true"} aria-controls={"configOutline"} data-action-click={"toggleConfigOutline"} title={"Скрыть структуру переменных конфигурации справа"} className={"config-structure-toggle-active rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:border-blue-500/70 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
-                  {"Структура"}
-                </button>
+                <div className={"flex items-center gap-2"}>
+                  <button id={"configStructureToggle"} type={"button"} aria-pressed={"true"} aria-expanded={"true"} aria-controls={"configOutline"} data-action-click={"toggleConfigOutline"} title={"Скрыть структуру переменных конфигурации справа"} className={"config-structure-toggle-active rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:border-blue-500/70 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+                    {"Структура"}
+                  </button>
+                  <button type={"button"} data-action-click={"requestClearConfig"} aria-label={"Очистить конфигурацию"} title={"Очистить конфигурацию"} className={"config-editor-icon-button"}>
+                    <svg aria-hidden={"true"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.8"} strokeLinecap={"round"} strokeLinejoin={"round"}><path d={"M3 6h18M8 6V4h8v2m-9 0 1 14h10l1-14M10 11v5m4-5v5"}></path></svg>
+                  </button>
+                  <button id={"configEditorFullscreenToggle"} type={"button"} data-action-click={"toggleConfigEditorFullscreen"} aria-label={"Развернуть редактор"} title={"Развернуть редактор"} aria-pressed={"false"} className={"config-editor-icon-button"}>
+                    <svg aria-hidden={"true"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.8"} strokeLinecap={"round"} strokeLinejoin={"round"}><path d={"M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"}></path></svg>
+                  </button>
+                </div>
                 {"\n            "}
               </div>
               {"\n\n            "}
@@ -1261,48 +1263,6 @@ export default function App() {
             <div id={"telegramNotifications"} className={"space-y-3"} aria-live={"polite"}></div>
           </section>
         </section>
-        <section id={"tabContent-snapshots"} className={"hidden view-animate space-y-4"}>
-          <div className={"flex flex-wrap items-center justify-between gap-3"}><h1 className={"text-xl font-bold text-white"}>Резервные копии</h1><button data-action-click={"createSnapshot"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"}>＋ Создать снимок сейчас</button></div>
-          <div className={"grid gap-3 xl:grid-cols-2"}>
-            <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
-              <div className={"flex items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>На роутере</h2><span id={"snapshotCount"} className={"backup-chip"}>Загрузка…</span></div>
-              <p className={"text-sm leading-6 text-slate-400"}>Снимок включает конфигурацию, списки, блобы, мониторинг, Telegram и оформление UI. Создаётся перед изменениями через панель (не чаще раза в 15 минут), ежедневно в 04:05 и вручную.</p>
-              <div className={"grid gap-2 sm:grid-cols-[auto_5.5rem_auto_5.5rem_auto] sm:items-center text-sm"}><label htmlFor={"snapshotDays"} className={"text-slate-300"}>Хранить</label><input id={"snapshotDays"} type={"number"} min={1} max={3650} className={"backup-input"} /><span>дней, не больше</span><input id={"snapshotMaxCount"} type={"number"} min={5} max={500} className={"backup-input"} /><span>снимков</span></div>
-              <button data-action-click={"saveSnapshotRetention"} className={"rounded-lg border border-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800"}>Применить</button>
-              <div className={"flex gap-3 text-sm"}><span className={"w-14 shrink-0 text-slate-400"}>Где</span><code id={"snapshotDirectory"} className={"break-all text-slate-200"}>—</code></div>
-              <p className={"text-xs text-slate-500"}>Пять последних снимков и закреплённые не удаляются автоматически.</p>
-            </section>
-            <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
-              <h2 className={"font-bold text-white"}>Вне роутера</h2>
-              <div className={"flex flex-wrap gap-2"}><a href={"/api/snapshots/current/archive"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↓ Скачать архив</a><label htmlFor={"snapshotRestoreFile"} className={"cursor-pointer rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↑ Восстановить из файла</label><input id={"snapshotRestoreFile"} type={"file"} accept={".tar.gz,.tgz,application/gzip"} className={"hidden"} data-action-change={"restoreSnapshotFile"} data-args={JSON.stringify([{source:"self"}])} /></div>
-              <p className={"text-sm leading-6 text-slate-400"}>Архив `.tar.gz` сохраняется на устройство, с которого открыт интерфейс. В нём могут быть секреты Telegram. Перед восстановлением панель создаёт снимок текущего состояния.</p>
-              <p id={"backupStatus"} className={"text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Загрузка сведений…</p>
-            </section>
-          </div>
-          <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
-            <div className={"flex flex-wrap items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>Копии на NAS</h2><span id={"snapshotRemoteStatus"} className={"text-sm text-slate-400"}>Отправка выключена</span></div>
-            <p className={"text-sm leading-6 text-slate-400"}>Роутер отправляет новые снимки по SSH. NAS хранит архивы, а ключ роутера ограничен одной папкой: он может добавлять новые снимки и читать их, но не удалять и не перезаписывать.</p>
-            <div className={"grid gap-3 lg:grid-cols-2"}>
-              <label className={"backup-field"}><span>Отправлять</span><span className={"flex items-center gap-2"}><input id={"snapshotRemoteEnabled"} type={"checkbox"} /> каждый новый снимок на NAS</span></label>
-              <label className={"backup-field"}><span>Адрес</span><input id={"snapshotRemoteHost"} className={"backup-input"} placeholder={"192.168.1.207"} /></label>
-              <label className={"backup-field"}><span>Порт SSH</span><input id={"snapshotRemotePort"} className={"backup-input max-w-28"} type={"number"} min={1} max={65535} /></label>
-              <label className={"backup-field"}><span>Пользователь</span><input id={"snapshotRemoteUser"} className={"backup-input"} placeholder={"имя пользователя на NAS"} /></label>
-              <label className={"backup-field lg:col-span-2"}><span>Папка на NAS</span><input id={"snapshotRemoteDir"} className={"backup-input"} placeholder={"/volume1/homes/user/Backups/nfqws2-ui"} /><small>Полный путь. Команда установки ключа разрешает доступ только к этой папке.</small></label>
-              <label className={"backup-field"}><span>Оставлять на роутере</span><input id={"snapshotRemoteKeep"} className={"backup-input max-w-28"} type={"number"} min={1} max={50} /><small>последних снимков, плюс закреплённые</small></label>
-            </div>
-            <div className={"flex flex-wrap gap-2"}><button data-action-click={"saveSnapshotRemote"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button><button id={"snapshotRemoteTest"} data-action-click={"testSnapshotRemote"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>Проверить связь</button><button id={"snapshotRemotePush"} data-action-click={"pushSnapshotRemote"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>Отправить сейчас</button></div>
-            <div className={"grid gap-2 border-t border-slate-800 pt-3 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-start"}><span className={"text-sm text-slate-400"}>Ключ роутера</span><div className={"space-y-2"}><button id={"snapshotCreateKey"} data-action-click={"createSnapshotKey"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>＋ Создать ключ роутера</button><code id={"snapshotPublicKey"} className={"block break-all text-xs text-slate-300"}></code><details id={"snapshotSetupDetails"} className={"hidden"}><summary className={"cursor-pointer text-sm text-blue-300"}>Команда для NAS — выполнить один раз</summary><textarea id={"snapshotSetupCommand"} readOnly rows={6} className={"backup-input mt-2 font-mono text-xs"}></textarea><button data-action-click={"copySnapshotSetup"} className={"mt-2 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-100"}>Копировать команду</button></details></div></div>
-          </section>
-          <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}><div className={"flex items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>Снимки</h2><button data-action-click={"refreshBackups"} className={"rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800"}>↻ Обновить</button></div><div id={"backupList"} className={"space-y-2"} aria-live={"polite"}></div></section>
-        </section>
-        <section id={"tabContent-supportReport"} className={"hidden view-animate space-y-4"}>
-          <div className={"ui-card max-w-4xl rounded-2xl p-4 sm:p-5 space-y-4"}>
-            <div><h1 className={"text-lg font-bold text-white"}>Отчёт для помощи</h1><p className={"mt-1 text-xs leading-5 text-slate-400"}>Соберите техническую сводку для чата или issue. В отчёт не попадают содержимое конфига и списков, токен Telegram или подробный вывод команд. Отчёт никуда не отправляется автоматически — перед отправкой вы сможете его прочитать.</p></div>
-            <label className={"flex items-start gap-2 text-sm text-slate-200"}><input id={"supportReportAnonymize"} type={"checkbox"} defaultChecked className={"mt-0.5 accent-blue-500"} /><span>Скрыть имена сайтов мониторинга <span className={"block text-xs font-normal text-slate-400"}>Заменить на «сайт-1», «сайт-2» и так далее.</span></span></label>
-            <div className={"flex flex-wrap gap-2"}><button data-action-click={"buildSupportReport"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Собрать отчёт</button><button id={"copySupportReport"} data-action-click={"copySupportReport"} className={"hidden rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"}>Скопировать</button><button id={"downloadSupportReport"} data-action-click={"downloadSupportReport"} className={"hidden rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"}>Скачать .txt</button></div>
-            <textarea id={"supportReportText"} rows={16} readOnly className={"hidden w-full resize-y rounded-lg border border-slate-700 bg-[#060a12] p-3 font-mono text-xs leading-5 text-slate-100"} aria-label={"Сформированный отчёт для помощи"}></textarea>
-          </div>
-        </section>
         <section id={"tabContent-appearance"} className={"hidden view-animate space-y-5"}>
           <div><h1 className={"text-xl font-bold text-white"}>Оформление UI</h1><p className={"mt-1 text-sm text-slate-400"}>Настройки сохраняются в этом браузере.</p></div>
           <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
@@ -1549,6 +1509,16 @@ export default function App() {
 {"\n  "}
     <div id={"toastWrapper"} className={"fixed bottom-24 right-5 z-50 space-y-2.5 pointer-events-none"}></div>
     <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] space-y-2.5 pointer-events-none"}></div>
+    <div id={"configClearModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
+      <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"configClearTitle"}>
+        <h3 id={"configClearTitle"} className={"text-base font-bold text-white"}>Очистить конфигурацию?</h3>
+        <p className={"mt-2 text-sm text-slate-300"}>Весь текст в редакторе будет удалён. Изменения затронут только черновик и не применятся к службе, пока вы отдельно не нажмёте «Применить конфигурацию».</p>
+        <div className={"mt-5 flex justify-end gap-2"}>
+          <button type={"button"} data-action-click={"cancelClearConfig"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button>
+          <button type={"button"} data-action-click={"confirmClearConfig"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Очистить</button>
+        </div>
+      </section>
+    </div>
     <div id={"customListDeleteModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"customListDeleteTitle"}>
         <h3 id={"customListDeleteTitle"} className={"text-base font-bold text-white"}>Удалить пользовательский список?</h3>

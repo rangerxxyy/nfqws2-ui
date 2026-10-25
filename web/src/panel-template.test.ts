@@ -42,6 +42,19 @@ describe('TSX panel without authentication', () => {
     expect(configSection).toContain('conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono');
   });
 
+  it('provides safe clear and animated near-fullscreen controls for the config editor', () => {
+    expect(template).toContain('data-action-click="requestClearConfig"');
+    expect(template).toContain('aria-label="Очистить конфигурацию"');
+    expect(template).toContain('id="configClearModal"');
+    expect(template).toContain('role="dialog" aria-modal="true"');
+    expect(template).toContain('data-action-click="toggleConfigEditorFullscreen"');
+    expect(template).toContain('aria-label="Развернуть редактор"');
+    expect(panelSource).toContain('requestClearConfig:');
+    expect(panelSource).toContain('toggleConfigEditorFullscreen:');
+    expect(panelStyles).toContain('.config-editor-fullscreen');
+    expect(panelStyles).toContain('prefers-reduced-motion: reduce');
+  });
+
   it('shows the six backend-discovered Lua scripts in a dedicated read-only section', () => {
     const tabs = ['configTabEditor', 'configTabSettings', 'configTabScripts'].map((id) => template.indexOf(`id="${id}"`));
     expect(tabs[0]).toBeLessThan(tabs[1]);
@@ -237,16 +250,10 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('candidate_average_ms: Option<u64>');
   });
 
-  it('adds a privacy-conscious help report page with manual copy and download', () => {
-    expect(template).toContain('id="navBtn-supportReport"');
-    expect(template).toContain('id="tabContent-supportReport"');
-    expect(template).toContain('data-action-click="buildSupportReport"');
-    expect(template).toContain('id="supportReportAnonymize"');
-    expect(template).toContain('id="supportReportText"');
-    expect(panelSource).toContain('nfqwsDiagnostics.supportReport');
-    expect(panelSource).toContain('Отчёт никуда не отправляется автоматически');
-    expect(panelSource).toContain('URL.createObjectURL');
-    expect(backendSource).toContain('/api/nfqws2/diagnostics/support-report');
+  it('keeps the support report section out of the interface for now', () => {
+    expect(template).not.toContain('id="navBtn-supportReport"');
+    expect(template).not.toContain('id="tabContent-supportReport"');
+    expect(template).not.toContain('Отчёт для помощи');
   });
 
   it('styles the trace protocol picker and diagnosis helper text for clear reading', () => {
@@ -492,15 +499,17 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.action-tooltip');
   });
 
-  it('removes the legacy logs section and exposes snapshot backups', () => {
+  it('removes the legacy logs, backups, and support report sections from navigation', () => {
     for (const route of ['logs']) {
       expect(template).not.toContain(`id="navBtn-${route}"`);
       expect(template).not.toContain(`id="tabContent-${route}"`);
     }
-    expect(template).toContain('id="navBtn-snapshots"');
-    expect(template).toContain('id="tabContent-snapshots"');
-    expect(panelSource).toContain('nfqwsSnapshots.get()');
-    expect(panelSource).toContain('restoreSnapshot');
+    for (const route of ['snapshots', 'supportReport']) {
+      expect(template).not.toContain(`id="navBtn-${route}"`);
+      expect(template).not.toContain(`id="tabContent-${route}"`);
+    }
+    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['community', 'snapshots', 'supportReport']");
+    expect(panelSource).toContain('nfqwsSnapshots.create(');
     expect(backendSource).toContain('"/api/snapshots"');
     expect(backendSource).toContain('get(get_snapshots).post(create_snapshot_api)');
   });
@@ -688,7 +697,7 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('grid-template-columns: minmax(0, 1fr);');
     expect(panelStyles).toContain('max-height: 50vh; overflow-y: auto;');
     expect(template).toContain('Списки доменов и IP');
-    expect(template).toContain('Резервные копии');
+    expect(template).not.toContain('Резервные копии');
   });
 
   it('does not ship login controls or example credentials', () => {

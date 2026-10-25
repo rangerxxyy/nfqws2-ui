@@ -511,6 +511,18 @@ textarea { line-height: 1.7; tab-size: 4; }
 .line-numbers-col { color: #6b7a92; }
 .config-argument-line-numbers { white-space: pre; text-align: right; }
 .conf-editor-surface { isolation:isolate; }
+.config-editor-icon-button { display:inline-grid; width:2.25rem; height:2.25rem; place-items:center; border:1px solid #334155; border-radius:.65rem; background:#0b111e; color:#cbd5e1; transition:color .18s ease, background-color .18s ease, border-color .18s ease, transform .18s ease; }
+.config-editor-icon-button svg { width:1.1rem; height:1.1rem; }
+.config-editor-icon-button:hover { color:#fff; background:#1e293b; border-color:#475569; }
+.config-editor-icon-button:active { transform:scale(.95); }
+.config-editor-icon-button:focus-visible { outline:2px solid #60a5fa; outline-offset:2px; }
+.config-editor-fullscreen { position:fixed !important; inset:.75rem !important; z-index:60; width:auto !important; height:auto !important; max-height:calc(100vh - 1.5rem); background:#0b101b; box-shadow:0 24px 90px #000b; animation:config-editor-expand .28s cubic-bezier(.2,.8,.2,1) both; }
+.config-editor-fullscreen .config-editor-workspace { min-height:0; flex:1; }
+.config-editor-fullscreen .mobile-code-editor { height:auto !important; min-height:0; flex:1; }
+.config-editor-fullscreen .config-outline { max-height:none; }
+@keyframes config-editor-expand { from { opacity:.82; transform:scale(.975); } to { opacity:1; transform:scale(1); } }
+@media (max-width: 640px) { .config-editor-fullscreen { inset:.4rem !important; max-height:calc(100vh - .8rem); } .config-editor-fullscreen .config-editor-workspace-open { grid-template-columns:minmax(0,1fr); } .config-editor-fullscreen .config-outline { display:none; } }
+@media (prefers-reduced-motion: reduce) { .config-editor-icon-button { transition:none; } .config-editor-fullscreen { animation:none; } }
 .conf-syntax-highlight { z-index:0; color:#e2e8f0; white-space:pre-wrap; overflow-wrap:break-word; word-break:break-word; tab-size:4; line-height:1.68; pointer-events:none; }
 .conf-editor-input { z-index:1; background:transparent !important; color:transparent !important; -webkit-text-fill-color:transparent !important; caret-color:#60a5fa; white-space:pre-wrap; overflow-wrap:break-word; word-break:break-word; tab-size:4; line-height:1.68; }
 *::selection, *::-moz-selection { background:transparent !important; color:inherit !important; }
