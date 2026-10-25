@@ -52,6 +52,26 @@ export function removeListLines(content: string, selectionStart: number, selecti
   return { content: content.slice(0, firstLineStart) + content.slice(afterLastLine), removed };
 }
 
+export function toggleListComments(content: string, selectionStart: number, selectionEnd: number): { content: string; selectionStart: number; selectionEnd: number } {
+  const start = Math.max(0, Math.min(selectionStart, content.length));
+  const end = Math.max(start, Math.min(selectionEnd, content.length));
+  const from = content.lastIndexOf('\n', start - 1) + 1;
+  const endAt = end > start && content[end - 1] === '\n' ? end - 1 : end;
+  const newline = content.indexOf('\n', endAt);
+  const to = newline < 0 ? content.length : newline;
+  const lines = content.slice(from, to).split('\n');
+  const nonempty = lines.filter((line) => line.trim());
+  if (!nonempty.length) return { content, selectionStart: start, selectionEnd: end };
+  const uncomment = nonempty.every((line) => /^\s*#/.test(line));
+  const replacement = lines.map((line) => !line.trim() ? line : uncomment ? line.replace(/^(\s*)# ?/, '$1') : `# ${line}`).join('\n');
+  const nextContent = content.slice(0, from) + replacement + content.slice(to);
+  if (start === end && lines.length === 1) {
+    const caret = Math.max(from, start + replacement.length - (to - from));
+    return { content: nextContent, selectionStart: caret, selectionEnd: caret };
+  }
+  return { content: nextContent, selectionStart: from, selectionEnd: from + replacement.length };
+}
+
 export function findNextListMatch(content: string, query: string, caret: number): { start: number; end: number } | null {
   const needle = query.trim().toLocaleLowerCase('en-US');
   if (!needle) return null;

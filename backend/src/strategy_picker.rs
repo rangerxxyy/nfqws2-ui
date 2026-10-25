@@ -1126,8 +1126,8 @@ pub fn candidate_batch_argv(
     Ok(result)
 }
 
-/// Construct one domain-scoped profile for an explicitly selected, locally
-/// validated HTTP/HTTPS candidate. QUIC application needs its own real runner.
+/// Construct a domain- or IPv4-scoped profile for an explicitly selected,
+/// locally validated HTTP/HTTPS candidate. QUIC application needs its own runner.
 pub fn build_domain_profile(
     host: &str,
     protocol: StrategyProtocol,
@@ -1135,7 +1135,7 @@ pub fn build_domain_profile(
     available_functions: &HashSet<String>,
     available_blobs: &[String],
 ) -> Result<String, String> {
-    let normalized = crate::site_diagnostics::normalize_host(host)?;
+    let normalized = crate::site_diagnostics::normalize_site_target(host)?;
     if normalized != host {
         return Err("Имя домена должно быть нормализовано перед подготовкой профиля".into());
     }
@@ -1151,11 +1151,15 @@ pub fn build_domain_profile(
             return Err("Применение QUIC-стратегии пока не поддерживается".into());
         }
     };
+    let selector = match normalized.parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => format!("--ipset-ip={ip}"),
+        Err(_) => format!("--hostlist-domains={normalized}"),
+    };
     let mut profile = vec![
         "--new".to_owned(),
         transport.to_owned(),
         layer.to_owned(),
-        format!("--hostlist-domains={normalized}"),
+        selector,
         payload.to_owned(),
     ];
     profile.extend(steps.iter().cloned());
@@ -1198,6 +1202,21 @@ mod application_tests {
             http,
             "--new --filter-tcp=80 --filter-l7=http --hostlist-domains=example.org --payload=http_req --lua-desync=multisplit:pos=method+2"
         );
+    }
+
+    #[test]
+    fn builds_ipset_scoped_profiles_for_public_ipv4_targets() {
+        let functions = HashSet::from(["multisplit".to_string()]);
+        let profile = build_domain_profile(
+            "8.8.8.8",
+            StrategyProtocol::Https,
+            &["--lua-desync=multisplit:pos=1".into()],
+            &functions,
+            &[],
+        )
+        .unwrap();
+        assert!(profile.contains("--ipset-ip=8.8.8.8"));
+        assert!(!profile.contains("--hostlist-domains"));
     }
 
     #[test]

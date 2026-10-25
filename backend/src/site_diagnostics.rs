@@ -165,6 +165,19 @@ pub fn normalize_host(input: &str) -> Result<String, String> {
     }
 }
 
+/// Accept a public DNS name or a public IPv4 literal for site diagnosis and
+/// strategy picking. The isolated strategy runner currently uses IPv4 rules.
+pub fn normalize_site_target(input: &str) -> Result<String, String> {
+    if let Ok(ip) = input.trim().parse::<IpAddr>() {
+        return match ip {
+            IpAddr::V4(ip) if public_ip(ip.into()) => Ok(ip.to_string()),
+            IpAddr::V4(_) => Err("Для проверки укажите публичный IPv4-адрес".into()),
+            IpAddr::V6(_) => Err("Подбор и диагноз по IP пока поддерживают публичный IPv4".into()),
+        };
+    }
+    normalize_host(input)
+}
+
 pub fn public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
@@ -991,64 +1004,83 @@ async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
 }
 
 pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
-    let (system, (mut reference_step, reference)) = tokio::join!(
-        timeout(Duration::from_secs(4), lookup_host(format!("{host}:443"))),
-        dns_reference(&host)
-    );
-    let mut system_addresses = match system {
-        Ok(Ok(addresses)) => addresses
-            .map(|address| address.ip())
-            .take(16)
-            .collect::<Vec<_>>(),
-        _ => Vec::new(),
-    };
-    system_addresses.sort();
-    system_addresses.dedup();
-    let mut addresses = system_addresses
-        .iter()
-        .copied()
-        .filter(|ip| public_ip(*ip))
-        .collect::<Vec<_>>();
-    let dns = DiagnosticStep::new(
-        "dns",
-        if system_addresses.is_empty() {
-            "error"
-        } else if addresses.is_empty() {
-            "warning"
-        } else {
-            "ok"
-        },
-        if system_addresses.is_empty() {
-            "Системный DNS не вернул адреса".into()
-        } else {
-            format!(
-                "DNS роутера: {}",
-                system_addresses
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        },
-    );
-    if !reference.is_empty()
-        && !addresses.is_empty()
-        && !addresses.iter().any(|ip| reference.contains(ip))
-    {
-        reference_step.status = "warning";
-        reference_step.detail.push_str(
-            ". Ответы отличаются; это возможно у CDN и само по себе не доказывает подмену DNS",
+    let literal_ip = host.parse::<IpAddr>().ok();
+    let (mut steps, mut addresses, reference) = if let Some(ip) = literal_ip {
+        let skipped_dns = DiagnosticStep::new(
+            "dns",
+            "unavailable",
+            "Указан IP-адрес; DNS для него не запрашивался",
         );
-    }
+        let skipped_doh = DiagnosticStep::new(
+            "doh",
+            "unavailable",
+            "Сверка с DoH доступна только для доменного имени",
+        );
+        (vec![skipped_dns, skipped_doh], vec![ip], Vec::new())
+    } else {
+        let (system, (mut reference_step, reference)) = tokio::join!(
+            timeout(Duration::from_secs(4), lookup_host(format!("{host}:443"))),
+            dns_reference(&host)
+        );
+        let mut system_addresses = match system {
+            Ok(Ok(addresses)) => addresses
+                .map(|address| address.ip())
+                .take(16)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        system_addresses.sort();
+        system_addresses.dedup();
+        let addresses = system_addresses
+            .iter()
+            .copied()
+            .filter(|ip| public_ip(*ip))
+            .collect::<Vec<_>>();
+        let dns = DiagnosticStep::new(
+            "dns",
+            if system_addresses.is_empty() {
+                "error"
+            } else if addresses.is_empty() {
+                "warning"
+            } else {
+                "ok"
+            },
+            if system_addresses.is_empty() {
+                "Системный DNS не вернул адреса".into()
+            } else {
+                format!(
+                    "DNS роутера: {}",
+                    system_addresses
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
+        );
+        if !reference.is_empty()
+            && !addresses.is_empty()
+            && !addresses.iter().any(|ip| reference.contains(ip))
+        {
+            reference_step.status = "warning";
+            reference_step.detail.push_str(
+                ". Ответы отличаются; это возможно у CDN и само по себе не доказывает подмену DNS",
+            );
+        }
+        (vec![dns, reference_step], addresses, reference)
+    };
     let mut limitations = vec![
-        "Оба режима проверяют один публичный IPv4. Прямой запрос исключён из nfqws2 точечными временными правилами.".into(),
+        if literal_ip.is_some() {
+            "Проверяется указанный публичный IPv4. Прямой запрос исключён из nfqws2 точечными временными правилами; DNS, DoH и контрольный SNI пропущены.".into()
+        } else {
+            "Оба режима проверяют один публичный IPv4. Прямой запрос исключён из nfqws2 точечными временными правилами.".into()
+        },
         "«Как сейчас» — обычный маршрут самого роутера. В режиме «только устройства политики» этот трафик может идти мимо nfqws2; результат не доказывает выбор профиля для клиентских устройств.".into(),
     ];
     if addresses.is_empty() && !reference.is_empty() {
         addresses.clone_from(&reference);
         limitations.push("Для HTTP-проб использованы адреса DoH: системный DNS не дал публичного адреса (возможен FakeIP).".into());
     }
-    let mut steps = vec![dns, reference_step];
     let Some(ip) = addresses.iter().find_map(|ip| match ip {
         IpAddr::V4(ip) => Some(*ip),
         _ => None,
@@ -1068,19 +1100,30 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         tcp_step(&addresses),
         probe("current", &host, ip.into(), 443, false),
         route_step(ip.into()),
-        advertised_http3(&host, ip.into())
+        async {
+            if literal_ip.is_some() {
+                None
+            } else {
+                advertised_http3(&host, ip.into()).await
+            }
+        }
     );
     steps.extend([tcp, route]);
     let direct = match bypass_probe(ip, 443, ProbeTransport::Tcp, async {
-        tokio::join!(
-            probe_scoped("direct", &host, ip.into(), 443, false, true),
-            sni_step(&host, ip.into())
-        )
+        let direct = probe_scoped("direct", &host, ip.into(), 443, false, true).await;
+        let sni = if literal_ip.is_some() {
+            None
+        } else {
+            Some(sni_step(&host, ip.into()).await)
+        };
+        (direct, sni)
     })
     .await
     {
         Ok((direct, sni)) => {
-            steps.push(sni);
+            if let Some(sni) = sni {
+                steps.push(sni);
+            }
             direct
         }
         Err(message) => {
@@ -1120,7 +1163,16 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
             };
         }
     }
-    let quic = Some(quic_comparison(&host, ip, &binary, advertised).await);
+    let quic = if literal_ip.is_some() {
+        steps.push(DiagnosticStep::new(
+            "quic",
+            "unavailable",
+            "Проверка QUIC по IP пропущена: для неё требуется доменное имя и TLS SNI",
+        ));
+        None
+    } else {
+        Some(quic_comparison(&host, ip, &binary, advertised).await)
+    };
     let summary = diagnosis_summary(&direct, &current).into();
     DiagnosticReport {
         host,
@@ -1229,6 +1281,20 @@ mod tests {
             "-x.com",
         ] {
             assert!(normalize_host(host).is_err(), "accepted {host}");
+        }
+    }
+
+    #[test]
+    fn normalizes_public_ipv4_targets_and_rejects_non_public_or_ipv6_targets() {
+        assert_eq!(normalize_site_target(" 8.8.8.8 ").unwrap(), "8.8.8.8");
+        assert_eq!(normalize_site_target("youtube.com").unwrap(), "youtube.com");
+        for target in [
+            "127.0.0.1",
+            "192.168.1.1",
+            "169.254.1.1",
+            "2606:4700:4700::1111",
+        ] {
+            assert!(normalize_site_target(target).is_err(), "accepted {target}");
         }
     }
 

@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines } from './list-editor';
+import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines, toggleListComments } from './list-editor';
 
 describe('list editor helpers', () => {
+  it('comments selected list lines and removes comment markers when all selected lines are commented', () => {
+    expect(toggleListComments('one.example\ntwo.example\n', 0, 22)).toEqual({ content: '# one.example\n# two.example\n', selectionStart: 0, selectionEnd: 27 });
+    expect(toggleListComments('  # one.example\n# two.example', 0, 30)).toEqual({ content: '  one.example\ntwo.example', selectionStart: 0, selectionEnd: 25 });
+  });
+
+  it('toggles only the current line when there is no selection and preserves blank lines', () => {
+    expect(toggleListComments('one.example\n\ntwo.example', 13, 13)).toEqual({ content: 'one.example\n\n# two.example', selectionStart: 15, selectionEnd: 15 });
+  });
   it('resolves each list tab from its element id so availability checks match backend ids', () => {
     expect(listIdFromTabElementId('listTab-user.list')).toBe('user.list');
     expect(listIdFromTabElementId('listTab-auto.list')).toBe('auto.list');
