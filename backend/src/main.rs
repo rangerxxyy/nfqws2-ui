@@ -4765,6 +4765,8 @@ fn external_config_test_args(
     source: &str,
     active_args: &[String],
     isolated_auto_list: &Path,
+    lists_directory: &Path,
+    auto_list_sources: &mut Vec<(PathBuf, Option<PathBuf>)>,
 ) -> Result<Vec<String>, String> {
     let diagnostics = validate_nfqws2_config(source)?;
     if let Some(diagnostic) = diagnostics
@@ -4795,6 +4797,7 @@ fn external_config_test_args(
         })
         .collect::<HashMap<_, _>>();
     let mut arguments = Vec::new();
+    let mut auto_list_index = 0usize;
     for name in [
         "NFQWS_BASE_ARGS",
         "NFQWS_ARGS",
@@ -4821,8 +4824,37 @@ fn external_config_test_args(
                 return Err(format!(
                     "{name}: --hostlist-auto должен быть записан как --hostlist-auto=путь"
                 ));
-            } else if argument.starts_with("--hostlist-auto=") {
-                arguments.push(format!("--hostlist-auto={}", isolated_auto_list.display()));
+            } else if [
+                "--hostlist",
+                "--hostlist-exclude",
+                "--ipset",
+                "--ipset-exclude",
+            ]
+            .contains(&argument)
+            {
+                return Err(format!(
+                    "{name}: {argument} должен быть записан как {argument}=путь"
+                ));
+            } else if let Some(path) = argument.strip_prefix("--hostlist-auto=") {
+                let destination = if auto_list_index == 0 {
+                    isolated_auto_list.to_path_buf()
+                } else {
+                    isolated_auto_list.with_file_name(format!(
+                        "{}-{auto_list_index}.list",
+                        isolated_auto_list
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or("auto")
+                    ))
+                };
+                let source = resolve_foreign_list_path(path, lists_directory).ok();
+                auto_list_sources.push((destination.clone(), source));
+                auto_list_index += 1;
+                arguments.push(format!("--hostlist-auto={}", destination.display()));
+            } else if let Some(argument) = rewrite_foreign_list_argument(argument, lists_directory)
+                .map_err(|message| format!("{name}: {message}"))?
+            {
+                arguments.push(argument);
             } else if let Some(path) = argument.strip_prefix("--lua-init=") {
                 let filename = path
                     .trim_start_matches('@')
@@ -4868,11 +4900,88 @@ fn external_config_test_args(
     Ok(arguments)
 }
 
-fn active_auto_list_path(active_args: &[String]) -> Option<PathBuf> {
-    active_args
-        .iter()
-        .find_map(|argument| argument.strip_prefix("--hostlist-auto="))
-        .map(|path| PathBuf::from(path.trim_start_matches('@')))
+fn resolve_foreign_list_path(value: &str, lists_directory: &Path) -> Result<PathBuf, String> {
+    const SOURCE_PREFIXES: [&str; 6] = [
+        "/opt/etc/nfqws2/lists/",
+        "/etc/nfqws2/lists/",
+        "/opt/etc/nfqws/lists/",
+        "/etc/nfqws/lists/",
+        "/opt/zapret2/ipset/",
+        "/opt/zapret/ipset/",
+    ];
+    if value.is_empty() || value.contains(['\\', '\0']) {
+        return Err("Путь к списку пустой или содержит недопустимые символы".into());
+    }
+    let value = value.trim_start_matches('@');
+    let relative = if value.starts_with('/') {
+        if let Ok(relative) = Path::new(value).strip_prefix(lists_directory) {
+            relative.to_path_buf()
+        } else if let Some(relative) = SOURCE_PREFIXES
+            .iter()
+            .find_map(|prefix| value.strip_prefix(prefix))
+        {
+            PathBuf::from(relative)
+        } else {
+            return Err(format!(
+                "путь списка «{value}» не относится к поддерживаемой раскладке nfqws2/zapret"
+            ));
+        }
+    } else {
+        Path::new(value)
+            .strip_prefix("lists")
+            .unwrap_or_else(|_| Path::new(value))
+            .to_path_buf()
+    };
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("путь списка «{value}» выходит за каталог списков"));
+    }
+    let root = lists_directory
+        .canonicalize()
+        .map_err(|error| format!("каталог списков не найден: {error}"))?;
+    let candidate = root.join(&relative);
+    let mut cursor = root.clone();
+    for component in relative.components() {
+        cursor.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&cursor)
+            .map_err(|_| format!("файл списка «{value}» отсутствует в установленном каталоге"))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "путь списка «{value}» содержит символическую ссылку"
+            ));
+        }
+    }
+    let metadata = std::fs::metadata(&candidate)
+        .map_err(|_| format!("файл списка «{value}» отсутствует в установленном каталоге"))?;
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|_| format!("не удалось проверить путь списка «{value}»"))?;
+    if !metadata.is_file() || !canonical.starts_with(&root) {
+        return Err(format!("путь списка «{value}» не является обычным файлом"));
+    }
+    Ok(canonical)
+}
+
+fn rewrite_foreign_list_argument(
+    argument: &str,
+    lists_directory: &Path,
+) -> Result<Option<String>, String> {
+    for flag in [
+        "--hostlist",
+        "--hostlist-exclude",
+        "--ipset",
+        "--ipset-exclude",
+    ] {
+        let Some(path) = argument.strip_prefix(&format!("{flag}=")) else {
+            continue;
+        };
+        return resolve_foreign_list_path(path, lists_directory)
+            .map(|path| Some(format!("{flag}={}", path.display())));
+    }
+    Ok(None)
 }
 
 struct ForeignAutoListCleanup {
@@ -4890,17 +4999,10 @@ impl Drop for ForeignAutoListCleanup {
 
 async fn prepare_foreign_auto_lists(
     directory: &Path,
-    prepared: &[(String, String, Vec<String>)],
-    active_args: &[String],
+    auto_lists: &[(PathBuf, Option<PathBuf>)],
     cleanup: &mut ForeignAutoListCleanup,
 ) -> Result<(), String> {
-    let destinations = prepared
-        .iter()
-        .flat_map(|(_, _, args)| args.iter())
-        .filter_map(|argument| argument.strip_prefix("--hostlist-auto="))
-        .map(PathBuf::from)
-        .collect::<HashSet<_>>();
-    if destinations.is_empty() {
+    if auto_lists.is_empty() {
         return Ok(());
     }
     // Exclusive creation prevents a pre-created symlink in the shared temp
@@ -4919,24 +5021,23 @@ async fn prepare_foreign_auto_lists(
         .await
         .map_err(|error| format!("Не удалось создать временные списки проверки: {error}"))?;
     cleanup.armed = true;
-    let source = active_auto_list_path(active_args);
-    for destination in destinations {
-        let contents = if let Some(source) = source.as_ref() {
+    for (destination, source) in auto_lists {
+        let contents = if let Some(source) = source {
             match tokio::fs::metadata(source).await {
                 Ok(metadata) if metadata.len() <= MAX_FOREIGN_AUTO_LIST_BYTES => {
                     let file = tokio::fs::File::open(source).await.map_err(|error| {
-                        format!("Не удалось открыть активный автосписок: {error}")
+                        format!("Не удалось открыть автосписок проверяемого конфига: {error}")
                     })?;
                     let mut contents = Vec::new();
                     file.take(MAX_FOREIGN_AUTO_LIST_BYTES + 1)
                         .read_to_end(&mut contents)
                         .await
                         .map_err(|error| {
-                            format!("Не удалось прочитать активный автосписок: {error}")
+                            format!("Не удалось прочитать автосписок проверяемого конфига: {error}")
                         })?;
                     if contents.len() as u64 > MAX_FOREIGN_AUTO_LIST_BYTES {
                         return Err(format!(
-                            "Активный автосписок превышает лимит {} МиБ",
+                            "Автосписок проверяемого конфига превышает лимит {} МиБ",
                             MAX_FOREIGN_AUTO_LIST_BYTES / (1024 * 1024)
                         ));
                     }
@@ -4944,13 +5045,15 @@ async fn prepare_foreign_auto_lists(
                 }
                 Ok(_) => {
                     return Err(format!(
-                        "Активный автосписок превышает лимит {} МиБ",
+                        "Автосписок проверяемого конфига превышает лимит {} МиБ",
                         MAX_FOREIGN_AUTO_LIST_BYTES / (1024 * 1024)
                     ));
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => {
-                    return Err(format!("Не удалось проверить активный автосписок: {error}"));
+                    return Err(format!(
+                        "Не удалось проверить автосписок проверяемого конфига: {error}"
+                    ));
                 }
             }
         } else {
@@ -4970,7 +5073,7 @@ async fn prepare_foreign_auto_lists(
                 .map_err(|error| format!("Не удалось записать временный автосписок: {error}"))?;
         }
         #[cfg(not(unix))]
-        tokio::fs::write(&destination, contents.unwrap_or_default())
+        tokio::fs::write(destination, contents.unwrap_or_default())
             .await
             .map_err(|error| format!("Не удалось создать временный автосписок: {error}"))?;
     }
@@ -5247,6 +5350,7 @@ async fn start_foreign_config_check(
         armed: false,
     };
     let mut prepared = Vec::new();
+    let mut prepared_auto_lists = Vec::new();
     let mut total_bytes = 0usize;
     for (index, input) in request.configs.into_iter().enumerate() {
         let is_url = input.url.is_some();
@@ -5277,7 +5381,13 @@ async fn start_foreign_config_check(
             );
         }
         let isolated_auto_list = auto_list_directory.join(format!("config-{index}.list"));
-        let args = match external_config_test_args(&content, &active_args, &isolated_auto_list) {
+        let args = match external_config_test_args(
+            &content,
+            &active_args,
+            &isolated_auto_list,
+            &paths.lists_dir,
+            &mut prepared_auto_lists,
+        ) {
             Ok(args) => args,
             Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
         };
@@ -5305,8 +5415,7 @@ async fn start_foreign_config_check(
     };
     if let Err(message) = prepare_foreign_auto_lists(
         &auto_list_directory,
-        &prepared,
-        &active_args,
+        &prepared_auto_lists,
         &mut auto_list_cleanup,
     )
     .await
@@ -9055,19 +9164,36 @@ mod tests {
 
     #[test]
     fn foreign_config_parser_extracts_only_literal_tcp_groups_and_active_lua_paths() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        std::fs::create_dir(&lists).unwrap();
+        std::fs::write(lists.join("user.list"), "example.org\n").unwrap();
+        std::fs::write(lists.join("auto.list"), "auto.example.org\n").unwrap();
         let active = vec![
             "--lua-init=@/opt/nfqws/lua/zapret-lib.lua".to_string(),
             "--blob=tls_clienthello:@/opt/nfqws/blobs/tls_clienthello.bin".to_string(),
             "--hostlist-auto=/opt/nfqws/lists/auto.list".to_string(),
         ];
-        let source = "NFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua --blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin --hostlist-auto=/opt/zapret/ipset/auto.list --hostlist-auto-debug=/var/log/auto.log\"\nNFQWS_ARGS=\"--filter-tcp=80,443 --payload=tls_client_hello --lua-desync=fake\"\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443 --lua-desync=multisplit:pos=1\"\n";
+        let source = "NFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua --blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin --hostlist-auto=/opt/zapret/ipset/auto.list --hostlist-auto-debug=/var/log/auto.log\"\nNFQWS_ARGS=\"--filter-tcp=80,443 --hostlist=/opt/zapret/ipset/user.list --payload=tls_client_hello --lua-desync=fake\"\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443 --lua-desync=multisplit:pos=1\"\n";
         let isolated_auto_list = Path::new("/tmp/config-check/auto.list");
-        let args = external_config_test_args(source, &active, isolated_auto_list).unwrap();
-        assert_eq!(args.len(), 9);
+        let mut auto_lists = Vec::new();
+        let args =
+            external_config_test_args(source, &active, isolated_auto_list, &lists, &mut auto_lists)
+                .unwrap();
+        assert_eq!(args.len(), 10);
         assert!(args.contains(&"--new".to_string()));
         assert!(args.contains(&active[0]));
         assert!(args.contains(&active[1]));
         assert!(args.contains(&format!("--hostlist-auto={}", isolated_auto_list.display())));
+        assert_eq!(auto_lists.len(), 1);
+        assert_eq!(
+            auto_lists[0].1.as_deref(),
+            Some(lists.join("auto.list").canonicalize().unwrap().as_path())
+        );
+        assert!(args.contains(&format!(
+            "--hostlist={}",
+            lists.join("user.list").canonicalize().unwrap().display()
+        )));
         assert!(
             !args
                 .iter()
@@ -9079,21 +9205,28 @@ mod tests {
         );
 
         let mode_reference = "MODE_LIST=\"--hostlist=lists/user.list\"\nNFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n";
+        let mut auto_lists = Vec::new();
         let args = external_config_test_args(
             mode_reference,
             &active,
             Path::new("/tmp/config-check/mode-auto.list"),
+            &lists,
+            &mut auto_lists,
         )
         .unwrap();
-        assert!(
-            args.iter()
-                .any(|argument| argument == "--hostlist=lists/user.list")
-        );
+        assert!(args.iter().any(|argument| argument
+            == &format!(
+                "--hostlist={}",
+                lists.join("user.list").canonicalize().unwrap().display()
+            )));
     }
 
     #[test]
     fn foreign_config_parser_rejects_dynamic_values_new_lua_files_and_missing_tcp_filter() {
         let active = vec!["--lua-init=@/safe.lua".to_string()];
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        std::fs::create_dir(&lists).unwrap();
         for source in [
             "NFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n",
             "NFQWS_BASE_ARGS=\"--lua-init=@/untrusted.lua\"\nNFQWS_ARGS=\"--filter-tcp=443\"\n",
@@ -9104,7 +9237,9 @@ mod tests {
                 external_config_test_args(
                     source,
                     &active,
-                    Path::new("/tmp/config-check/auto.list")
+                    Path::new("/tmp/config-check/auto.list"),
+                    &lists,
+                    &mut Vec::new()
                 )
                 .is_err(),
                 "{source}"
@@ -9112,27 +9247,59 @@ mod tests {
         }
     }
 
+    #[test]
+    fn foreign_config_list_paths_map_only_to_existing_files_in_the_installed_lists_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        std::fs::create_dir(&lists).unwrap();
+        let active_list = lists.join("user.list");
+        std::fs::write(&active_list, "example.org\n").unwrap();
+
+        for prefix in [
+            "/opt/etc/nfqws2/lists/",
+            "/etc/nfqws2/lists/",
+            "/opt/etc/nfqws/lists/",
+            "/etc/nfqws/lists/",
+            "/opt/zapret2/ipset/",
+            "/opt/zapret/ipset/",
+        ] {
+            assert_eq!(
+                resolve_foreign_list_path(&format!("{prefix}user.list"), &lists).unwrap(),
+                active_list.canonicalize().unwrap(),
+                "{prefix}"
+            );
+        }
+        assert!(resolve_foreign_list_path("/opt/zapret/ipset/missing.list", &lists).is_err());
+        assert!(resolve_foreign_list_path("/tmp/user.list", &lists).is_err());
+        assert!(resolve_foreign_list_path("../outside.list", &lists).is_err());
+        #[cfg(unix)]
+        {
+            let outside = directory.path().join("outside.list");
+            std::fs::write(&outside, "outside.example\n").unwrap();
+            std::os::unix::fs::symlink(&outside, lists.join("linked.list")).unwrap();
+            assert!(resolve_foreign_list_path("/opt/zapret/ipset/linked.list", &lists).is_err());
+        }
+    }
+
     #[tokio::test]
     async fn foreign_auto_list_is_seeded_into_private_temporary_copy() {
         let id = new_update_id();
         let directory = std::env::temp_dir().join(format!("nfqws2-ui-test-auto-{id}"));
-        let source = std::env::temp_dir().join(format!("nfqws2-ui-test-source-{id}"));
+        let source_dir = tempfile::tempdir().unwrap();
+        let lists_dir = source_dir.path().join("lists");
+        std::fs::create_dir(&lists_dir).unwrap();
+        let source = lists_dir.join("auto.list");
         tokio::fs::write(&source, "example.org\n").await.unwrap();
-        let active = vec![format!("--hostlist-auto={}", source.display())];
-        let prepared = vec![(
-            "test".into(),
-            "Текст".into(),
-            vec![format!(
-                "--hostlist-auto={}",
-                directory.join("config-0.list").display()
-            )],
-        )];
+        let auto_lists = vec![
+            (directory.join("config-0.list"), Some(source)),
+            (directory.join("config-1.list"), None),
+        ];
         let mut cleanup = ForeignAutoListCleanup {
             path: directory.clone(),
             armed: false,
         };
 
-        prepare_foreign_auto_lists(&directory, &prepared, &active, &mut cleanup)
+        prepare_foreign_auto_lists(&directory, &auto_lists, &mut cleanup)
             .await
             .unwrap();
         assert_eq!(
@@ -9141,9 +9308,14 @@ mod tests {
                 .unwrap(),
             "example.org\n"
         );
+        assert_eq!(
+            tokio::fs::read_to_string(directory.join("config-1.list"))
+                .await
+                .unwrap(),
+            ""
+        );
         drop(cleanup);
         assert!(!directory.exists());
-        tokio::fs::remove_file(source).await.unwrap();
     }
 
     #[test]
