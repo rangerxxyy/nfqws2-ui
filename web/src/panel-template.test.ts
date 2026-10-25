@@ -512,6 +512,12 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).not.toContain('[data-layout="tiles"] .app-main-layout > aside nav button > span { display:none; }');
   });
 
+  it('uses the selected palette for the active navigation tile indicator and glow', () => {
+    expect(panelStyles).toContain('[data-accent] .side-nav-btn.active::before');
+    expect(panelStyles).toContain('background-color:var(--accent-color)');
+    expect(panelStyles).toContain('box-shadow:0 0 8px color-mix(in srgb,var(--accent-color) 55%,transparent)');
+  });
+
   it('keeps custom strategy input inside its mode tile and exposes copy feedback', () => {
     const modeTile = appSource.slice(appSource.indexOf('id={"strategyModeSelect"}'), appSource.indexOf('id={"scanProgressLabel"}'));
     expect(modeTile).toContain('id={"strategyCustomInputPanel"}');
