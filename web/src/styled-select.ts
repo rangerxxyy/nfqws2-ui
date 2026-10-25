@@ -50,10 +50,16 @@ let selectSequence = 0;
 
 function positionMenu(state: StyledSelectState) {
   const rect = state.trigger.getBoundingClientRect();
+  const width = Math.min(rect.width, Math.max(0, window.innerWidth - 16));
+  const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
   state.menu.style.maxHeight = '';
   const side = styledSelectMenuSide(rect.top, rect.bottom, state.menu.offsetHeight, window.innerHeight);
   state.menu.dataset.side = side;
-  const available = side === 'top' ? rect.top - 14 : window.innerHeight - rect.bottom - 14;
+  state.menu.style.left = `${left}px`;
+  state.menu.style.width = `${width}px`;
+  state.menu.style.top = side === 'bottom' ? `${rect.bottom + 4}px` : 'auto';
+  state.menu.style.bottom = side === 'top' ? `${window.innerHeight - rect.top + 4}px` : 'auto';
+  const available = side === 'top' ? rect.top - 12 : window.innerHeight - rect.bottom - 12;
   state.menu.style.maxHeight = `${styledSelectMenuMaxHeight(available)}px`;
 }
 
@@ -128,6 +134,23 @@ function refreshState(state: StyledSelectState) {
     item.dataset.active = String(state.open && index === state.activeIndex);
     item.dataset.selected = String(index === select.selectedIndex);
     item.textContent = option.label;
+    if (index === select.selectedIndex) {
+      const indicator = document.createElement('span');
+      indicator.className = 'styled-select-indicator';
+      indicator.setAttribute('aria-hidden', 'true');
+      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      check.setAttribute('viewBox', '0 0 24 24');
+      check.setAttribute('fill', 'none');
+      check.setAttribute('stroke', 'currentColor');
+      check.setAttribute('stroke-width', '3');
+      check.setAttribute('stroke-linecap', 'round');
+      check.setAttribute('stroke-linejoin', 'round');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'm5 12 4 4L19 6');
+      check.append(path);
+      indicator.append(check);
+      item.append(indicator);
+    }
     if (!option.disabled) item.addEventListener('click', () => chooseOption(state, index));
     menu.append(item);
   });
@@ -211,7 +234,8 @@ function installOne(select: HTMLSelectElement) {
   if (!parent) return;
   copySelectStyles(select, wrapper, trigger);
   parent.insertBefore(wrapper, select);
-  wrapper.append(trigger, menu, select);
+  wrapper.append(trigger, select);
+  document.body.append(menu);
   select.classList.add('styled-select-native');
   select.tabIndex = -1;
   select.setAttribute('aria-hidden', 'true');
@@ -290,7 +314,7 @@ function installOne(select: HTMLSelectElement) {
     document.addEventListener('pointerdown', (event) => {
       const target = event.target;
       for (const current of activeStates) {
-        if (current.open && target instanceof Node && !current.wrapper.contains(target)) closeMenu(current);
+        if (current.open && target instanceof Node && !current.wrapper.contains(target) && !current.menu.contains(target)) closeMenu(current);
       }
     });
     document.addEventListener('scroll', repositionOpenMenus, true);

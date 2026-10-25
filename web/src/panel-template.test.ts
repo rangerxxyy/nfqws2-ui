@@ -108,6 +108,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(styledSelectSource).toContain('MutationObserver');
   });
 
+  it('keeps dropdowns above clipped panels and uses the XKeen menu palette', () => {
+    expect(styledSelectSource).toContain('menu.style.left = `${left}px`');
+    expect(styledSelectSource).toContain('menu.style.width = `${width}px`');
+    expect(styledSelectSource).toContain('current.menu.contains(target)');
+    expect(panelStyles).toContain('.styled-select-menu { position: fixed;');
+    expect(panelStyles).toContain('border-radius: .375rem;');
+    expect(panelStyles).toContain('background: oklch(0.1666 0.0331 266.08);');
+    expect(panelStyles).toContain('background:rgba(59,130,246,.15); color:#60a5fa;');
+  });
+
   it('keeps explanatory and data text readable across panel sections and themes', () => {
     expect(panelStyles).toContain('font-size: max(0.75rem, 1em);');
     expect(panelStyles).toContain('html[data-theme="light"] { color-scheme: light; }');

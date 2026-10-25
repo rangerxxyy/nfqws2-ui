@@ -51,3 +51,5 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - Long select menus can use up to 34rem of available viewport height; the TypeScript positioner no longer clamps every menu to 256px.
 - The release picker now offers an in-place retry for both an empty eligible-version list and a failed release request, matching the recovery affordance in the reference updater.
 - About-panel command rows now reserve an intrinsic copy-button column and wrap long command text in the remaining space, following the upstream narrow-screen overlap fix.
+- Select menus now render in the document overlay layer and use fixed viewport positioning, so long timezone and settings lists remain visible above scrollable panels. Their dark surface and border use the same color tokens as XKeen UI; options keep the compact 14 px/30 px rhythm, neutral selected row with a white vector check, and 15% blue hover/keyboard highlight.
+- The select menu remains in front of editor panels but below confirmation dialogs, while outside-click detection continues to distinguish the portaled menu from unrelated page clicks.
