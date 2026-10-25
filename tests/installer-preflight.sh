@@ -51,5 +51,5 @@ esac
 [ ! -e "$TMP/opkg-called" ] || { echo 'installer invoked opkg during preflight' >&2; exit 1; }
 echo 'installer checksum preflight passed without invoking opkg'
 
-SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 sh "$SCRIPT_DIR/installer-download-retry.sh" "$INSTALLER"
