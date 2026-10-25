@@ -23,7 +23,7 @@ import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
-import { diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
@@ -1477,14 +1477,15 @@ function diagnosisIcon(kind: Presentation['kind']): HTMLElement {
   icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', kind === 'success' ? 'Ответ получен' : kind === 'failure' ? 'Ошибка проверки' : 'Результат не определён'); return icon;
 }
 function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string; label: string }>, activeIndex: number, results?: ReturnType<typeof diagnosisRows>) {
+  const resultsReceived = results !== undefined;
   const section = document.createElement('section'); section.className = 'diagnosis-queue ui-card rounded-2xl';
   section.setAttribute('aria-label', 'Этапы проверки сайта');
   const title = document.createElement('h3'); title.className = 'diagnosis-checks-title';
-  title.textContent = activeIndex < 0 ? 'Этапы проверки' : activeIndex >= stages.length ? 'Проверки завершены · результаты по этапам' : 'Проверка сайта';
+  title.textContent = activeIndex < 0 ? 'Этапы проверки' : resultsReceived && activeIndex >= stages.length ? 'Проверки завершены · результаты по этапам' : 'Проверка сайта';
   section.append(title);
   const list = document.createElement('ol'); list.className = 'diagnosis-queue-list';
   stages.forEach((stage, index) => {
-    const state = diagnosisQueueState(index, activeIndex);
+    const state = diagnosisQueueState(index, activeIndex, resultsReceived);
     const result = results?.find((item) => item.id === stage.id);
     const row = document.createElement('li');
     row.className = `diagnosis-queue-step is-${state}${result ? ` is-result-${result.kind}` : ''}`;
@@ -1492,10 +1493,16 @@ function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string
     const marker = document.createElement('span'); marker.className = 'diagnosis-queue-marker'; marker.setAttribute('aria-hidden', 'true');
     marker.textContent = state === 'complete' ? (result?.kind === 'failure' ? '×' : result?.kind === 'unknown' ? '!' : '✓') : state === 'active' ? '…' : String(index + 1);
     const label = document.createElement('span'); label.textContent = stage.label;
-    const status = document.createElement('small'); status.textContent = state === 'active' ? 'Выполняется' : state === 'pending' ? 'Ожидает' : result?.kind === 'failure' ? 'Ошибка' : result?.kind === 'unknown' ? 'Не определено' : 'Готово';
+    const status = document.createElement('small'); status.textContent = state === 'active' ? (resultsReceived ? 'Выполняется' : 'Проверка') : state === 'pending' ? 'Ожидает' : result?.kind === 'failure' ? 'Ошибка' : result?.kind === 'unknown' ? 'Не определено' : 'Готово';
     row.append(marker, label, status); list.append(row);
   });
-  section.append(list); container.replaceChildren(section);
+  section.append(list);
+  if (!resultsReceived && activeIndex >= 0) {
+    const note = document.createElement('p'); note.className = 'diagnosis-queue-note';
+    note.textContent = 'Проверка выполняется на роутере. Подтверждённые результаты появятся после ответа.';
+    section.append(note);
+  }
+  container.replaceChildren(section);
 }
 const waitForDiagnosisAnimation = () => new Promise<void>((resolve) => window.setTimeout(resolve, 120));
 function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticReport) {
@@ -1536,13 +1543,22 @@ async function runSiteDiagnosis() {
   if (!input.value.trim()) return toast('Введите домен или публичный IPv4 для проверки.', 'error');
   diagnosisRunning = true; input.disabled = true; button.disabled = true;
   button.textContent = 'Проверяем…'; container.replaceChildren();
-  renderDiagnosisQueue(container, SITE_DIAGNOSIS_STAGES.map(({ id, label }) => ({ id, label })), -1);
+  const stages = SITE_DIAGNOSIS_STAGES.map(({ id, label }) => ({ id, label }));
+  renderDiagnosisQueue(container, stages, -1);
   const toastHost = $('#toastWrapper');
   const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
-  const loading = document.createElement('p'); loading.className = 'col-span-full text-sm text-blue-300 animate-pulse';
-  loading.setAttribute('role', 'status'); loading.textContent = 'Сравниваем доступ напрямую, текущий маршрут и QUIC с роутера…'; container.append(loading);
+  await waitForDiagnosisAnimation();
+  let liveStageIndex = 0;
+  renderDiagnosisQueue(container, stages, liveStageIndex);
+  const stageTimer = window.setInterval(() => {
+    const nextIndex = nextDiagnosisQueueIndex(liveStageIndex, stages.length);
+    if (nextIndex === null) { window.clearInterval(stageTimer); return; }
+    liveStageIndex = nextIndex;
+    renderDiagnosisQueue(container, stages, liveStageIndex);
+  }, 760);
   try {
     const report = await nfqwsDiagnostics.site(input.value);
+    window.clearInterval(stageTimer);
     const resultRows = diagnosisRows(report);
     const stages = resultRows.map(({ id, label }) => ({ id, label }));
     for (let index = 0; index < stages.length; index += 1) {
@@ -1555,6 +1571,7 @@ async function runSiteDiagnosis() {
     closeProgress();
     toast(`Проверка ${report.host} завершена: ${report.summary}`);
   } catch (error) {
+    window.clearInterval(stageTimer);
     container.replaceChildren(); const message = error instanceof Error ? error.message : 'Не удалось выполнить проверку сайта';
     const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); closeProgress(); toast(message, 'error');
   } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить'; }

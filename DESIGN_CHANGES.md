@@ -35,5 +35,10 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 
 - Frontend: 29 test files, 241 tests passed; TypeScript production build completed.
 - Backend: Rust formatting and the full Cargo test suite completed successfully.
-- Chromium desktop and mobile captures were reviewed. The local preview has no router backend, so it displays the designed “Нет связи с панелью” state instead of populated panels; this does not verify interactive routes. Firefox’s headless capture remained on the initial loading screen, so its interactive rendering still needs a backend-connected browser session.
-- No physical router was available for deployment checks. The release workflow’s aarch64-musl build remains the router-target verification gate.
+- Chromium local preview reached the designed “Нет связи с панелью” state. The router backend was not available locally, so populated pages and their interactive flows were not visible in that session.
+- The GitHub release workflow completed the `aarch64-unknown-linux-musl` cross-test/build and package preflight for v1.0.5. No physical router was available for deployment checks.
+
+## Next interface iteration
+
+- While the site diagnostic request is running, one queued stage now receives a moving active highlight. All other stages remain pending until the router returns the report, so the animation does not claim unconfirmed checks succeeded. The result view then walks through the returned per-stage statuses.
+- A closing dropdown is removed from the accessibility tree immediately while its visual exit animation finishes; reopening restores the listbox state.

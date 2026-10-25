@@ -102,6 +102,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
+    expect(styledSelectSource).toContain("menu.setAttribute('aria-hidden', 'true')");
+    expect(styledSelectSource).toContain("menu.removeAttribute('aria-hidden')");
     expect(styledSelectSource).toContain("new Event('change', { bubbles: true })");
     expect(styledSelectSource).toContain('MutationObserver');
   });
@@ -621,9 +623,13 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('shows the diagnosis checklist before its request and replays results in order', () => {
-    expect(panelSource).toContain("renderDiagnosisQueue(container, SITE_DIAGNOSIS_STAGES.map");
+    expect(panelSource).toContain('const stages = SITE_DIAGNOSIS_STAGES.map');
+    expect(panelSource).toContain('renderDiagnosisQueue(container, stages, -1)');
+    expect(panelSource).toContain('const stageTimer = window.setInterval');
     expect(panelSource).toContain('for (let index = 0; index < stages.length; index += 1)');
     expect(panelSource).toContain('await waitForDiagnosisAnimation()');
+    expect(panelSource).toContain('Подтверждённые результаты появятся после ответа');
+    expect(panelStyles).toContain('.diagnosis-queue-note');
     expect(panelStyles).toContain('.diagnosis-queue-step.is-active');
     expect(panelStyles).toContain('.diagnosis-queue-step.is-result-failure');
   });

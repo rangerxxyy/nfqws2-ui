@@ -65,6 +65,7 @@ function closeMenu(state: StyledSelectState) {
   state.open = false;
   if (state.menuClosingTimer !== null) window.clearTimeout(state.menuClosingTimer);
   state.menu.dataset.closing = 'true';
+  state.menu.setAttribute('aria-hidden', 'true');
   state.menuClosingTimer = window.setTimeout(() => {
     state.menuClosingTimer = null;
     if (!state.open) state.menu.hidden = true;
@@ -111,6 +112,7 @@ function refreshState(state: StyledSelectState) {
     state.menuClosingTimer = null;
     delete menu.dataset.closing;
     menu.hidden = false;
+    menu.removeAttribute('aria-hidden');
     const active = models[state.activeIndex];
     if (!active || active.disabled) {
       const next = nextEnabledOption(models, select.selectedIndex, 1);
@@ -165,6 +167,7 @@ function installOne(select: HTMLSelectElement) {
   menu.id = `${trigger.id}-listbox`;
   menu.setAttribute('role', 'listbox');
   menu.hidden = true;
+  menu.setAttribute('aria-hidden', 'true');
   trigger.setAttribute('aria-controls', menu.id);
 
   const accessibleLabel = select.getAttribute('aria-label');

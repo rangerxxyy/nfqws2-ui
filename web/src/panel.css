@@ -1095,6 +1095,8 @@ textarea { line-height: 1.7; tab-size: 4; }
 .diagnosis-queue-step.is-result-success .diagnosis-queue-marker { border-color: #34d399; color: #34d399; }
 .diagnosis-queue-step.is-result-failure .diagnosis-queue-marker { border-color: #fb7185; color: #fb7185; }
 .diagnosis-queue-step.is-result-unknown .diagnosis-queue-marker { border-color: #fbbf24; color: #fbbf24; }
+.diagnosis-queue-note { margin-top:.65rem; color:#94a3b8; font-size:.75rem; line-height:1.45; }
+[data-theme="light"] .diagnosis-queue-note { color:#475569; }
 @keyframes diagnosis-stage-pulse { to { box-shadow: 0 0 0 4px rgb(96 165 250 / 16%); } }
 [data-theme="light"] .diagnosis-queue-step { border-color: #cbd5e1; color: #475569; background: #f8fafc; }
 [data-theme="light"] .diagnosis-queue-step.is-active { border-color: #3b82f6; color: #1e3a8a; background: #eff6ff; }
