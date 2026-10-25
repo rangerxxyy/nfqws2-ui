@@ -268,7 +268,35 @@ impl<'a> ConfigDocument<'a> {
         }
         let assignment = self.unique(name)?;
         let raw = &self.source[assignment.value.clone()];
-        let encoded = if raw.starts_with('"') && raw.ends_with('"') {
+        let encoded = Self::encode_literal(raw, value);
+        Ok(self.replace(assignment, &encoded))
+    }
+
+    /// Replace all assignments only when the caller has already resolved the
+    /// supported static/self-append forms. Repeating the final literal value
+    /// preserves shell's last-assignment-wins behavior and surrounding text.
+    pub fn set_literal_all(&self, name: &str, value: &str) -> Result<String, String> {
+        if value.contains('\0') {
+            return Err("Значение содержит NUL-байт".into());
+        }
+        let mut matches = self
+            .assignments
+            .iter()
+            .filter(|assignment| assignment.name == name)
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            return self.set_literal_or_append(name, value);
+        }
+        let mut result = self.source.to_owned();
+        for assignment in matches.drain(..).rev() {
+            let raw = &self.source[assignment.value.clone()];
+            result.replace_range(assignment.value.clone(), &Self::encode_literal(raw, value));
+        }
+        Ok(result)
+    }
+
+    fn encode_literal(raw: &str, value: &str) -> String {
+        if raw.starts_with('"') && raw.ends_with('"') {
             let mut escaped = String::from("\"");
             for character in value.chars() {
                 if matches!(character, '\\' | '"' | '$' | '`') {
@@ -287,8 +315,7 @@ impl<'a> ConfigDocument<'a> {
             value.to_owned()
         } else {
             format!("'{}'", value.replace('\'', "'\\''"))
-        };
-        Ok(self.replace(assignment, &encoded))
+        }
     }
 
     /// Set a unique literal assignment or append it when an optional nfqws2
@@ -559,6 +586,27 @@ mod tests {
             .set_literal("ISP_INTERFACE", "eth3")
             .unwrap();
         assert_eq!(edited, text.replacen("\"wan\r\n eth2\"", "\"eth3\"", 1));
+    }
+
+    #[test]
+    fn flattens_supported_self_appended_custom_profile_assignments_without_touching_comments() {
+        let source = "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443\" # base\nNFQWS_ARGS_CUSTOM=\"$NFQWS_ARGS_CUSTOM --new --filter-tcp=80\" # append\n";
+        let document = ConfigDocument::parse(source).unwrap();
+        let resolved = document.literal_or_mode_value("NFQWS_ARGS_CUSTOM").unwrap();
+        assert_eq!(resolved, "--filter-tcp=443 --new --filter-tcp=80");
+        let updated = document
+            .set_literal_all(
+                "NFQWS_ARGS_CUSTOM",
+                "--filter-tcp=443 --new --filter-tcp=443",
+            )
+            .unwrap();
+        assert!(updated.contains("# base"));
+        assert!(updated.contains("# append"));
+        let parsed = ConfigDocument::parse(&updated).unwrap();
+        assert_eq!(
+            parsed.literal_or_mode_value("NFQWS_ARGS_CUSTOM").unwrap(),
+            "--filter-tcp=443 --new --filter-tcp=443"
+        );
     }
 
     #[test]

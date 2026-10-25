@@ -303,33 +303,29 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/backups/nfqws2.conf.123.000000001.bak/restore');
   });
 
-  it('uses dedicated backend APIs for profiles, snapshot deletion, changes, and log sources', async () => {
+  it('loads runtime profiles and applies only the custom profile argument groups', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('{"id":"p1","name":"Home","updatedAt":1,"bytes":12}', { status: 201 }))
-      .mockResolvedValueOnce(new Response('{"id":"p1","name":"Home","updatedAt":1,"content":"NFQWS_ARGS=\\\"--filter-tcp=443\\\""}', { status: 200 }))
-      .mockResolvedValueOnce(new Response('{"id":"p1","name":"Home 2","updatedAt":2,"bytes":12}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"profiles":[{"id":"custom-1","index":1,"name":"Свой профиль 1","source":"NFQWS_ARGS_CUSTOM","editable":true,"args":["--filter-tcp=443"],"filters":["--filter-tcp=443"],"protocols":[],"lists":[],"steps":[]}],"customArgs":"--filter-tcp=443","revision":"rev"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"config":{"file":"/opt/etc/nfqws2/nfqws2.conf","content":"NFQWS_ARGS_CUSTOM=\\\"--filter-tcp=80\\\"\\n","revision":"next"},"message":"Профили применены"}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"deleted":true}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"items":[{"id":"snap-1","ts":2,"version":"1.1.0","reason":"apply","note":"","changedFiles":["nfqws2.conf"]}]}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"content":"line"}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    await nfqwsProfiles.create('Home', 'NFQWS_ARGS="--filter-tcp=443"');
-    const saved = await nfqwsProfiles.get('p1');
-    const updated = await nfqwsProfiles.update('p1', 'Home 2', 'NFQWS_ARGS="--filter-tcp=80"');
+    const listed = await nfqwsProfiles.list();
+    const saved = await nfqwsProfiles.saveCustom([['--filter-tcp=80']], listed.revision);
     await nfqwsSnapshots.delete('snap-1');
     const history = await nfqwsChangeHistory.list();
     await nfqwsLogs.get('nfqws2-ui', 20);
-    expect(saved.content).toContain('443');
-    expect(updated.name).toBe('Home 2');
+    expect(listed.profiles[0]?.editable).toBe(true);
+    expect(saved.message).toBe('Профили применены');
     expect(history.items[0]?.version).toBe('1.1.0');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      '/api/profiles', '/api/profiles/p1', '/api/profiles/p1', '/api/snapshots/snap-1', '/api/change-history', '/api/logs?source=nfqws2-ui&tail=20',
+      '/api/profiles', '/api/profiles', '/api/snapshots/snap-1', '/api/change-history', '/api/logs?source=nfqws2-ui&tail=20',
     ]);
-    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ name: 'Home', content: 'NFQWS_ARGS="--filter-tcp=443"' });
-    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBeUndefined();
-    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('PUT');
-    expect(JSON.parse(String((fetchMock.mock.calls[2]?.[1] as RequestInit).body))).toEqual({ name: 'Home 2', content: 'NFQWS_ARGS="--filter-tcp=80"' });
-    expect((fetchMock.mock.calls[3]?.[1] as RequestInit).method).toBe('DELETE');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBeUndefined();
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe('PUT');
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ profiles: [['--filter-tcp=80']], revision: 'rev' });
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('DELETE');
   });
 
   it('applies a config through the transactional endpoint', async () => {

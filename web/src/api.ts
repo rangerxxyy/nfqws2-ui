@@ -70,8 +70,8 @@ export type SnapshotItem = { id: string; ts: number; reason: string; note: strin
 export type SnapshotRemoteSettings = { enabled: boolean; host: string; port: number; user: string; dir: string; keepLocal: number };
 export type SnapshotSettings = { maxCount: number; maxDays: number; remote: SnapshotRemoteSettings };
 export type SnapshotOverview = { items: SnapshotItem[]; settings: SnapshotSettings; directory: string; totalBytes: number; localCount: number; remote: { tool: string | null; publicKey: string; on: boolean; pending: number; stored: number; lastOk: number | null; error: string | null; setupCommand: string } };
-export type ConfigProfileSummary = { id: string; name: string; updatedAt: number; bytes: number };
-export type ConfigProfile = { id: string; name: string; updatedAt: number; content: string };
+export type NfqwsArgumentProfile = { id: string; index: number; name: string; source: string; editable: boolean; args: string[]; filters: string[]; protocols: string[]; lists: string[]; steps: string[] };
+export type NfqwsProfilesResponse = { profiles: NfqwsArgumentProfile[]; customArgs: string; revision: string; limitation: string | null };
 export type ChangeHistoryEntry = { id: string; ts: number; version: string | null; reason: string; note: string; changedFiles: string[] };
 export type LogSource = 'nfqws2-ui' | 'nfqws2';
 export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean };
@@ -167,12 +167,8 @@ export const nfqwsSnapshots = {
 };
 
 export const nfqwsProfiles = {
-  list: () => api<{ profiles: ConfigProfileSummary[] }>('/api/profiles'),
-  get: (id: string) => api<ConfigProfile>(`/api/profiles/${encodeURIComponent(id)}`),
-  create: (name: string, content: string) => api<ConfigProfileSummary>('/api/profiles', { method: 'POST', body: JSON.stringify({ name, content }) }),
-  update: (id: string, name: string, content: string) => api<ConfigProfileSummary>(`/api/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ name, content }) }),
-  delete: (id: string) => api<{ deleted: boolean }>(`/api/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  activate: (id: string) => api<{ config: ConfigResponse; message: string }>(`/api/profiles/${encodeURIComponent(id)}/activate`, { method: 'POST' }),
+  list: () => api<NfqwsProfilesResponse>('/api/profiles'),
+  saveCustom: (profiles: string[][], revision: string) => api<{ config: ConfigResponse; message: string }>('/api/profiles', { method: 'PUT', body: JSON.stringify({ profiles, revision }) }),
 };
 
 export const nfqwsChangeHistory = {

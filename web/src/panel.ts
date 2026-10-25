@@ -11,7 +11,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigProfileSummary, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -304,7 +304,11 @@ let currentLogContent = '';
 let pendingConfirmation: (() => Promise<void>) | null = null;
 let pendingConfirmationCancel: (() => void) | null = null;
 let changeHistoryCache: ChangeHistoryEntry[] = [];
-let pendingProfileEdit: { kind: 'create' } | { kind: 'edit'; id: string } | null = null;
+let runtimeProfilesState: NfqwsProfilesResponse | null = null;
+let runtimeProfileDraft: string[][] = [];
+let selectedRuntimeProfileId = '';
+let runtimeProfilesDirty = false;
+let runtimeProfileEditorMode: 'builder' | 'text' = 'builder';
 function renderBackups(data: SnapshotOverview) {
   const host = $('#backupList'); if (!host) return;
   snapshotOverview = data;
@@ -390,81 +394,210 @@ async function deleteSnapshot(id: string) {
   });
 }
 
-function renderProfiles(profiles: ConfigProfileSummary[]) {
-  const host = $('#profileList'); if (!host) return;
-  host.replaceChildren();
-  if (!profiles.length) { const empty = document.createElement('p'); empty.className = 'text-sm text-slate-400'; empty.textContent = 'Сохранённых профилей пока нет. Создайте профиль из текущей конфигурации.'; host.append(empty); return; }
+function profileFromArgs(index: number, args: string[], editable: boolean): NfqwsArgumentProfile {
+  const source = editable ? 'NFQWS_ARGS_CUSTOM' : 'Управляемая группа nfqws2';
+  const explicitName = args.find((argument) => argument.startsWith('--name='))?.slice('--name='.length);
+  const name = explicitName || (editable ? `Свой профиль ${index}` : `Профиль ${index}`);
+  return {
+    id: editable ? `custom-${index}` : `draft-managed-${index}`, index, name, source, editable, args,
+    filters: args.filter((argument) => argument.startsWith('--filter-')),
+    protocols: args.filter((argument) => argument.startsWith('--payload=') || argument.startsWith('--filter-7=')),
+    lists: args.filter((argument) => argument.startsWith('--hostlist') || argument.startsWith('--ipset') || argument.startsWith('--autohostlist')),
+    steps: args.filter((argument) => argument.startsWith('--lua-desync=')),
+  };
+}
+function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
+  if (!runtimeProfilesState) return [];
+  const managed = runtimeProfilesState.profiles.filter((profile) => !profile.editable);
+  const custom = runtimeProfileDraft.map((args, index) => profileFromArgs(index + 1, args, true));
+  return [...custom, ...managed].map((profile, index) => ({ ...profile, index: index + 1 }));
+}
+function markRuntimeProfilesDirty() {
+  runtimeProfilesDirty = true;
+  const status = $('#profileStatus');
+  if (status) status.textContent = 'Есть несохранённые изменения. Применение сохранит снимок, проверит конфиг и перезапустит nfqws2.';
+  renderRuntimeProfiles();
+}
+function renderRuntimeProfiles() {
+  const list = $('#profileList'); const editor = $('#profileEditor');
+  if (!list || !editor || !runtimeProfilesState) return;
+  const profiles = visibleRuntimeProfiles();
+  if (!profiles.some((profile) => profile.id === selectedRuntimeProfileId)) selectedRuntimeProfileId = profiles[0]?.id ?? '';
+  list.replaceChildren();
+  const sideHeading = document.createElement('p'); sideHeading.className = 'px-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400'; sideHeading.textContent = 'Профили · порядок проверки'; list.append(sideHeading);
   for (const profile of profiles) {
-    const row = document.createElement('article'); row.className = 'backup-row';
-    const text = document.createElement('div'); text.className = 'min-w-0';
-    const name = document.createElement('strong'); name.className = 'block text-sm text-white'; name.textContent = profile.name;
-    const meta = document.createElement('span'); meta.className = 'mt-1 block text-xs text-slate-400'; meta.textContent = `Изменён ${new Date(profile.updatedAt * 1000).toLocaleString()} · ${formatBytes(profile.bytes)}`;
-    text.append(name, meta);
-    const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-2';
-    for (const [action, label] of [['activateProfile', 'Активировать'], ['editProfile', 'Изменить'], ['deleteProfile', 'Удалить']] as const) {
-      const button = document.createElement('button'); button.type = 'button'; button.className = 'backup-action'; button.dataset.actionClick = action; button.dataset.args = JSON.stringify([profile.id]); button.textContent = label;
-      if (action === 'activateProfile') button.classList.add('text-blue-200');
-      if (action === 'deleteProfile') button.classList.add('text-rose-200');
-      actions.append(button);
+    const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'selectRuntimeProfile'; button.dataset.args = JSON.stringify([profile.id]);
+    button.setAttribute('aria-current', profile.id === selectedRuntimeProfileId ? 'true' : 'false');
+    button.className = `flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${profile.id === selectedRuntimeProfileId ? 'bg-blue-500/20 text-blue-200' : 'text-slate-300 hover:bg-slate-800'}`;
+    const num = document.createElement('span'); num.className = 'grid h-5 w-5 shrink-0 place-items-center rounded-full border border-emerald-400 text-[11px] font-bold text-emerald-300'; num.textContent = String(profile.index);
+    const name = document.createElement('span'); name.className = 'min-w-0 flex-1 truncate'; name.textContent = profile.name;
+    const badge = document.createElement('span'); badge.className = 'text-xs text-slate-500'; badge.textContent = profile.editable ? '•' : '🔒'; badge.setAttribute('aria-label', profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
+    button.append(num, name, badge); list.append(button);
+  }
+  editor.replaceChildren();
+  const profile = profiles.find((item) => item.id === selectedRuntimeProfileId);
+  if (!profile) {
+    const empty = document.createElement('p'); empty.className = 'text-sm text-slate-400'; empty.textContent = 'Профили не найдены в текущей конфигурации. Можно добавить пользовательский профиль.'; editor.append(empty); return;
+  }
+  const heading = document.createElement('div'); heading.className = 'flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3';
+  const title = document.createElement('div');
+  const name = document.createElement('h2'); name.className = 'font-bold text-white'; name.textContent = `#${profile.index} ${profile.name}`;
+  const source = document.createElement('p'); source.className = 'mt-1 text-xs text-slate-400'; source.textContent = `${profile.editable ? 'Пользовательский профиль · NFQWS_ARGS_CUSTOM' : `Штатная группа · ${profile.source}`} · параметры передаются в nfqws2`;
+  title.append(name, source); heading.append(title);
+  if (profile.editable) {
+    const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-1';
+    for (const [action, label, accessible] of [['moveRuntimeProfileUp', '↑', 'Переместить профиль выше'], ['moveRuntimeProfileDown', '↓', 'Переместить профиль ниже'], ['deleteRuntimeProfile', 'Удалить', 'Удалить профиль из черновика']] as const) {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = action; button.dataset.args = JSON.stringify([profile.id]); button.className = 'backup-action'; button.textContent = label; button.setAttribute('aria-label', accessible); actions.append(button);
     }
-    row.append(text, actions); host.append(row);
+    heading.append(actions);
+  } else {
+    const lock = document.createElement('span'); lock.className = 'rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400'; lock.textContent = 'Только просмотр'; heading.append(lock);
+  }
+  editor.append(heading);
+  const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы и payload', profile.protocols], ['Списки', profile.lists], ['Шаги desync', profile.steps]];
+  for (const [label, values] of sections) {
+    const row = document.createElement('div'); row.className = 'grid gap-1 border-b border-slate-800/80 py-2 sm:grid-cols-[10rem_minmax(0,1fr)]';
+    const key = document.createElement('strong'); key.className = 'text-xs text-slate-300'; key.textContent = label;
+    const value = document.createElement('span'); value.className = 'break-words font-mono text-xs leading-5 text-slate-200'; value.textContent = values.length ? values.join('  ·  ') : '—'; row.append(key, value); editor.append(row);
+  }
+  if (profile.editable) {
+    const modeBar = document.createElement('div'); modeBar.className = 'mt-3 flex flex-wrap items-center justify-between gap-2';
+    const modeTitle = document.createElement('strong'); modeTitle.className = 'text-xs text-slate-300'; modeTitle.textContent = 'Редактор профиля'; modeBar.append(modeTitle);
+    const modeButtons = document.createElement('div'); modeButtons.className = 'flex gap-1 rounded-lg border border-slate-700 p-1';
+    for (const [mode, label] of [['builder', 'Конструктор'], ['text', 'Текст']] as const) {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'setRuntimeProfileMode'; button.dataset.args = JSON.stringify([mode]); button.setAttribute('aria-pressed', String(runtimeProfileEditorMode === mode));
+      button.className = `rounded-md px-2.5 py-1 text-xs ${runtimeProfileEditorMode === mode ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`; button.textContent = label; modeButtons.append(button);
+    }
+    modeBar.append(modeButtons); editor.append(modeBar);
+  }
+  if (profile.editable && runtimeProfileEditorMode === 'builder') {
+    const builder = document.createElement('div'); builder.className = 'mt-2 grid gap-2';
+    const groups: Array<[string, (argument: string) => boolean]> = [
+      ['Имя профиля', (arg) => arg.startsWith('--name=')],
+      ['Фильтры', (arg) => arg.startsWith('--filter-')],
+      ['Протоколы и списки', (arg) => arg.startsWith('--payload=') || arg.startsWith('--hostlist') || arg.startsWith('--ipset') || arg.startsWith('--autohostlist')],
+      ['Упорядоченные шаги', (arg) => arg.startsWith('--lua-desync=')],
+      ['Другие параметры', (arg) => !arg.startsWith('--filter-') && !arg.startsWith('--payload=') && !arg.startsWith('--hostlist') && !arg.startsWith('--ipset') && !arg.startsWith('--autohostlist') && !arg.startsWith('--lua-desync=') && !arg.startsWith('--name=')],
+    ];
+    for (const [groupName, predicate] of groups) {
+      const indexes = profile.args.map((arg, index) => predicate(arg) ? index : -1).filter((index) => index >= 0);
+      if (!indexes.length) continue;
+      const row = document.createElement('div'); row.className = 'flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-2';
+      const title = document.createElement('span'); title.className = 'mr-1 text-xs font-semibold text-slate-300'; title.textContent = groupName; row.append(title);
+      for (const index of indexes) {
+        const chip = document.createElement(profile.editable ? 'button' : 'span');
+        if (chip instanceof HTMLButtonElement) { chip.type = 'button'; chip.dataset.actionClick = 'removeRuntimeProfileArgument'; chip.dataset.args = JSON.stringify([profile.id, String(index)]); chip.setAttribute('aria-label', `Убрать параметр ${profile.args[index]}`); }
+        chip.className = 'max-w-full rounded-md bg-slate-800 px-2 py-1 font-mono text-xs text-blue-200'; chip.textContent = profile.args[index]! + (profile.editable ? ' ×' : ''); row.append(chip);
+      }
+      builder.append(row);
+    }
+    if (!profile.args.length) { const empty = document.createElement('p'); empty.className = 'rounded-lg border border-dashed border-slate-700 p-3 text-xs text-slate-400'; empty.textContent = 'В профиле пока нет аргументов. Добавьте фильтр и хотя бы один шаг desync.'; builder.append(empty); }
+    const addLabel = document.createElement('label'); addLabel.className = 'mt-1 block text-xs text-slate-400'; addLabel.textContent = 'Добавить параметр';
+    const select = document.createElement('select'); select.dataset.actionChange = 'appendRuntimeProfileArgument'; select.dataset.valueSource = 'value'; select.className = 'mt-1 w-full max-w-xl rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100';
+    const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ выбрать параметр'; select.append(placeholder);
+    for (const [value, label] of [['--filter-tcp=443', 'TCP-порты'], ['--filter-udp=443', 'UDP-порты'], ['--payload=tls_client_hello', 'TLS ClientHello'], ['--payload=quic_initial', 'QUIC Initial'], ['--hostlist=lists/user.list', 'Список доменов'], ['--hostlist-domains=example.com', 'Домены'], ['--ipset=lists/ipset.list', 'Список IP'], ['--lua-desync=fake', 'Шаг desync']] as const) {
+      const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option);
+    }
+    addLabel.append(select); builder.append(addLabel); editor.append(builder);
+  }
+  if (!profile.editable || runtimeProfileEditorMode === 'text') {
+    const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = profile.editable ? 'Аргументы профиля · по одному на строку' : 'Аргументы штатной группы';
+    const textarea = document.createElement('textarea'); textarea.id = 'runtimeProfileArgs'; textarea.rows = Math.max(5, Math.min(12, profile.args.length + 2)); textarea.spellcheck = false; textarea.readOnly = !profile.editable;
+    textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none read-only:text-slate-400';
+    textarea.value = profile.args.join('\n');
+    if (profile.editable) textarea.addEventListener('input', () => {
+      const index = Number(profile.id.slice('custom-'.length)) - 1;
+      if (Number.isInteger(index) && runtimeProfileDraft[index]) {
+        runtimeProfileDraft[index] = textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
+        runtimeProfilesDirty = true;
+        const status = $('#profileStatus');
+        if (status) status.textContent = 'Есть несохранённые изменения. Применение сохранит снимок, проверит конфиг и перезапустит nfqws2.';
+      }
+    });
+    label.append(textarea); editor.append(label);
+  }
+  if (profile.editable) {
+    const tip = document.createElement('p'); tip.className = 'mt-2 text-xs leading-5 text-slate-500'; tip.textContent = '--new нельзя вводить в редактор отдельного профиля. Для named-профиля используйте --name=имя. Сохранение создаст резервную копию и перезапустит nfqws2 с проверкой и откатом при ошибке.'; editor.append(tip);
   }
 }
 async function loadProfiles() {
-  const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профили…';
-  try { const result = await nfqwsProfiles.list(); renderProfiles(result.profiles); if (label) label.textContent = `${result.profiles.length} профилей · активация сохраняет текущую конфигурацию и перезапускает nfqws2.`; }
-  catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили.'; }
-}
-async function createProfile() {
-  if (!config) await loadConfig();
-  if (!config) return toast('Сначала загрузите текущую конфигурацию.', 'error');
-  pendingProfileEdit = { kind: 'create' };
-  setText('#profileDialogTitle', 'Сохранить профиль');
-  setValue('#profileNameInput', 'Мой профиль');
-  setValue('#profileContentInput', config.content);
-  showProfileDialog();
-}
-async function editProfile(id: string) {
+  const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профильные группы nfqws2…';
   try {
-    const current = await nfqwsProfiles.get(id);
-    pendingProfileEdit = { kind: 'edit', id };
-    setText('#profileDialogTitle', 'Изменить профиль');
-    setValue('#profileNameInput', current.name);
-    setValue('#profileContentInput', current.content);
-  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить профиль.', 'error'); return; }
-  showProfileDialog();
+    const result = await nfqwsProfiles.list(); runtimeProfilesState = result;
+    runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
+    runtimeProfilesDirty = false; renderRuntimeProfiles();
+    if (label) label.textContent = `${result.profiles.length} профилей в порядке nfqws2 · пользовательских ${runtimeProfileDraft.length} · штатные защищены от изменения`;
+  } catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили nfqws2.'; }
 }
-function showProfileDialog() {
-  const modal = $('#profileDialog'); modal?.classList.remove('hidden'); modal?.classList.add('flex');
-  const input = $<HTMLInputElement>('#profileNameInput'); input?.focus(); input?.select();
+function addRuntimeProfile() {
+  runtimeProfileDraft.push(['--filter-tcp=443', '--payload=tls_client_hello', '--lua-desync=fake']);
+  selectedRuntimeProfileId = `custom-${runtimeProfileDraft.length}`;
+  markRuntimeProfilesDirty();
 }
-function closeProfileDialog() {
-  pendingProfileEdit = null; const modal = $('#profileDialog'); modal?.classList.add('hidden'); modal?.classList.remove('flex');
+function pasteRuntimeProfile() {
+  const modal = $('#profileImportDialog'); const input = $<HTMLTextAreaElement>('#profileImportInput');
+  if (input) input.value = '';
+  modal?.classList.remove('hidden'); modal?.classList.add('flex'); input?.focus();
 }
-async function saveProfileDialog() {
-  const edit = pendingProfileEdit; const name = $<HTMLInputElement>('#profileNameInput')?.value.trim() ?? '';
-  const content = $<HTMLTextAreaElement>('#profileContentInput')?.value ?? '';
-  if (!edit || !name) return toast('Введите название профиля.', 'error');
-  if (!content.trim()) return toast('Конфигурация профиля не должна быть пустой.', 'error');
-  try {
-    if (edit.kind === 'create') { await nfqwsProfiles.create(name, content); toast('Профиль сохранён.'); }
-    else { await nfqwsProfiles.update(edit.id, name, content); toast('Профиль обновлён.'); }
-    closeProfileDialog();
-    await loadProfiles();
-  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить профиль.', 'error'); }
+function cancelProfileImport() {
+  const modal = $('#profileImportDialog'); modal?.classList.add('hidden'); modal?.classList.remove('flex');
 }
-async function activateProfile(id: string) {
-  requestDangerousConfirmation('Активировать профиль?', 'Текущая конфигурация сохранится в резервных копиях, затем nfqws2 перезапустится с выбранным профилем.', async () => {
+function acceptProfileImport() {
+  const raw = $<HTMLTextAreaElement>('#profileImportInput')?.value ?? '';
+  if (!raw.trim() || /[\0\r]/.test(raw) || /[;'"`$\\&|]/.test(raw)) return toast('Вставьте аргументы профиля без shell-команд и кавычек.', 'error');
+  const imported: string[][] = [[]];
+  for (const arg of raw.split(/\s+/).filter(Boolean)) {
+    if (arg === '--new' || arg.startsWith('--new=')) {
+      const name = arg.slice('--new='.length);
+      imported.push(name ? [`--name=${name}`] : []);
+    } else imported[imported.length - 1]!.push(arg);
+  }
+  if (imported[0]?.length === 0 && imported.length > 1) imported.shift();
+  if (imported.length > 64 || imported.flat().length > 8192) return toast('Вставленный набор превышает допустимый размер профилей.', 'error');
+  runtimeProfileDraft.push(...imported); selectedRuntimeProfileId = `custom-${runtimeProfileDraft.length}`;
+  cancelProfileImport(); markRuntimeProfilesDirty();
+}
+function selectRuntimeProfile(id: string) { selectedRuntimeProfileId = id; renderRuntimeProfiles(); }
+function setRuntimeProfileMode(mode: string) {
+  runtimeProfileEditorMode = mode === 'text' ? 'text' : 'builder';
+  renderRuntimeProfiles();
+}
+function appendRuntimeProfileArgument(argument: string) {
+  if (!argument) return;
+  const index = Number(selectedRuntimeProfileId.slice('custom-'.length)) - 1;
+  if (!Number.isInteger(index) || !runtimeProfileDraft[index]) return;
+  runtimeProfileDraft[index]!.push(argument); markRuntimeProfilesDirty();
+}
+function removeRuntimeProfileArgument(id: string, argIndex: string) {
+  const index = Number(id.slice('custom-'.length)) - 1; const position = Number(argIndex);
+  if (!Number.isInteger(index) || !Number.isInteger(position) || !runtimeProfileDraft[index]?.[position]) return;
+  runtimeProfileDraft[index]!.splice(position, 1); markRuntimeProfilesDirty();
+}
+function mutateRuntimeProfile(id: string, action: 'up' | 'down' | 'delete') {
+  const index = Number(id.slice('custom-'.length)) - 1;
+  if (!Number.isInteger(index) || !runtimeProfileDraft[index]) return;
+  if (action === 'delete') {
+    runtimeProfileDraft.splice(index, 1);
+    selectedRuntimeProfileId = runtimeProfileDraft.length ? `custom-${Math.min(index + 1, runtimeProfileDraft.length)}` : '';
+  } else {
+    const target = index + (action === 'up' ? -1 : 1);
+    if (target < 0 || target >= runtimeProfileDraft.length) return;
+    [runtimeProfileDraft[index], runtimeProfileDraft[target]] = [runtimeProfileDraft[target]!, runtimeProfileDraft[index]!];
+    selectedRuntimeProfileId = `custom-${target + 1}`;
+  }
+  markRuntimeProfilesDirty();
+}
+async function saveRuntimeProfiles() {
+  if (!runtimeProfilesState || !runtimeProfilesDirty) return toast('Нет изменений профилей для применения.');
+  requestDangerousConfirmation('Применить пользовательские профили?', 'Текущая конфигурация будет сохранена в резервных копиях, затем конфиг проверится и nfqws2 перезапустится. При ошибке панель попробует восстановить исходный конфиг.', async () => {
     setBusy(true); setRestartInProgress(true);
-    try { const result = await nfqwsProfiles.activate(id); config = result.config; const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) editor.value = config.content; await fetchStatus(); toast(result.message || lifecycleMessage('restart')); }
-    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось активировать профиль.', 'error'); }
+    try {
+      const result = await nfqwsProfiles.saveCustom(runtimeProfileDraft, runtimeProfilesState!.revision);
+      config = result.config;
+      const textarea = $('#nfqwsConfTextarea'); if (textarea instanceof HTMLTextAreaElement) textarea.value = config.content;
+      toast(result.message || 'Профили nfqws2 применены.'); await Promise.all([loadProfiles(), fetchStatus()]);
+    } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось применить профили.', 'error'); }
     finally { setRestartInProgress(false); setBusy(false); }
-  });
-}
-async function deleteProfile(id: string) {
-  requestDangerousConfirmation('Удалить профиль?', 'Удалится только сохранённая копия. Активная конфигурация nfqws2 не изменится.', async () => {
-    try { await nfqwsProfiles.delete(id); toast('Профиль удалён.'); await loadProfiles(); }
-    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось удалить профиль.', 'error'); }
   });
 }
 function requestDangerousConfirmation(title: string, message: string, action: () => Promise<void>, onCancel: () => void = () => undefined) {
@@ -3021,12 +3154,18 @@ function bindPrototypeActions() {
     refreshBackups: () => void loadBackups(),
     restoreSnapshot: (id: string) => void restoreSnapshot(id),
     pinSnapshot: (id: string, pinned: string | boolean) => void (async () => { try { await nfqwsSnapshots.pin(id, pinned === true || pinned === 'true'); await loadBackups(); } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось закрепить снимок.', 'error'); } })(),
-    createProfile: () => void createProfile(),
-    activateProfile: (id: string) => void activateProfile(id),
-    editProfile: (id: string) => void editProfile(id),
-    deleteProfile: (id: string) => void deleteProfile(id),
-    saveProfileDialog: () => void saveProfileDialog(),
-    cancelProfileDialog: () => closeProfileDialog(),
+    addRuntimeProfile: () => addRuntimeProfile(),
+    pasteRuntimeProfile: () => pasteRuntimeProfile(),
+    acceptProfileImport: () => acceptProfileImport(),
+    cancelProfileImport: () => cancelProfileImport(),
+    selectRuntimeProfile: (id: string) => selectRuntimeProfile(id),
+    setRuntimeProfileMode: (mode: string) => setRuntimeProfileMode(mode),
+    appendRuntimeProfileArgument: (argument: string) => appendRuntimeProfileArgument(argument),
+    removeRuntimeProfileArgument: (id: string, index: string) => removeRuntimeProfileArgument(id, index),
+    moveRuntimeProfileUp: (id: string) => mutateRuntimeProfile(id, 'up'),
+    moveRuntimeProfileDown: (id: string) => mutateRuntimeProfile(id, 'down'),
+    deleteRuntimeProfile: (id: string) => mutateRuntimeProfile(id, 'delete'),
+    saveRuntimeProfiles: () => void saveRuntimeProfiles(),
     refreshProfiles: () => void loadProfiles(),
     refreshChangeHistory: () => void loadChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
     filterChangeHistory: () => renderChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
@@ -3267,9 +3406,8 @@ function boot() {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && $('#listEditorPanel.list-editor-fullscreen')) toggleListEditorFullscreen();
-    if (event.key === 'Escape' && !$('#profileDialog')?.classList.contains('hidden')) closeProfileDialog();
+    if (event.key === 'Escape' && !$('#profileImportDialog')?.classList.contains('hidden')) cancelProfileImport();
     if (event.key === 'Escape' && !$('#operationConfirmModal')?.classList.contains('hidden')) closeDangerousConfirmation();
-    if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.id === 'profileNameInput') { event.preventDefault(); void saveProfileDialog(); }
   });
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigScroll, { passive: true });
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());

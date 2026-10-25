@@ -1305,8 +1305,14 @@ export default function App() {
           </section>
         </section>
         <section id={"tabContent-profiles"} className={"hidden view-animate space-y-4"}>
-          <div className={"flex flex-wrap items-end justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Профили</h1><p className={"mt-1 text-sm text-slate-400"}>Сохранённые варианты конфигурации nfqws2. Активация проходит проверку, создаёт снимок текущего состояния и перезапускает службу.</p></div><button type={"button"} data-action-click={"createProfile"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>＋ Сохранить текущую конфигурацию</button></div>
-          <section className={"ui-card max-w-5xl rounded-xl p-4 sm:p-5"}><p id={"profileStatus"} className={"mb-3 text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Профили хранятся отдельно от активного файла.</p><div id={"profileList"} className={"grid gap-2"}></div></section>
+          <div className={"flex flex-wrap items-end justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Профили nfqws2</h1><p className={"mt-1 max-w-3xl text-sm text-slate-400"}>Профили формируются из групп аргументов активного конфига. Штатные группы доступны только для просмотра; пользовательские из NFQWS_ARGS_CUSTOM можно изменить, упорядочить или удалить.</p></div><div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"pasteRuntimeProfile"} className={"backup-action"}>Вставить чужой</button><button type={"button"} data-action-click={"addRuntimeProfile"} className={"backup-action"}>＋ Свой профиль</button><button type={"button"} data-action-click={"saveRuntimeProfiles"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Применить изменения</button></div></div>
+          <section className={"ui-card max-w-[90rem] rounded-xl p-3 sm:p-4"}>
+            <p id={"profileStatus"} className={"mb-3 text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Профили загружаются из конфигурации nfqws2…</p>
+            <div className={"grid min-h-[34rem] gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]"}>
+              <nav id={"profileList"} className={"grid content-start gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-2"} aria-label={"Порядок профилей nfqws2"}></nav>
+              <div id={"profileEditor"} className={"min-w-0 rounded-lg border border-slate-800 bg-slate-950/20 p-3 sm:p-4"}></div>
+            </div>
+          </section>
         </section>
         <section id={"tabContent-snapshots"} className={"hidden view-animate space-y-4"}>
           <div><h1 className={"text-xl font-bold text-white"}>Резервные копии</h1><p className={"mt-1 text-sm text-slate-400"}>Снимки конфигурации и списков, созданные перед изменениями, вручную или по расписанию.</p></div>
@@ -1505,13 +1511,12 @@ export default function App() {
         <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelOperationConfirmation"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"confirmOperationConfirmation"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Продолжить</button></div>
       </section>
     </div>
-    <div id={"profileDialog"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[75] hidden items-center justify-center p-4"}>
-      <section className={"w-full max-w-3xl rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"profileDialogTitle"}>
-        <h3 id={"profileDialogTitle"} className={"text-base font-bold text-white"}>Сохранить профиль</h3>
-        <label className={"mt-4 block text-sm text-slate-300"} htmlFor={"profileNameInput"}>Название<input id={"profileNameInput"} maxLength={64} className={"mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} /></label>
-        <label className={"mt-4 block text-sm text-slate-300"} htmlFor={"profileContentInput"}>Конфигурация профиля<textarea id={"profileContentInput"} rows={18} spellCheck={false} className={"mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none"}></textarea></label>
-        <p className={"mt-2 text-xs text-slate-500"}>Сохранение проверяет конфигурацию; активация создаёт резервную копию и перезапускает nfqws2.</p>
-        <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelProfileDialog"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"saveProfileDialog"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button></div>
+    <div id={"profileImportDialog"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[75] hidden items-center justify-center p-4"}>
+      <section className={"w-full max-w-2xl rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"profileImportTitle"}>
+        <h3 id={"profileImportTitle"} className={"text-base font-bold text-white"}>Вставить профиль nfqws2</h3>
+        <p className={"mt-2 text-sm text-slate-400"}>Вставьте аргументы профиля, включая параметры фильтров и шаги desync. Разделители --new будут импортированы отдельными профилями.</p>
+        <textarea id={"profileImportInput"} rows={10} spellCheck={false} className={"mt-4 w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none"}></textarea>
+        <div className={"mt-4 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelProfileImport"} className={"backup-action"}>Отмена</button><button type={"button"} data-action-click={"acceptProfileImport"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Добавить</button></div>
       </section>
     </div>
 {"\n\n  "}

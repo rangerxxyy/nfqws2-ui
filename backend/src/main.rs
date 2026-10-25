@@ -2641,15 +2641,9 @@ struct SnapshotPinRequest {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ProfileCreateRequest {
-    name: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ProfileUpdateRequest {
-    name: String,
-    content: String,
+struct RuntimeProfilesWrite {
+    profiles: Vec<Vec<String>>,
+    revision: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9595,127 +9589,98 @@ async fn delete_snapshot_api(
 }
 
 async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
-    match nfqws2_ui::profiles::list(&state.data_dir) {
-        Ok(profiles) => Json(serde_json::json!({ "profiles": profiles })).into_response(),
-        Err(message) => profile_operation_error(message),
-    }
-}
-
-fn validate_profile_config(content: &str) -> Result<(), String> {
-    let diagnostics = validate_nfqws2_config(content)?;
-    if let Some(diagnostic) = diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
-    {
-        return Err(format!("{}: {}", diagnostic.code, diagnostic.message));
-    }
-    Ok(())
-}
-
-fn profile_operation_error(message: String) -> Response {
-    let status = if message.starts_with("Не удалось") {
-        StatusCode::INTERNAL_SERVER_ERROR
-    } else if message == "Профиль не найден" {
-        StatusCode::NOT_FOUND
-    } else {
-        StatusCode::BAD_REQUEST
-    };
-    error(status, message)
-}
-
-async fn get_profile(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Response {
-    match nfqws2_ui::profiles::get(&state.data_dir, &id) {
-        Ok(profile) => Json(profile).into_response(),
-        Err(message) => profile_operation_error(message),
-    }
-}
-
-async fn create_profile(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<ProfileCreateRequest>,
-) -> Response {
-    if request.content.len() > 512 * 1024 {
-        return error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "Конфигурация профиля превышает лимит 512 КиБ",
-        );
-    }
-    if let Err(message) = validate_profile_config(&request.content) {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
-    }
-    match nfqws2_ui::profiles::create(
-        &state.data_dir,
-        &request.name,
-        &request.content,
-        now_unix_seconds(),
-    ) {
-        Ok(profile) => (StatusCode::CREATED, Json(profile)).into_response(),
-        Err(message) => profile_operation_error(message),
-    }
-}
-
-async fn update_profile(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Path(id): axum::extract::Path<String>,
-    Json(request): Json<ProfileUpdateRequest>,
-) -> Response {
-    if request.content.len() > 512 * 1024 {
-        return error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "Конфигурация профиля превышает лимит 512 КиБ",
-        );
-    }
-    if let Err(message) = validate_profile_config(&request.content) {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
-    }
-    match nfqws2_ui::profiles::update(
-        &state.data_dir,
-        &id,
-        &request.name,
-        &request.content,
-        now_unix_seconds(),
-    ) {
-        Ok(profile) => Json(profile).into_response(),
-        Err(message) => profile_operation_error(message),
-    }
-}
-
-async fn delete_profile(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Response {
-    match nfqws2_ui::profiles::delete(&state.data_dir, &id) {
-        Ok(()) => Json(serde_json::json!({ "deleted": true })).into_response(),
-        Err(message) => profile_operation_error(message),
-    }
-}
-
-async fn activate_profile(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> Response {
-    let content = match nfqws2_ui::profiles::content(&state.data_dir, &id) {
-        Ok(content) => content,
-        Err(message) => return profile_operation_error(message),
-    };
-    if let Err(message) = validate_profile_config(&content) {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
-    }
     let Some(path) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
-    let current = match tokio::fs::read(&path).await {
-        Ok(bytes) => revision(&bytes),
-        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    match tokio::fs::read(&path).await {
+        Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => {
+            let content = match std::str::from_utf8(&bytes) {
+                Ok(content) => content,
+                Err(_) => {
+                    return error(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "Конфигурация содержит некорректный UTF-8; исправьте файл в raw-редакторе",
+                    );
+                }
+            };
+            match nfqws2_ui::runtime_profiles::from_config(content, &revision(&bytes)) {
+                Ok(profiles) => Json(profiles).into_response(),
+                Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+            }
+        }
+        Ok(_) => error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Конфигурация превышает лимит 512 КиБ",
+        ),
+        Err(io_error) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось прочитать конфигурацию: {io_error}"),
+        ),
+    }
+}
+
+fn build_runtime_profiles_config(
+    original: &str,
+    request: RuntimeProfilesWrite,
+) -> Result<String, String> {
+    if revision(original.as_bytes()) != request.revision {
+        return Err(WRITE_REVISION_CONFLICT.into());
+    }
+    let encoded = nfqws2_ui::runtime_profiles::encode_custom_profile_args(&request.profiles)?;
+    nfqws2_ui::runtime_profiles::from_config(original, &request.revision)?;
+    let document = ConfigDocument::parse(original)?;
+    let proposed = document.set_literal_all("NFQWS_ARGS_CUSTOM", &encoded)?;
+    let diagnostics = validate_nfqws2_config(&proposed)?;
+    if let Some(diagnostic) = diagnostics
+        .into_iter()
+        .find(|item| item.severity == DiagnosticSeverity::Error)
+    {
+        return Err(format!("{}: {}", diagnostic.code, diagnostic.message));
+    }
+    Ok(proposed)
+}
+
+async fn save_runtime_profiles(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<RuntimeProfilesWrite>,
+) -> Response {
+    let Some(path) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(io_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось прочитать конфигурацию: {io_error}"),
+            );
+        }
+    };
+    let original = match std::str::from_utf8(&bytes) {
+        Ok(original) => original,
+        Err(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Конфигурация содержит некорректный UTF-8; сохранение профилей остановлено",
+            );
+        }
+    };
+    let proposed = match build_runtime_profiles_config(original, request) {
+        Ok(content) => content,
+        Err(message) if message == WRITE_REVISION_CONFLICT => {
+            return error(
+                StatusCode::CONFLICT,
+                "Конфигурация изменилась; обновите список профилей перед сохранением",
+            );
+        }
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    let current_revision = revision(&bytes);
     match apply_config_transaction(
         &state,
         ConfigWrite {
-            content,
-            revision: current,
+            content: proposed,
+            revision: current_revision,
         },
         || async { service_action(ServiceAction::Restart).await },
     )
@@ -9724,7 +9689,7 @@ async fn activate_profile(
         Ok(result) => Json(result).into_response(),
         Err(message) if message == WRITE_REVISION_CONFLICT => error(
             StatusCode::CONFLICT,
-            "Конфигурация изменилась во время активации профиля",
+            "Конфигурация изменилась во время сохранения профиля",
         ),
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
@@ -10873,12 +10838,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             get(get_snapshots).post(create_snapshot_api),
         )
         .route("/api/change-history", get(get_change_history))
-        .route("/api/profiles", get(get_profiles).post(create_profile))
         .route(
-            "/api/profiles/{id}",
-            get(get_profile).put(update_profile).delete(delete_profile),
+            "/api/profiles",
+            get(get_profiles).put(save_runtime_profiles),
         )
-        .route("/api/profiles/{id}/activate", post(activate_profile))
         .route(
             "/api/snapshots/settings",
             axum::routing::put(update_snapshot_settings),
@@ -11033,74 +10996,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn profile_config_validation_rejects_fatal_diagnostics() {
-        assert!(validate_profile_config("NFQWS_ARGS=\"--new\"\n").is_err());
-        assert!(validate_profile_config("NFQWS_ARGS=\"--filter-tcp=443\"\n").is_ok());
+    fn runtime_profile_edit_changes_only_custom_arguments_and_preserves_other_config() {
+        let original = concat!(
+            "MODE_LIST='--hostlist=lists/user.list' # keep mode\n",
+            "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443\" # keep base comment\n",
+            "NFQWS_ARGS_CUSTOM=\"$NFQWS_ARGS_CUSTOM --new --filter-tcp=80\" # keep append comment\n",
+            "NFQWS_ARGS=\"--filter-tcp=80,443 --lua-desync=split\" # managed\n",
+        );
+        let request = RuntimeProfilesWrite {
+            profiles: vec![
+                vec!["--filter-tcp=443".into()],
+                vec!["--filter-tcp=80".into(), "--lua-desync=fake".into()],
+            ],
+            revision: revision(original.as_bytes()),
+        };
+        let updated = build_runtime_profiles_config(original, request).unwrap();
+
+        assert!(updated.contains("MODE_LIST='--hostlist=lists/user.list' # keep mode"));
+        assert!(updated.contains("# keep base comment"));
+        assert!(updated.contains("# keep append comment"));
+        assert!(
+            updated.contains("NFQWS_ARGS=\"--filter-tcp=80,443 --lua-desync=split\" # managed")
+        );
+        let document = ConfigDocument::parse(&updated).unwrap();
+        assert_eq!(
+            document.literal_or_mode_value("NFQWS_ARGS_CUSTOM").unwrap(),
+            "--filter-tcp=443 --new --filter-tcp=80 --lua-desync=fake"
+        );
+    }
+
+    #[test]
+    fn runtime_profile_edit_rejects_stale_revisions_and_shell_fragments() {
+        let original = "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443\"\n";
+        let stale = RuntimeProfilesWrite {
+            profiles: vec![vec!["--filter-tcp=80".into()]],
+            revision: "stale".into(),
+        };
+        assert_eq!(
+            build_runtime_profiles_config(original, stale).unwrap_err(),
+            WRITE_REVISION_CONFLICT
+        );
+        let unsafe_args = RuntimeProfilesWrite {
+            profiles: vec![vec!["--filter-tcp=443;reboot".into()]],
+            revision: revision(original.as_bytes()),
+        };
+        assert!(build_runtime_profiles_config(original, unsafe_args).is_err());
     }
 
     #[tokio::test]
-    async fn profile_api_rejects_fatal_config_diagnostics_on_create_update_and_activation() {
+    async fn profile_api_lists_nfws2_argument_groups_with_custom_only_editable() {
         let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path().join("data");
-        let invalid_id =
-            nfqws2_ui::profiles::create(&data_dir, "Legacy invalid", "NFQWS_ARGS=\"--new\"\n", 1)
-                .unwrap()
-                .id;
-        let app = api_router(test_state(data_dir.clone()), dir.path().join("web"));
-        let invalid_body = serde_json::json!({"name":"Bad","content":"NFQWS_ARGS=\"--new\"\n"});
-
-        let create = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/profiles")
-                    .header("content-type", "application/json")
-                    .body(Body::from(invalid_body.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(create.status(), StatusCode::UNPROCESSABLE_ENTITY);
-
-        let update = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("PUT")
-                    .uri(format!("/api/profiles/{invalid_id}"))
-                    .header("content-type", "application/json")
-                    .body(Body::from(invalid_body.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(update.status(), StatusCode::UNPROCESSABLE_ENTITY);
-
-        let activate = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(format!("/api/profiles/{invalid_id}/activate"))
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(activate.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    }
-
-    #[tokio::test]
-    async fn profile_api_surfaces_corrupt_store_as_server_error_without_overwriting_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let data_dir = dir.path().join("data");
-        std::fs::create_dir_all(&data_dir).unwrap();
-        let store = data_dir.join("profiles.json");
-        std::fs::write(&store, b"{not valid json").unwrap();
-        let app = api_router(test_state(data_dir), dir.path().join("web"));
-
-        let list = app
-            .clone()
+        let config = dir.path().join("nfqws2.conf");
+        std::fs::write(
+            &config,
+            "MODE_LIST='--hostlist=lists/user.list'\nNFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --lua-desync=fake --new=video --filter-tcp=80 --lua-desync=split\"\nNFQWS_ARGS_UDP=\"--filter-udp=443 --payload=quic_initial\"\nNFQWS_ARGS=\"--filter-tcp=80,443 --hostlist=lists/user.list\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n",
+        )
+        .unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("data"), Some(config)),
+            dir.path().join("web"),
+        );
+        let response = app
             .oneshot(
                 Request::builder()
                     .uri("/api/profiles")
@@ -11109,27 +11065,22 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(list.status(), StatusCode::INTERNAL_SERVER_ERROR);
-
-        let create = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/profiles")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        serde_json::json!({
-                            "name": "Home",
-                            "content": "NFQWS_ARGS=\"--filter-tcp=443\"\n"
-                        })
-                        .to_string(),
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(create.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(std::fs::read(store).unwrap(), b"{not valid json");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let profiles = result["profiles"].as_array().unwrap();
+        assert_eq!(profiles.len(), 4);
+        assert_eq!(profiles[0]["name"], "Свой профиль 1");
+        assert_eq!(profiles[1]["source"], "NFQWS_ARGS_CUSTOM");
+        assert_eq!(profiles[2]["source"], "NFQWS_ARGS_UDP");
+        assert_eq!(profiles[3]["source"], "NFQWS_ARGS");
+        assert_eq!(profiles[0]["editable"], true);
+        assert_eq!(profiles[2]["editable"], false);
+        assert!(
+            result["revision"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
     }
 
     #[test]
