@@ -70,6 +70,116 @@ pub async fn fetch_ipv4_prefixes(asn: u32) -> Result<Vec<String>, String> {
     parse_announced_ipv4_prefixes(&output.stdout[..split])
 }
 
+pub async fn resolve_asn_query(query: &str) -> Result<(u32, Option<String>), String> {
+    let query = query.trim();
+    if let Some(asn) = parse_asn_query(query)? {
+        return Ok((asn, None));
+    }
+
+    let host = crate::site_diagnostics::normalize_site_target(query)?;
+    let address = if let Ok(address) = host.parse::<std::net::IpAddr>() {
+        if !crate::site_diagnostics::public_ip(address) {
+            return Err("Укажите публичный IP-адрес или домен".into());
+        }
+        address
+    } else {
+        crate::site_diagnostics::public_ipv4_references(&host)
+            .await
+            .into_iter()
+            .find(|address| matches!(address, std::net::IpAddr::V4(_)))
+            .ok_or_else(|| format!("Не удалось получить публичный IPv4-адрес для {host}"))?
+    };
+    let url = format!(
+        "https://stat.ripe.net/data/network-info/data.json?sourceapp=nfqws2-ui&resource={address}"
+    );
+    let output = fetch_ripe_response(&url).await?;
+    let asn =
+        parse_network_info_asn(&output).map_err(|message| format!("{message} для {address}"))?;
+    Ok((asn, Some(format!("{query} → {address}"))))
+}
+
+fn parse_network_info_asn(bytes: &[u8]) -> Result<u32, String> {
+    let value: Value = serde_json::from_slice(bytes)
+        .map_err(|_| "RIPEstat вернул некорректные данные о сети".to_string())?;
+    value
+        .pointer("/data/asns/0")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<u32>().ok())
+        .or_else(|| {
+            value
+                .pointer("/data/asns/0")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+        })
+        .filter(|asn| *asn > 0)
+        .ok_or_else(|| "RIPEstat не указал ASN".to_string())
+}
+
+fn parse_asn_query(query: &str) -> Result<Option<u32>, String> {
+    let numeric = query
+        .get(..2)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("AS"))
+        .map(|_| &query[2..])
+        .unwrap_or(query);
+    if numeric.is_empty() || !numeric.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Ok(None);
+    }
+    let asn = numeric
+        .parse::<u32>()
+        .map_err(|_| "Номер ASN вне допустимого диапазона".to_string())?;
+    if asn == 0 {
+        return Err("Укажите номер ASN больше нуля".into());
+    }
+    Ok(Some(asn))
+}
+
+async fn fetch_ripe_response(url: &str) -> Result<Vec<u8>, String> {
+    let curl = if Path::new("/opt/bin/curl").is_file() {
+        "/opt/bin/curl"
+    } else if cfg!(windows) {
+        "curl.exe"
+    } else {
+        "curl"
+    };
+    let output = timeout(
+        Duration::from_secs(12),
+        Command::new(curl)
+            .args([
+                "--disable",
+                "--silent",
+                "--show-error",
+                "--noproxy",
+                "*",
+                "--connect-timeout",
+                "3",
+                "--max-time",
+                "10",
+                "--max-filesize",
+                "1048576",
+                "--fail",
+                url,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| "RIPEstat не ответил за отведённое время".to_string())?
+    .map_err(|error| format!("Не удалось запустить curl для RIPEstat: {error}"))?;
+    if !output.status.success() {
+        return Err(
+            "Не удалось загрузить данные RIPEstat (ответ слишком большой или соединение прервано)"
+                .into(),
+        );
+    }
+    if output.stdout.len() > MAX_RIPESTAT_BYTES {
+        return Err("Ответ RIPEstat превышает лимит 1 МБ".into());
+    }
+    Ok(output.stdout)
+}
+
 fn parse_announced_ipv4_prefixes(bytes: &[u8]) -> Result<Vec<String>, String> {
     if bytes.len() > MAX_RIPESTAT_BYTES {
         return Err("Ответ RIPEstat превышает лимит 1 МБ".into());
@@ -127,7 +237,39 @@ fn parse_announced_ipv4_prefixes(bytes: &[u8]) -> Result<Vec<String>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_PREFIXES, MAX_RIPESTAT_BYTES, parse_announced_ipv4_prefixes};
+    use super::{
+        MAX_PREFIXES, MAX_RIPESTAT_BYTES, parse_announced_ipv4_prefixes, parse_asn_query,
+        parse_network_info_asn, resolve_asn_query,
+    };
+
+    #[tokio::test]
+    async fn direct_asn_lookup_skips_network_resolution() {
+        assert_eq!(resolve_asn_query("aS15169").await.unwrap(), (15169, None));
+    }
+
+    #[test]
+    fn parses_asn_numbers_case_insensitively_and_rejects_invalid_ranges() {
+        assert_eq!(parse_asn_query("AS15169").unwrap(), Some(15169));
+        assert_eq!(parse_asn_query("aS13335").unwrap(), Some(13335));
+        assert_eq!(parse_asn_query("4294967295").unwrap(), Some(u32::MAX));
+        assert!(parse_asn_query("AS0").is_err());
+        assert!(parse_asn_query("4294967296").is_err());
+        assert_eq!(parse_asn_query("example.com").unwrap(), None);
+    }
+
+    #[test]
+    fn reads_asn_from_ripe_network_info_responses() {
+        assert_eq!(
+            parse_network_info_asn(br#"{"data":{"asns":["15169"]}}"#).unwrap(),
+            15169
+        );
+        assert_eq!(
+            parse_network_info_asn(br#"{"data":{"asns":[13335]}}"#).unwrap(),
+            13335
+        );
+        assert!(parse_network_info_asn(br#"{"data":{"asns":[]}}"#).is_err());
+        assert!(parse_network_info_asn(b"not json").is_err());
+    }
 
     #[test]
     fn parses_unique_ipv4_prefixes_and_removes_nested_ranges() {

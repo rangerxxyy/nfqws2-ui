@@ -1333,7 +1333,7 @@ export default function App() {
                 </h3>
                 {"\n              "}
                 <p className={"text-xs text-slate-400 mt-0.5"}>
-                  {"Загружает все анонсируемые IPv4-префиксы компании из базы RIPEstat"}
+                  {"Находит сеть по ASN, IP или домену и загружает её IPv4-префиксы из RIPEstat"}
                 </p>
                 {"\n            "}
               </div>
@@ -1343,10 +1343,18 @@ export default function App() {
                 <div>
                   {"\n                "}
                   <label htmlFor={"asnNumber"} className={"block text-slate-400 font-mono mb-1"}>
-                    {"Номер автономной системы (ASN)"}
+                    {"ASN, публичный IPv4 или домен"}
                   </label>
                   {"\n                "}
-                  <input id={"asnNumber"} autoComplete={"off"} placeholder={"Например, AS15169 или 15169"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-white"} />
+                  <input id={"asnNumber"} autoComplete={"off"} placeholder={"AS15169, 8.8.8.8 или example.com"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-white"} />
+                  <div className={"mt-2 flex flex-wrap gap-1.5"} role={"group"} aria-label={"Частые ASN"}>
+                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS24940"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Hetzner</button>
+                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS16276"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>OVH</button>
+                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS14061"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>DigitalOcean</button>
+                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS51167"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Contabo</button>
+                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS13335"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Cloudflare</button>
+                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS16509"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Amazon AWS</button>
+                  </div>
                   {"\n              "}
                 </div>
                 {"\n\n              "}
@@ -1357,7 +1365,7 @@ export default function App() {
                 <div id={"asnResultBox"} className={"p-3.5 rounded-xl bg-[#060a12] border border-slate-800 font-mono text-[11px] text-slate-400 space-y-1"}>
                   {"\n                "}
                   <div role={"status"} aria-live={"polite"}>
-                    {"Укажите ASN, чтобы получить анонсируемые IPv4-подсети и добавить их в ipset.list."}
+                    {"Укажите ASN, публичный IP или домен, чтобы добавить префиксы сети в ipset.list."}
                   </div>
                   {"\n              "}
                 </div>

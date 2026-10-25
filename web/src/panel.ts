@@ -18,7 +18,7 @@ import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
 import { strategyNeedsWindowsTcpTimestamps } from './strategy-capability';
-import { mergeAsnPrefixes, parseAsnInput } from './asn-prefixes';
+import { mergeAsnPrefixes, normalizeAsnQuery } from './asn-prefixes';
 import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
@@ -1153,15 +1153,15 @@ async function fetchAsnPrefixes() {
     result.classList.toggle('text-rose-300', isError);
     result.classList.toggle('text-slate-400', !isError);
   };
-  const asn = parseAsnInput(input.value);
-  if (asn === null) {
-    showResult('Введите корректный номер ASN, например AS15169.', true);
+  const query = normalizeAsnQuery(input.value);
+  if (query === null) {
+    showResult('Введите ASN, публичный IPv4 или домен, например AS15169 или example.com.', true);
     return;
   }
   if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Загружаю префиксы…'; }
-  showResult(`Запрашиваю анонсируемые IPv4-префиксы AS${asn} в RIPEstat…`);
+  showResult(`Запрашиваю RIPEstat для ${query}…`);
   try {
-    const response = await nfqwsNetwork.prefixes(asn);
+    const response = await nfqwsNetwork.prefixes(query);
     const inventory = await nfqwsLists.index();
     const summary = inventory.files.find((file) => file.id === 'ipset.list');
     if (!summary?.writable) throw new Error('Список ipset.list отсутствует или недоступен для записи.');
@@ -1172,7 +1172,7 @@ async function fetchAsnPrefixes() {
     const current = await nfqwsLists.get('ipset.list');
     const merged = mergeAsnPrefixes(current.content, response.prefixes);
     if (merged.added === 0) {
-      showResult(`AS${asn}: получено ${response.prefixes.length} префиксов; все уже есть в ipset.list.`);
+      showResult(`AS${response.asn}: получено ${response.prefixes.length} префиксов; все уже есть в ipset.list.`);
       return;
     }
     const saved = await nfqwsLists.save('ipset.list', merged.content, current.revision);
@@ -1181,7 +1181,7 @@ async function fetchAsnPrefixes() {
       if (editor instanceof HTMLTextAreaElement) editor.value = saved.content;
       syncListLineNumbers(editor instanceof HTMLTextAreaElement ? editor : undefined);
     }
-    showResult(`AS${asn}: получено ${response.prefixes.length}, добавлено ${merged.added}; уже было ${merged.alreadyPresent}. ipset.list сохранён.`);
+    showResult(`${response.resolvedFrom ? `${response.resolvedFrom} → ` : ''}AS${response.asn}: получено ${response.prefixes.length}, добавлено ${merged.added}; уже было ${merged.alreadyPresent}. ipset.list сохранён.`);
   } catch (error) {
     showResult(error instanceof Error ? error.message : 'Не удалось загрузить префиксы ASN.', true);
   } finally {
@@ -2623,6 +2623,7 @@ function bindPrototypeActions() {
     checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
     fetchAsnPrefixes: () => void fetchAsnPrefixes(),
+    setAsnQuery: (query: string) => { const input = $('#asnNumber'); if (input instanceof HTMLInputElement) { input.value = query; input.focus(); } },
     checkMonitoringSite: (host: string) => void runMonitoring(host),
     saveMonitoringSettings: () => void saveMonitoringSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить расписание.', 'error')),
     toggleMonitoringCustom: (select: HTMLSelectElement) => { $('#monitoringCustom')?.classList.toggle('hidden', select.value !== 'custom'); $('#monitoringCustom')?.classList.toggle('inline-flex', select.value === 'custom'); },

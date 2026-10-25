@@ -3,11 +3,11 @@ import { api, nfqwsApply, nfqwsAppearance, nfqwsBackups, nfqwsConfig, nfqwsDiagn
 
 describe('API client used by the source-based panel', () => {
   it('requests a bounded ASN prefix lookup from the Rust API', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{"asn":15169,"prefixes":["8.8.8.0/24"]}', { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"asn":15169,"resolvedFrom":"example.com → 8.8.8.8","prefixes":["8.8.8.0/24"]}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(nfqwsNetwork.prefixes(15169)).resolves.toEqual({ asn: 15169, prefixes: ['8.8.8.0/24'] });
+    await expect(nfqwsNetwork.prefixes('example.com')).resolves.toEqual({ asn: 15169, resolvedFrom: 'example.com → 8.8.8.8', prefixes: ['8.8.8.0/24'] });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/asn-prefixes');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ asn: 15169 });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ query: 'example.com' });
   });
 
   it('reports the beginning of a non-JSON success response instead of silently returning an empty object', async () => {

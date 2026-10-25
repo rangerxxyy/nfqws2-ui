@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeAsnPrefixes, parseAsnInput } from './asn-prefixes';
+import { mergeAsnPrefixes, normalizeAsnQuery, parseAsnInput } from './asn-prefixes';
 
 describe('ASN prefix input', () => {
   it('accepts decimal ASNs with or without the AS prefix', () => {
@@ -19,5 +19,19 @@ describe('ASN prefix input', () => {
       added: 1,
       alreadyPresent: 1,
     });
+  });
+});
+
+describe('ASN, IP, and domain lookup input', () => {
+  it('accepts ASN, public IP, and domain query forms', () => {
+    expect(normalizeAsnQuery(' AS15169 ')).toBe('AS15169');
+    expect(normalizeAsnQuery('8.8.8.8')).toBe('8.8.8.8');
+    expect(normalizeAsnQuery('example.com')).toBe('example.com');
+  });
+
+  it('rejects invalid ASNs, IP addresses, and malformed domains', () => {
+    for (const value of ['', 'AS0', '4294967296', '256.1.1.1', 'not a domain', 'example..com', 'bad_domain']) {
+      expect(normalizeAsnQuery(value)).toBeNull();
+    }
   });
 });

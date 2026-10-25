@@ -258,10 +258,12 @@ describe('TSX panel without authentication', () => {
   it('connects the ASN prefix generator to RIPEstat and the ipset list editor', () => {
     expect(template).toContain('id="asnNumber"');
     expect(template).toContain('data-action-click="fetchAsnPrefixes"');
-    expect(panelSource).toContain('nfqwsNetwork.prefixes(asn)');
+    expect(template).toContain('data-action-click="setAsnQuery"');
+    expect([...template.matchAll(/data-action-click="setAsnQuery"/g)]).toHaveLength(6);
+    expect(panelSource).toContain('nfqwsNetwork.prefixes(query)');
     expect(panelSource).toContain("nfqwsLists.save('ipset.list'");
     expect(backendSource).toContain('/api/nfqws2/asn-prefixes');
-    expect(backendSource).toContain('fetch_ipv4_prefixes(request.asn)');
+    expect(backendSource).toContain('resolve_asn_query(&request.query)');
     expect(panelSource).not.toContain("'fetchAsnPrefixes',");
   });
 

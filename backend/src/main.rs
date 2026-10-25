@@ -7,7 +7,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use nfqws2_ui::asn_prefixes::fetch_ipv4_prefixes;
+use nfqws2_ui::asn_prefixes::{fetch_ipv4_prefixes, resolve_asn_query};
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::config_format::format_nfqws_config;
 use nfqws2_ui::freeze_diagnostic;
@@ -2481,7 +2481,7 @@ struct ListWrite {
 
 #[derive(Deserialize)]
 struct AsnPrefixRequest {
-    asn: u32,
+    query: String,
 }
 
 #[derive(Deserialize)]
@@ -7904,13 +7904,21 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn get_asn_prefixes(Json(request): Json<AsnPrefixRequest>) -> Response {
-    if request.asn == 0 {
-        return error(StatusCode::BAD_REQUEST, "Укажите номер ASN больше нуля");
+    if request.query.trim().is_empty() || request.query.len() > 253 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Укажите ASN, публичный IP-адрес или домен",
+        );
     }
-    match fetch_ipv4_prefixes(request.asn).await {
-        Ok(prefixes) => {
-            Json(serde_json::json!({ "asn": request.asn, "prefixes": prefixes })).into_response()
-        }
+    let (asn, resolved_from) = match resolve_asn_query(&request.query).await {
+        Ok(result) => result,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    match fetch_ipv4_prefixes(asn).await {
+        Ok(prefixes) => Json(
+            serde_json::json!({ "asn": asn, "resolvedFrom": resolved_from, "prefixes": prefixes }),
+        )
+        .into_response(),
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
 }
