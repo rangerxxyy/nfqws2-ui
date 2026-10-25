@@ -7,6 +7,12 @@ export const MONITORING_STORAGE_KEY = 'nfqws2-ui:monitoring:v1';
 export const MAX_MONITORING_SITES = 20;
 export const MAX_MONITORING_RESULTS = 96;
 
+export function normalizeMonitoringInterval(hours: number, minutes: number): number {
+  const total = Math.trunc(hours) * 60 + Math.trunc(minutes);
+  if (!Number.isFinite(total)) return 30;
+  return Math.max(10, Math.min(1440, total));
+}
+
 export function normalizeMonitoringHost(input: string): string | null {
   const host = input.trim().toLowerCase().replace(/\.$/, '');
   if (!host || host.includes('://') || /[\s/@?#:]/.test(host) || /^\d+(?:\.\d+){3}$/.test(host)) return null;

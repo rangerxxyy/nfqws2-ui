@@ -80,7 +80,7 @@ if tar -tvzf "$TMP/$ASSET" | awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) !=
 fi
 mkdir -p "$STAGE"
 tar -xzf "$TMP/$ASSET" -C "$STAGE" || { set_state failed 'Could not unpack the release archive.'; exit 1; }
-if [ ! -x "$STAGE/bin/nfqws2-ui" ] || [ ! -d "$STAGE/public" ] || [ ! -x "$STAGE/scripts/S99nfqws2-ui" ] || [ ! -r "$STAGE/scripts/symlink.sh" ] || [ ! -x "$STAGE/scripts/update-release.sh" ] || [ ! -x "$STAGE/scripts/update-core-release.sh" ]; then
+if [ ! -x "$STAGE/bin/nfqws2-ui" ] || [ ! -d "$STAGE/public" ] || [ ! -x "$STAGE/scripts/S99nfqws2-ui" ] || [ ! -r "$STAGE/scripts/symlink.sh" ] || [ ! -x "$STAGE/scripts/update-release.sh" ] || [ ! -x "$STAGE/scripts/update-core-release.sh" ] || [ ! -r "$STAGE/scripts/nfqws2-ui-ctl" ]; then
 	set_state failed 'Release archive is missing required updater files.'
 	exit 1
 fi
@@ -114,6 +114,9 @@ if ! "$CORE_INIT" restart || ! "$CORE_INIT" status; then
 	else set_state failed 'nfqws2 restart/status check failed and panel rollback could not restore the previous release.'; fi
 	exit 1
 fi
+mkdir -p /opt/bin
+cp "$STAGE/scripts/nfqws2-ui-ctl" /opt/bin/nfqws2-ui-ctl
+chmod 755 /opt/bin/nfqws2-ui-ctl
 SWITCHED=0
 COMMITTED=1
 set_state success "Panel $TAG passed HTTP health-check; nfqws2 restarted and status verified. Previous release retained."
