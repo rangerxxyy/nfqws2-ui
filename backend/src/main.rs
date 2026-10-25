@@ -48,7 +48,7 @@ const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
 const WRITE_REVISION_CONFLICT: &str = "REVISION_CONFLICT";
 const GITHUB_RELEASES_API: &str =
-    "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=100";
+    "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=30";
 const NFQWS2_RELEASES_API: &str =
     "https://api.github.com/repos/nfqws/nfqws2-keenetic/releases?per_page=100";
 static UPDATE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -2700,7 +2700,7 @@ async fn spawn_github_wget_with_candidates(
     let mut last_error = None;
     for executable in candidates {
         match tokio::process::Command::new(executable)
-            .args(["-q", "-T", "10", "-O", "-", url])
+            .args(["-q", "-T", "15", "-O", "-", url])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true)
@@ -2728,15 +2728,19 @@ async fn fetch_github_url(url: &'static str) -> Result<String, String> {
         .take()
         .ok_or("Не удалось прочитать ответ GitHub")?;
     let read = tokio::time::timeout(
-        std::time::Duration::from_secs(12),
+        std::time::Duration::from_secs(18),
         stdout
             .take((MAX_RELEASE_RESPONSE_BYTES + 1) as u64)
             .read_to_end(&mut bytes),
     )
     .await;
-    if read.is_err() || bytes.len() > MAX_RELEASE_RESPONSE_BYTES {
+    if read.is_err() {
         let _ = child.kill().await;
-        return Err("Ответ GitHub Releases превысил лимит или время ожидания".into());
+        return Err("Истекло время ожидания ответа GitHub Releases".into());
+    }
+    if bytes.len() > MAX_RELEASE_RESPONSE_BYTES {
+        let _ = child.kill().await;
+        return Err("Ответ GitHub Releases превысил лимит 1 МБ".into());
     }
     read.unwrap()
         .map_err(|error| format!("Ошибка чтения GitHub Releases: {error}"))?;
@@ -6464,6 +6468,10 @@ async fn cancel_foreign_config_check(
     Json(operation).into_response()
 }
 
+fn picker_mode_uses_catalog_candidates(custom_mode: bool) -> bool {
+    !custom_mode
+}
+
 async fn start_strategy_pick(
     State(state): State<Arc<AppState>>,
     Json(request): Json<StrategyPickRequest>,
@@ -6573,8 +6581,11 @@ async fn start_strategy_pick(
             strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
         }
     }
-    let freeze_candidates = {
+    let include_catalog_sources = picker_mode_uses_catalog_candidates(custom_mode);
+    let freeze_candidates = if include_catalog_sources {
         load_confirmed_freeze_candidates(&state.data_dir.join("freeze-diagnostic-operations")).await
+    } else {
+        Vec::new()
     };
     if plan.candidates.is_empty() && freeze_candidates.is_empty() && !request.include_community {
         return error(
@@ -6638,9 +6649,8 @@ async fn start_strategy_pick(
     let task_repeats = repeats;
     let stop_after_first_confirmed = request.stop_after_first_confirmed;
     let refine_lighter = request.refine_lighter;
-    let include_community = request.include_community && !custom_mode;
+    let include_community = request.include_community && include_catalog_sources;
     let community_cache_dir = state.data_dir.join("community-strategy-cache");
-    let include_catalog_sources = !custom_mode;
     let binary = paths.binary.to_string_lossy().into_owned();
     let active_args_for_task = active_args.clone();
     let functions_for_task = functions.clone();
@@ -11491,6 +11501,11 @@ mod tests {
     }
 
     #[test]
+    fn panel_release_request_avoids_the_oversized_hundred_release_response() {
+        assert!(GITHUB_RELEASES_API.ends_with("?per_page=30"));
+    }
+
+    #[test]
     fn release_catalog_keeps_only_stable_releases_with_package_and_checksum() {
         let data = serde_json::json!([
             {"tag_name":"v1.2.3","published_at":"2026-10-22T00:00:00Z","body":"<script>alert(1)</script>","draft":false,"prerelease":false,"assets":[{"name":"nfqws2-ui-v1.2.3-aarch64-unknown-linux-musl.tar.gz"},{"name":"nfqws2-ui-v1.2.3-aarch64-unknown-linux-musl.tar.gz.sha256"}]},
@@ -12487,6 +12502,12 @@ mod tests {
         assert_eq!(operation.results[0].host, "hetzner.com");
         assert_eq!(operation.results[0].address, completed.address);
         assert_eq!(operation.results[0].asn, completed.asn);
+    }
+
+    #[test]
+    fn custom_strategy_mode_does_not_enable_catalog_candidates() {
+        assert!(!picker_mode_uses_catalog_candidates(true));
+        assert!(picker_mode_uses_catalog_candidates(false));
     }
 
     #[tokio::test]

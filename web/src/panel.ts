@@ -1662,10 +1662,10 @@ function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
   const renderSites = (sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail') => {
     const list = document.createElement('div'); list.className = 'mt-2 divide-y divide-slate-800/70';
     for (const site of sites) {
-      const row = document.createElement('div'); row.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-xs';
+      const row = document.createElement('div'); row.className = 'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 py-2 text-xs sm:grid-cols-[minmax(0,33%)_auto_minmax(0,1fr)]';
       const host = document.createElement('strong'); host.className = 'min-w-0 truncate font-mono font-semibold text-white'; host.textContent = site.host;
       const result = site[key];
-      const attemptLabel = document.createElement('span'); attemptLabel.className = 'shrink-0 rounded bg-slate-800/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-300';
+      const attemptLabel = document.createElement('span'); attemptLabel.className = 'inline-flex w-fit items-center gap-1.5 whitespace-nowrap rounded bg-slate-800/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-200';
       const legacyCounts = site[detailKey].match(/^(\d+)\/(\d+) успешных/);
       const reportedAttempts = key === 'currentOk' ? (site.currentAttempts ?? 0) : (site.candidateAttempts ?? 0);
       const reportedSuccesses = key === 'currentOk' ? (site.currentSuccesses ?? 0) : (site.candidateSuccesses ?? 0);
@@ -1681,9 +1681,15 @@ function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
       const attemptCount = result === null
         ? '—'
         : formatForeignConfigProbeSummary(successes, attempts, averageMs);
-      attemptLabel.textContent = attemptCount;
+      const summaryText = document.createElement('span');
+      summaryText.textContent = result === null ? '—' : `${successes}/${attempts} успешных`;
+      attemptLabel.append(summaryText);
+      if (result !== null && averageMs != null) {
+        const latency = document.createElement('span'); latency.className = 'text-teal-200'; latency.textContent = `· ${averageMs} мс`;
+        attemptLabel.append(latency);
+      }
       attemptLabel.setAttribute('aria-label', `Успешные проверки: ${attemptCount}`);
-      const statusText = document.createElement('span'); statusText.className = `shrink-0 font-semibold ${result === true ? 'text-emerald-300' : result === false ? 'text-rose-300' : 'text-slate-500'}`; statusText.textContent = `Домен: ${foreignStatusLabel(result)}`;
+      const statusText = document.createElement('span'); statusText.className = `col-span-2 justify-self-end text-right font-semibold sm:col-span-1 ${result === true ? 'text-emerald-300' : result === false ? 'text-rose-300' : 'text-slate-500'}`; statusText.textContent = `Домен: ${foreignStatusLabel(result)}`;
       row.append(host, attemptLabel, statusText); list.append(row);
       if (result !== true && site[detailKey]) {
         const detail = document.createElement('p'); detail.className = 'pb-2 text-[11px] leading-4 text-slate-400'; detail.textContent = site[detailKey]; list.append(detail);

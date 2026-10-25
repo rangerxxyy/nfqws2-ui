@@ -229,7 +229,10 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain("document.createElement('details')");
     expect(panelSource).toContain("chevron.className = 'details-chevron'");
     expect(panelStyles).toContain('details[open] > summary .details-chevron');
-    expect(panelSource).toContain("attemptLabel.className = 'shrink-0 rounded bg-slate-800/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-300'");
+    expect(panelSource).toContain("sm:grid-cols-[minmax(0,33%)_auto_minmax(0,1fr)]");
+    expect(panelSource).toContain('col-span-2 justify-self-end text-right font-semibold sm:col-span-1');
+    expect(panelSource).toContain("attemptLabel.className = 'inline-flex w-fit items-center gap-1.5");
+    expect(panelSource).toContain("latency.className = 'text-teal-200'");
     expect(panelSource).toContain("details.className = 'ui-card min-w-0 self-start h-fit rounded-xl border border-slate-800 p-3'");
     expect(panelSource).toContain('`Домен: ${foreignStatusLabel(result)}`');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigApply');
