@@ -10,16 +10,20 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, removeListLines } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
-import { loadMonitoringState, normalizeMonitoringHost, saveMonitoringState, type MonitoringState } from './monitoring';
-import type { UiUpdateStatus } from './api';
+import { serviceControlPresentation } from './service-control';
+import { renderReleaseMarkdown } from './release-markdown';
+import { diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
+import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
+import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community' | 'snapshots' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
@@ -34,6 +38,7 @@ let diagnosisRunning = false;
 let monitoringRunning = false;
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
+let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard' };
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -46,6 +51,7 @@ let activeStrategyPreview: { source: 'strategyPick' | 'freezeScan'; operationId:
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
+let expandedReleaseTag: string | null = null;
 let updatePolling = false;
 let updateTarget: 'ui' | 'core' = 'ui';
 let installedCoreTag: string | null = null;
@@ -65,15 +71,28 @@ const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>
 const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
 const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
 const setWidth = (selector: string, value: number | null) => { const node = $(selector); if (node) node.style.width = `${Math.min(100, Math.max(0, value ?? 0))}%`; };
+const recentToastTimes = new Map<string, number>();
 function toast(message: string, type: 'success' | 'error' = 'success') {
   const host = $('#toastWrapper'); if (!host) return;
+  if (!message.trim() || !canShowToast(message, type, Date.now(), recentToastTimes)) return;
+  const presentation = toastPresentation(type);
   const item = document.createElement('div');
-  item.className = `pointer-events-auto px-4 py-3 rounded-xl border shadow-xl text-sm ${type === 'error' ? 'bg-rose-950 border-rose-700 text-rose-200' : 'bg-slate-900 border-slate-700 text-slate-100'}`;
-  item.textContent = message; host.append(item); window.setTimeout(() => item.remove(), 4500);
+  item.className = `toast-card toast-card-${type} pointer-events-auto`;
+  item.setAttribute('role', presentation.role);
+  item.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+  const icon = document.createElement('span');
+  icon.className = `toast-card-icon toast-card-icon-${type}`;
+  icon.setAttribute('aria-hidden', 'true');
+  icon.textContent = presentation.icon;
+  const copy = document.createElement('span'); copy.className = 'toast-card-copy';
+  const title = document.createElement('strong'); title.textContent = presentation.title;
+  const detail = document.createElement('span'); detail.textContent = message;
+  copy.append(title, detail); item.append(icon, copy); host.append(item);
+  window.setTimeout(() => item.remove(), 5200);
 }
 function schedulePanelRefreshAfterUpdate(message: string) {
-  try { window.sessionStorage.setItem(UPDATE_NOTICE_KEY, message); } catch { /* The refresh still ensures the new bundle is loaded. */ }
-  toast(`${message} Страница обновится автоматически.`);
+  try { window.sessionStorage.setItem(UPDATE_NOTICE_KEY, message); }
+  catch { toast(`${message} Страница обновится автоматически.`); }
   window.setTimeout(() => window.location.reload(), 1200);
 }
 function showPendingUpdateNotice() {
@@ -209,6 +228,127 @@ function showRoute(route: Route) {
     button.classList.toggle('text-slate-400', !active);
   });
   if (route === 'lists') void loadList(activeListId);
+  if (route === 'snapshots') void loadBackups();
+  if (route === 'about') void loadAboutStatus();
+}
+let snapshotOverview: SnapshotOverview | null = null;
+function renderBackups(data: SnapshotOverview) {
+  const host = $('#backupList'); if (!host) return;
+  snapshotOverview = data;
+  setText('#snapshotCount', `${data.localCount} ${pluralize(data.localCount, 'снимок', 'снимка', 'снимков')} · ${formatBytes(data.totalBytes)}`);
+  setText('#snapshotDirectory', data.directory);
+  setText('#snapshotRemoteStatus', !data.remote.tool ? 'На роутере нет SSH-клиента' : data.remote.error ? `Ошибка отправки: ${data.remote.error}` : data.remote.on ? `Включено · на NAS ${data.remote.stored} · ждут отправки ${data.remote.pending}` : 'Отправка выключена — снимки хранятся на роутере');
+  setValue('#snapshotDays', String(data.settings.maxDays)); setValue('#snapshotMaxCount', String(data.settings.maxCount));
+  setValue('#snapshotRemoteEnabled', String(data.settings.remote.enabled), true); setValue('#snapshotRemoteHost', data.settings.remote.host); setValue('#snapshotRemotePort', String(data.settings.remote.port)); setValue('#snapshotRemoteUser', data.settings.remote.user); setValue('#snapshotRemoteDir', data.settings.remote.dir); setValue('#snapshotRemoteKeep', String(data.settings.remote.keepLocal));
+  setText('#snapshotPublicKey', data.remote.publicKey);
+  const command = $('#snapshotSetupCommand'); if (command instanceof HTMLTextAreaElement) command.value = data.remote.setupCommand;
+  $('#snapshotSetupDetails')?.classList.toggle('hidden', !data.remote.setupCommand);
+  const keyButton = $('#snapshotCreateKey'); if (keyButton instanceof HTMLButtonElement) { keyButton.textContent = data.remote.publicKey ? 'Ключ роутера готов' : '＋ Создать ключ роутера'; keyButton.disabled = Boolean(data.remote.publicKey) || !data.remote.tool; }
+  const pushButton = $('#snapshotRemotePush'); if (pushButton instanceof HTMLButtonElement) pushButton.disabled = !data.remote.on || data.remote.pending === 0;
+  const testButton = $('#snapshotRemoteTest'); if (testButton instanceof HTMLButtonElement) testButton.disabled = !data.remote.tool || !data.remote.publicKey;
+  host.replaceChildren();
+  if (!data.items.length) { const empty = document.createElement('p'); empty.className = 'rounded-xl border border-slate-800 bg-[#060a12] p-4 text-sm text-slate-400'; empty.textContent = 'Снимков пока нет. Создайте первый снимок вручную.'; host.append(empty); return; }
+  for (const item of data.items) {
+    const row = document.createElement('article'); row.className = 'backup-row';
+    const details = document.createElement('div'); details.className = 'min-w-0';
+    const title = document.createElement('strong'); title.className = 'block text-sm text-white'; title.textContent = `${snapshotReason(item.reason)}${item.pinned ? ' · закреплён' : ''}`;
+    const date = document.createElement('span'); date.className = 'mt-1 block text-xs text-slate-400'; date.textContent = new Date(item.ts * 1000).toLocaleString();
+    const note = document.createElement('span'); note.className = 'mt-1 block break-words text-xs text-slate-500'; note.textContent = item.note || `${item.local && item.remote ? 'Роутер и NAS' : item.local ? 'На роутере' : 'На NAS'} · ${formatBytes(item.size)}`;
+    details.append(title, date, note);
+    const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-2';
+    const download = document.createElement('a'); download.className = 'backup-action'; download.href = `/api/snapshots/${encodeURIComponent(item.id)}/archive`; download.textContent = 'Скачать';
+    const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'backup-action'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.args = JSON.stringify([item.id]); restore.textContent = 'Восстановить';
+    const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'backup-action'; pin.dataset.actionClick = 'pinSnapshot'; pin.dataset.args = JSON.stringify([item.id, !item.pinned]); pin.textContent = item.pinned ? 'Открепить' : 'Закрепить';
+    pin.disabled = !item.local;
+    actions.append(download, restore, pin); row.append(details, actions); host.append(row);
+  }
+}
+async function loadBackups() {
+  const label = $('#backupStatus'); if (label) label.textContent = 'Загружаем список снимков с роутера…';
+  try { renderBackups(await nfqwsSnapshots.get()); if (label) label.textContent = 'Автоснимки создаются перед изменениями через панель и ежедневно в 04:05.'; }
+  catch (error) { if (label) label.textContent = error instanceof Error ? `Не удалось загрузить снимки: ${error.message}` : 'Не удалось загрузить резервные копии.'; }
+}
+function setValue(selector: string, value: string, checked = false) { const element = $(selector); if (element instanceof HTMLInputElement) { if (checked) element.checked = value === 'true'; else element.value = value; } }
+function formatBytes(value: number): string { if (value < 1024) return `${value} Б`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} КБ`; return `${(value / (1024 * 1024)).toFixed(1)} МБ`; }
+function pluralize(value: number, one: string, few: string, many: string): string { const n = Math.abs(value) % 100; const last = n % 10; return n > 10 && n < 20 ? many : last > 1 && last < 5 ? few : last === 1 ? one : many; }
+function snapshotReason(reason: string): string { return ({ 'вручную': 'Вручную', 'перед изменением': 'Перед изменением', 'ежедневный': 'Ежедневный', 'перед восстановлением': 'Перед восстановлением', 'из файла': 'Из файла' } as Record<string, string>)[reason] ?? reason; }
+async function createSnapshot() {
+  const note = window.prompt('Подпись к снимку (необязательно):', ''); if (note === null) return;
+  try { const item = await nfqwsSnapshots.create(note); toast(`Снимок создан · ${new Date(item.ts * 1000).toLocaleString()}`); await loadBackups(); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось создать снимок.', 'error'); }
+}
+async function restoreSnapshot(id: string) {
+  if (!window.confirm('Восстановить конфигурацию, списки и настройки из этого снимка? Перед записью сохранится текущее состояние.')) return;
+  try { const result = await nfqwsSnapshots.restore(id); toast(result.message); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить снимок.', 'error'); }
+}
+async function restoreSnapshotFile(input: HTMLInputElement) {
+  const file = input.files?.[0]; if (!file) return;
+  if (!window.confirm(`Восстановить состояние из «${file.name}»? Перед записью создастся снимок текущего состояния.`)) { input.value = ''; return; }
+  try { const result = await nfqwsSnapshots.restoreFile(file); toast(result.message ?? `Восстановлено файлов: ${result.changed?.length ?? 0}`); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить архив.', 'error'); }
+  finally { input.value = ''; }
+}
+function readSnapshotSettings() {
+  const current = snapshotOverview?.settings; if (!current) throw new Error('Сначала загрузите настройки снимков.');
+  const number = (selector: string, fallback: number) => Number.parseInt(($<HTMLInputElement>(selector)?.value ?? ''), 10) || fallback;
+  return { ...current, maxDays: number('#snapshotDays', current.maxDays), maxCount: number('#snapshotMaxCount', current.maxCount), remote: { ...current.remote, enabled: ($<HTMLInputElement>('#snapshotRemoteEnabled')?.checked ?? false), host: $<HTMLInputElement>('#snapshotRemoteHost')?.value.trim() ?? '', port: number('#snapshotRemotePort', current.remote.port), user: $<HTMLInputElement>('#snapshotRemoteUser')?.value.trim() ?? '', dir: $<HTMLInputElement>('#snapshotRemoteDir')?.value.trim() ?? '', keepLocal: number('#snapshotRemoteKeep', current.remote.keepLocal) } };
+}
+async function saveSnapshotSettings(remoteOnly = false) {
+  const settings = readSnapshotSettings();
+  if (remoteOnly && snapshotOverview) { settings.maxDays = snapshotOverview.settings.maxDays; settings.maxCount = snapshotOverview.settings.maxCount; }
+  await nfqwsSnapshots.saveSettings(settings); toast('Настройки резервных копий сохранены.'); await loadBackups();
+}
+async function runSnapshotRemote(action: 'test' | 'push' | 'key') {
+  try {
+    if (action !== 'key') await saveSnapshotSettings(true);
+    if (action === 'test') { const result = await nfqwsSnapshots.testRemote(); toast(`Связь с NAS есть · найдено файлов: ${result.count}`); }
+    else if (action === 'push') { const result = await nfqwsSnapshots.pushRemote(); toast(`Отправлено снимков: ${result.sent}`); }
+    else { await nfqwsSnapshots.createKey(); toast('Ключ создан. Выполните команду для NAS, затем проверьте связь.'); }
+    await loadBackups();
+  } catch (error) { toast(error instanceof Error ? error.message : 'Операция с NAS не выполнена.', 'error'); }
+}
+function syncAppearanceControls() {
+  all<HTMLInputElement>('input[name="appearanceTheme"]').forEach((input) => { input.checked = input.value === appearanceSettings.theme; });
+  all<HTMLInputElement>('input[name="appearanceLayout"]').forEach((input) => { input.checked = input.value === appearanceSettings.layout; });
+}
+function updateAppearance(change: Partial<AppearanceSettings>) {
+  let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Apply for this session without persistent storage. */ }
+  appearanceSettings = saveAppearance(storage, { ...appearanceSettings, ...change });
+  applyAppearance(appearanceSettings);
+  syncAppearanceControls();
+  void nfqwsAppearance.save(appearanceSettings).catch((error) => toast(error instanceof Error ? `Оформление сохранено только в этом браузере: ${error.message}` : 'Оформление сохранено только в этом браузере.', 'error'));
+}
+async function syncAppearanceFromRouter() {
+  const saved = await nfqwsAppearance.get(); if (!saved) return;
+  let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Use the restored settings for this session. */ }
+  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
+}
+function initializeAppearanceSettings() {
+  let storage: Storage | null = null;
+  try { storage = window.localStorage; } catch { /* Use safe defaults if browser storage is blocked. */ }
+  appearanceSettings = loadAppearance(storage);
+  applyAppearance(appearanceSettings);
+  syncAppearanceControls();
+  void nfqwsAppearance.get().then((saved) => {
+    if (!saved) { void nfqwsAppearance.save(appearanceSettings).catch(() => undefined); return; }
+    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
+  }).catch(() => undefined);
+}
+async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
+  try {
+    const result = statusOverride ?? await nfqwsUpdates.uiStatus();
+    setText('#aboutCurrentVersion', result.currentVersion);
+    setText('#aboutLatestVersion', result.latestVersion ?? 'не удалось определить');
+    setText('#aboutUpdateStatus', result.updateAvailable ? `Доступна версия ${result.latestVersion}. Обновите панель через кнопку обновления в верхней панели.` : result.latestVersion ? `Установлена актуальная версия ${result.currentVersion}.` : 'Последнюю версию пока не удалось определить. Проверьте соединение с GitHub.');
+  } catch (error) { setText('#aboutUpdateStatus', error instanceof Error ? error.message : 'Не удалось загрузить сведения об обновлении.'); }
+}
+async function checkUiUpdate() {
+  const button = $('[data-action-click="checkUiUpdate"]'); if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Проверяем…'; }
+  setText('#aboutUpdateStatus', 'Запрашиваем список релизов GitHub…');
+  try { const response = await nfqwsUpdates.releases(); await loadAboutStatus(response.updateStatus); renderUiUpdateNotice(response.updateStatus, true); }
+  catch (error) { setText('#aboutUpdateStatus', error instanceof Error ? `Проверка не удалась: ${error.message}` : 'Не удалось проверить обновления.'); }
+  finally { if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '↻ Проверить обновление'; } }
 }
 function renderMonitoringSites() {
   const host = $('#monitorSites'); if (!host || !monitoringState) return;
@@ -257,7 +397,7 @@ function currentMonitoringInterval() {
   if (choice !== 'custom') return Number(choice) || 30;
   const hours = Number(($('#monitoringHours') as HTMLInputElement | null)?.value ?? 0);
   const minutes = Number(($('#monitoringMinutes') as HTMLInputElement | null)?.value ?? 30);
-  return Math.max(1, Math.min(1440, hours * 60 + minutes));
+  return normalizeMonitoringInterval(hours, minutes);
 }
 function persistMonitoring() {
   if (!monitoringState) return;
@@ -296,11 +436,16 @@ async function saveMonitoringSettings() {
 async function loadTelegramSettings() {
   const cfg = await nfqwsMonitoring.telegram();
   const via = $('#telegramVia') as HTMLSelectElement | null; if (via) via.value = cfg.sendVia;
+  toggleTelegramTransportFields(cfg.sendVia);
   const iface = $('#telegramInterface') as HTMLInputElement | null; if (iface) iface.value = cfg.interface;
   const proxy = $('#telegramProxy') as HTMLInputElement | null; if (proxy) proxy.value = cfg.proxy;
   const chat = $('#telegramChatId') as HTMLInputElement | null; if (chat) chat.value = cfg.chatId;
   setText('#telegramStatus', cfg.tokenSet ? 'Токен бота сохранён на роутере.' : 'Токен ещё не задан.');
   renderTelegramNotifications(cfg.notifications);
+}
+function toggleTelegramTransportFields(via: string) {
+  $('#telegramInterfaceField')?.classList.toggle('hidden', via !== 'interface');
+  $('#telegramProxyField')?.classList.toggle('hidden', via !== 'proxy');
 }
 async function loadTelegramNotifications() {
   renderTelegramNotifications(await nfqwsMonitoring.telegramNotifications());
@@ -398,20 +543,7 @@ async function fetchStatus() {
     setWidth('#cpuProgressBar', cpu);
     applyMetricTone('#cpuMetricText', '#cpuProgressBar', cpu);
     setText('#headerCoreVersion', status.service.version ?? '—'); setText('#headerUiVersion', status.panel.version);
-    const powerLabel = running ? 'Остановить nfqws2' : 'Запустить nfqws2';
-    const power = $('#togglePowerText'); if (power) power.textContent = powerLabel;
-    const powerBtn = $('#togglePowerBtn'); if (powerBtn) {
-      powerBtn.title = powerLabel;
-      powerBtn.setAttribute('aria-label', powerLabel);
-      powerBtn.classList.toggle('text-rose-400', running);
-      powerBtn.classList.toggle('text-emerald-400', stopped);
-      powerBtn.classList.toggle('bg-rose-500/10', running);
-      powerBtn.classList.toggle('hover:bg-rose-500/20', running);
-      powerBtn.classList.toggle('border-rose-500/30', running);
-      powerBtn.classList.toggle('bg-emerald-500/10', stopped);
-      powerBtn.classList.toggle('hover:bg-emerald-500/20', stopped);
-      powerBtn.classList.toggle('border-emerald-500/30', stopped);
-    }
+    syncServiceControl(service);
     setText('#checkedAt', status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '—');
   } catch (error) {
     status = null;
@@ -423,9 +555,29 @@ async function fetchStatus() {
     setText('#ramMetricText', '—'); setWidth('#ramProgressBar', null); applyMetricTone('#ramMetricText', '#ramProgressBar', null);
     setText('#cpuMetricText', '—'); setWidth('#cpuProgressBar', null); applyMetricTone('#cpuMetricText', '#cpuProgressBar', null);
     setText('#headerCoreVersion', '—'); setText('#headerUiVersion', '—');
+    syncServiceControl('unknown');
     const detail = $('#statusDetail'); if (detail) detail.textContent = error instanceof Error ? error.message : 'Ошибка проверки статуса';
   } finally { statusPolling = false; }
 }
+
+function syncServiceControl(state: string) {
+  const presentation = serviceControlPresentation(state);
+  const button = $('#togglePowerBtn');
+  if (!button) return;
+  const label = $('#togglePowerText'); if (label) label.textContent = presentation.label;
+  button.setAttribute('aria-label', presentation.label);
+  button.dataset.actionTooltip = presentation.label;
+  button.dataset.serviceAction = presentation.action;
+  button.querySelector<SVGElement>('[data-power-icon="play"]')?.classList.toggle('hidden', presentation.icon !== 'play');
+  button.querySelector<SVGElement>('[data-power-icon="stop"]')?.classList.toggle('hidden', presentation.icon !== 'stop');
+  const tones = {
+    success: ['text-emerald-400', 'bg-emerald-500/10', 'hover:bg-emerald-500/20', 'border-emerald-500/30', 'focus-visible:ring-emerald-400'],
+    danger: ['text-rose-400', 'bg-rose-500/10', 'hover:bg-rose-500/20', 'border-rose-500/30', 'focus-visible:ring-rose-400'],
+    neutral: ['text-slate-400', 'bg-slate-500/10', 'hover:bg-slate-500/20', 'border-slate-500/30', 'focus-visible:ring-slate-400'],
+  } as const;
+  for (const tone of Object.values(tones)) for (const className of tone) button.classList.toggle(className, tone === tones[presentation.tone]);
+}
+
 function fmtMb(bytes: number) { return (bytes / 1024 / 1024).toFixed(0); }
 function applyMetricTone(textSelector: string, barSelector: string, percent: number | null) {
   const tone = usageTone(percent);
@@ -657,7 +809,83 @@ function syncConfigLines() {
   const count = Math.max(1, editor.value.split('\n').length);
   gutter.innerHTML = Array.from({ length: count }, (_, i) => `${i + 1}`).join('<br>');
   gutter.scrollTop = editor.scrollTop;
+  syncConfigHighlight(editor);
   setText('#confLinesBadge', `${count} строк`);
+}
+function escapeConfigHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character);
+}
+function highlightConfigTokens(source: string, comments: boolean): string {
+  let html = '';
+  let index = 0;
+  let inLua = false;
+  let afterLuaFlag = false;
+  let awaitingLuaMode = false;
+  let awaitingParamKey = false;
+  let awaitingParamValue = false;
+  const append = (value: string, token?: string) => {
+    const safe = escapeConfigHtml(value);
+    html += token ? `<span class="conf-token-${token}">${safe}</span>` : safe;
+  };
+  while (index < source.length) {
+    const rest = source.slice(index);
+    if (comments && rest.startsWith('#')) { append(rest, 'comment'); break; }
+    if (rest[0] === '"' || rest[0] === "'") {
+      const quote = rest[0]; let end = 1; let escaped = false;
+      while (end < rest.length) { const ch = rest[end]; if (ch === quote && !escaped) break; escaped = ch === '\\' && !escaped; if (ch !== '\\') escaped = false; end += 1; }
+      if (end < rest.length) {
+        append(quote, 'string');
+        if (quote === '"') html += highlightConfigTokens(rest.slice(1, end), false);
+        else append(rest.slice(1, end), 'string');
+        append(quote, 'string'); index += end + 1; continue;
+      }
+      append(quote, 'string'); index += 1; continue;
+    }
+    const variable = rest.match(/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/);
+    if (variable) { append(variable[0], 'variable'); index += variable[0].length; continue; }
+    const flag = rest.match(/^--[A-Za-z0-9_-]+/);
+    if (flag) {
+      append(flag[0], 'flag');
+      if (flag[0] === '--lua-desync') { inLua = true; afterLuaFlag = true; awaitingLuaMode = false; awaitingParamKey = false; awaitingParamValue = false; }
+      index += flag[0].length; continue;
+    }
+    const delimiter = rest.match(/^[=,:]/);
+    if (delimiter) {
+      append(delimiter[0], 'operator');
+      if (delimiter[0] === '=' && afterLuaFlag) { afterLuaFlag = false; awaitingLuaMode = true; }
+      else if (delimiter[0] === ':') { awaitingParamKey = true; awaitingParamValue = false; }
+      else if (delimiter[0] === '=' && awaitingParamKey) { awaitingParamKey = false; awaitingParamValue = true; }
+      index += 1; continue;
+    }
+    const number = rest.match(/^-?\d+(?:[._+-]\d+)*%?/);
+    if (number) { append(number[0], 'number'); index += number[0].length; continue; }
+    const word = rest.match(/^[A-Za-z_][A-Za-z0-9_.-]*/);
+    if (word) {
+      const value = word[0]; const isKey = rest.slice(value.length).startsWith('=');
+      if (isKey) append(value, 'key');
+      else if (awaitingLuaMode) { append(value, 'mode'); awaitingLuaMode = false; }
+      else if (awaitingParamKey) { append(value, 'mode'); awaitingParamKey = false; }
+      else if (awaitingParamValue && inLua) append(value, 'value');
+      else if (/^(if|then|else|elif|fi|for|while|do|done|case|esac|in|export|local|return|function)$/i.test(value)) append(value, 'keyword');
+      else append(value, 'word');
+      index += value.length; continue;
+    }
+    append(source[index]); index += 1;
+  }
+  return html;
+}
+function highlightConfigLine(line: string): string {
+  const trimmed = line.trimStart();
+  if (trimmed.startsWith('#')) return escapeConfigHtml(line.slice(0, line.length - trimmed.length)) + highlightConfigTokens(trimmed, true);
+  return highlightConfigTokens(line, true) || '&nbsp;';
+}
+function syncConfigHighlight(editor?: HTMLTextAreaElement) {
+  const input = editor ?? $('#nfqwsConfTextarea'); const highlight = $('#confSyntaxHighlight');
+  if (!(input instanceof HTMLTextAreaElement) || !highlight) return;
+  highlight.innerHTML = input.value.split('\n').map(highlightConfigLine).join('\n');
+  highlight.scrollTop = input.scrollTop;
+  highlight.scrollLeft = input.scrollLeft;
+  highlight.style.whiteSpace = input.style.whiteSpace || 'pre-wrap';
 }
 function renderConfigOutline() {
   const editor = $('#nfqwsConfTextarea');
@@ -704,6 +932,8 @@ function toggleConfigOutline() {
   outline.classList.toggle('hidden', !open);
   workspace.classList.toggle('config-editor-workspace-open', open);
   button.setAttribute('aria-expanded', String(open));
+  button.setAttribute('aria-pressed', String(open));
+  button.title = open ? 'Скрыть структуру переменных конфигурации справа' : 'Показать структуру переменных конфигурации справа';
   button.classList.toggle('config-structure-toggle-active', open);
   if (open) renderConfigOutline();
 }
@@ -744,7 +974,7 @@ async function saveConfigAndApply() {
     config = result.config;
     setRestartInProgress(false);
     await fetchStatus();
-    toast('Конфигурация сохранена, повторно прочитана; backend подтвердил перезапуск nfqws2.');
+    toast(lifecycleMessage('restart'));
   } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setRestartInProgress(false); setBusy(false); }
 }
@@ -753,7 +983,7 @@ async function serviceAction(action: 'start' | 'stop' | 'restart') {
 
   setBusy(true);
   if (action === 'restart') setRestartInProgress(true);
-  try { await api('/api/service', { method: 'POST', body: JSON.stringify({ action }) }); toast('Команда выполнена'); }
+  try { await api('/api/service', { method: 'POST', body: JSON.stringify({ action }) }); toast(lifecycleMessage(action)); }
   catch (error) { toast(error instanceof Error ? error.message : 'Команда не выполнена', 'error'); }
   finally {
     if (action === 'restart') setRestartInProgress(false);
@@ -957,6 +1187,28 @@ function diagnosisIcon(kind: Presentation['kind']): HTMLElement {
   icon.textContent = kind === 'success' ? '✓' : kind === 'failure' ? '×' : '!';
   icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', kind === 'success' ? 'Ответ получен' : kind === 'failure' ? 'Ошибка проверки' : 'Результат не определён'); return icon;
 }
+function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string; label: string }>, activeIndex: number, results?: ReturnType<typeof diagnosisRows>) {
+  const section = document.createElement('section'); section.className = 'diagnosis-queue ui-card rounded-2xl';
+  section.setAttribute('aria-label', 'Этапы проверки сайта');
+  const title = document.createElement('h3'); title.className = 'diagnosis-checks-title';
+  title.textContent = activeIndex < 0 ? 'Этапы проверки' : activeIndex >= stages.length ? 'Проверки завершены · результаты по этапам' : 'Проверка сайта';
+  section.append(title);
+  const list = document.createElement('ol'); list.className = 'diagnosis-queue-list';
+  stages.forEach((stage, index) => {
+    const state = diagnosisQueueState(index, activeIndex);
+    const result = results?.find((item) => item.id === stage.id);
+    const row = document.createElement('li');
+    row.className = `diagnosis-queue-step is-${state}${result ? ` is-result-${result.kind}` : ''}`;
+    row.setAttribute('aria-current', state === 'active' ? 'step' : 'false');
+    const marker = document.createElement('span'); marker.className = 'diagnosis-queue-marker'; marker.setAttribute('aria-hidden', 'true');
+    marker.textContent = state === 'complete' ? (result?.kind === 'failure' ? '×' : result?.kind === 'unknown' ? '!' : '✓') : state === 'active' ? '…' : String(index + 1);
+    const label = document.createElement('span'); label.textContent = stage.label;
+    const status = document.createElement('small'); status.textContent = state === 'active' ? 'Выполняется' : state === 'pending' ? 'Ожидает' : result?.kind === 'failure' ? 'Ошибка' : result?.kind === 'unknown' ? 'Не определено' : 'Готово';
+    row.append(marker, label, status); list.append(row);
+  });
+  section.append(list); container.replaceChildren(section);
+}
+const waitForDiagnosisAnimation = () => new Promise<void>((resolve) => window.setTimeout(resolve, 120));
 function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticReport) {
   container.replaceChildren();
   const verdict = comparisonVerdict(report.direct, report.current);
@@ -995,12 +1247,20 @@ async function runSiteDiagnosis() {
   if (!input.value.trim()) return toast('Введите домен для проверки.', 'error');
   diagnosisRunning = true; input.disabled = true; button.disabled = true;
   button.textContent = 'Проверяем…'; container.replaceChildren();
+  renderDiagnosisQueue(container, SITE_DIAGNOSIS_STAGES.map(({ id, label }) => ({ id, label })), -1);
   const toastHost = $('#toastWrapper');
   const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
   const loading = document.createElement('p'); loading.className = 'col-span-full text-sm text-blue-300 animate-pulse';
   loading.setAttribute('role', 'status'); loading.textContent = 'Сравниваем доступ напрямую, текущий маршрут и QUIC с роутера…'; container.append(loading);
   try {
     const report = await nfqwsDiagnostics.site(input.value);
+    const resultRows = diagnosisRows(report);
+    const stages = resultRows.map(({ id, label }) => ({ id, label }));
+    for (let index = 0; index < stages.length; index += 1) {
+      renderDiagnosisQueue(container, stages, index, resultRows);
+      await waitForDiagnosisAnimation();
+      renderDiagnosisQueue(container, stages, index + 1, resultRows);
+    }
     container.replaceChildren();
     renderSiteDiagnosis(container, report);
     closeProgress();
@@ -1164,12 +1424,17 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     const body = document.createElement('div'); body.className = 'strategy-pick-result-main';
     const heading = document.createElement('h4'); heading.className = 'strategy-pick-result-title';
     heading.textContent = `${result.candidate.name}${refined ? ' · уточнённый вариант' : ''}`;
+    const headingLine = document.createElement('div'); headingLine.className = 'strategy-pick-result-heading';
+    const verdict = document.createElement('span'); verdict.className = `strategy-pick-result-badge ${result.confirmed ? 'is-confirmed' : 'is-unconfirmed'}`;
+    verdict.textContent = result.confirmed ? 'Подтверждена' : 'Не подтверждена';
+    headingLine.append(heading, verdict);
     const meta = document.createElement('p'); meta.className = 'strategy-pick-result-meta'; meta.textContent = `${result.candidate.source} · ${result.successes}/${result.attempts} успешных · ${result.elapsedMs} мс`;
     const detail = document.createElement('p'); detail.className = 'strategy-pick-result-detail'; detail.textContent = result.detail;
     const details = document.createElement('details'); details.className = 'strategy-pick-steps';
     const detailsSummary = document.createElement('summary'); detailsSummary.textContent = `Параметры стратегии · ${result.candidate.steps.length} шаг.`;
     const args = document.createElement('code'); args.textContent = result.candidate.steps.join('\n');
-    details.append(detailsSummary, args); body.append(heading, meta, detail, details); card.append(status, body);
+    const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200'; copy.textContent = 'Копировать'; copy.dataset.actionClick = 'copyStrategyResult'; copy.dataset.args = JSON.stringify([result.candidate.steps.join('\n'), { source: 'self' }]);
+    details.append(detailsSummary, args, copy); body.append(headingLine, meta, detail, details); card.append(status, body);
     if (operation.state === 'complete' && result.confirmed) {
       const preview = document.createElement('button');
       preview.type = 'button';
@@ -1616,19 +1881,6 @@ async function cancelFreezeScan() {
 
 export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain'] as const;
 
-function renderReleaseNotes(target: HTMLElement, notes: string) {
-  const lines = notes.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 8);
-  if (!lines.length) return;
-  const list = document.createElement('ul');
-  list.className = 'mt-2 list-disc pl-4 font-sans text-xs leading-5 text-slate-100';
-  for (const line of lines) {
-    const item = document.createElement('li');
-    item.textContent = line.replace(/^[-*# ]+/, '').slice(0, 240);
-    list.append(item);
-  }
-  target.append(list);
-}
-
 function renderReleases() {
   const list = $('#updateVersionsList');
   const install = $('#confirmUpdateInstallBtn');
@@ -1642,16 +1894,21 @@ function renderReleases() {
   }
   for (const release of availableReleases) {
     const selected = selectedReleaseTag === release.tag;
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.dataset.actionClick = 'selectVersionItem';
-    card.dataset.args = JSON.stringify([release.tag]);
-    card.setAttribute('aria-pressed', String(selected));
-    card.className = `relative block w-full rounded-xl border p-3 pr-10 text-left font-sans transition-colors ${selected ? 'border-blue-400 bg-[#172b4b]' : 'border-slate-700 bg-slate-900/50 hover:border-slate-500'}`;
+    const expanded = expandedReleaseTag === release.tag;
+    const card = document.createElement('article');
+    card.className = `release-version-card rounded-xl border transition-colors ${selected ? 'is-selected' : ''}`;
+    const header = document.createElement('button');
+    header.type = 'button';
+    header.dataset.actionClick = 'selectVersionItem';
+    header.dataset.args = JSON.stringify([release.tag]);
+    header.setAttribute('aria-pressed', String(selected));
+    header.setAttribute('aria-expanded', String(expanded));
+    header.setAttribute('aria-controls', `release-notes-${CSS.escape(release.tag)}`);
+    header.className = 'release-version-header';
     const title = document.createElement('span');
     title.className = 'block text-sm font-bold text-slate-100';
     title.textContent = release.tag;
-    card.append(title);
+    header.append(title);
     if (updateTarget === 'core' && release.tag === installedCoreTag) {
       const installed = document.createElement('span');
       installed.className = 'ml-2 rounded bg-emerald-900/70 px-2 py-0.5 text-[10px] font-semibold text-emerald-300';
@@ -1661,12 +1918,18 @@ function renderReleases() {
     const date = document.createElement('span');
     date.className = 'mt-1 block text-xs text-slate-400';
     date.textContent = release.publishedAt ? new Date(release.publishedAt).toLocaleDateString() : 'Дата публикации не указана';
-    card.append(date);
+    header.append(date);
     const radio = document.createElement('span');
     radio.setAttribute('aria-hidden', 'true');
     radio.className = `absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 ${selected ? 'border-blue-300 bg-blue-500' : 'border-slate-500'}`;
-    card.append(radio);
-    renderReleaseNotes(card, release.notes);
+    header.append(radio);
+    card.append(header);
+    const notes = document.createElement('div');
+    notes.id = `release-notes-${CSS.escape(release.tag)}`;
+    notes.className = 'release-markdown-scroll';
+    notes.hidden = !expanded;
+    notes.append(renderReleaseMarkdown(release.notes));
+    card.append(notes);
     list.append(card);
   }
   if (install instanceof HTMLButtonElement) install.disabled = !selectedReleaseTag || updatePolling || (updateTarget === 'core' && selectedReleaseTag === installedCoreTag);
@@ -1677,6 +1940,7 @@ function renderReleases() {
 
 async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
   updateTarget = target;
+  expandedReleaseTag = null;
   const modal = $('#updateModalBackdrop');
   if (!modal) return;
   modal.classList.remove('hidden'); modal.classList.add('flex');
@@ -1694,6 +1958,7 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
       renderUiUpdateNotice(result.updateStatus, true);
     }
     selectedReleaseTag = availableReleases[0]?.tag ?? null;
+    expandedReleaseTag = selectedReleaseTag;
     renderReleases();
   } catch (error) {
     if (list) list.textContent = error instanceof Error ? error.message : 'Не удалось загрузить версии.';
@@ -1721,7 +1986,7 @@ async function installSelectedRelease() {
       try { current = await nfqwsUpdates.status(operation.id); }
       catch { await new Promise((resolve) => window.setTimeout(resolve, 1000)); }
     }
-    if (current.state === 'success') schedulePanelRefreshAfterUpdate(`${core ? 'Ядро nfqws2' : 'Панель'} обновлено до ${tag}.`);
+    if (current.state === 'success') schedulePanelRefreshAfterUpdate(lifecycleMessage(core ? 'core-update' : 'panel-update', tag));
     else if (current.state === 'rolled_back') toast(current.message || 'Обновление не прошло проверку; восстановлена предыдущая версия.', 'error');
     else if (current.state === 'failed') toast(current.message || 'Не удалось установить обновление.', 'error');
     else toast('Статус обновления пока не получен. Проверьте панель через несколько секунд.', 'error');
@@ -1735,6 +2000,7 @@ async function installSelectedRelease() {
 
 function updateStrategyMode(mode: string) {
   $('#strategyCustomInputPanel')?.classList.toggle('hidden', mode !== 'custom');
+  $('#strategyModeSelect')?.closest('.strategy-mode-tile')?.classList.toggle('strategy-mode-tile-custom', mode === 'custom');
   const help = $('#strategyModeHelp');
   if (!help) return;
   help.textContent = ({
@@ -1746,6 +2012,35 @@ function updateStrategyMode(mode: string) {
   help.classList.remove('mode-help-enter');
   void help.offsetWidth;
   help.classList.add('mode-help-enter');
+}
+
+function copyStrategyText(text: string, button: HTMLButtonElement) {
+  writeTextToClipboard(text).then(() => {
+    const original = 'Копировать';
+    button.textContent = 'Скопировано';
+    button.classList.add('strategy-copy-success');
+    window.setTimeout(() => {
+      button.textContent = original;
+      button.classList.remove('strategy-copy-success');
+    }, 1500);
+  }).catch(() => toast('Буфер обмена недоступен', 'error'));
+}
+
+async function writeTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const helper = document.createElement('textarea');
+  helper.value = text;
+  helper.setAttribute('readonly', '');
+  helper.style.position = 'fixed';
+  helper.style.opacity = '0';
+  document.body.append(helper);
+  helper.select();
+  const copied = document.execCommand('copy');
+  helper.remove();
+  if (!copied) throw new Error('Буфер обмена недоступен');
 }
 
 function bindPrototypeActions() {
@@ -1768,11 +2063,27 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
+    createBackup: () => void createSnapshot(),
+    createSnapshot: () => void createSnapshot(),
+    refreshBackups: () => void loadBackups(),
+    restoreSnapshot: (id: string) => void restoreSnapshot(id),
+    pinSnapshot: (id: string, pinned: string | boolean) => void (async () => { try { await nfqwsSnapshots.pin(id, pinned === true || pinned === 'true'); await loadBackups(); } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось закрепить снимок.', 'error'); } })(),
+    saveSnapshotRetention: () => void saveSnapshotSettings().catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить срок хранения.', 'error')),
+    saveSnapshotRemote: () => void saveSnapshotSettings(true).catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить настройки NAS.', 'error')),
+    testSnapshotRemote: () => void runSnapshotRemote('test'),
+    pushSnapshotRemote: () => void runSnapshotRemote('push'),
+    createSnapshotKey: () => void runSnapshotRemote('key'),
+    restoreSnapshotFile: (input: HTMLInputElement) => void restoreSnapshotFile(input),
+    copySnapshotSetup: () => { const command = $<HTMLTextAreaElement>('#snapshotSetupCommand'); if (command) void navigator.clipboard.writeText(command.value).then(() => toast('Команда скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
+    setAppearanceTheme: (theme: UiTheme) => updateAppearance({ theme }),
+    setAppearanceLayout: (layout: UiLayout) => updateAppearance({ layout }),
+    checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
     checkMonitoringSite: (host: string) => void runMonitoring(host),
     saveMonitoringSettings: () => void saveMonitoringSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить расписание.', 'error')),
     toggleMonitoringCustom: (select: HTMLSelectElement) => { $('#monitoringCustom')?.classList.toggle('hidden', select.value !== 'custom'); $('#monitoringCustom')?.classList.toggle('inline-flex', select.value === 'custom'); },
     saveTelegramSettings: () => void saveTelegramSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить Telegram.', 'error')),
+    toggleTelegramTransportFields: (via: string) => toggleTelegramTransportFields(via),
     sendTestTelegram: () => void sendTestTelegram().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось отправить сообщение Telegram.', 'error')),
     findTelegramChatId: () => void findTelegramChatId().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось найти чаты Telegram.', 'error')),
     addMonitoringSite: () => addMonitoringSite(),
@@ -1790,6 +2101,12 @@ function bindPrototypeActions() {
     startStrategyPick: () => void startStrategyPick(),
     cancelStrategyPick: () => void cancelStrategyPick(),
     toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
+    copyStrategyParams: (button: HTMLButtonElement) => {
+      const input = $('#strategyCustomSteps');
+      if (!(input instanceof HTMLTextAreaElement)) return;
+      copyStrategyText(input.value, button);
+    },
+    copyStrategyResult: (text: string, button: HTMLButtonElement) => copyStrategyText(text, button),
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
     previewFreezeStrategy: (operationId: string, index: string) => void previewFreezeStrategy(operationId, index),
     applyFreezeStrategyOneClick: (operationId: string, index: string) => void applyFreezeStrategyOneClick(operationId, index),
@@ -1798,14 +2115,14 @@ function bindPrototypeActions() {
     cancelFreezeScan: () => void cancelFreezeScan(),
     setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
     restartService: () => void serviceAction('restart'),
-    toggleDaemonPower: () => void serviceAction(status?.service.state === 'running' ? 'stop' : 'start'),
+    toggleDaemonPower: () => void serviceAction(serviceControlPresentation(status?.service.state).action),
     applyConfigAndRestart: () => void saveConfigAndApply(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string) => void navigator.clipboard.writeText(String(value)).then(() => toast('Фрагмент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')),
     handleConfInput: () => { syncConfigLines(); renderConfigOutline(); },
     syncConfScroll: () => syncConfigLines(),
-    toggleWordWrapConf: (enabled: boolean) => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre'; },
+    toggleWordWrapConf: (enabled: boolean) => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) { editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre'; syncConfigHighlight(editor); } },
     toggleConfigOutline: () => toggleConfigOutline(),
     scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); editor.scrollTop = editor.value.slice(0, offset).split('\n').length * 23; },
     toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) { modal.classList.add('hidden'); modal.classList.remove('flex'); } else showDiff(); },
@@ -1814,7 +2131,7 @@ function bindPrototypeActions() {
     openUpdateModal: (target: 'ui' | 'core') => void openUpdatePicker(target),
     openLatestUiUpdate: (tag: string) => { uiUpdateNoticeOpenedTag = tag; hideUiUpdateNotice(); void openUpdatePicker('ui'); },
     dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
-    selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { selectedReleaseTag = tag; renderReleases(); } },
+    selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { const toggling = expandedReleaseTag === tag; selectedReleaseTag = tag; expandedReleaseTag = toggling ? null : tag; renderReleases(); } },
     installSelectedRelease: () => void installSelectedRelease(),
     filterDocs: (query: string) => { const box = $('#docItemsContainer'); if (box) box.textContent = query ? 'Справочник флагов не подключён.' : 'Справочник флагов не загружен.'; },
     syncListLineNumbers: (editor?: HTMLTextAreaElement) => syncListLineNumbers(editor),
@@ -1879,6 +2196,7 @@ function bindPrototypeActions() {
 }
 
 function boot() {
+  initializeAppearanceSettings();
   installStyledSelects(document);
   installActionTooltips(document);
   monitoringState = loadMonitoringState(getMonitoringStorage());

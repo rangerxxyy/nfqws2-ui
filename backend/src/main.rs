@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
-    body::Body,
-    extract::{Query, State},
+    body::{Body, Bytes},
+    extract::{DefaultBodyLimit, Query, State},
     http::{HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
@@ -13,6 +13,7 @@ use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::site_trace;
 use nfqws2_ui::strategy_picker::{self, StrategyMode, StrategyProtocol};
 use nfqws2_ui::transfer_diagnostic;
+mod snapshots;
 use nfqws2_ui::{
     ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
     network_interface_names, parse_meminfo_kb, process_matches, service_action, service_action_at,
@@ -1890,6 +1891,25 @@ struct BackupItem {
     file: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SnapshotCreateRequest {
+    #[serde(default)]
+    note: String,
+}
+
+#[derive(Deserialize)]
+struct SnapshotPinRequest {
+    pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UiAppearanceSettings {
+    theme: String,
+    layout: String,
+}
+
 #[derive(Serialize)]
 struct BackupsResponse {
     backups: Vec<BackupItem>,
@@ -2986,6 +3006,29 @@ fn config_path_for_state(state: &AppState) -> Option<PathBuf> {
         .or_else(|| config_path("nfqws2.conf"))
 }
 
+async fn create_ui_change_snapshot(
+    state: &AppState,
+    note: &str,
+    sync_remote: bool,
+) -> Result<(), String> {
+    let Some(config) = config_path_for_state(state) else {
+        return Ok(());
+    };
+    let _guard = state.config_write_lock.lock().await;
+    let previous_id = snapshots::load_store(&state.data_dir)
+        .items
+        .last()
+        .map(|item| item.id.clone());
+    let snapshot =
+        snapshots::create_snapshot(&state.data_dir, &config, "перед изменением", note, false)?;
+    let created = previous_id.as_deref() != Some(snapshot.id.as_str());
+    drop(_guard);
+    if created && sync_remote {
+        kick_remote_snapshot_push(&state.data_dir);
+    }
+    Ok(())
+}
+
 fn list_flag(id: &str) -> Option<&'static str> {
     match id {
         "user.list" => Some("--hostlist"),
@@ -3712,8 +3755,12 @@ fn monitoring_store_path(data_dir: &Path) -> PathBuf {
 async fn load_monitoring_store(data_dir: &Path) -> Result<MonitoringStore, String> {
     let path = monitoring_store_path(data_dir);
     match tokio::fs::read(&path).await {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|e| format!("Некорректный файл мониторинга: {e}")),
+        Ok(bytes) => {
+            let mut store: MonitoringStore = serde_json::from_slice(&bytes)
+                .map_err(|e| format!("Некорректный файл мониторинга: {e}"))?;
+            store.interval_minutes = store.interval_minutes.clamp(10, 1440);
+            Ok(store)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MonitoringStore::default()),
         Err(e) => Err(format!("Не удалось прочитать настройки мониторинга: {e}")),
     }
@@ -3750,12 +3797,10 @@ async fn put_monitoring_store(
     Json(update): Json<MonitoringStoreUpdate>,
 ) -> Response {
     let _monitoring_guard = state.monitoring_lock.lock().await;
-    if ![30, 60, 120].contains(&update.interval_minutes)
-        && !(1..=1440).contains(&update.interval_minutes)
-    {
+    if !monitoring_interval_valid(update.interval_minutes) {
         return error(
             StatusCode::BAD_REQUEST,
-            "Интервал должен быть 30, 60, 120 минут или от 1 до 1440 минут",
+            "Интервал должен быть 30, 60, 120 минут или от 10 до 1440 минут",
         );
     }
     if update.sites.len() > 20 {
@@ -3779,6 +3824,11 @@ async fn put_monitoring_store(
         Ok(value) => value,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
     };
+    if let Err(message) =
+        create_ui_change_snapshot(&state, "перед изменением мониторинга", true).await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
     store.enabled = update.enabled;
     store.interval_minutes = update.interval_minutes;
     store.sites = normalized;
@@ -3826,6 +3876,11 @@ async fn put_telegram_settings(
         Ok(value) => value,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
     };
+    if let Err(message) =
+        create_ui_change_snapshot(&state, "перед изменением уведомлений Telegram", true).await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
     if let Some(token) = update.token
         && !token.trim().is_empty()
     {
@@ -4011,6 +4066,10 @@ fn queue_telegram_notification(store: &mut MonitoringStore, text: String, timest
             tries: 0,
             error: None,
         });
+}
+
+fn monitoring_interval_valid(minutes: u64) -> bool {
+    [30, 60, 120].contains(&minutes) || (10..=1440).contains(&minutes)
 }
 
 fn format_telegram_event_time(timestamp: u64) -> String {
@@ -4250,8 +4309,8 @@ async fn check_saved_sites(
             .iter_mut()
             .find(|site| site.host == report.host)
         {
-            let previous = site.results.first().map(|r| r.status.clone());
             let status = report.current.status.to_owned();
+            let previous = site.results.first().map(|result| result.status.clone());
             if previous.as_ref().is_some_and(|old| old != &status)
                 && !updated.telegram.chat_id.is_empty()
             {
@@ -6319,6 +6378,23 @@ async fn backup_and_write_named(
         )
         .into());
     }
+    let snapshot_config = if backup_name == "nfqws2.conf" {
+        Some(source.to_path_buf())
+    } else {
+        source
+            .parent()
+            .and_then(Path::parent)
+            .map(|root| root.join("nfqws2.conf"))
+            .filter(|path| path.is_file())
+            .or_else(|| config_path("nfqws2.conf"))
+    };
+    if let Some(config) = snapshot_config {
+        snapshots::create_snapshot(data_dir, &config, "перед изменением", backup_name, false)
+            .map_err(|message| {
+                format!("Не удалось сохранить полный снимок перед изменением: {message}")
+            })?;
+        kick_remote_snapshot_push(data_dir);
+    }
     if backup_name.is_empty()
         || backup_name.len() > 64
         || !backup_name
@@ -6469,6 +6545,755 @@ async fn get_backups(State(state): State<Arc<AppState>>) -> Response {
     }
     backups.sort_by(|a, b| b.id.cmp(&a.id));
     Json(BackupsResponse { backups }).into_response()
+}
+
+async fn get_snapshots(State(state): State<Arc<AppState>>) -> Response {
+    Json(snapshots::list_snapshots(&state.data_dir)).into_response()
+}
+
+async fn create_snapshot_api(
+    State(state): State<Arc<AppState>>,
+    request: Option<Json<SnapshotCreateRequest>>,
+) -> Response {
+    let note = request.map(|Json(value)| value.note).unwrap_or_default();
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let _guard = state.config_write_lock.lock().await;
+    match snapshots::create_snapshot(&state.data_dir, &config, "вручную", &note, true) {
+        Ok(item) => {
+            kick_remote_snapshot_push(&state.data_dir);
+            Json(item).into_response()
+        }
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn update_snapshot_settings(
+    State(state): State<Arc<AppState>>,
+    Json(settings): Json<snapshots::SnapshotSettings>,
+) -> Response {
+    if let Err(message) = validate_snapshot_remote_settings(&settings.remote) {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
+    if let Err(message) =
+        create_ui_change_snapshot(&state, "перед изменением хранения снимков", false).await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    match snapshots::save_settings(&state.data_dir, &settings) {
+        Ok(()) => {
+            if let Err(message) = snapshots::apply_retention(&state.data_dir) {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+            }
+            Json(serde_json::json!({"saved": true})).into_response()
+        }
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn pin_snapshot(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(request): Json<SnapshotPinRequest>,
+) -> Response {
+    if !snapshots::valid_snapshot_id(&id) {
+        return error(StatusCode::BAD_REQUEST, "Неверный ID снимка");
+    }
+    let mut store = snapshots::load_store(&state.data_dir);
+    let Some(item) = store.items.iter_mut().find(|item| item.id == id) else {
+        return error(StatusCode::NOT_FOUND, "Снимок не найден");
+    };
+    if request.pinned && !item.local {
+        return error(
+            StatusCode::CONFLICT,
+            "Снимок находится только на NAS; закрепите его на роутере после восстановления",
+        );
+    }
+    item.pinned = request.pinned;
+    match snapshots::save_store(&state.data_dir, &store) {
+        Ok(()) => Json(serde_json::json!({"saved": true})).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn download_snapshot(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    match snapshot_archive_available(&state.data_dir, &id).await {
+        Ok(bytes) => snapshot_download_response(bytes, &format!("nfqws2-snapshot-{id}.tar.gz")),
+        Err(message) => error(StatusCode::NOT_FOUND, message),
+    }
+}
+
+async fn snapshot_archive_available(data_dir: &Path, id: &str) -> Result<Vec<u8>, String> {
+    if !snapshots::valid_snapshot_id(id) {
+        return Err("Неверный ID резервной копии".into());
+    }
+    if let Ok(bytes) = snapshots::archive_bytes(data_dir, id) {
+        return Ok(bytes);
+    }
+    let store = snapshots::load_store(data_dir);
+    if !store.items.iter().any(|item| item.id == id && item.remote) {
+        return Err("Архив отсутствует на роутере и не отмечен как копия на NAS".into());
+    }
+    let path = snapshots::snapshot_dir(data_dir).join(format!(".remote-{id}.tmp"));
+    let _ = tokio::fs::remove_file(&path).await;
+    remote_call(data_dir, "get", &format!("{id}.tar.gz"), None, Some(&path)).await?;
+    #[cfg(unix)]
+    tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .await
+        .map_err(|e| e.to_string())?;
+    let bytes = tokio::fs::read(&path)
+        .await
+        .map_err(|e| format!("Не удалось прочитать архив с NAS: {e}"))?;
+    let _ = tokio::fs::remove_file(&path).await;
+    if bytes.is_empty() || bytes.len() > snapshots::MAX_ARCHIVE_BYTES {
+        return Err("Архив с NAS пустой или превышает 64 МиБ".into());
+    }
+    Ok(bytes)
+}
+
+async fn download_current_snapshot(State(state): State<Arc<AppState>>) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let _guard = state.config_write_lock.lock().await;
+    match snapshots::create_snapshot(
+        &state.data_dir,
+        &config,
+        "вручную",
+        "архив для скачивания",
+        true,
+    )
+    .and_then(|item| {
+        snapshots::archive_bytes(&state.data_dir, &item.id).map(|bytes| (item.id, bytes))
+    }) {
+        Ok((id, bytes)) => {
+            kick_remote_snapshot_push(&state.data_dir);
+            snapshot_download_response(bytes, &format!("nfqws2-snapshot-{id}.tar.gz"))
+        }
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+fn snapshot_download_response(bytes: Vec<u8>, filename: &str) -> Response {
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/gzip"),
+    );
+    let disposition = format!("attachment; filename=\"{filename}\"");
+    match HeaderValue::from_str(&disposition) {
+        Ok(value) => {
+            response
+                .headers_mut()
+                .insert(axum::http::header::CONTENT_DISPOSITION, value);
+        }
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Не удалось сформировать имя архива",
+            );
+        }
+    }
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+async fn restore_snapshot_api(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let _guard = state.config_write_lock.lock().await;
+    let archive = match snapshot_archive_available(&state.data_dir, &id).await {
+        Ok(bytes) => bytes,
+        Err(message) => return error(StatusCode::NOT_FOUND, message),
+    };
+    if let Err(message) = snapshots::validate_archive(&archive) {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
+    if let Err(message) = snapshots::create_snapshot(
+        &state.data_dir,
+        &config,
+        "перед восстановлением",
+        &format!("перед снимком {id}"),
+        true,
+    ) {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось сохранить текущее состояние: {message}"),
+        );
+    }
+    match snapshots::validate_and_restore(&state.data_dir, &config, &archive) {
+        Ok(changed) => {
+            kick_remote_snapshot_push(&state.data_dir);
+            Json(serde_json::json!({"changed": changed, "message": format!("Восстановлено файлов: {}. Перезапустите nfqws2, чтобы применить конфигурацию.", changed.len())})).into_response()
+        }
+        Err(message) => error(StatusCode::BAD_REQUEST, message),
+    }
+}
+
+async fn restore_uploaded_snapshot(State(state): State<Arc<AppState>>, body: Bytes) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let _guard = state.config_write_lock.lock().await;
+    if let Err(message) = snapshots::validate_archive(&body) {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
+    if let Err(message) = snapshots::create_snapshot(
+        &state.data_dir,
+        &config,
+        "перед восстановлением",
+        "перед архивом с устройства",
+        true,
+    ) {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось сохранить текущее состояние: {message}"),
+        );
+    }
+    match snapshots::validate_and_restore(&state.data_dir, &config, &body) {
+        Ok(changed) => {
+            kick_remote_snapshot_push(&state.data_dir);
+            Json(serde_json::json!({"changed": changed, "message": format!("Восстановлено файлов: {}. Перезапустите nfqws2, чтобы применить конфигурацию.", changed.len())})).into_response()
+        }
+        Err(message) => error(StatusCode::BAD_REQUEST, message),
+    }
+}
+
+async fn create_snapshot_key(State(state): State<Arc<AppState>>) -> Response {
+    match create_router_snapshot_key(&state.data_dir).await {
+        Ok(public_key) => Json(serde_json::json!({"publicKey": public_key})).into_response(),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn test_snapshot_remote(State(state): State<Arc<AppState>>) -> Response {
+    match remote_call(&state.data_dir, "ping", "", None, None).await {
+        Ok(output) if output.trim() == "ok" => {
+            match remote_call(&state.data_dir, "list", "", None, None).await {
+                Ok(output) => {
+                    record_snapshot_remote_success(&state.data_dir).await;
+                    Json(serde_json::json!({"ok": true, "count": output.lines().filter(|line| !line.trim().is_empty()).count()})).into_response()
+                }
+                Err(message) => error(StatusCode::BAD_GATEWAY, message),
+            }
+        }
+        Ok(_) => error(
+            StatusCode::BAD_GATEWAY,
+            "NAS ответил неожиданным результатом",
+        ),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn record_snapshot_remote_success(data_dir: &Path) {
+    let mut state: serde_json::Value = tokio::fs::read(snapshots::remote_state_path(data_dir))
+        .await
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    state["ok"] = serde_json::json!(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
+    state["error"] = serde_json::Value::Null;
+    state["errorAt"] = serde_json::Value::Null;
+    let _ = tokio::fs::write(
+        snapshots::remote_state_path(data_dir),
+        serde_json::to_vec(&state).unwrap_or_default(),
+    )
+    .await;
+}
+
+async fn push_snapshot_remote(State(state): State<Arc<AppState>>) -> Response {
+    match push_remote_snapshots(&state.data_dir).await {
+        Ok(sent) => Json(serde_json::json!({"sent": sent})).into_response(),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
+async fn get_ui_appearance(State(state): State<Arc<AppState>>) -> Response {
+    let path = state.data_dir.join("appearance.json");
+    match tokio::fs::read(path).await {
+        Ok(bytes) => match serde_json::from_slice::<UiAppearanceSettings>(&bytes) {
+            Ok(value) => Json(Some(value)).into_response(),
+            Err(_) => Json(Option::<UiAppearanceSettings>::None).into_response(),
+        },
+        Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
+            Json(Option::<UiAppearanceSettings>::None).into_response()
+        }
+        Err(io_error) => error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Не удалось прочитать оформление UI: {io_error}"),
+        ),
+    }
+}
+
+async fn put_ui_appearance(
+    State(state): State<Arc<AppState>>,
+    Json(settings): Json<UiAppearanceSettings>,
+) -> Response {
+    if !matches!(settings.theme.as_str(), "dark" | "light" | "neon")
+        || !matches!(
+            settings.layout.as_str(),
+            "standard" | "compact" | "dense" | "wide"
+        )
+    {
+        return error(StatusCode::BAD_REQUEST, "Недопустимые параметры оформления");
+    }
+    if let Err(io_error) = tokio::fs::create_dir_all(&state.data_dir).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    let path = state.data_dir.join("appearance.json");
+    if path.is_file()
+        && let Err(message) =
+            create_ui_change_snapshot(&state, "перед изменением оформления UI", true).await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    let temp = path.with_extension("json.tmp");
+    let bytes = match serde_json::to_vec(&settings) {
+        Ok(bytes) => bytes,
+        Err(serialize_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                serialize_error.to_string(),
+            );
+        }
+    };
+    if let Err(io_error) = tokio::fs::write(&temp, bytes).await {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    #[cfg(unix)]
+    if let Err(io_error) =
+        tokio::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600)).await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+    }
+    match tokio::fs::rename(&temp, &path).await {
+        Ok(()) => Json(serde_json::json!({"saved": true})).into_response(),
+        Err(io_error) => error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    }
+}
+
+fn validate_snapshot_remote_settings(
+    remote: &snapshots::SnapshotRemoteSettings,
+) -> Result<(), String> {
+    if remote.host.len() > 253
+        || !remote
+            .host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':'))
+    {
+        return Err("Адрес NAS должен содержать только имя хоста или IP-адрес".into());
+    }
+    if remote.user.len() > 64
+        || !remote
+            .user
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err("Имя пользователя NAS содержит недопустимые символы".into());
+    }
+    if !remote.dir.is_empty()
+        && (!remote.dir.starts_with('/')
+            || remote.dir.len() > 512
+            || remote.dir.split('/').any(|part| part == "..")
+            || !remote
+                .dir
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'_' | b'-')))
+    {
+        return Err("Папка NAS должна быть абсолютным путём без .. и специальных символов".into());
+    }
+    if remote.enabled && (remote.host.is_empty() || remote.user.is_empty() || remote.dir.is_empty())
+    {
+        return Err("Для отправки на NAS заполните адрес, пользователя и папку".into());
+    }
+    Ok(())
+}
+
+fn snapshot_ssh_tool() -> Option<&'static str> {
+    ["dbclient", "ssh"].into_iter().find(|tool| {
+        std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {tool}")])
+            .output()
+            .is_ok_and(|result| result.status.success())
+    })
+}
+
+fn snapshot_ssh_is_dropbear(tool: &str) -> bool {
+    if tool == "dbclient" {
+        return true;
+    }
+    std::process::Command::new("sh")
+        .args(["-c", "command -v ssh"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| std::fs::read_link(String::from_utf8_lossy(&output.stdout).trim()).ok())
+        .is_some_and(|target| {
+            target
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("dropbear")
+        })
+}
+
+fn normalize_snapshot_public_key(raw: &str) -> Option<String> {
+    let mut fields = raw.split_whitespace();
+    let kind = fields.next()?;
+    let encoded = fields.next()?;
+    if !matches!(kind, "ssh-ed25519" | "ssh-rsa")
+        || encoded.is_empty()
+        || !encoded
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+    {
+        return None;
+    }
+    Some(format!("{kind} {encoded} nfqws2-ui"))
+}
+
+async fn create_router_snapshot_key(data_dir: &Path) -> Result<String, String> {
+    let tool = snapshot_ssh_tool().ok_or("На роутере не найден ssh-клиент (dbclient или ssh)")?;
+    let dropbear = snapshot_ssh_is_dropbear(tool);
+    let key = snapshots::remote_key_path(data_dir);
+    if !key.is_file() {
+        tokio::fs::create_dir_all(snapshots::snapshot_dir(data_dir))
+            .await
+            .map_err(|e| e.to_string())?;
+        let output = if !dropbear {
+            std::process::Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", "", "-C", "nfqws2-ui", "-f"])
+                .arg(&key)
+                .output()
+        } else {
+            std::process::Command::new("dropbearkey")
+                .args(["-t", "ed25519", "-f"])
+                .arg(&key)
+                .output()
+        }
+        .map_err(|e| format!("Не удалось запустить генератор ключа: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Не удалось создать ключ: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+    #[cfg(unix)]
+    tokio::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600))
+        .await
+        .map_err(|e| e.to_string())?;
+    let pub_path = snapshots::remote_pub_path(data_dir);
+    let raw_public = if pub_path.is_file() {
+        tokio::fs::read_to_string(&pub_path)
+            .await
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    } else {
+        let output = if dropbear {
+            std::process::Command::new("dropbearkey")
+                .args(["-y", "-f"])
+                .arg(&key)
+                .output()
+        } else {
+            std::process::Command::new("ssh-keygen")
+                .args(["-y", "-f"])
+                .arg(&key)
+                .output()
+        }
+        .map_err(|e| e.to_string())?;
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|line| line.starts_with("ssh-"))
+            .map(|line| {
+                format!(
+                    "{} nfqws2-ui",
+                    line.split_whitespace()
+                        .take(2)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                )
+            })
+            .unwrap_or_default()
+    };
+    let public = normalize_snapshot_public_key(&raw_public)
+        .ok_or("Не удалось прочитать открытый ключ роутера")?;
+    tokio::fs::write(pub_path, format!("{public}\n"))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(public)
+}
+
+async fn remote_call(
+    data_dir: &Path,
+    op: &str,
+    name: &str,
+    input: Option<&Path>,
+    output_path: Option<&Path>,
+) -> Result<String, String> {
+    let settings = snapshots::load_settings(data_dir).remote;
+    validate_snapshot_remote_settings(&settings)?;
+    if settings.host.is_empty() || settings.user.is_empty() || settings.dir.is_empty() {
+        return Err("Сначала заполните и сохраните адрес, пользователя и папку NAS".into());
+    }
+    let tool = snapshot_ssh_tool().ok_or("На роутере нет ssh-клиента")?;
+    let key = snapshots::remote_key_path(data_dir);
+    if !key.is_file() {
+        return Err("Сначала создайте ключ роутера".into());
+    }
+    if !matches!(op, "ping" | "list" | "put" | "get")
+        || (!name.is_empty()
+            && name != "index.json"
+            && !snapshots::valid_snapshot_id(name.trim_end_matches(".tar.gz")))
+    {
+        return Err("Недопустимая команда или имя файла для NAS".into());
+    }
+    let target = format!("{}@{}", settings.user, settings.host);
+    let remote_command = if name.is_empty() {
+        op.to_owned()
+    } else {
+        format!("{op} {name}")
+    };
+    let mut command = tokio::process::Command::new(tool);
+    if tool == "ssh" && !snapshot_ssh_is_dropbear(tool) {
+        command
+            .args(["-i"])
+            .arg(&key)
+            .args([
+                "-p",
+                &settings.port.to_string(),
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                "-o",
+            ])
+            .arg(format!(
+                "UserKnownHostsFile={}",
+                snapshots::known_hosts_path(data_dir).display()
+            ))
+            .args(["-o", "ConnectTimeout=10"])
+            .arg(&target)
+            .arg(&remote_command);
+    } else {
+        command
+            .args(["-y", "-i"])
+            .arg(&key)
+            .args(["-p", &settings.port.to_string()])
+            .arg(&target)
+            .arg(&remote_command);
+    }
+    command
+        .env("HOME", data_dir)
+        .env("PATH", "/opt/bin:/opt/sbin:/usr/bin:/bin:/usr/sbin:/sbin")
+        .kill_on_drop(true);
+    if let Some(path) = input {
+        command.stdin(std::process::Stdio::from(
+            std::fs::File::open(path).map_err(|e| e.to_string())?,
+        ));
+    } else {
+        command.stdin(std::process::Stdio::null());
+    }
+    if let Some(path) = output_path {
+        command.stdout(std::process::Stdio::from(
+            std::fs::File::create(path).map_err(|e| e.to_string())?,
+        ));
+    }
+    let output = tokio::time::timeout(std::time::Duration::from_secs(120), command.output())
+        .await
+        .map_err(|_| "Нет ответа от NAS за 120 секунд".to_owned())?
+        .map_err(|e| format!("Не удалось запустить ssh: {e}"))?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if message.is_empty() {
+            "NAS отклонил запрос".into()
+        } else {
+            message
+        });
+    }
+    if output_path.is_some() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+struct SnapshotPushLock(PathBuf);
+impl Drop for SnapshotPushLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+async fn push_remote_snapshots(data_dir: &Path) -> Result<usize, String> {
+    match push_remote_snapshots_inner(data_dir).await {
+        Ok(sent) => Ok(sent),
+        Err(message) => {
+            let mut state: serde_json::Value =
+                tokio::fs::read(snapshots::remote_state_path(data_dir))
+                    .await
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+                    .unwrap_or_default();
+            state["error"] = serde_json::json!(message);
+            state["errorAt"] = serde_json::json!(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            );
+            let _ = tokio::fs::write(
+                snapshots::remote_state_path(data_dir),
+                serde_json::to_vec(&state).unwrap_or_default(),
+            )
+            .await;
+            Err(message)
+        }
+    }
+}
+
+fn kick_remote_snapshot_push(data_dir: &Path) {
+    if !snapshots::load_settings(data_dir).remote.enabled {
+        return;
+    }
+    let directory = data_dir.to_path_buf();
+    tokio::spawn(async move {
+        let _ = push_remote_snapshots(&directory).await;
+    });
+}
+
+async fn push_remote_snapshots_inner(data_dir: &Path) -> Result<usize, String> {
+    let settings = snapshots::load_settings(data_dir);
+    if !settings.remote.enabled {
+        return Err("Отправка на NAS выключена".into());
+    }
+    let lock_path = snapshots::snapshot_dir(data_dir).join(".push.lock");
+    tokio::fs::create_dir_all(snapshots::snapshot_dir(data_dir))
+        .await
+        .map_err(|e| e.to_string())?;
+    let lock_file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&lock_path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            #[cfg(unix)]
+            {
+                let owner = std::fs::read_to_string(&lock_path)
+                    .ok()
+                    .and_then(|value| value.trim().parse::<u32>().ok());
+                if owner.is_none()
+                    || owner.is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists())
+                {
+                    return Err("Отправка снимков на NAS уже выполняется".into());
+                }
+                let _ = std::fs::remove_file(&lock_path);
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&lock_path)
+                    .map_err(|e| format!("Не удалось заблокировать отправку на NAS: {e}"))?
+            }
+            #[cfg(not(unix))]
+            {
+                return Err("Отправка снимков на NAS уже выполняется".into());
+            }
+        }
+        Err(error) => return Err(format!("Не удалось заблокировать отправку на NAS: {error}")),
+    };
+    use std::io::Write as _;
+    let mut lock_file = lock_file;
+    let _ = writeln!(lock_file, "{}", std::process::id());
+    drop(lock_file);
+    let _lock = SnapshotPushLock(lock_path);
+    let mut store = snapshots::load_store(data_dir);
+    let mut sent = 0;
+    let pending: Vec<String> = store
+        .items
+        .iter()
+        .filter(|item| item.local && !item.remote)
+        .map(|item| item.id.clone())
+        .collect();
+    for id in pending {
+        let file = snapshots::snapshot_dir(data_dir).join(format!("{id}.tar.gz"));
+        if let Err(error) =
+            remote_call(data_dir, "put", &format!("{id}.tar.gz"), Some(&file), None).await
+            && !error.contains("уже существует")
+        {
+            return Err(error);
+        }
+        if let Some(item) = store.items.iter_mut().find(|item| item.id == id) {
+            item.remote = true;
+        }
+        sent += 1;
+        snapshots::save_store(data_dir, &store)?;
+    }
+    let index_path = snapshots::index_path(data_dir);
+    snapshots::apply_retention(data_dir)?;
+    store = snapshots::load_store(data_dir);
+    snapshots::save_store(data_dir, &store)?;
+    remote_call(data_dir, "put", "index.json", Some(&index_path), None).await?;
+    let mut state: serde_json::Value = tokio::fs::read(snapshots::remote_state_path(data_dir))
+        .await
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    state["ok"] = serde_json::json!(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
+    state["error"] = serde_json::Value::Null;
+    tokio::fs::write(
+        snapshots::remote_state_path(data_dir),
+        serde_json::to_vec(&state).unwrap_or_default(),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(sent)
+}
+
+fn start_snapshot_scheduler(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            if !snapshots::is_due_daily(&state.data_dir) {
+                continue;
+            }
+            let Some(config) = config_path_for_state(&state) else {
+                continue;
+            };
+            let guard = state.config_write_lock.lock().await;
+            match snapshots::create_snapshot(&state.data_dir, &config, "ежедневный", "", false)
+            {
+                Ok(_) => {
+                    snapshots::mark_daily_snapshot(&state.data_dir);
+                    drop(guard);
+                    kick_remote_snapshot_push(&state.data_dir);
+                }
+                Err(error) => eprintln!("daily snapshot failed: {error}"),
+            }
+        }
+    });
 }
 
 async fn create_backup(State(state): State<Arc<AppState>>) -> Response {
@@ -6808,6 +7633,33 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         )
         .route("/api/backups", get(get_backups).post(create_backup))
         .route("/api/backups/{id}/restore", post(restore_backup))
+        .route(
+            "/api/snapshots",
+            get(get_snapshots).post(create_snapshot_api),
+        )
+        .route(
+            "/api/snapshots/settings",
+            axum::routing::put(update_snapshot_settings),
+        )
+        .route(
+            "/api/snapshots/current/archive",
+            get(download_current_snapshot),
+        )
+        .route(
+            "/api/snapshots/restore-file",
+            post(restore_uploaded_snapshot)
+                .layer(DefaultBodyLimit::max(snapshots::MAX_ARCHIVE_BYTES)),
+        )
+        .route("/api/snapshots/remote/key", post(create_snapshot_key))
+        .route("/api/snapshots/remote/test", post(test_snapshot_remote))
+        .route("/api/snapshots/remote/push", post(push_snapshot_remote))
+        .route(
+            "/api/ui/appearance",
+            get(get_ui_appearance).put(put_ui_appearance),
+        )
+        .route("/api/snapshots/{id}/archive", get(download_snapshot))
+        .route("/api/snapshots/{id}/restore", post(restore_snapshot_api))
+        .route("/api/snapshots/{id}/pin", post(pin_snapshot))
         .route("/api/logs", get(get_logs))
         .route("/api/updates/releases", get(get_github_releases))
         .route("/api/updates/status", get(get_ui_update_status))
@@ -6881,6 +7733,7 @@ async fn main() {
     });
     start_ui_update_checker(state.clone());
     start_monitoring_scheduler(state.clone());
+    start_snapshot_scheduler(state.clone());
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/opt/share/nfqws2-ui/current/public"));
@@ -6940,12 +7793,44 @@ mod tests {
         assert_eq!(format_telegram_event_time(0), "01.01.1970 00:00 UTC");
     }
 
+    #[tokio::test]
+    async fn monitoring_store_migrates_legacy_intervals_to_the_safe_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = monitoring_store_path(dir.path());
+        tokio::fs::write(
+            path,
+            serde_json::json!({
+                "enabled": true,
+                "intervalMinutes": 1,
+                "lastAutoCheck": null,
+                "sites": [],
+                "telegram": {}
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+        let store = load_monitoring_store(dir.path()).await.unwrap();
+        assert_eq!(store.interval_minutes, 10);
+    }
+
     #[test]
     fn monitoring_accepts_podkop_fake_ipv4_range_but_rejects_other_reserved_addresses() {
         assert!(monitor_probe_ipv4("198.18.0.0".parse().unwrap()));
         assert!(monitor_probe_ipv4("198.19.255.255".parse().unwrap()));
         assert!(!monitor_probe_ipv4("198.51.100.1".parse().unwrap()));
         assert!(!monitor_probe_ipv4("127.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn monitoring_interval_has_a_ten_minute_floor_like_zemidala() {
+        assert!(!monitoring_interval_valid(1));
+        assert!(!monitoring_interval_valid(9));
+        assert!(monitoring_interval_valid(10));
+        assert!(monitoring_interval_valid(30));
+        assert!(monitoring_interval_valid(1440));
+        assert!(!monitoring_interval_valid(1441));
     }
 
     #[test]

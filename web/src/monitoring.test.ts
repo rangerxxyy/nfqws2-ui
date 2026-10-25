@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { appendMonitoringResult, loadMonitoringState, normalizeMonitoringHost, saveMonitoringState } from './monitoring';
+import { appendMonitoringResult, loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState } from './monitoring';
 
 describe('monitoring state', () => {
+  it('keeps custom monitoring intervals between ten minutes and one day', () => {
+    expect(normalizeMonitoringInterval(0, 1)).toBe(10);
+    expect(normalizeMonitoringInterval(0, 9)).toBe(10);
+    expect(normalizeMonitoringInterval(0, 10)).toBe(10);
+    expect(normalizeMonitoringInterval(1, 5)).toBe(65);
+    expect(normalizeMonitoringInterval(25, 0)).toBe(1440);
+    expect(normalizeMonitoringInterval(Number.NaN, 30)).toBe(30);
+  });
+
   it('accepts hostnames and rejects URLs, IP literals, and malformed input', () => {
     expect(normalizeMonitoringHost(' Example.COM ')).toBe('example.com');
     expect(normalizeMonitoringHost('https://example.com')).toBeNull();

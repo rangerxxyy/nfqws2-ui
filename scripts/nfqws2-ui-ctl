@@ -1,0 +1,86 @@
+#!/bin/sh
+# Dedicated command-line control for rangerxxyy/nfqws2-ui.
+set -eu
+
+ROOT=/opt/share/nfqws2-ui
+APP=$ROOT/current
+PORT_FILE=/opt/var/run/nfqws2-ui.port
+REPO_API=https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases/latest
+
+fail() { printf 'nfqws2-ui-ctl: %s\n' "$*" >&2; exit 1; }
+usage() {
+	cat <<'EOF'
+nfqws2-ui-ctl — управление веб-панелью rangerxxyy/nfqws2-ui
+
+  nfqws2-ui-ctl update [--check] [VERSION] [--force]
+      Без версии — последняя. С версией — установить её; --force разрешает повторную
+      установку или откат на более ранний релиз.
+      Примеры: nfqws2-ui-ctl update --check; nfqws2-ui-ctl update vX.Y.Z --force
+  nfqws2-ui-ctl status
+      Версии панели/nfqws2 и локальная HTTP-проверка панели.
+  nfqws2-ui-ctl help
+      Показать эту справку.
+EOF
+}
+
+installed_version() {
+	[ -x "$APP/bin/nfqws2-ui" ] || return 1
+	"$APP/bin/nfqws2-ui" --version 2>/dev/null | sed -n 's/^nfqws2-ui //p' | head -n 1
+}
+latest_version() {
+	command -v wget >/dev/null 2>&1 || fail 'не найден wget'
+	wget -q -T 15 -O - "$REPO_API" 2>/dev/null |
+		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -n 1
+}
+valid_version() {
+	case "$1" in
+		[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' ;;
+		*) return 1 ;;
+	esac
+}
+new_operation_id() {
+	command -v od >/dev/null 2>&1 || fail 'не найден od для создания ID операции'
+	command -v tr >/dev/null 2>&1 || fail 'не найден tr для создания ID операции'
+	od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+cmd=${1:-help}
+[ "$#" -eq 0 ] || shift
+case "$cmd" in
+	update)
+		check=0 force=0 requested=''
+		for arg do
+			case "$arg" in
+				--check|-c) check=1 ;;
+				--force|-f) force=1 ;;
+				*) [ -z "$requested" ] || fail 'укажите не более одной версии'; requested=${arg#v} ;;
+		esac
+		done
+		if [ -z "$requested" ]; then requested=$(latest_version); [ -n "$requested" ] || fail 'не удалось получить последний релиз GitHub'; fi
+		valid_version "$requested" || fail "неверный номер версии: $requested (ожидается X.Y.Z)"
+		current=$(installed_version || true)
+		if [ "$check" -eq 1 ]; then
+			printf 'Установлена: %s\nПоследняя:   %s\n' "${current:-не определена}" "$requested"
+			[ "$current" != "$requested" ] && printf 'Доступно обновление: nfqws2-ui-ctl update %s\n' "$requested" || printf 'Установлена актуальная версия.\n'
+			exit 0
+		fi
+		[ -x "$APP/scripts/update-release.sh" ] || fail 'не найден штатный установщик релиза панели'
+		if [ "$current" = "$requested" ] && [ "$force" -ne 1 ]; then printf 'Уже установлена версия %s; для переустановки укажите --force.\n' "$requested"; exit 0; fi
+		id=$(new_operation_id)
+		[ "${#id}" -eq 32 ] || fail 'не удалось создать безопасный ID обновления'
+		exec "$APP/scripts/update-release.sh" "v$requested" "$id"
+		;;
+	status)
+		current=$(installed_version || true)
+		printf 'nfqws2-ui: %s\n' "${current:-бинарный файл не найден}"
+		if [ -x /opt/etc/init.d/S51nfqws2 ]; then /opt/etc/init.d/S51nfqws2 status || true; else printf 'nfqws2: init-скрипт не обнаружен\n'; fi
+		port=1002
+		[ ! -r "$PORT_FILE" ] || port=$(cat "$PORT_FILE")
+		case "$port" in ''|*[!0-9]*) port=1002 ;; esac
+		if command -v wget >/dev/null 2>&1 && wget -q -T 2 -O - "http://127.0.0.1:$port/api/health" 2>/dev/null | grep -q '"ok":true'; then
+			printf 'Панель: HTTP отвечает на 127.0.0.1:%s\n' "$port"
+		else printf 'Панель: HTTP-проверка не пройдена на 127.0.0.1:%s\n' "$port"; fi
+		;;
+	help|-h|--help) usage ;;
+	*) usage >&2; exit 2 ;;
+esac
