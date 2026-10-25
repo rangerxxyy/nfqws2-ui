@@ -9595,8 +9595,10 @@ async fn delete_snapshot_api(
 }
 
 async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
-    Json(serde_json::json!({ "profiles": nfqws2_ui::profiles::list(&state.data_dir) }))
-        .into_response()
+    match nfqws2_ui::profiles::list(&state.data_dir) {
+        Ok(profiles) => Json(serde_json::json!({ "profiles": profiles })).into_response(),
+        Err(message) => profile_operation_error(message),
+    }
 }
 
 fn validate_profile_config(content: &str) -> Result<(), String> {
@@ -9610,13 +9612,24 @@ fn validate_profile_config(content: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn profile_operation_error(message: String) -> Response {
+    let status = if message.starts_with("Не удалось") {
+        StatusCode::INTERNAL_SERVER_ERROR
+    } else if message == "Профиль не найден" {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    error(status, message)
+}
+
 async fn get_profile(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
     match nfqws2_ui::profiles::get(&state.data_dir, &id) {
         Ok(profile) => Json(profile).into_response(),
-        Err(message) => error(StatusCode::NOT_FOUND, message),
+        Err(message) => profile_operation_error(message),
     }
 }
 
@@ -9640,7 +9653,7 @@ async fn create_profile(
         now_unix_seconds(),
     ) {
         Ok(profile) => (StatusCode::CREATED, Json(profile)).into_response(),
-        Err(message) => error(StatusCode::BAD_REQUEST, message),
+        Err(message) => profile_operation_error(message),
     }
 }
 
@@ -9666,7 +9679,7 @@ async fn update_profile(
         now_unix_seconds(),
     ) {
         Ok(profile) => Json(profile).into_response(),
-        Err(message) => error(StatusCode::BAD_REQUEST, message),
+        Err(message) => profile_operation_error(message),
     }
 }
 
@@ -9676,7 +9689,7 @@ async fn delete_profile(
 ) -> Response {
     match nfqws2_ui::profiles::delete(&state.data_dir, &id) {
         Ok(()) => Json(serde_json::json!({ "deleted": true })).into_response(),
-        Err(message) => error(StatusCode::NOT_FOUND, message),
+        Err(message) => profile_operation_error(message),
     }
 }
 
@@ -9686,7 +9699,7 @@ async fn activate_profile(
 ) -> Response {
     let content = match nfqws2_ui::profiles::content(&state.data_dir, &id) {
         Ok(content) => content,
-        Err(message) => return error(StatusCode::NOT_FOUND, message),
+        Err(message) => return profile_operation_error(message),
     };
     if let Err(message) = validate_profile_config(&content) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, message);
@@ -11075,6 +11088,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(activate.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn profile_api_surfaces_corrupt_store_as_server_error_without_overwriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let store = data_dir.join("profiles.json");
+        std::fs::write(&store, b"{not valid json").unwrap();
+        let app = api_router(test_state(data_dir), dir.path().join("web"));
+
+        let list = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/profiles")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let create = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/profiles")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "name": "Home",
+                            "content": "NFQWS_ARGS=\"--filter-tcp=443\"\n"
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(std::fs::read(store).unwrap(), b"{not valid json");
     }
 
     #[test]

@@ -37,21 +37,30 @@ fn store_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join("profiles.json")
 }
 
-fn load(data_dir: &Path) -> ConfigProfileStore {
-    fs::read(store_path(data_dir))
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+fn load(data_dir: &Path) -> Result<ConfigProfileStore, String> {
+    let path = store_path(data_dir);
+    match fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|error| format!("Не удалось прочитать сохранённые профили: {error}")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(ConfigProfileStore::default())
+        }
+        Err(error) => Err(format!("Не удалось прочитать сохранённые профили: {error}")),
+    }
 }
 
 fn save(data_dir: &Path, store: &ConfigProfileStore) -> Result<(), String> {
-    fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
+    fs::create_dir_all(data_dir)
+        .map_err(|error| format!("Не удалось сохранить хранилище профилей: {error}"))?;
     let path = store_path(data_dir);
     let temp = path.with_extension(format!("{}.tmp", std::process::id()));
     let bytes = serde_json::to_vec(store).map_err(|error| error.to_string())?;
-    fs::write(&temp, bytes).map_err(|error| format!("Не удалось записать профили: {error}"))?;
-    set_private_file(&temp)?;
-    fs::rename(&temp, &path).map_err(|error| format!("Не удалось сохранить профили: {error}"))
+    fs::write(&temp, bytes)
+        .map_err(|error| format!("Не удалось сохранить хранилище профилей: {error}"))?;
+    set_private_file(&temp)
+        .map_err(|error| format!("Не удалось сохранить хранилище профилей: {error}"))?;
+    fs::rename(&temp, &path)
+        .map_err(|error| format!("Не удалось сохранить хранилище профилей: {error}"))
 }
 
 #[cfg(unix)]
@@ -80,10 +89,10 @@ fn validate_content(content: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn list(data_dir: &Path) -> Vec<ConfigProfileSummary> {
-    let mut profiles = load(data_dir).profiles;
+pub fn list(data_dir: &Path) -> Result<Vec<ConfigProfileSummary>, String> {
+    let mut profiles = load(data_dir)?.profiles;
     profiles.sort_by_key(|profile| profile.name.to_lowercase());
-    profiles
+    Ok(profiles
         .into_iter()
         .map(|profile| ConfigProfileSummary {
             id: profile.id,
@@ -91,7 +100,7 @@ pub fn list(data_dir: &Path) -> Vec<ConfigProfileSummary> {
             updated_at: profile.updated_at,
             bytes: profile.content.len(),
         })
-        .collect()
+        .collect())
 }
 
 pub fn create(
@@ -102,7 +111,7 @@ pub fn create(
 ) -> Result<ConfigProfileSummary, String> {
     let name = validate_name(name)?;
     validate_content(content)?;
-    let mut store = load(data_dir);
+    let mut store = load(data_dir)?;
     if store.profiles.len() >= MAX_PROFILES {
         return Err("Можно сохранить не больше 16 профилей".into());
     }
@@ -137,7 +146,7 @@ pub fn rename(
     now: u64,
 ) -> Result<ConfigProfileSummary, String> {
     let name = validate_name(name)?;
-    let mut store = load(data_dir);
+    let mut store = load(data_dir)?;
     if store
         .profiles
         .iter()
@@ -163,7 +172,7 @@ pub fn rename(
 }
 
 pub fn delete(data_dir: &Path, id: &str) -> Result<(), String> {
-    let mut store = load(data_dir);
+    let mut store = load(data_dir)?;
     let before = store.profiles.len();
     store.profiles.retain(|profile| profile.id != id);
     if store.profiles.len() == before {
@@ -173,7 +182,7 @@ pub fn delete(data_dir: &Path, id: &str) -> Result<(), String> {
 }
 
 pub fn get(data_dir: &Path, id: &str) -> Result<ConfigProfile, String> {
-    load(data_dir)
+    load(data_dir)?
         .profiles
         .into_iter()
         .find(|profile| profile.id == id)
@@ -189,7 +198,7 @@ pub fn update(
 ) -> Result<ConfigProfileSummary, String> {
     let name = validate_name(name)?;
     validate_content(content)?;
-    let mut store = load(data_dir);
+    let mut store = load(data_dir)?;
     if store
         .profiles
         .iter()
@@ -216,7 +225,7 @@ pub fn update(
 }
 
 pub fn content(data_dir: &Path, id: &str) -> Result<String, String> {
-    load(data_dir)
+    load(data_dir)?
         .profiles
         .into_iter()
         .find(|profile| profile.id == id)
@@ -233,7 +242,7 @@ mod tests {
     fn creates_lists_renames_and_deletes_named_configs() {
         let dir = tempdir().unwrap();
         let created = create(dir.path(), "Дом", "NFQWS_ARGS=\"--filter-tcp=443\"\n", 10).unwrap();
-        assert_eq!(list(dir.path())[0].name, "Дом");
+        assert_eq!(list(dir.path()).unwrap()[0].name, "Дом");
         assert_eq!(
             content(dir.path(), &created.id).unwrap(),
             "NFQWS_ARGS=\"--filter-tcp=443\"\n"
@@ -241,7 +250,7 @@ mod tests {
         let renamed = rename(dir.path(), &created.id, "Работа", 11).unwrap();
         assert_eq!(renamed.updated_at, 11);
         delete(dir.path(), &created.id).unwrap();
-        assert!(list(dir.path()).is_empty());
+        assert!(list(dir.path()).unwrap().is_empty());
     }
 
     #[test]
@@ -291,5 +300,16 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn refuses_to_overwrite_a_corrupt_profile_store() {
+        let dir = tempdir().unwrap();
+        let path = store_path(dir.path());
+        fs::write(&path, b"{not valid json").unwrap();
+
+        assert!(create(dir.path(), "Дом", "config", 10).is_err());
+        assert!(list(dir.path()).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"{not valid json");
     }
 }
