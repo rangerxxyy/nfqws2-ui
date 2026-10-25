@@ -289,8 +289,20 @@ struct ForeignConfigSiteResult {
     host: String,
     current_ok: Option<bool>,
     current_detail: String,
+    #[serde(default)]
+    current_attempts: usize,
+    #[serde(default)]
+    current_successes: usize,
+    #[serde(default)]
+    current_average_ms: Option<u64>,
     candidate_ok: Option<bool>,
     candidate_detail: String,
+    #[serde(default)]
+    candidate_attempts: usize,
+    #[serde(default)]
+    candidate_successes: usize,
+    #[serde(default)]
+    candidate_average_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -308,6 +320,66 @@ struct ForeignConfigInput {
     source: Option<String>,
     content: Option<String>,
     url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SupportReportRequest {
+    #[serde(default = "default_true")]
+    hide_site_names: bool,
+}
+
+struct SupportReportData {
+    platform: String,
+    service_state: String,
+    running_profiles: usize,
+    monitored_sites: Vec<String>,
+    monitoring_enabled: bool,
+    config_errors: usize,
+    config_warnings: usize,
+    lists_count: usize,
+}
+
+fn format_support_report(data: &SupportReportData) -> String {
+    let sites = if data.monitored_sites.is_empty() {
+        "Сайты мониторинга: не настроены".to_owned()
+    } else {
+        format!("Сайты мониторинга: {}", data.monitored_sites.join(", "))
+    };
+    format!(
+        "Отчёт для помощи · nfqws2-UI {}\nПлатформа: {}\nСлужба nfqws2: {}\nАктивных профилей: {}\nСтатическая проверка конфига: ошибок {}, предупреждений {}\nСписков: {}\nМониторинг: {}\n{}\n\nСодержимое конфига и списков, токен Telegram и подробный вывод команд в отчёт не включены. Сетевая проверка не запускалась.",
+        env!("CARGO_PKG_VERSION"),
+        data.platform,
+        data.service_state,
+        data.running_profiles,
+        data.config_errors,
+        data.config_warnings,
+        data.lists_count,
+        if data.monitoring_enabled {
+            "включён"
+        } else {
+            "выключен"
+        },
+        sites,
+    )
+}
+
+fn support_site_labels(sites: &[MonitoredSite], hide_site_names: bool) -> Vec<String> {
+    sites
+        .iter()
+        .enumerate()
+        .map(|(index, site)| {
+            if hide_site_names {
+                format!("сайт-{}", index + 1)
+            } else {
+                site.host
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(253)
+                    .collect()
+            }
+        })
+        .collect()
 }
 
 fn update_site_trace_progress(
@@ -3277,6 +3349,89 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
     .into_response()
 }
 
+async fn build_support_report(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SupportReportRequest>,
+) -> Response {
+    let platform = discover_system_paths()
+        .map(|paths| {
+            if paths.root == Path::new("/opt") {
+                "Keenetic / Entware"
+            } else {
+                "OpenWrt"
+            }
+        })
+        .unwrap_or("не определена")
+        .to_owned();
+    let service_state = match service_status().await.0 {
+        ServiceState::Running => "запущена",
+        ServiceState::Stopped => "остановлена",
+        ServiceState::Error => "ошибка",
+        ServiceState::Unknown => "неизвестно",
+    }
+    .to_owned();
+    let running_profiles = active_process_snapshot()
+        .map(|(_, args)| runtime_profiles(&args).len())
+        .unwrap_or(0);
+
+    let (config_errors, config_warnings, lists_count) =
+        if let Some(config_path) = config_path_for_state(&state) {
+            let content = match tokio::fs::read_to_string(&config_path).await {
+                Ok(content) => content,
+                Err(_) => {
+                    return error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Не удалось прочитать конфигурацию для диагностики",
+                    );
+                }
+            };
+            let diagnostics = match validate_nfqws2_config(&content) {
+                Ok(diagnostics) => diagnostics,
+                Err(_) => {
+                    return error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Не удалось проверить конфигурацию для диагностики",
+                    );
+                }
+            };
+            (
+                diagnostics
+                    .iter()
+                    .filter(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+                    .count(),
+                diagnostics
+                    .iter()
+                    .filter(|diagnostic| diagnostic.severity == DiagnosticSeverity::Warning)
+                    .count(),
+                list_ids_for_config(&config_path).len(),
+            )
+        } else {
+            (0, 0, 0)
+        };
+
+    let monitoring = match load_monitoring_store(&state.data_dir).await {
+        Ok(monitoring) => monitoring,
+        Err(_) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Не удалось прочитать сводку мониторинга",
+            );
+        }
+    };
+    let monitored_sites = support_site_labels(&monitoring.sites, request.hide_site_names);
+    let report = format_support_report(&SupportReportData {
+        platform,
+        service_state,
+        running_profiles,
+        monitored_sites,
+        monitoring_enabled: monitoring.enabled,
+        config_errors,
+        config_warnings,
+        lists_count,
+    });
+    Json(serde_json::json!({ "text": report })).into_response()
+}
+
 fn keenetic_system_metrics(data: &serde_json::Value) -> Option<SystemInfo> {
     let total = data.get("memtotal")?.as_u64()?.checked_mul(1024)?;
     let used = data
@@ -5909,8 +6064,14 @@ async fn start_foreign_config_check(
                     host: host.clone(),
                     current_ok: None,
                     current_detail: "Ожидает проверки".into(),
+                    current_attempts: 0,
+                    current_successes: 0,
+                    current_average_ms: None,
                     candidate_ok: None,
                     candidate_detail: "Ожидает проверки".into(),
+                    candidate_attempts: 0,
+                    candidate_successes: 0,
+                    candidate_average_ms: None,
                 })
                 .collect(),
         })
@@ -6048,6 +6209,9 @@ async fn start_foreign_config_check(
                     if let Some(site) = comparison.sites.get_mut(host_index) {
                         site.current_ok = baseline.with_nfqws2.ok;
                         site.current_detail = baseline.with_nfqws2.reason.clone();
+                        site.current_attempts = 1;
+                        site.current_successes = usize::from(baseline.with_nfqws2.ok == Some(true));
+                        site.current_average_ms = baseline.with_nfqws2.duration_ms;
                     }
                 }
                 operation.done = operation.done.saturating_add(1);
@@ -6114,6 +6278,16 @@ async fn start_foreign_config_check(
                     .iter()
                     .filter(|report| report.with_nfqws2.ok == Some(true))
                     .count();
+                let successful_durations = reports
+                    .iter()
+                    .filter(|report| report.with_nfqws2.ok == Some(true))
+                    .filter_map(|report| report.with_nfqws2.duration_ms)
+                    .collect::<Vec<_>>();
+                let average_ms = (!successful_durations.is_empty()).then(|| {
+                    (successful_durations.iter().sum::<u64>()
+                        + successful_durations.len() as u64 / 2)
+                        / successful_durations.len() as u64
+                });
                 let confirmed = successes == repeats;
                 let last_report = reports.last();
                 let candidate_detail = format!(
@@ -6130,6 +6304,9 @@ async fn start_foreign_config_check(
                     {
                         site.candidate_ok = Some(confirmed);
                         site.candidate_detail = candidate_detail;
+                        site.candidate_attempts = reports.len();
+                        site.candidate_successes = successes;
+                        site.candidate_average_ms = average_ms;
                     }
                     operation.done = operation.done.saturating_add(1);
                     operation.updated_at = now_unix_seconds();
@@ -9475,6 +9652,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
         .route(
+            "/api/nfqws2/diagnostics/support-report",
+            post(build_support_report),
+        )
+        .route(
             "/api/nfqws2/diagnostics/config-check",
             post(start_foreign_config_check),
         )
@@ -9713,6 +9894,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn support_report_masks_site_names_by_default_and_sanitizes_visible_names() {
+        let sites = vec![
+            MonitoredSite {
+                host: "example.com".into(),
+                results: Vec::new(),
+            },
+            MonitoredSite {
+                host: "second.example\nInjected".into(),
+                results: Vec::new(),
+            },
+        ];
+
+        assert_eq!(support_site_labels(&sites, true), ["сайт-1", "сайт-2"]);
+        assert_eq!(
+            support_site_labels(&sites, false),
+            ["example.com", "second.exampleInjected"]
+        );
+    }
+
+    #[test]
     fn foreign_config_request_limits_match_zemidala() {
         assert!(validate_foreign_config_counts(1, 1).is_ok());
         assert!(validate_foreign_config_counts(10, 15).is_ok());
@@ -9732,15 +9933,27 @@ mod tests {
                     host: "one.example".into(),
                     current_ok: Some(false),
                     current_detail: String::new(),
+                    current_attempts: 1,
+                    current_successes: 0,
+                    current_average_ms: Some(210),
                     candidate_ok: Some(true),
                     candidate_detail: String::new(),
+                    candidate_attempts: 3,
+                    candidate_successes: 3,
+                    candidate_average_ms: Some(95),
                 },
                 ForeignConfigSiteResult {
                     host: "two.example".into(),
                     current_ok: Some(true),
                     current_detail: String::new(),
+                    current_attempts: 1,
+                    current_successes: 1,
+                    current_average_ms: Some(120),
                     candidate_ok: Some(true),
                     candidate_detail: String::new(),
+                    candidate_attempts: 3,
+                    candidate_successes: 3,
+                    candidate_average_ms: Some(110),
                 },
             ],
         };
@@ -9778,6 +9991,39 @@ mod tests {
         assert_eq!(normalize_foreign_config_repeats(Some(5)), 5);
         assert_eq!(normalize_foreign_config_repeats(Some(0)), 1);
         assert_eq!(normalize_foreign_config_repeats(Some(99)), 5);
+    }
+
+    #[test]
+    fn foreign_config_site_metrics_are_serialized_and_legacy_operations_still_load() {
+        let site = ForeignConfigSiteResult {
+            host: "example.org".into(),
+            current_ok: Some(true),
+            current_detail: "HTTP 200".into(),
+            current_attempts: 1,
+            current_successes: 1,
+            current_average_ms: Some(125),
+            candidate_ok: Some(true),
+            candidate_detail: "3/3 успешных".into(),
+            candidate_attempts: 3,
+            candidate_successes: 3,
+            candidate_average_ms: Some(98),
+        };
+        let value = serde_json::to_value(&site).unwrap();
+        assert_eq!(value["candidateAttempts"], 3);
+        assert_eq!(value["candidateSuccesses"], 3);
+        assert_eq!(value["candidateAverageMs"], 98);
+        assert_eq!(value["currentAverageMs"], 125);
+
+        let legacy: ForeignConfigSiteResult = serde_json::from_value(serde_json::json!({
+            "host": "legacy.example",
+            "currentOk": true,
+            "currentDetail": "HTTP 200",
+            "candidateOk": true,
+            "candidateDetail": "3/3 успешных"
+        }))
+        .unwrap();
+        assert_eq!(legacy.candidate_attempts, 0);
+        assert_eq!(legacy.candidate_average_ms, None);
     }
 
     #[test]
@@ -13944,3 +14190,4 @@ mod tests {
         assert!(original.starts_with(&script.content));
     }
 }
+
