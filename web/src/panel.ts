@@ -1,4 +1,5 @@
 import { diagnosisRows } from './diagnosis-layout';
+import { replaceBaseDesyncSteps } from './strategy-application';
 import { parseCustomStrategies } from './custom-strategy-input';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
@@ -988,13 +989,18 @@ async function saveConfigAndApply() {
   if (busy) return;
   if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
   const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
+  const draft = editor.value;
   setBusy(true);
   let validation: ConfigValidationResponse;
   try {
-    validation = await nfqwsConfig.validate(editor.value);
+    validation = await nfqwsConfig.validate(draft);
   } catch (error) {
     setBusy(false);
     return toast(error instanceof Error ? `Проверка backend не выполнена: ${error.message}` : 'Проверка backend не выполнена', 'error');
+  }
+  if (editor.value !== draft) {
+    setBusy(false);
+    return toast('Черновик изменился во время проверки. Проверьте конфигурацию повторно.', 'error');
   }
   if (!validation.valid) {
     setBusy(false);
@@ -1017,43 +1023,13 @@ async function saveConfigAndApply() {
   }
   setRestartInProgress(true);
   try {
-    const result = await nfqwsApply.apply(editor.value, config.revision);
+    const result = await nfqwsApply.apply(draft, config.revision);
     config = result.config;
     setRestartInProgress(false);
     await fetchStatus();
     toast(lifecycleMessage('restart'));
   } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setRestartInProgress(false); setBusy(false); }
-}
-async function formatConfigDraft() {
-  const editor = $('#nfqwsConfTextarea');
-  const button = $('#formatConfigButton');
-  if (!(editor instanceof HTMLTextAreaElement) || !(button instanceof HTMLButtonElement) || button.disabled) return;
-  button.disabled = true;
-  button.textContent = 'Оформляем…';
-  try {
-    const result = await nfqwsConfig.format(editor.value);
-    if (result.content === editor.value) {
-      toast('Форматирование не изменило черновик');
-      return;
-    }
-    editor.focus();
-    editor.setSelectionRange(0, editor.value.length);
-    const inserted = document.execCommand('insertText', false, result.content);
-    if (!inserted || editor.value !== result.content) {
-      editor.value = result.content;
-      editor.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    syncConfigLines();
-    syncConfigHighlight(editor);
-    renderConfigOutline();
-    toast('Черновик оформлен; конфигурация ещё не применена');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : 'Не удалось оформить черновик конфигурации', 'error');
-  } finally {
-    button.disabled = false;
-    button.textContent = 'Оформить';
-  }
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart') {
   if (busy) return;
@@ -1590,7 +1566,9 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     const refined = result.candidate.source === 'Уточнение blockcheck2';
     const card = document.createElement('article');
     card.className = `strategy-pick-result-row strategy-result-enter ${result.confirmed ? 'is-confirmed' : 'is-unconfirmed'}`;
-    const status = document.createElement('span'); status.className = 'strategy-pick-result-status'; status.setAttribute('aria-label', result.confirmed ? 'Подтверждена' : 'Не подтверждена'); status.textContent = result.confirmed ? '✓' : '×';
+    const status = document.createElement('span'); status.className = 'strategy-pick-result-status'; status.setAttribute('aria-label', result.confirmed ? 'Подтверждена' : 'Не подтверждена');
+    const statusIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); statusIcon.classList.add('strategy-pick-result-status-icon'); statusIcon.setAttribute('viewBox', '0 0 16 16'); statusIcon.setAttribute('aria-hidden', 'true');
+    const statusPath = document.createElementNS('http://www.w3.org/2000/svg', 'path'); statusPath.setAttribute('d', result.confirmed ? 'm3.25 8.25 3 3 6.5-6.5' : 'm4.5 4.5 7 7m0-7-7 7'); statusPath.setAttribute('fill', 'none'); statusPath.setAttribute('stroke', 'currentColor'); statusPath.setAttribute('stroke-width', result.confirmed ? '1.8' : '1.6'); statusPath.setAttribute('stroke-linecap', 'round'); statusPath.setAttribute('stroke-linejoin', 'round'); statusIcon.append(statusPath); status.append(statusIcon);
     const body = document.createElement('div'); body.className = 'strategy-pick-result-main';
     const heading = document.createElement('h4'); heading.className = 'strategy-pick-result-title';
     heading.textContent = `${result.candidate.name}${refined ? ' · уточнённый вариант' : ''}`;
@@ -1605,10 +1583,11 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     const meta = document.createElement('p'); meta.className = 'strategy-pick-result-meta'; meta.textContent = `${result.candidate.source} · ${result.successes}/${result.attempts} успешных · ${result.elapsedMs} мс`;
     const detail = document.createElement('p'); detail.className = 'strategy-pick-result-detail'; detail.textContent = result.detail;
     const details = document.createElement('details'); details.className = 'strategy-pick-steps';
-    const detailsSummary = document.createElement('summary'); detailsSummary.textContent = `Параметры стратегии · ${result.candidate.steps.length} шаг.`;
+    const detailsSummary = document.createElement('summary'); detailsSummary.textContent = `Подробности и параметры · ${result.candidate.steps.length} шаг.`;
     const args = document.createElement('code'); args.textContent = result.candidate.steps.join('\n');
     const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200'; copy.textContent = 'Копировать'; copy.dataset.actionClick = 'copyStrategyResult'; copy.dataset.args = JSON.stringify([result.candidate.steps.join('\n'), { source: 'self' }]);
-    details.append(detailsSummary, args, copy); body.append(headingLine, meta, detail, details); card.append(status, body);
+    const applyBase = document.createElement('button'); applyBase.type = 'button'; applyBase.className = 'strategy-copy-button mt-2 ml-2 rounded-md border border-emerald-700/70 px-2.5 py-1 text-[11px] font-semibold text-emerald-200 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50'; applyBase.textContent = operation.state === 'complete' ? 'Применить в NFQWS_BASE_ARGS' : 'Доступно после завершения'; applyBase.disabled = operation.state !== 'complete'; applyBase.dataset.actionClick = 'applyStrategyPickToBaseArgs'; applyBase.dataset.args = JSON.stringify([String(index), operation.id]);
+    details.append(detailsSummary, args, copy, applyBase); body.append(headingLine, meta, detail, details); card.append(status, body);
     if (operation.state === 'complete' && result.confirmed) {
       const preview = document.createElement('button');
       preview.type = 'button';
@@ -1671,6 +1650,41 @@ async function previewStrategyPick(candidateIndex: string) {
     panel?.classList.add('hidden');
     toast(error instanceof Error ? error.message : 'Предпросмотр стратегии недоступен.', 'error');
   }
+}
+
+async function applyStrategyPickToBaseArgs(candidateIndex: string, operationId: string) {
+  const index = Number(candidateIndex);
+  const editor = $('#nfqwsConfTextarea');
+  if (busy) return;
+  if (!config || !(editor instanceof HTMLTextAreaElement)) return toast('Сначала загрузите конфигурацию с роутера.', 'error');
+  if (editor.value !== config.content) return toast('Сначала примените или отмените черновик конфигурации.', 'error');
+  if (!Number.isInteger(index) || index < 0 || !operationId) return toast('Выберите результат завершённого подбора.', 'error');
+  setBusy(true);
+  let proposed: string | null = null;
+  try {
+    const operation = await nfqwsDiagnostics.strategyStatus(operationId);
+    if (operation.state !== 'complete') throw new Error('Применить можно только после завершения подбора.');
+    const result = operation.results[index];
+    if (!result) throw new Error('Результат стратегии больше недоступен. Запустите подбор повторно.');
+    const baseArgs = configAssignmentValue(config.content, 'NFQWS_BASE_ARGS');
+    const nextBaseArgs = replaceBaseDesyncSteps(baseArgs, result.candidate.steps);
+    if (!window.confirm([
+      `Заменить стратегические параметры NFQWS_BASE_ARGS на «${result.candidate.name}»?`,
+      result.confirmed ? 'Стратегия подтверждена проверкой.' : 'ВНИМАНИЕ: стратегия не подтверждена и может не открыть сайты.',
+      'Базовые параметры действуют для всех сайтов. Конфигурация будет проверена и nfqws2 перезапустится.'
+    ].join('\n\n'))) return;
+    const before = editor.value;
+    const preview = await nfqwsConfig.preview(before, 'NFQWS_BASE_ARGS', nextBaseArgs);
+    if (editor.value !== before) throw new Error('Конфигурация изменилась во время подготовки; повторите действие.');
+    proposed = preview.content;
+    editor.value = preview.content;
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось подготовить базовую стратегию.', 'error');
+  } finally {
+    setBusy(false);
+  }
+  if (proposed) await saveConfigAndApply();
 }
 
 async function previewFreezeStrategy(operationId: string, resultIndex: string) {
@@ -2285,6 +2299,7 @@ function bindPrototypeActions() {
     },
     copyStrategyResult: (text: string, button: HTMLButtonElement) => copyStrategyText(text, button),
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
+    applyStrategyPickToBaseArgs: (index: string, operationId: string) => void applyStrategyPickToBaseArgs(index, operationId),
     previewFreezeStrategy: (operationId: string, index: string) => void previewFreezeStrategy(operationId, index),
     applyFreezeStrategyOneClick: (operationId: string, index: string) => void applyFreezeStrategyOneClick(operationId, index),
     applyStrategyPick: (source: string, operationId: string, index: string, revision: string) => void applyStrategyPick(source, operationId, index, revision),
@@ -2294,7 +2309,6 @@ function bindPrototypeActions() {
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(serviceControlPresentation(status?.service.state).action),
     applyConfigAndRestart: () => void saveConfigAndApply(),
-    formatConfigDraft: () => void formatConfigDraft(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string) => void navigator.clipboard.writeText(String(value)).then(() => toast('Фрагмент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')),

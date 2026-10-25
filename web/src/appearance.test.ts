@@ -10,9 +10,19 @@ describe('appearance settings', () => {
   it('persists a user disabled timestamp reminder without changing theme or layout', () => {
     let value = '';
     const storage = { setItem: (_key: string, next: string) => { value = next; } } as unknown as Storage;
-    saveAppearance(storage, { theme: 'neon', layout: 'compact', accent: 'cyan', statusBar: 'expanded', remindWindowsTcpTimestamps: false });
-    expect(JSON.parse(value)).toEqual({ theme: 'neon', layout: 'compact', accent: 'cyan', statusBar: 'expanded', remindWindowsTcpTimestamps: false });
-    expect(loadAppearance({ getItem: () => value } as unknown as Storage)).toEqual({ theme: 'neon', layout: 'compact', accent: 'cyan', statusBar: 'expanded', remindWindowsTcpTimestamps: false });
+    saveAppearance(storage, { theme: 'neon', layout: 'compact', accent: 'cyan', statusBar: 'standard', remindWindowsTcpTimestamps: false });
+    expect(JSON.parse(value)).toEqual({ theme: 'neon', layout: 'compact', accent: 'cyan', statusBar: 'standard', remindWindowsTcpTimestamps: false });
+    expect(loadAppearance({ getItem: () => value } as unknown as Storage)).toEqual({ theme: 'neon', layout: 'compact', accent: 'cyan', statusBar: 'standard', remindWindowsTcpTimestamps: false });
+  });
+
+  it('normalizes the removed expanded mode and retains supported status bar layouts', () => {
+    const storage = { getItem: () => JSON.stringify({ theme: 'dark', layout: 'standard', statusBar: 'expanded' }) } as unknown as Storage;
+    expect(loadAppearance(storage).statusBar).toBe('standard');
+    for (const mode of ['minimal', 'compact', 'stacked', 'reverse'] as const) {
+      let saved = '';
+      saveAppearance({ setItem: (_key: string, value: string) => { saved = value; } } as unknown as Storage, { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: mode, remindWindowsTcpTimestamps: true });
+      expect(loadAppearance({ getItem: () => saved } as unknown as Storage).statusBar).toBe(mode);
+    }
   });
 
   it('falls back to safe presets when stored accent and layout values are unknown', () => {
@@ -22,7 +32,7 @@ describe('appearance settings', () => {
 
   it('applies the theme, accent, status bar and layout to the root element', () => {
     const root = { dataset: {} } as unknown as HTMLElement;
-    applyAppearance({ theme: 'light', layout: 'tiles', accent: 'amber', statusBar: 'minimal', remindWindowsTcpTimestamps: true }, root);
-    expect(root.dataset).toEqual({ theme: 'light', layout: 'tiles', accent: 'amber', statusBar: 'minimal' });
+    applyAppearance({ theme: 'light', layout: 'tiles', accent: 'amber', statusBar: 'standard', remindWindowsTcpTimestamps: true }, root);
+    expect(root.dataset).toEqual({ theme: 'light', layout: 'tiles', accent: 'amber', statusBar: 'standard' });
   });
 });

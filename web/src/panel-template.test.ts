@@ -32,6 +32,14 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain("if (section === 'scripts') void loadLuaScripts()");
     expect(panelSource).toContain("button.setAttribute('aria-pressed', String(selected))");
     expect(panelStyles).toContain('.config-subtab-active');
+    const configSection = template.slice(template.indexOf('id="tabContent-conf"'), template.indexOf('id="tabContent-lists"'));
+    expect(configSection).not.toContain('formatConfigButton');
+    expect(configSection).not.toContain('Оформить');
+    expect(template).toContain('overflow-y-auto p-4 lg:p-6');
+    expect(configSection).toContain('mobile-code-editor flex h-[740px] min-w-0 bg-[#060a12] font-mono text-[14px] leading-[1.68]');
+    expect(configSection).toContain('line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3');
+    expect(configSection).toContain('conf-syntax-highlight absolute inset-0 m-0 overflow-hidden py-4 px-5 font-mono leading-[1.68]');
+    expect(configSection).toContain('conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono');
   });
 
   it('shows the six backend-discovered Lua scripts in a dedicated read-only section', () => {
@@ -58,6 +66,14 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('gutter.style.maxHeight = viewportHeight');
     expect(panelSource).toContain('field.style.maxHeight = viewportHeight');
     expect(panelStyles).toContain('.config-argument-line-numbers');
+  });
+
+  it('validates and applies the same immutable configuration draft', () => {
+    const apply = panelSource.slice(panelSource.indexOf('async function saveConfigAndApply()'), panelSource.indexOf('async function serviceAction('));
+    expect(apply).toContain('const draft = editor.value;');
+    expect(apply).toContain('nfqwsConfig.validate(draft)');
+    expect(apply).toContain('if (editor.value !== draft)');
+    expect(apply).toContain('nfqwsApply.apply(draft, config.revision)');
   });
 
   it('uses normal case for left navigation group headings', () => {
@@ -201,8 +217,9 @@ describe('TSX panel without authentication', () => {
     const diagnostic16k = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-monitor"'));
     expect(picker).toContain('flex flex-col lg:flex-row');
     expect(picker).toContain('strategy-settings-grid');
-    expect(panelStyles).toContain('.strategy-settings-grid { max-width: 980px; }');
-    expect(panelStyles).toContain('.strategy-settings-grid > div { min-width:0; display:grid;');
+    expect(panelStyles).toContain('.strategy-settings-grid { max-width: 980px; gap:.15rem; }');
+    expect(panelStyles).toContain('.strategy-settings-grid > div.strategy-setting-row { min-width:0; display:grid;');
+    expect(panelStyles).toContain('border:0; background:transparent;');
     expect(picker).not.toContain('md:grid-cols-5');
     expect(picker).toContain('id="strategyRepeatsSelect"');
     expect(picker).toContain('id="strategyStopAfterFirst"');
@@ -475,7 +492,10 @@ describe('TSX panel without authentication', () => {
     expect(appSource).toContain('<label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"}');
     expect(appSource).toContain('name={"appearanceLayout"} value={value}');
     expect(appSource).toContain('name={"appearanceAccent"} value={value}');
-    expect(appSource).toContain('name={"appearanceStatusBar"} value={"expanded"}');
+    expect(appSource).toContain('name={"appearanceStatusBar"} value={value}');
+    for (const mode of ['standard', 'minimal', 'compact', 'stacked', 'reverse']) expect(appSource).toContain(`'${mode}'`);
+    expect(appSource).not.toContain('>Расширенный</strong>');
+    expect(appSource).toContain('Статус-бар');
     expect(panelStyles).toContain('.appearance-choice input[type="radio"], .appearance-layout-choice input[type="radio"]');
     expect(panelStyles).toContain('position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer;');
     expect(panelStyles).toContain('.appearance-choice:has(input:focus-visible)');
@@ -578,6 +598,12 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('result.successes}/${result.attempts} успешных');
     expect(panelStyles).toContain('.strategy-pick-result-badge.is-confirmed');
     expect(panelStyles).toContain('.strategy-pick-result-badge.is-unconfirmed');
+    expect(panelSource).toContain('strategy-pick-result-status-icon');
+    expect(panelStyles).toContain('.strategy-pick-result-status-icon');
+    expect(panelSource).toContain("applyBase.dataset.actionClick = 'applyStrategyPickToBaseArgs'");
+    expect(panelSource).toContain('Применить в NFQWS_BASE_ARGS');
+    expect(panelSource).toContain('Стратегия подтверждена проверкой.');
+    expect(panelSource).toContain('Базовые параметры действуют для всех сайтов.');
   });
 
   it('lets long mobile navigation labels wrap within their grid cells', () => {
@@ -653,11 +679,11 @@ describe('TSX panel without authentication', () => {
   });
 
   it('validates the config in Rust before applying and confirms unresolved shell values', () => {
-    expect(panelSource).toContain('await nfqwsConfig.validate(editor.value)');
+    expect(panelSource).toContain('await nfqwsConfig.validate(draft)');
     expect(panelSource).toContain('if (!validation.valid)');
     expect(panelSource).toContain('validation.checks.installedBinary');
     expect(panelSource).toContain('Проверка установленным бинарником не выполнялась');
-    expect(panelSource.indexOf('await nfqwsConfig.validate(editor.value)')).toBeLessThan(panelSource.indexOf('nfqwsApply.apply(editor.value, config.revision)'));
+    expect(panelSource.indexOf('await nfqwsConfig.validate(draft)')).toBeLessThan(panelSource.indexOf('nfqwsApply.apply(draft, config.revision)'));
   });
 
   it('keeps separate entry points for UI and core releases without in-modal switching', () => {

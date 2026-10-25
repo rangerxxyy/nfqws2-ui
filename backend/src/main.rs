@@ -6909,7 +6909,7 @@ async fn put_ui_appearance(
         )
         || !matches!(
             settings.status_bar.as_str(),
-            "minimal" | "standard" | "expanded"
+            "standard" | "minimal" | "compact" | "stacked" | "reverse"
         )
     {
         return error(StatusCode::BAD_REQUEST, "Недопустимые параметры оформления");
@@ -7858,13 +7858,13 @@ mod tests {
             "theme": "light",
             "layout": "tiles",
             "accent": "cyan",
-            "statusBar": "minimal",
+            "statusBar": "stacked",
             "remindWindowsTcpTimestamps": false
         }))
         .unwrap();
         assert_eq!(settings.layout, "tiles");
         assert_eq!(settings.accent, "cyan");
-        assert_eq!(settings.status_bar, "minimal");
+        assert_eq!(settings.status_bar, "stacked");
         assert!(!settings.remind_windows_tcp_timestamps);
     }
 

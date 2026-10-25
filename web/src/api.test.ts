@@ -19,10 +19,10 @@ describe('API client used by the source-based panel', () => {
     });
   });
 
-  it('persists the selected appearance layout, accent and status-bar mode on the router', async () => {
+  it('persists the selected appearance layout and palette with the standard status bar', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const settings = { theme: 'light', layout: 'tiles', accent: 'cyan', statusBar: 'minimal', remindWindowsTcpTimestamps: true } as const;
+    const settings = { theme: 'light', layout: 'tiles', accent: 'cyan', statusBar: 'stacked', remindWindowsTcpTimestamps: true } as const;
     await nfqwsAppearance.save(settings);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/ui/appearance');
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual(settings);

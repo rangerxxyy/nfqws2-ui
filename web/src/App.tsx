@@ -437,7 +437,6 @@ export default function App() {
               {"Скрипты"}
             </button>
             <div className={"ml-auto flex flex-wrap items-center gap-2"}>
-              <button id={"formatConfigButton"} data-action-click={"formatConfigDraft"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"Оформить"}</button>
               <button data-action-click={"copyConfigText"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"Копировать"}</button>
               <button data-action-click={"applyConfigAndRestart"} className={"rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all hover:bg-blue-500 active:scale-95"}>{"Применить конфигурацию"}</button>
             </div>
@@ -964,7 +963,7 @@ export default function App() {
         </section>
         <section id={"tabContent-autotune"} className={"hidden view-animate space-y-5"}>
           {"\n        \n        "}
-          <div className={"ui-card rounded-2xl p-6 shadow-xl"}>
+          <div className={"ui-card rounded-2xl p-4 sm:p-5 shadow-xl"}>
             {"\n          "}
             <div className={"flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800"}>
               {"\n            "}
@@ -1006,9 +1005,9 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"grid grid-cols-1 gap-2.5 mt-4 strategy-settings-grid"}>
+            <div className={"grid grid-cols-1 gap-1 mt-3 strategy-settings-grid"}>
               {"\n            "}
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5"}>
+              <div className={"strategy-setting-row"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
                   {"Транспорт"}
@@ -1021,33 +1020,35 @@ export default function App() {
                 {"\n            "}
               </div>
 
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5"}>
+              <div className={"strategy-setting-row"}>
                 <label htmlFor={"strategyRepeatsSelect"} className={"block text-xs font-mono text-slate-400"}>Повторов</label>
                 <select id={"strategyRepeatsSelect"} defaultValue={"3"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
                   <option value={"2"}>2 повтора</option><option value={"3"}>3 повтора</option><option value={"4"}>4 повтора</option><option value={"5"}>5 повторов</option>
                 </select>
-                <label htmlFor={"strategyStopAfterFirst"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-300"}>
-                  <input id={"strategyStopAfterFirst"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
-                  <span>Автоматически остановиться на первой подтверждённой стратегии</span>
-                </label>
-                <label htmlFor={"strategyRefineLighter"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
-                  <input id={"strategyRefineLighter"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
-                  <span>Искать более лёгкий вариант даже после нахождения рабочего
-                    <span className={"mt-1 block text-[11px] font-normal leading-4 text-slate-400"}>Дополнительно проверит параметры fake-шага по одной группе. Займёт до 5 минут; исходный результат останется доступен.</span>
-                  </span>
-                </label>
-                <label htmlFor={"strategyIncludeOtherHistory"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
-                  <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
-                  <span>Проверять подтверждённые стратегии с других сайтов</span>
-                </label>
-                <label htmlFor={"strategyIncludeCommunity"} className={"mt-3 flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
-                  <input id={"strategyIncludeCommunity"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
-                  <span>Стратегии сообщества для ASN провайдера</span>
-                </label>
-                <p className={"mt-1 ml-5 text-[11px] leading-4 text-slate-400"}>Совместимые варианты будут загружены из каталога и проверены отдельными реальными запросами.</p>
+                <div className={"strategy-option-grid"}>
+                  <label htmlFor={"strategyStopAfterFirst"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-300"}>
+                    <input id={"strategyStopAfterFirst"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
+                    <span>Остановиться на первой подтверждённой стратегии</span>
+                  </label>
+                  <label htmlFor={"strategyRefineLighter"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                    <input id={"strategyRefineLighter"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
+                    <span>Искать более лёгкий вариант после подтверждения
+                      <span className={"mt-1 block text-[11px] font-normal leading-4 text-slate-400"}>Проверит варианты fake-шага отдельно, до 5 минут.</span>
+                    </span>
+                  </label>
+                  <label htmlFor={"strategyIncludeOtherHistory"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                    <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
+                    <span>Стратегии из истории других сайтов</span>
+                  </label>
+                  <label htmlFor={"strategyIncludeCommunity"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                    <input id={"strategyIncludeCommunity"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
+                    <span>Стратегии сообщества для ASN провайдера</span>
+                  </label>
+                  <p className={"strategy-option-help"}>Подходящие варианты будут загружены из каталога и проверены отдельными запросами.</p>
+                </div>
               </div>
               {"\n\n            "}
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5"}>
+              <div className={"strategy-setting-row"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
                   {"Домен или публичный IPv4"}
@@ -1057,7 +1058,7 @@ export default function App() {
                 {"\n            "}
               </div>
               {"\n\n            "}
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5 strategy-mode-tile"}>
+              <div className={"strategy-setting-row strategy-mode-tile"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
                   {"Режим тестирования"}
@@ -1076,7 +1077,7 @@ export default function App() {
                 </div>
                 {"\n            "}
               </div>
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5 flex flex-col justify-between strategy-progress-card"}>
+              <div className={"strategy-progress-card"}>
                 {"\n              "}
                 <div className={"flex items-center justify-between text-xs font-mono"}>
                   {"\n                "}
@@ -1254,10 +1255,8 @@ export default function App() {
             <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Акцентная палитра</h2><p className={"mt-1 text-xs text-slate-400"}>Меняет цвет выделения, активного меню и основных кнопок.</p><div className={"mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3"}>
               {[["blue", "Синий (стандартная)", "#3b82f6"], ["cyan", "Океан", "#06b6d4"], ["emerald", "Изумруд", "#10b981"], ["amber", "Янтарь", "#f59e0b"], ["rose", "Рубин", "#f43f5e"], ["violet", "Аметист", "#a855f7"]].map(([value, label, color]) => <label key={value} className={"appearance-accent-choice"}><input type={"radio"} name={"appearanceAccent"} value={value} data-action-change={"setAppearanceAccent"} data-value-source={"value"} /><span className={"appearance-accent-swatch"} style={{ backgroundColor: color }}></span><strong>{label}</strong></label>)}
             </div></div>
-            <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Статус-бар</h2><p className={"mt-1 text-xs text-slate-400"}>Выберите объём системной информации в верхней панели.</p><div className={"mt-3 grid gap-2 sm:grid-cols-3"}>
-              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceStatusBar"} value={"minimal"} data-action-change={"setAppearanceStatusBar"} data-value-source={"value"} /><span><strong>Минималистичный</strong><small>Состояние и кнопки управления</small></span></label>
-              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceStatusBar"} value={"standard"} data-action-change={"setAppearanceStatusBar"} data-value-source={"value"} /><span><strong>Стандартный</strong><small>Состояние, RAM и CPU</small></span></label>
-              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceStatusBar"} value={"expanded"} data-action-change={"setAppearanceStatusBar"} data-value-source={"value"} /><span><strong>Расширенный</strong><small>Метрики и сведения о проверке</small></span></label>
+            <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Статус-бар</h2><p className={"mt-1 text-xs text-slate-400"}>Пять вариантов размещения состояния службы, управления и системных метрик.</p><div className={"mt-3 grid gap-2 sm:grid-cols-2"}>
+              {[['standard', 'Классический (стандартный)', 'Состояние, управление и RAM / CPU в одну строку'], ['minimal', 'Минималистичный', 'Состояние и кнопки управления'], ['compact', 'Компактный с иконками', 'Те же данные при меньших отступах'], ['stacked', 'Двухрядный', 'Метрики переходят на отдельный ряд'], ['reverse', 'Обратный порядок', 'Метрики, управление и статус справа налево']].map(([value, label, description]) => <label key={value} className={`appearance-layout-choice appearance-status-${value}`}><input type={"radio"} name={"appearanceStatusBar"} value={value} data-action-change={"setAppearanceStatusBar"} data-value-source={"value"} /><span className={"appearance-layout-preview status-layout-preview"} aria-hidden={"true"}><i></i><i></i><i></i><i></i></span><span><strong>{label}</strong><small>{description}</small></span></label>)}
             </div></div>
             <label className={"flex cursor-pointer items-start gap-3 border-t border-slate-800 pt-4 text-sm text-slate-200"}><input type={"checkbox"} data-appearance-remind-timestamps={"true"} data-action-change={"setAppearanceTimestampReminder"} data-value-source={"checked"} className={"mt-0.5 accent-blue-500"} /><span><strong>Напоминать о TCP timestamps в Windows</strong><small className={"mt-1 block text-xs text-slate-400"}>Показывать предупреждение, если стратегия использует только TCP timestamps. При необходимости включите их командой <code>netsh interface tcp set global timestamps=enabled</code>.</small></span></label>
             <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Расположение меню</h2><p className={"mt-1 text-xs text-slate-400"}>Варианты расположения всей навигации. Все разделы остаются доступны, кроме группы диагностики в режиме «Компактный».</p><div className={"mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"}>

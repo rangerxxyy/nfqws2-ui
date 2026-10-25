@@ -1,7 +1,7 @@
 export type UiTheme = 'dark' | 'light' | 'neon';
 export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles';
 export type UiAccent = 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet';
-export type UiStatusBar = 'minimal' | 'standard' | 'expanded';
+export type UiStatusBar = 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse';
 export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean };
 
 const STORAGE_KEY = 'nfqws2-ui-appearance-v1';
@@ -24,7 +24,7 @@ export function loadAppearance(storage: Storage | null): AppearanceSettings {
     theme: value.theme === 'light' || value.theme === 'neon' ? value.theme : 'dark',
     layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles'].includes(value.layout ?? '') ? value.layout as UiLayout : 'standard',
     accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(value.accent ?? '') ? value.accent as UiAccent : 'blue',
-    statusBar: value.statusBar === 'minimal' || value.statusBar === 'expanded' ? value.statusBar : 'standard',
+    statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(value.statusBar ?? '') ? value.statusBar as UiStatusBar : 'standard',
     remindWindowsTcpTimestamps: value.remindWindowsTcpTimestamps !== false,
   };
 }
@@ -34,7 +34,7 @@ export function saveAppearance(storage: Storage | null, settings: AppearanceSett
     theme: settings.theme === 'light' || settings.theme === 'neon' ? settings.theme : 'dark',
     layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles'].includes(settings.layout) ? settings.layout : 'standard',
     accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(settings.accent) ? settings.accent : 'blue',
-    statusBar: settings.statusBar === 'minimal' || settings.statusBar === 'expanded' ? settings.statusBar : 'standard',
+    statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(settings.statusBar) ? settings.statusBar : 'standard',
     remindWindowsTcpTimestamps: settings.remindWindowsTcpTimestamps !== false,
   };
   try { storage?.setItem(STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Appearance still applies for this session. */ }
