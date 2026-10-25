@@ -722,7 +722,7 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('documents the panel-specific terminal command instead of zemidala aliases', () => {
     expect(appSource).toContain('nfqws2-ui-ctl update --check');
-    expect(appSource).toContain('nfqws2-ui-ctl update v1.0.0 --force');
+    expect(appSource).toContain('nfqws2-ui-ctl update v1.0.1 --force');
     expect(appSource).toContain('nfqws2-ui-ctl status');
     expect(appSource).not.toContain('nfqws-ui-setup');
     expect(appSource).not.toContain('nfqws-ui update');
@@ -764,6 +764,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).not.toContain('authPassword');
     expect(appSource).toContain('id={"panelAuthPassword"}');
     expect(template).not.toContain('7194028410:AAH8x9kLmP2qW_nfqws2_router_bot');
+  });
+
+  it('keeps remember-me duration visible and removes the obsolete password minimum', () => {
+    expect(entrySource).toContain('id="rememberDays"');
+    expect(entrySource).toContain('disabled={!remember}');
+    expect(entrySource).toContain('<option value="0">Никогда</option>');
+    expect(appSource).not.toContain('minLength={12}');
+    expect(appSource).not.toContain('Не менее 12 символов');
+    expect(appSource).toContain('даже из одного символа');
   });
 
   it('keeps list deduplication as a real local draft action', () => {

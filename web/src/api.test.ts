@@ -2,6 +2,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('notifies the app when an authenticated API request returns 401', async () => {
+    const target = new EventTarget();
+    let expired = false;
+    target.addEventListener('nfqws-auth-expired', () => { expired = true; });
+    vi.stubGlobal('window', target);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"Сеанс истёк"}', { status: 401 })));
+
+    await expect(api('/api/nfqws2/config')).rejects.toMatchObject({ status: 401 });
+
+    expect(expired).toBe(true);
+  });
+
+  it('does not treat a rejected login password as an expired panel session', async () => {
+    const target = new EventTarget();
+    let expired = false;
+    target.addEventListener('nfqws-auth-expired', () => { expired = true; });
+    vi.stubGlobal('window', target);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"Неверный пароль."}', { status: 401 })));
+
+    await expect(nfqwsAuth.login('wrong password', false)).rejects.toMatchObject({ status: 401 });
+
+    expect(expired).toBe(false);
+  });
+
   it('sends login credentials and the remember-me choice to the Rust auth API', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"success":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

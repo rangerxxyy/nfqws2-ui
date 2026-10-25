@@ -110,6 +110,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   const response = await fetch(path, { ...init, headers, credentials: 'same-origin' });
+  if (response.status === 401 && !path.startsWith('/api/auth/') && typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('nfqws-auth-expired'));
+  }
   return await readApiResponse(response) as T;
 }
 

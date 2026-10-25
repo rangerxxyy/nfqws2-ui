@@ -493,8 +493,8 @@ impl AuthManager {
 use std::os::unix::fs::PermissionsExt;
 
 fn validate_password(password: &str) -> Result<(), String> {
-    if password.chars().count() < 12 {
-        return Err("Пароль должен содержать не менее 12 символов.".into());
+    if password.is_empty() {
+        return Err("Пароль не должен быть пустым.".into());
     }
     if password.len() > MAX_PASSWORD_BYTES {
         return Err("Пароль слишком длинный.".into());
@@ -543,10 +543,11 @@ mod tests {
     use axum::{Router, body::Body, routing::get};
     use tower::ServiceExt;
     #[test]
-    fn password_policy_requires_twelve_characters_and_caps_input_size() {
+    fn password_policy_accepts_short_passwords_and_caps_input_size() {
         assert!(validate_password("correct horse battery").is_ok());
-        assert!(validate_password("short").is_err());
-        assert!(validate_password("парольпарол").is_err());
+        assert!(validate_password("1").is_ok());
+        assert!(validate_password("short").is_ok());
+        assert!(validate_password("").is_err());
         assert!(validate_password("парольпароль").is_ok());
         assert!(validate_password(&"x".repeat(MAX_PASSWORD_BYTES + 1)).is_err());
     }
