@@ -9599,6 +9599,17 @@ async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
         .into_response()
 }
 
+fn validate_profile_config(content: &str) -> Result<(), String> {
+    let diagnostics = validate_nfqws2_config(content)?;
+    if let Some(diagnostic) = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
+        return Err(format!("{}: {}", diagnostic.code, diagnostic.message));
+    }
+    Ok(())
+}
+
 async fn get_profile(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -9619,7 +9630,7 @@ async fn create_profile(
             "Конфигурация профиля превышает лимит 512 КиБ",
         );
     }
-    if let Err(message) = validate_nfqws2_config(&request.content) {
+    if let Err(message) = validate_profile_config(&request.content) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, message);
     }
     match nfqws2_ui::profiles::create(
@@ -9644,7 +9655,7 @@ async fn update_profile(
             "Конфигурация профиля превышает лимит 512 КиБ",
         );
     }
-    if let Err(message) = validate_nfqws2_config(&request.content) {
+    if let Err(message) = validate_profile_config(&request.content) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, message);
     }
     match nfqws2_ui::profiles::update(
@@ -9677,6 +9688,9 @@ async fn activate_profile(
         Ok(content) => content,
         Err(message) => return error(StatusCode::NOT_FOUND, message),
     };
+    if let Err(message) = validate_profile_config(&content) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    }
     let Some(path) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
@@ -11004,6 +11018,64 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_config_validation_rejects_fatal_diagnostics() {
+        assert!(validate_profile_config("NFQWS_ARGS=\"--new\"\n").is_err());
+        assert!(validate_profile_config("NFQWS_ARGS=\"--filter-tcp=443\"\n").is_ok());
+    }
+
+    #[tokio::test]
+    async fn profile_api_rejects_fatal_config_diagnostics_on_create_update_and_activation() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        let invalid_id =
+            nfqws2_ui::profiles::create(&data_dir, "Legacy invalid", "NFQWS_ARGS=\"--new\"\n", 1)
+                .unwrap()
+                .id;
+        let app = api_router(test_state(data_dir.clone()), dir.path().join("web"));
+        let invalid_body = serde_json::json!({"name":"Bad","content":"NFQWS_ARGS=\"--new\"\n"});
+
+        let create = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/profiles")
+                    .header("content-type", "application/json")
+                    .body(Body::from(invalid_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let update = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/profiles/{invalid_id}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(invalid_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(update.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let activate = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/profiles/{invalid_id}/activate"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(activate.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
 
     #[test]
     fn support_report_masks_site_names_by_default_and_sanitizes_visible_names() {
