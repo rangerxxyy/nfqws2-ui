@@ -11,13 +11,14 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
 import { strategyNeedsWindowsTcpTimestamps } from './strategy-capability';
+import { mergeAsnPrefixes, parseAsnInput } from './asn-prefixes';
 import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
@@ -1138,6 +1139,53 @@ async function loadList(id: NfqwsListId) {
     if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !summary.writable || busy;
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось прочитать список', 'error');
+  }
+}
+
+async function fetchAsnPrefixes() {
+  const input = $('#asnNumber');
+  const button = $('#fetchAsnPrefixesButton');
+  const result = $('#asnResultBox');
+  if (!(input instanceof HTMLInputElement) || !result) return;
+  const status = result.querySelector('[role="status"]') ?? result;
+  const showResult = (message: string, isError = false) => {
+    status.textContent = message;
+    result.classList.toggle('text-rose-300', isError);
+    result.classList.toggle('text-slate-400', !isError);
+  };
+  const asn = parseAsnInput(input.value);
+  if (asn === null) {
+    showResult('Введите корректный номер ASN, например AS15169.', true);
+    return;
+  }
+  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Загружаю префиксы…'; }
+  showResult(`Запрашиваю анонсируемые IPv4-префиксы AS${asn} в RIPEstat…`);
+  try {
+    const response = await nfqwsNetwork.prefixes(asn);
+    const inventory = await nfqwsLists.index();
+    const summary = inventory.files.find((file) => file.id === 'ipset.list');
+    if (!summary?.writable) throw new Error('Список ipset.list отсутствует или недоступен для записи.');
+    const editor = activeListId === 'ipset.list' ? $('#listEditorTextarea') : null;
+    if (activeList?.id === 'ipset.list' && editor instanceof HTMLTextAreaElement && editor.value !== activeList.content) {
+      throw new Error('Сначала сохраните или отмените несохранённые изменения ipset.list.');
+    }
+    const current = await nfqwsLists.get('ipset.list');
+    const merged = mergeAsnPrefixes(current.content, response.prefixes);
+    if (merged.added === 0) {
+      showResult(`AS${asn}: получено ${response.prefixes.length} префиксов; все уже есть в ipset.list.`);
+      return;
+    }
+    const saved = await nfqwsLists.save('ipset.list', merged.content, current.revision);
+    if (activeListId === 'ipset.list' && activeList) {
+      activeList = saved;
+      if (editor instanceof HTMLTextAreaElement) editor.value = saved.content;
+      syncListLineNumbers(editor instanceof HTMLTextAreaElement ? editor : undefined);
+    }
+    showResult(`AS${asn}: получено ${response.prefixes.length}, добавлено ${merged.added}; уже было ${merged.alreadyPresent}. ipset.list сохранён.`);
+  } catch (error) {
+    showResult(error instanceof Error ? error.message : 'Не удалось загрузить префиксы ASN.', true);
+  } finally {
+    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Загрузить IPv4-подсети и добавить в ipset.list'; }
   }
 }
 
@@ -2336,7 +2384,7 @@ async function cancelFreezeScan() {
   finally { if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.textContent = 'Остановить'; } }
 }
 
-export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','applyCommunityPreset','fetchAsnPrefixes','pushBackupToNas','exportFullBackup','excludeBrokenDomain'] as const;
+export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','applyCommunityPreset','pushBackupToNas','exportFullBackup','excludeBrokenDomain'] as const;
 
 function renderReleases() {
   const list = $('#updateVersionsList');
@@ -2574,6 +2622,7 @@ function bindPrototypeActions() {
     setAppearanceTimestampReminder: (remindWindowsTcpTimestamps: boolean) => updateAppearance({ remindWindowsTcpTimestamps }),
     checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
+    fetchAsnPrefixes: () => void fetchAsnPrefixes(),
     checkMonitoringSite: (host: string) => void runMonitoring(host),
     saveMonitoringSettings: () => void saveMonitoringSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить расписание.', 'error')),
     toggleMonitoringCustom: (select: HTMLSelectElement) => { $('#monitoringCustom')?.classList.toggle('hidden', select.value !== 'custom'); $('#monitoringCustom')?.classList.toggle('inline-flex', select.value === 'custom'); },

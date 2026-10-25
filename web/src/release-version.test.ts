@@ -4,20 +4,20 @@ import { describe, expect, it } from 'vitest';
 const backendManifest = readFileSync(new URL('../../backend/Cargo.toml', import.meta.url), 'utf8');
 const backendLock = readFileSync(new URL('../../backend/Cargo.lock', import.meta.url), 'utf8');
 const frontendManifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
-const releaseNotesUrl = new URL('../../RELEASE_v0.9.6.md', import.meta.url);
+const releaseNotesUrl = new URL('../../RELEASE_v0.9.7.md', import.meta.url);
 const releaseNotes = existsSync(releaseNotesUrl) ? readFileSync(releaseNotesUrl, 'utf8') : '';
 const releaseWorkflow = readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
 const changelog = readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8');
 
-describe('v0.9.6 release metadata', () => {
+describe('v0.9.7 release metadata', () => {
   it('keeps Rust, web, lockfile, and release notes on the same version', () => {
     const backendVersion = backendManifest.match(/^version = "([^"]+)"/m)?.[1];
     const lockedVersion = backendLock.match(/name = "nfqws2-ui"\s+version = "([^"]+)"/)?.[1];
 
-    expect(backendVersion).toBe('0.9.6');
+    expect(backendVersion).toBe('0.9.7');
     expect(frontendManifest.version).toBe(backendVersion);
     expect(lockedVersion).toBe(backendVersion);
-    expect(releaseNotes).toMatch(/^# v0\.9\.6\b/);
+    expect(releaseNotes).toMatch(/^# v0\.9\.7\b/);
   });
 
   it('uses the matching release note as the GitHub release body', () => {
@@ -26,6 +26,7 @@ describe('v0.9.6 release metadata', () => {
   });
 
   it('keeps the newest release first in the changelog', () => {
+    const v097 = changelog.indexOf('## [0.9.7]');
     const v096 = changelog.indexOf('## [0.9.6]');
     const v095 = changelog.indexOf('## [0.9.5]');
     const v094 = changelog.indexOf('## [0.9.4]');
@@ -35,6 +36,7 @@ describe('v0.9.6 release metadata', () => {
 
     expect(v095).toBeGreaterThanOrEqual(0);
     expect(v096).toBeGreaterThanOrEqual(0);
+    expect(v097).toBeLessThan(v096);
     expect(v095).toBeGreaterThan(v096);
     expect(v094).toBeGreaterThan(v095);
     expect(v093).toBeGreaterThan(v094);

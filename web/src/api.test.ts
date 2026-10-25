@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsAppearance, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('requests a bounded ASN prefix lookup from the Rust API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"asn":15169,"prefixes":["8.8.8.0/24"]}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsNetwork.prefixes(15169)).resolves.toEqual({ asn: 15169, prefixes: ['8.8.8.0/24'] });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/asn-prefixes');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ asn: 15169 });
+  });
+
   it('reports the beginning of a non-JSON success response instead of silently returning an empty object', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>upstream gateway failed</html>', { status: 200 })));
     const error = await api('/api/status').catch((value: unknown) => value);

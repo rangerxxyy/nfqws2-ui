@@ -98,7 +98,7 @@ describe('TSX panel without authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(14);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(13);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -255,6 +255,16 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('candidate_average_ms: Option<u64>');
   });
 
+  it('connects the ASN prefix generator to RIPEstat and the ipset list editor', () => {
+    expect(template).toContain('id="asnNumber"');
+    expect(template).toContain('data-action-click="fetchAsnPrefixes"');
+    expect(panelSource).toContain('nfqwsNetwork.prefixes(asn)');
+    expect(panelSource).toContain("nfqwsLists.save('ipset.list'");
+    expect(backendSource).toContain('/api/nfqws2/asn-prefixes');
+    expect(backendSource).toContain('fetch_ipv4_prefixes(request.asn)');
+    expect(panelSource).not.toContain("'fetchAsnPrefixes',");
+  });
+
   it('keeps the support report section out of the interface for now', () => {
     expect(template).not.toContain('id="navBtn-supportReport"');
     expect(template).not.toContain('id="tabContent-supportReport"');
@@ -294,6 +304,9 @@ describe('TSX panel without authentication', () => {
     const diagnostic16k = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-monitor"'));
     expect(picker).toContain('flex flex-col lg:flex-row');
     expect(picker).toContain('strategy-settings-grid');
+    expect(picker).toContain('strategy-target-transport-row');
+    expect(panelStyles).toContain('.strategy-target-transport-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(13rem,.62fr);');
+    expect(panelStyles).toContain('.autotune-settings-card { padding: .75rem 1rem; }');
     expect(panelStyles).toContain('.strategy-settings-grid { max-width: 980px; gap:.15rem; }');
     expect(panelStyles).toContain('.strategy-settings-grid > div.strategy-setting-row { min-width:0; display:grid;');
     expect(panelStyles).toContain('border:0; background:transparent;');
@@ -310,7 +323,7 @@ describe('TSX panel without authentication', () => {
     expect(picker).toContain('value="custom"');
     expect(picker).toContain('Расширенный · каталог blockcheck2');
     expect(panelSource).toContain("value.split(/\\r?\\n/)");
-    expect(picker).toContain('min-h-[220px] xl:h-[540px]');
+    expect(picker).toContain('min-h-[180px] 2xl:h-[360px]');
     expect(diagnostic16k).toContain('flex flex-col sm:flex-row');
     expect(diagnostic16k).toContain('min-w-0 flex-1');
     expect(diagnostic16k).toContain('id="freezeScanHostsInput"');

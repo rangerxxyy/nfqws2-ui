@@ -970,27 +970,27 @@ export default function App() {
           </div>
           <div id={"traceResultContainer"} className={"grid grid-cols-1 lg:grid-cols-2 gap-5"}></div>
         </section>
-        <section id={"tabContent-autotune"} className={"hidden view-animate space-y-5"}>
+        <section id={"tabContent-autotune"} className={"hidden view-animate space-y-3"}>
           {"\n        \n        "}
-          <div className={"ui-card rounded-2xl p-4 sm:p-5 shadow-xl"}>
+          <div className={"ui-card autotune-settings-card rounded-xl p-3 sm:p-4 shadow-lg"}>
             {"\n          "}
-            <div className={"flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800"}>
+            <div className={"flex flex-col lg:flex-row lg:items-center justify-between gap-2 pb-3 border-b border-slate-800"}>
               {"\n            "}
               <div>
                 {"\n              "}
-                <div className={"flex items-center gap-2.5"}>
+                <div className={"flex flex-wrap items-center gap-2"}>
                   {"\n                "}
-                  <span className={"px-2.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-mono font-bold"}>
+                  <span className={"px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[11px] font-mono font-bold"}>
                     {"Автоподбор стратегий"}
                   </span>
                   {"\n                "}
-                  <h2 className={"text-lg font-bold text-white"}>
+                  <h2 className={"text-base font-bold text-white"}>
                     {"Авто-подбор стратегии nfqws2"}
                   </h2>
                   {"\n              "}
                 </div>
                 {"\n              "}
-                <p className={"text-xs sm:text-sm text-slate-300 mt-1"}>
+                <p className={"text-xs text-slate-300 mt-1"}>
                     {"Проверяет реальные запросы отдельным экземпляром nfqws2 и временными правилами только для тестовых соединений. Основной конфиг автоматически не меняется."}
                 </p>
                 {"\n            "}
@@ -998,7 +998,7 @@ export default function App() {
               {"\n\n            "}
               <div className={"flex flex-wrap items-center gap-3"}>
                 {"\n              "}
-                <button id={"startScanBtn"} data-action-click={"startStrategyPick"} className={"px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all active:scale-95"}>
+                <button id={"startScanBtn"} data-action-click={"startStrategyPick"} className={"whitespace-nowrap px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center gap-2 shadow-md shadow-blue-600/20 transition-all active:scale-95"}>
                   {"\n                "}
                   <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                     <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2.2"} d={"M13 10V3L4 14h7v7l9-11h-7z"}></path>
@@ -1007,26 +1007,27 @@ export default function App() {
                   <span id={"scanBtnText"}>Подобрать стратегию</span>
                   {"\n              "}
                 </button>
-                <button id={"strategyPickCancel"} data-action-click={"cancelStrategyPick"} className={"hidden px-4 py-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 text-sm font-semibold"}>Остановить</button>
+                <button id={"strategyPickCancel"} data-action-click={"cancelStrategyPick"} className={"hidden px-3 py-2 rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-200 text-sm font-semibold"}>Остановить</button>
                 {"\n            "}
               </div>
               {"\n          "}
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"grid grid-cols-1 gap-1 mt-3 strategy-settings-grid"}>
+            <div className={"grid grid-cols-1 gap-1 mt-2 strategy-settings-grid"}>
               {"\n            "}
-              <div className={"strategy-setting-row"}>
-                {"\n              "}
-                <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Транспорт"}
+              <div className={"strategy-target-transport-row"}>
+                <label htmlFor={"scanCustomHost"} className={"text-xs font-mono text-slate-400"}>
+                  {"Домен или публичный IPv4"}
+                  <input id={"scanCustomHost"} type={"text"} placeholder={"example.com или 8.8.8.8"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
                 </label>
-                {"\n              "}
-                <select id={"strategyProtocolSelect"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  <option value={"https"}>HTTPS · TCP 443</option><option value={"http"}>HTTP · TCP 80</option>
-                </select>
-                <p className={"mt-2 text-[11px] leading-4 text-slate-400"}>{"QUIC Initial проверяется в разделе «Проверка сайта»; перебор QUIC-стратегий пока не подключён."}</p>
-                {"\n            "}
+                <label htmlFor={"strategyProtocolSelect"} className={"text-xs font-mono text-slate-400"}>
+                  {"Транспорт"}
+                  <select id={"strategyProtocolSelect"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                    <option value={"https"}>HTTPS · TCP 443</option><option value={"http"}>HTTP · TCP 80</option>
+                  </select>
+                </label>
+                <p className={"strategy-target-transport-help"}>{"QUIC Initial проверяется в разделе «Проверка сайта»; перебор QUIC-стратегий пока не подключён."}</p>
               </div>
 
               <div className={"strategy-setting-row"}>
@@ -1057,15 +1058,6 @@ export default function App() {
                 </div>
               </div>
               {"\n\n            "}
-              <div className={"strategy-setting-row"}>
-                {"\n              "}
-                <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Домен или публичный IPv4"}
-                </label>
-                {"\n              "}
-              <input id={"scanCustomHost"} type={"text"} placeholder={"example.com или 8.8.8.8"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
-                {"\n            "}
-              </div>
               {"\n\n            "}
               <div className={"strategy-setting-row strategy-mode-tile"}>
                 {"\n              "}
@@ -1120,10 +1112,10 @@ export default function App() {
           </div>
           {"\n\n        "}
           {"\n        "}
-          <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5"}>
+          <div className={"grid grid-cols-1 2xl:grid-cols-12 gap-3"}>
             {"\n          "}
-            <div className={"xl:col-span-8 space-y-3"} id={"autotuneStrategiesList"}></div>
-            <section id={"autotunePreviewPanel"} className={"hidden xl:col-span-8 ui-card rounded-2xl p-4 space-y-3"} aria-live={"polite"}>
+            <div className={"2xl:col-span-8 space-y-3"} id={"autotuneStrategiesList"}></div>
+            <section id={"autotunePreviewPanel"} className={"hidden 2xl:col-span-8 ui-card rounded-2xl p-4 space-y-3"} aria-live={"polite"}>
               <div>
                 <h3 className={"text-sm font-bold text-white"}>Предпросмотр применения</h3>
                 <p id={"autotunePreviewSummary"} className={"mt-1 text-sm font-medium text-slate-300"}></p>
@@ -1135,7 +1127,7 @@ export default function App() {
               </button>
             </section>
             {"\n\n          "}
-            <div className={"xl:col-span-4 ui-card rounded-2xl p-5 flex flex-col min-h-[220px] xl:h-[540px]"}>
+            <div className={"2xl:col-span-4 ui-card rounded-xl p-4 flex flex-col min-h-[180px] 2xl:h-[360px]"}>
               {"\n            "}
               <div className={"pb-3 border-b border-slate-800 flex items-center justify-between"}>
                 {"\n              "}
@@ -1350,24 +1342,22 @@ export default function App() {
                 {"\n              "}
                 <div>
                   {"\n                "}
-                  <label className={"block text-slate-400 font-mono mb-1"}>
-                    {"Выберите сервис или введите номер ASN"}
+                  <label htmlFor={"asnNumber"} className={"block text-slate-400 font-mono mb-1"}>
+                    {"Номер автономной системы (ASN)"}
                   </label>
                   {"\n                "}
-                  <select id={"asnSelector"} defaultValue={""} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-white"}>
-                    <option value={""} disabled>Список ASN не загружен из backend</option>
-                  </select>
+                  <input id={"asnNumber"} autoComplete={"off"} placeholder={"Например, AS15169 или 15169"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-white"} />
                   {"\n              "}
                 </div>
                 {"\n\n              "}
-                <button data-action-click={"fetchAsnPrefixes"} className={"w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition-all"}>
+                <button id={"fetchAsnPrefixesButton"} data-action-click={"fetchAsnPrefixes"} className={"w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition-all"}>
                   {"\n                Загрузить IPv4-подсети и добавить в ipset.list\n              "}
                 </button>
                 {"\n\n              "}
                 <div id={"asnResultBox"} className={"p-3.5 rounded-xl bg-[#060a12] border border-slate-800 font-mono text-[11px] text-slate-400 space-y-1"}>
                   {"\n                "}
-                  <div>
-                    {"Получение ASN и префиксов не подключено к backend."}
+                  <div role={"status"} aria-live={"polite"}>
+                    {"Укажите ASN, чтобы получить анонсируемые IPv4-подсети и добавить их в ipset.list."}
                   </div>
                   {"\n              "}
                 </div>

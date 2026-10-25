@@ -25,6 +25,7 @@ export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc
 export type NfqwsListId = string;
 export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
+export type AsnPrefixResponse = { asn: number; prefixes: string[] };
 export type MonitoringProbeStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type MonitoringProbeReport = { host: string; summary: string; current: { status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null }; steps: MonitoringProbeStep[] };
 export type MonitoringSettings = { enabled: boolean; intervalMinutes: number; lastAutoCheck: number | null; sites: Array<{ host: string; results: Array<{ checkedAt: number; status: 'ok' | 'warning' | 'error' | 'unavailable'; summary: string; latencyMs: number | null; steps: MonitoringProbeStep[] }> }> };
@@ -118,6 +119,12 @@ export const nfqwsLists = {
     `/api/nfqws2/lists/${encodeURIComponent(id)}`,
     { method: 'DELETE', body: JSON.stringify({ revision }) },
   ),
+};
+
+export const nfqwsNetwork = {
+  prefixes: (asn: number) => api<AsnPrefixResponse>('/api/nfqws2/asn-prefixes', {
+    method: 'POST', body: JSON.stringify({ asn }),
+  }),
 };
 
 export const nfqwsInstallation = {

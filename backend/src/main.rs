@@ -7,6 +7,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
+use nfqws2_ui::asn_prefixes::fetch_ipv4_prefixes;
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::config_format::format_nfqws_config;
 use nfqws2_ui::freeze_diagnostic;
@@ -2476,6 +2477,11 @@ struct ListResponse {
 struct ListWrite {
     content: String,
     revision: String,
+}
+
+#[derive(Deserialize)]
+struct AsnPrefixRequest {
+    asn: u32,
 }
 
 #[derive(Deserialize)]
@@ -7897,6 +7903,18 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
     Json(ListsResponse { files }).into_response()
 }
 
+async fn get_asn_prefixes(Json(request): Json<AsnPrefixRequest>) -> Response {
+    if request.asn == 0 {
+        return error(StatusCode::BAD_REQUEST, "Укажите номер ASN больше нуля");
+    }
+    match fetch_ipv4_prefixes(request.asn).await {
+        Ok(prefixes) => {
+            Json(serde_json::json!({ "asn": request.asn, "prefixes": prefixes })).into_response()
+        }
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
 async fn get_list(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -9747,6 +9765,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             post(stop_site_trace_operation),
         )
         .route("/api/nfqws2/apply", post(apply_config))
+        .route("/api/nfqws2/asn-prefixes", post(get_asn_prefixes))
         .route("/api/nfqws2/lists", get(get_lists))
         .route(
             "/api/nfqws2/lists/{id}",
