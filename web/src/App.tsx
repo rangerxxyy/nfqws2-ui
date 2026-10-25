@@ -1219,7 +1219,7 @@ export default function App() {
             </div>
             <div id={"foreignConfigUrlForm"} className={"hidden space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3"}>
               <input id={"foreignConfigUrlName"} type={"text"} placeholder={"Название конфига (необязательно)"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 text-sm text-white placeholder:text-slate-500"} />
-              <input id={"foreignConfigUrl"} type={"url"} placeholder={"https://raw.githubusercontent.com/.../nfqws2.conf"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs text-white placeholder:text-slate-500"} />
+              <input id={"foreignConfigUrl"} type={"url"} placeholder={"https://github.com/.../blob/main/nfqws2.conf или raw URL"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs text-white placeholder:text-slate-500"} />
               <div className={"flex justify-end gap-2"}><button data-action-click={"closeForeignConfigForms"} className={"rounded-lg px-3 py-2 text-sm text-slate-400"}>Закрыть</button><button data-action-click={"addForeignConfigUrl"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white"}>Добавить ссылку</button></div>
             </div>
             <div id={"foreignConfigList"} className={"space-y-2"}><p className={"text-sm text-slate-500"}>Добавьте конфиг текстом, ссылкой или файлом .conf.</p></div>

@@ -11,6 +11,6 @@
 ## Проверки
 
 - Web: 201 тест пройден; TypeScript, production-сборка и `pnpm audit --prod` прошли.
-- Rust: 274 теста, форматирование, Clippy и `cargo audit` прошли.
-- ShellCheck и preflight shell-тесты требуют Linux окружения; их выполнит release workflow.
+- Rust: 275 тестов, форматирование, Clippy и `cargo audit` прошли.
+- Linux release workflow также успешно выполнил ShellCheck, preflight shell-тесты и ARM64 cross-build.
 - Роутерная проверка не выполнялась: в этой сессии нет подключённого тестового роутера. Локальная страница открывается, но API возвращает HTTP 500 из текущего окружения, поэтому ручную проверку с работающим backend не подтверждаю.

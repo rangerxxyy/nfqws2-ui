@@ -4861,7 +4861,37 @@ fn parse_public_https_config_url(value: &str) -> Result<(String, String), String
         return Err("В ссылке не допускается точка в конце доменного имени".into());
     }
     let host = site_diagnostics::normalize_host(host)?;
-    Ok((host, value.to_owned()))
+    if host != "github.com" {
+        return Ok((host, value.to_owned()));
+    }
+
+    // Match Zemidala's convenience for GitHub blob links, but keep the
+    // stricter HTTPS-only, public-DNS-pinned fetch used by this backend.
+    let path_and_suffix = &value[8 + authority.len()..];
+    let suffix_offset = path_and_suffix
+        .find(['?', '#'])
+        .unwrap_or(path_and_suffix.len());
+    let (path, suffix) = path_and_suffix.split_at(suffix_offset);
+    let segments = path
+        .strip_prefix('/')
+        .unwrap_or_default()
+        .splitn(4, '/')
+        .collect::<Vec<_>>();
+    if segments.len() != 4
+        || segments[0].is_empty()
+        || segments[1].is_empty()
+        || segments[2] != "blob"
+        || !segments[3].contains('/')
+    {
+        return Err(
+            "Для GitHub укажите ссылку на файл в формате /owner/repo/blob/ветка/файл".into(),
+        );
+    }
+    let raw_path = format!("{}/{}/{}", segments[0], segments[1], segments[3]);
+    Ok((
+        "raw.githubusercontent.com".into(),
+        format!("https://raw.githubusercontent.com/{raw_path}{suffix}"),
+    ))
 }
 
 async fn fetch_external_config(url: &str) -> Result<String, String> {
@@ -8893,6 +8923,16 @@ mod tests {
                 "https://raw.githubusercontent.com/user/repo/main/nfqws2.conf".into()
             )
         );
+        assert_eq!(
+            parse_public_https_config_url(
+                "https://github.com/zemidala/nfqws2-ui/blob/main/nfqws2.conf"
+            )
+            .unwrap(),
+            (
+                "raw.githubusercontent.com".into(),
+                "https://raw.githubusercontent.com/zemidala/nfqws2-ui/main/nfqws2.conf".into()
+            )
+        );
         for url in [
             "http://example.com/config.conf",
             "https://user:pass@example.com/config.conf",
@@ -8903,6 +8943,7 @@ mod tests {
         ] {
             assert!(parse_public_https_config_url(url).is_err(), "{url}");
         }
+        assert!(parse_public_https_config_url("https://github.com/user/repo").is_err());
     }
 
     #[test]
