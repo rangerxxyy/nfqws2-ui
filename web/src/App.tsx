@@ -1234,7 +1234,7 @@ export default function App() {
             </div>
             <div id={"foreignConfigProgress"} className={"hidden h-1.5 overflow-hidden rounded-full bg-slate-800"}><div id={"foreignConfigProgressBar"} className={"h-full bg-blue-500 transition-[width] duration-300"}></div></div>
             <div id={"foreignConfigResults"} className={"grid gap-3 lg:grid-cols-2"}></div>
-            <p className={"text-[11px] leading-relaxed text-slate-500"}>Принимаются статические конфиги до 64 КиБ. Известные пути Lua/blob-файлов подставляются из текущей установки; незнакомые Lua-файлы и shell-команды не запускаются. Ссылка должна использовать HTTPS без редиректов. Проверки идут последовательно.</p>
+            <p className={"text-[11px] leading-relaxed text-slate-500"}>Принимаются статические конфиги до 64 КиБ. Известные пути Lua/blob-файлов подставляются из текущей установки; незнакомые Lua-файлы и shell-команды не запускаются. Ссылка должна использовать HTTPS без редиректов. Проверки идут последовательно; при свободной памяти меньше 20 МиБ тест не запускается.</p>
           </div>
         </section>
         <section id={"tabContent-monitor"} className={"hidden view-animate space-y-5"}>

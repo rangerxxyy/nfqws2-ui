@@ -475,9 +475,20 @@ const MAX_FOREIGN_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_FOREIGN_CONFIGS: usize = 3;
 const MAX_FOREIGN_CONFIG_HOSTS: usize = 3;
 const FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 3;
+const MIN_FOREIGN_CONFIG_AVAILABLE_MB: u64 = 20;
 
 fn foreign_config_should_retry(outcome: Option<bool>, completed_attempt: usize) -> bool {
     outcome == Some(true) && completed_attempt + 1 < FOREIGN_CONFIG_CONFIRMATION_REPEATS
+}
+
+fn foreign_config_memory_warning(meminfo: &str) -> Option<String> {
+    let available_kb = parse_meminfo_kb_key(meminfo, "MemAvailable")?;
+    let available_mb = available_kb / 1024;
+    (available_mb < MIN_FOREIGN_CONFIG_AVAILABLE_MB).then(|| {
+        format!(
+            "Недостаточно свободной памяти ({available_mb} МБ): проверочный nfqws2 не запущен; требуется не менее {MIN_FOREIGN_CONFIG_AVAILABLE_MB} МБ"
+        )
+    })
 }
 const MAX_FOREIGN_CONFIG_OPERATIONS: usize = 8;
 const MAX_FOREIGN_CONFIG_STATE_BYTES: usize = 128 * 1024;
@@ -5232,6 +5243,25 @@ async fn start_foreign_config_check(
                 return;
             }
         }
+        let meminfo = tokio::fs::read_to_string("/proc/meminfo")
+            .await
+            .unwrap_or_default();
+        if let Some(message) = foreign_config_memory_warning(&meminfo) {
+            if let Ok(mut operation) = progress.lock() {
+                operation.state = "failed".into();
+                operation.stage = "resource_guard".into();
+                operation.current = None;
+                operation.message = message;
+                operation.updated_at = now_unix_seconds();
+                let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+            }
+            task_state
+                .foreign_config_controls
+                .lock()
+                .await
+                .remove(&task_id);
+            return;
+        }
         let runner = task_state.site_trace_runner.clone();
         let mut stopped = false;
         let total_hosts = progress
@@ -8868,6 +8898,14 @@ mod tests {
         assert!(!foreign_config_should_retry(Some(true), 2));
         assert!(!foreign_config_should_retry(Some(false), 0));
         assert!(!foreign_config_should_retry(None, 0));
+    }
+
+    #[test]
+    fn foreign_config_memory_guard_matches_the_twenty_megabyte_upstream_floor() {
+        assert!(foreign_config_memory_warning("MemAvailable: 19456 kB\n").is_some());
+        assert!(foreign_config_memory_warning("MemAvailable: 20479 kB\n").is_some());
+        assert!(foreign_config_memory_warning("MemAvailable: 20480 kB\n").is_none());
+        assert!(foreign_config_memory_warning("MemFree: 8192 kB\n").is_none());
     }
 
     #[test]
