@@ -229,7 +229,13 @@
     [data-accent] .version-pill:hover { border-color:var(--accent-border) !important; }
     [data-accent] [class*="text-blue-"], [data-accent] [class*="text-sky-"] { color:var(--accent-border) !important; }
     [data-accent] [class~="bg-blue-600"], [data-accent] [class~="bg-blue-500"] { background-color:var(--accent-strong) !important; }
+    [data-accent] [class~="bg-blue-500/5"] { background-color:color-mix(in srgb,var(--accent-color) 5%,transparent) !important; }
+    [data-accent] [class~="bg-blue-500/10"] { background-color:color-mix(in srgb,var(--accent-color) 10%,transparent) !important; }
+    [data-accent] [class~="bg-blue-500/15"] { background-color:color-mix(in srgb,var(--accent-color) 15%,transparent) !important; }
+    [data-accent] [class~="bg-blue-500/20"] { background-color:color-mix(in srgb,var(--accent-color) 20%,transparent) !important; }
+    [data-accent] [class~="bg-blue-500/25"] { background-color:color-mix(in srgb,var(--accent-color) 25%,transparent) !important; }
     [data-accent] [class~="hover:bg-blue-500"]:hover, [data-accent] [class~="hover:bg-blue-600"]:hover { background-color:var(--accent-soft) !important; }
+    [data-accent] [class~="hover:bg-blue-500/25"]:hover { background-color:color-mix(in srgb,var(--accent-color) 25%,transparent) !important; }
     [data-accent] [class*="border-blue-"], [data-accent] [class*="border-sky-"] { border-color:color-mix(in srgb,var(--accent-border) 45%,transparent) !important; }
     [data-accent] [class*="ring-blue-"] { --tw-ring-color:var(--accent-border) !important; }
     [data-accent] input[type="checkbox"]:checked { border-color:var(--accent-color); background-color:var(--accent-strong); }
@@ -1073,7 +1079,13 @@ textarea { line-height: 1.7; tab-size: 4; }
 [data-accent] .side-nav-btn.active { color:var(--accent-border) !important; border-color:color-mix(in srgb,var(--accent-color) 45%,transparent) !important; background:linear-gradient(90deg,color-mix(in srgb,var(--accent-color) 16%,transparent),color-mix(in srgb,var(--accent-color) 2%,transparent)) !important; }
 [data-accent] [class*="text-blue-"], [data-accent] [class*="text-sky-"] { color:var(--accent-border) !important; }
 [data-accent] [class~="bg-blue-600"], [data-accent] [class~="bg-blue-500"] { background-color:var(--accent-strong) !important; }
+[data-accent] [class~="bg-blue-500/5"] { background-color:color-mix(in srgb,var(--accent-color) 5%,transparent) !important; }
+[data-accent] [class~="bg-blue-500/10"] { background-color:color-mix(in srgb,var(--accent-color) 10%,transparent) !important; }
+[data-accent] [class~="bg-blue-500/15"] { background-color:color-mix(in srgb,var(--accent-color) 15%,transparent) !important; }
+[data-accent] [class~="bg-blue-500/20"] { background-color:color-mix(in srgb,var(--accent-color) 20%,transparent) !important; }
+[data-accent] [class~="bg-blue-500/25"] { background-color:color-mix(in srgb,var(--accent-color) 25%,transparent) !important; }
 [data-accent] [class~="hover:bg-blue-500"]:hover, [data-accent] [class~="hover:bg-blue-600"]:hover { background-color:var(--accent-soft) !important; }
+[data-accent] [class~="hover:bg-blue-500/25"]:hover { background-color:color-mix(in srgb,var(--accent-color) 25%,transparent) !important; }
 [data-accent] [class*="border-blue-"], [data-accent] [class*="border-sky-"] { border-color:color-mix(in srgb,var(--accent-border) 45%,transparent) !important; }
 [data-accent] [class*="ring-blue-"] { --tw-ring-color:var(--accent-border) !important; }
 [data-accent] input[type="checkbox"]:checked { border-color:var(--accent-color); background-color:var(--accent-strong); }
