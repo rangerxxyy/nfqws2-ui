@@ -1,9 +1,11 @@
 export type UiTheme = 'dark' | 'light' | 'neon';
-export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide';
-export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; remindWindowsTcpTimestamps: boolean };
+export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles';
+export type UiAccent = 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet';
+export type UiStatusBar = 'minimal' | 'standard' | 'expanded';
+export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean };
 
 const STORAGE_KEY = 'nfqws2-ui-appearance-v1';
-const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', remindWindowsTcpTimestamps: true };
+const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
 
 function readStorage(storage: Storage | null): unknown {
   try {
@@ -20,7 +22,9 @@ export function loadAppearance(storage: Storage | null): AppearanceSettings {
   const value = saved as Partial<AppearanceSettings>;
   return {
     theme: value.theme === 'light' || value.theme === 'neon' ? value.theme : 'dark',
-    layout: value.layout === 'compact' || value.layout === 'dense' || value.layout === 'wide' ? value.layout : 'standard',
+    layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles'].includes(value.layout ?? '') ? value.layout as UiLayout : 'standard',
+    accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(value.accent ?? '') ? value.accent as UiAccent : 'blue',
+    statusBar: value.statusBar === 'minimal' || value.statusBar === 'expanded' ? value.statusBar : 'standard',
     remindWindowsTcpTimestamps: value.remindWindowsTcpTimestamps !== false,
   };
 }
@@ -28,7 +32,9 @@ export function loadAppearance(storage: Storage | null): AppearanceSettings {
 export function saveAppearance(storage: Storage | null, settings: AppearanceSettings): AppearanceSettings {
   const normalized: AppearanceSettings = {
     theme: settings.theme === 'light' || settings.theme === 'neon' ? settings.theme : 'dark',
-    layout: settings.layout === 'compact' || settings.layout === 'dense' || settings.layout === 'wide' ? settings.layout : 'standard',
+    layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles'].includes(settings.layout) ? settings.layout : 'standard',
+    accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(settings.accent) ? settings.accent : 'blue',
+    statusBar: settings.statusBar === 'minimal' || settings.statusBar === 'expanded' ? settings.statusBar : 'standard',
     remindWindowsTcpTimestamps: settings.remindWindowsTcpTimestamps !== false,
   };
   try { storage?.setItem(STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Appearance still applies for this session. */ }
@@ -38,6 +44,8 @@ export function saveAppearance(storage: Storage | null, settings: AppearanceSett
 export function applyAppearance(settings: AppearanceSettings, root: HTMLElement = document.documentElement): void {
   root.dataset.theme = settings.theme;
   root.dataset.layout = settings.layout;
+  root.dataset.accent = settings.accent;
+  root.dataset.statusBar = settings.statusBar;
 }
 
 export function initializeAppearance(): AppearanceSettings {

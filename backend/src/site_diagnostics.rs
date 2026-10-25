@@ -1262,7 +1262,11 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         addresses.clone_from(&reference);
         limitations.push("Для HTTP-проб использованы адреса DoH: системный DNS не дал публичного адреса (возможен FakeIP).".into());
     }
-    let reverse_dns = reverse_dns_records(&addresses).await;
+    let reverse_dns = if literal_ip.is_some() {
+        reverse_dns_records(&addresses).await
+    } else {
+        Vec::new()
+    };
     let Some(ip) = addresses.iter().find_map(|ip| match ip {
         IpAddr::V4(ip) => Some(*ip),
         _ => None,

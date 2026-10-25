@@ -39,7 +39,7 @@ let diagnosisRunning = false;
 let monitoringRunning = false;
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
-let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', remindWindowsTcpTimestamps: true };
+let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -348,6 +348,8 @@ async function runSnapshotRemote(action: 'test' | 'push' | 'key') {
 function syncAppearanceControls() {
   all<HTMLInputElement>('input[name="appearanceTheme"]').forEach((input) => { input.checked = input.value === appearanceSettings.theme; });
   all<HTMLInputElement>('input[name="appearanceLayout"]').forEach((input) => { input.checked = input.value === appearanceSettings.layout; });
+  all<HTMLInputElement>('input[name="appearanceAccent"]').forEach((input) => { input.checked = input.value === appearanceSettings.accent; });
+  all<HTMLInputElement>('input[name="appearanceStatusBar"]').forEach((input) => { input.checked = input.value === appearanceSettings.statusBar; });
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
 }
 function updateAppearance(change: Partial<AppearanceSettings>) {
@@ -583,6 +585,7 @@ async function fetchStatus() {
     setText('#headerCoreVersion', status.service.version ?? '—'); setText('#headerUiVersion', status.panel.version);
     syncServiceControl(service);
     setText('#checkedAt', status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '—');
+    setText('#statusDetail', `Опрос: ${status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : 'выполняется'} · метрики: ${status.system.source === 'keenetic-rci' ? 'Keenetic RCI' : 'Linux'}`);
   } catch (error) {
     status = null;
     if (!restartInProgress) {
@@ -2157,6 +2160,8 @@ function bindPrototypeActions() {
     copySnapshotSetup: () => { const command = $<HTMLTextAreaElement>('#snapshotSetupCommand'); if (command) void navigator.clipboard.writeText(command.value).then(() => toast('Команда скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     setAppearanceTheme: (theme: UiTheme) => updateAppearance({ theme }),
     setAppearanceLayout: (layout: UiLayout) => updateAppearance({ layout }),
+    setAppearanceAccent: (accent: AppearanceSettings['accent']) => updateAppearance({ accent }),
+    setAppearanceStatusBar: (statusBar: AppearanceSettings['statusBar']) => updateAppearance({ statusBar }),
     setAppearanceTimestampReminder: (remindWindowsTcpTimestamps: boolean) => updateAppearance({ remindWindowsTcpTimestamps }),
     checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),

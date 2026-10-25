@@ -470,11 +470,16 @@ describe('TSX panel without authentication', () => {
 
   it('uses the full appearance card as a keyboard-accessible radio label', () => {
     expect(appSource).toContain('<label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"}');
-    expect(appSource).toContain('<label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"}');
+    expect(appSource).toContain('name={"appearanceLayout"} value={value}');
+    expect(appSource).toContain('name={"appearanceAccent"} value={value}');
+    expect(appSource).toContain('name={"appearanceStatusBar"} value={"expanded"}');
     expect(panelStyles).toContain('.appearance-choice input[type="radio"], .appearance-layout-choice input[type="radio"]');
     expect(panelStyles).toContain('position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer;');
     expect(panelStyles).toContain('.appearance-choice:has(input:focus-visible)');
     expect(panelStyles).toContain('.appearance-choice:has(input:checked)');
+    expect(panelStyles).toContain('[data-layout="right"] .app-main-layout');
+    expect(panelStyles).toContain('[data-layout="top"] .app-main-layout');
+    expect(panelStyles).toContain('[data-layout="tiles"] .app-main-layout');
   });
 
   it('keeps custom strategy input inside its mode tile and exposes copy feedback', () => {

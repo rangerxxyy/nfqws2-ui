@@ -1913,8 +1913,20 @@ struct SnapshotPinRequest {
 struct UiAppearanceSettings {
     theme: String,
     layout: String,
+    #[serde(default = "default_accent")]
+    accent: String,
+    #[serde(default = "default_status_bar")]
+    status_bar: String,
     #[serde(default = "default_true")]
     remind_windows_tcp_timestamps: bool,
+}
+
+fn default_accent() -> String {
+    "blue".into()
+}
+
+fn default_status_bar() -> String {
+    "standard".into()
 }
 
 fn default_true() -> bool {
@@ -6889,7 +6901,15 @@ async fn put_ui_appearance(
     if !matches!(settings.theme.as_str(), "dark" | "light" | "neon")
         || !matches!(
             settings.layout.as_str(),
-            "standard" | "compact" | "dense" | "wide"
+            "standard" | "compact" | "dense" | "wide" | "right" | "top" | "tiles"
+        )
+        || !matches!(
+            settings.accent.as_str(),
+            "blue" | "cyan" | "emerald" | "amber" | "rose" | "violet"
+        )
+        || !matches!(
+            settings.status_bar.as_str(),
+            "minimal" | "standard" | "expanded"
         )
     {
         return error(StatusCode::BAD_REQUEST, "Недопустимые параметры оформления");
@@ -7828,6 +7848,24 @@ mod tests {
         assert!(settings.remind_windows_tcp_timestamps);
         let serialized = serde_json::to_value(settings).unwrap();
         assert_eq!(serialized["remindWindowsTcpTimestamps"], true);
+        assert_eq!(serialized["accent"], "blue");
+        assert_eq!(serialized["statusBar"], "standard");
+    }
+
+    #[test]
+    fn appearance_settings_keep_new_router_layout_and_palette_choices() {
+        let settings: UiAppearanceSettings = serde_json::from_value(serde_json::json!({
+            "theme": "light",
+            "layout": "tiles",
+            "accent": "cyan",
+            "statusBar": "minimal",
+            "remindWindowsTcpTimestamps": false
+        }))
+        .unwrap();
+        assert_eq!(settings.layout, "tiles");
+        assert_eq!(settings.accent, "cyan");
+        assert_eq!(settings.status_bar, "minimal");
+        assert!(!settings.remind_windows_tcp_timestamps);
     }
 
     #[test]

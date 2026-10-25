@@ -1,7 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('persists the selected appearance layout, accent and status-bar mode on the router', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const settings = { theme: 'light', layout: 'tiles', accent: 'cyan', statusBar: 'minimal', remindWindowsTcpTimestamps: true } as const;
+    await nfqwsAppearance.save(settings);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/ui/appearance');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual(settings);
+  });
+
   it('starts, polls and cancels a persisted network freeze baseline scan', async () => {
     const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', current: null, done: 0, total: 20, results: [], message: 'queued', updatedAt: 100 };
     const fetchMock = vi.fn()

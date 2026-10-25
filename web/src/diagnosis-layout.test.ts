@@ -19,14 +19,27 @@ it('keeps QUIC transport and advertised HTTP3 separate and includes both paths',
   expect(rows.find(row => row.id === 'quic')?.detail).toContain('Сейчас:');
   expect(rows.find(row => row.id === 'quic')?.note).toContain('полный запрос HTTP/3 не выполнялся');
 });
-it('shows reverse DNS names per address without claiming PTR when none is found', () => {
+it('shows resolved site IP addresses in the DNS row without an extra reverse DNS row', () => {
   const report: SiteDiagnosticReport = {host:'example.com',addresses:['203.0.113.9','203.0.113.10'],reverseDns:[
     {address:'203.0.113.9',names:['edge.example.net'],resolver:'dig',detail:'Найдено обратным DNS (dig)'},
-    {address:'203.0.113.10',names:[],resolver:'nslookup',detail:'PTR-запись не найдена (nslookup)'},
   ],steps:[step('dns')],direct:step('direct'),current:step('current'),quic:null,summary:'',limitations:[]};
-  const ptr = diagnosisRows(report).find(row => row.id === 'reverse-dns');
-  expect(ptr).toMatchObject({kind:'success',label:'Обратный DNS · PTR'});
-  expect(ptr?.detail).toContain('203.0.113.9: edge.example.net · dig');
-  expect(ptr?.detail).toContain('203.0.113.10: PTR-запись не найдена (nslookup)');
-  expect(ptr?.note).toContain('может отличаться от домена сайта');
+  const rows = diagnosisRows(report);
+  expect(rows.map(row => row.id)).not.toContain('reverse-dns');
+  expect(rows.find(row => row.id === 'dns')).toMatchObject({label:'DNS-имя сайта'});
+  expect(rows.find(row => row.id === 'dns')?.detail).toContain('IP-адрес: 203.0.113.9, 203.0.113.10');
+});
+it('shows PTR domain in the DNS site-name row when the target is an IP address', () => {
+  const report: SiteDiagnosticReport = {host:'142.251.1.190',addresses:['142.251.1.190'],reverseDns:[
+    {address:'142.251.1.190',names:['lga34s32-in-f14.1e100.net'],resolver:'nslookup',detail:'Найдено обратным DNS (nslookup)'},
+  ],steps:[step('dns','unavailable')],direct:step('direct'),current:step('current'),quic:null,summary:'',limitations:[]};
+  const rows = diagnosisRows(report);
+  expect(rows.map(row => row.id)).not.toContain('reverse-dns');
+  expect(rows.find(row => row.id === 'dns')).toMatchObject({kind:'success',label:'DNS-имя сайта'});
+  expect(rows.find(row => row.id === 'dns')?.detail).toContain('142.251.1.190 найдено имя: lga34s32-in-f14.1e100.net');
+});
+it('makes the DNS row clear when an IP has no reverse DNS name', () => {
+  const report: SiteDiagnosticReport = {host:'203.0.113.9',addresses:['203.0.113.9'],reverseDns:[
+    {address:'203.0.113.9',names:[],resolver:'nslookup',detail:'PTR-запись не найдена (nslookup)'},
+  ],steps:[step('dns','unavailable')],direct:step('direct'),current:step('current'),quic:null,summary:'',limitations:[]};
+  expect(diagnosisRows(report).find(row => row.id === 'dns')?.detail).toContain('PTR-запись не найдена');
 });
