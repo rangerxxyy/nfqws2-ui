@@ -2639,6 +2639,18 @@ struct SnapshotPinRequest {
     pinned: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileCreateRequest {
+    name: String,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ProfileRenameRequest {
+    name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UiAppearanceSettings {
@@ -9566,6 +9578,105 @@ async fn get_snapshots(State(state): State<Arc<AppState>>) -> Response {
     Json(snapshots::list_snapshots(&state.data_dir)).into_response()
 }
 
+async fn get_change_history(State(state): State<Arc<AppState>>) -> Response {
+    Json(serde_json::json!({ "items": snapshots::change_history(&state.data_dir, 200) }))
+        .into_response()
+}
+
+async fn delete_snapshot_api(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    match snapshots::delete_local_snapshot(&state.data_dir, &id) {
+        Ok(()) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        Err(message) => error(StatusCode::CONFLICT, message),
+    }
+}
+
+async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
+    Json(serde_json::json!({ "profiles": nfqws2_ui::profiles::list(&state.data_dir) }))
+        .into_response()
+}
+
+async fn create_profile(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ProfileCreateRequest>,
+) -> Response {
+    if request.content.len() > 512 * 1024 {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Конфигурация профиля превышает лимит 512 КиБ",
+        );
+    }
+    if let Err(message) = validate_nfqws2_config(&request.content) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    }
+    match nfqws2_ui::profiles::create(
+        &state.data_dir,
+        &request.name,
+        &request.content,
+        now_unix_seconds(),
+    ) {
+        Ok(profile) => (StatusCode::CREATED, Json(profile)).into_response(),
+        Err(message) => error(StatusCode::BAD_REQUEST, message),
+    }
+}
+
+async fn rename_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(request): Json<ProfileRenameRequest>,
+) -> Response {
+    match nfqws2_ui::profiles::rename(&state.data_dir, &id, &request.name, now_unix_seconds()) {
+        Ok(profile) => Json(profile).into_response(),
+        Err(message) => error(StatusCode::BAD_REQUEST, message),
+    }
+}
+
+async fn delete_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    match nfqws2_ui::profiles::delete(&state.data_dir, &id) {
+        Ok(()) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        Err(message) => error(StatusCode::NOT_FOUND, message),
+    }
+}
+
+async fn activate_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let content = match nfqws2_ui::profiles::content(&state.data_dir, &id) {
+        Ok(content) => content,
+        Err(message) => return error(StatusCode::NOT_FOUND, message),
+    };
+    let Some(path) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let current = match tokio::fs::read(&path).await {
+        Ok(bytes) => revision(&bytes),
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    match apply_config_transaction(
+        &state,
+        ConfigWrite {
+            content,
+            revision: current,
+        },
+        || async { service_action(ServiceAction::Restart).await },
+    )
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(message) if message == WRITE_REVISION_CONFLICT => error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась во время активации профиля",
+        ),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
 async fn create_snapshot_api(
     State(state): State<Arc<AppState>>,
     request: Option<Json<SnapshotCreateRequest>>,
@@ -10481,52 +10592,63 @@ fn configured_log_path(config_text: &str, config_file: &Path) -> Option<PathBuf>
 }
 
 async fn get_logs(State(state): State<Arc<AppState>>, Query(query): Query<LogsQuery>) -> Response {
-    if query.source != "nfqws2" {
-        return error(StatusCode::BAD_REQUEST, "Неизвестный источник журнала");
-    }
-    let config = config_path_for_state(&state);
-    let config_text = config
-        .as_deref()
-        .and_then(|path| std::fs::read_to_string(path).ok());
-    let discovered = discover_system_paths();
-    let log_dir = discovered
-        .as_ref()
-        .map(|paths| paths.log_dir.clone())
-        .or_else(|| {
-            config
-                .as_deref()?
-                .ancestors()
-                .nth(3)
-                .map(|root| root.join("var/log"))
-        });
-    let Some(log_dir) = log_dir else {
+    let path = match query.source.as_str() {
+        "nfqws2-ui" => PathBuf::from("/opt/var/log/nfqws2-ui.log"),
+        "nfqws2" => {
+            let config = config_path_for_state(&state);
+            let config_text = config
+                .as_deref()
+                .and_then(|path| std::fs::read_to_string(path).ok());
+            let discovered = discover_system_paths();
+            let log_dir = discovered
+                .as_ref()
+                .map(|paths| paths.log_dir.clone())
+                .or_else(|| {
+                    config
+                        .as_deref()?
+                        .ancestors()
+                        .nth(3)
+                        .map(|root| root.join("var/log"))
+                });
+            let Some(log_dir) = log_dir else {
+                return Json(LogsResponse {
+                    content: "Каталог журналов nfqws2 не обнаружен".into(),
+                })
+                .into_response();
+            };
+            let mut candidates = Vec::new();
+            if let (Some(text), Some(config_path)) = (config_text.as_deref(), config.as_deref())
+                && let Some(path) = configured_log_path(text, config_path)
+            {
+                candidates.push(path);
+            }
+            candidates.extend(
+                ["nfqws2.log", "nfqws.log", "nfqws2-debug.log"].map(|name| log_dir.join(name)),
+            );
+            let canonical_log_dir = log_dir.canonicalize().ok();
+            let Some(path) = candidates.into_iter().find(|candidate| {
+                candidate.is_file()
+                    && candidate.canonicalize().ok().is_some_and(|canonical| {
+                        canonical_log_dir
+                            .as_ref()
+                            .is_some_and(|root| canonical.starts_with(root))
+                    })
+            }) else {
+                return Json(LogsResponse {
+                    content: "Журнал nfqws2 не найден".into(),
+                })
+                .into_response();
+            };
+            path
+        }
+        _ => return error(StatusCode::BAD_REQUEST, "Неизвестный источник журнала"),
+    };
+    if !path.is_file() {
         return Json(LogsResponse {
-            content: "Каталог журналов nfqws2 не обнаружен".into(),
+            content: format!("Журнал {} не найден", query.source),
         })
         .into_response();
-    };
-    let mut candidates = Vec::new();
-    if let (Some(text), Some(config_path)) = (config_text.as_deref(), config.as_deref())
-        && let Some(path) = configured_log_path(text, config_path)
-    {
-        candidates.push(path);
     }
-    candidates
-        .extend(["nfqws2.log", "nfqws.log", "nfqws2-debug.log"].map(|name| log_dir.join(name)));
-    let canonical_log_dir = log_dir.canonicalize().ok();
-    let Some(path) = candidates.into_iter().find(|candidate| {
-        candidate.is_file()
-            && candidate.canonicalize().ok().is_some_and(|canonical| {
-                canonical_log_dir
-                    .as_ref()
-                    .is_some_and(|root| canonical.starts_with(root))
-            })
-    }) else {
-        return Json(LogsResponse {
-            content: "Журнал nfqws2 не найден".into(),
-        })
-        .into_response();
-    };
     let bytes = match read_bounded_tail(&path, MAX_LOG_BYTES).await {
         Ok(bytes) => bytes,
         Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
@@ -10697,6 +10819,13 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             "/api/snapshots",
             get(get_snapshots).post(create_snapshot_api),
         )
+        .route("/api/change-history", get(get_change_history))
+        .route("/api/profiles", get(get_profiles).post(create_profile))
+        .route(
+            "/api/profiles/{id}",
+            axum::routing::put(rename_profile).delete(delete_profile),
+        )
+        .route("/api/profiles/{id}/activate", post(activate_profile))
         .route(
             "/api/snapshots/settings",
             axum::routing::put(update_snapshot_settings),
@@ -10720,6 +10849,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/snapshots/{id}/archive", get(download_snapshot))
         .route("/api/snapshots/{id}/restore", post(restore_snapshot_api))
         .route("/api/snapshots/{id}/pin", post(pin_snapshot))
+        .route(
+            "/api/snapshots/{id}",
+            axum::routing::delete(delete_snapshot_api),
+        )
         .route("/api/logs", get(get_logs))
         .route("/api/updates/releases", get(get_github_releases))
         .route("/api/updates/status", get(get_ui_update_status))

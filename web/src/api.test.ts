@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
   it('notifies the app when an authenticated API request returns 401', async () => {
@@ -301,6 +301,25 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/backups');
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/backups/nfqws2.conf.123.000000001.bak/restore');
+  });
+
+  it('uses dedicated backend APIs for profiles, snapshot deletion, changes, and log sources', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{"id":"p1","name":"Home","updatedAt":1,"bytes":12}', { status: 201 }))
+      .mockResolvedValueOnce(new Response('{"deleted":true}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"items":[]}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"content":"line"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await nfqwsProfiles.create('Home', 'NFQWS_ARGS="--filter-tcp=443"');
+    await nfqwsSnapshots.delete('snap-1');
+    await nfqwsChangeHistory.list();
+    await nfqwsLogs.get('nfqws2-ui', 20);
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/profiles', '/api/snapshots/snap-1', '/api/change-history', '/api/logs?source=nfqws2-ui&tail=20',
+    ]);
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ name: 'Home', content: 'NFQWS_ARGS="--filter-tcp=443"' });
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe('DELETE');
   });
 
   it('applies a config through the transactional endpoint', async () => {

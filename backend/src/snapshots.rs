@@ -134,6 +134,16 @@ pub struct SnapshotOverview {
     pub remote: SnapshotRemoteState,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotHistoryEntry {
+    pub id: String,
+    pub ts: u64,
+    pub reason: String,
+    pub note: String,
+    pub changed_files: Vec<String>,
+}
+
 pub fn snapshot_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("snapshots")
 }
@@ -474,7 +484,6 @@ fn prune(data_dir: &Path, store: &mut SnapshotStore) {
         let _ = fs::remove_file(snapshot_dir(data_dir).join(format!("{}.tar.gz", item.id)));
         if item.remote {
             item.local = false;
-            item.files.clear();
             store.items.insert(index, item);
         }
     }
@@ -484,6 +493,66 @@ pub fn apply_retention(data_dir: &Path) -> Result<(), String> {
     let mut store = load_store(data_dir);
     prune(data_dir, &mut store);
     save_store(data_dir, &store)
+}
+
+pub fn delete_local_snapshot(data_dir: &Path, id: &str) -> Result<(), String> {
+    if !safe_id(id) {
+        return Err("Неверный ID резервной копии".into());
+    }
+    let mut store = load_store(data_dir);
+    let Some(index) = store.items.iter().position(|item| item.id == id) else {
+        return Err("Снимок не найден".into());
+    };
+    if store.items[index].pinned {
+        return Err("Сначала открепите снимок, затем удалите его".into());
+    }
+    if !store.items[index].local {
+        return Err("Локальная копия снимка отсутствует".into());
+    }
+    fs::remove_file(snapshot_dir(data_dir).join(format!("{id}.tar.gz")))
+        .map_err(|error| format!("Не удалось удалить архив снимка: {error}"))?;
+    if store.items[index].remote {
+        store.items[index].local = false;
+    } else {
+        store.items.remove(index);
+    }
+    save_store(data_dir, &store)
+}
+
+pub fn change_history(data_dir: &Path, limit: usize) -> Vec<SnapshotHistoryEntry> {
+    let mut items = load_store(data_dir).items;
+    items.sort_by_key(|item| item.ts);
+    let mut previous = std::collections::BTreeMap::new();
+    let mut entries = Vec::with_capacity(items.len());
+    for item in items {
+        let mut changed_files: Vec<_> = item
+            .files
+            .iter()
+            .filter(|(name, hash)| previous.get(*name) != Some(*hash))
+            .map(|(name, _)| name.clone())
+            .collect();
+        changed_files.extend(
+            previous
+                .keys()
+                .filter(|name| !item.files.contains_key(*name))
+                .cloned(),
+        );
+        changed_files.sort();
+        changed_files.dedup();
+        previous = item.files.clone();
+        entries.push(SnapshotHistoryEntry {
+            id: item.id,
+            ts: item.ts,
+            reason: item.reason,
+            note: item.note,
+            changed_files,
+        });
+    }
+    entries
+        .into_iter()
+        .rev()
+        .take(limit.clamp(1, 500))
+        .collect()
 }
 
 pub fn list_snapshots(data_dir: &Path) -> SnapshotOverview {
@@ -813,4 +882,80 @@ esac
         public_key.replace('\'', "'\\''"),
         line.replace('\'', "'\\''")
     )
+}
+
+#[cfg(test)]
+mod manual_operations_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
+
+    fn item(id: &str, ts: u64, files: &[(&str, &str)]) -> SnapshotItem {
+        SnapshotItem {
+            id: id.into(),
+            ts,
+            reason: "вручную".into(),
+            note: String::new(),
+            size: 3,
+            files: files
+                .iter()
+                .map(|(name, hash)| ((*name).into(), (*hash).into()))
+                .collect::<BTreeMap<_, _>>(),
+            local: true,
+            remote: false,
+            pinned: false,
+        }
+    }
+
+    #[test]
+    fn deletes_only_local_unpinned_archives_and_keeps_remote_copy_metadata() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(snapshot_dir(dir.path())).unwrap();
+        fs::write(snapshot_dir(dir.path()).join("1.tar.gz"), b"one").unwrap();
+        fs::write(snapshot_dir(dir.path()).join("2.tar.gz"), b"two").unwrap();
+        let mut remote = item("2", 2, &[("nfqws2.conf", "abc")]);
+        remote.remote = true;
+        save_store(
+            dir.path(),
+            &SnapshotStore {
+                items: vec![item("1", 1, &[]), remote],
+                last_daily_date: None,
+            },
+        )
+        .unwrap();
+
+        delete_local_snapshot(dir.path(), "1").unwrap();
+        delete_local_snapshot(dir.path(), "2").unwrap();
+        assert!(!snapshot_dir(dir.path()).join("1.tar.gz").exists());
+        let remaining = load_store(dir.path());
+        assert_eq!(remaining.items.len(), 1);
+        assert!(!remaining.items[0].local);
+        assert!(remaining.items[0].remote);
+        assert_eq!(remaining.items[0].files.len(), 1);
+    }
+
+    #[test]
+    fn refuses_deleting_pinned_snapshots_and_lists_hash_changes_newest_first() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(snapshot_dir(dir.path())).unwrap();
+        fs::write(snapshot_dir(dir.path()).join("3.tar.gz"), b"one").unwrap();
+        let mut pinned = item("3", 3, &[]);
+        pinned.pinned = true;
+        save_store(
+            dir.path(),
+            &SnapshotStore {
+                items: vec![
+                    item("old", 1, &[("a", "1")]),
+                    item("new", 2, &[("a", "2"), ("b", "1")]),
+                    pinned,
+                ],
+                last_daily_date: None,
+            },
+        )
+        .unwrap();
+        assert!(delete_local_snapshot(dir.path(), "3").is_err());
+        let history = change_history(dir.path(), 20);
+        assert_eq!(history[1].changed_files, vec!["a", "b"]);
+        assert_eq!(history[2].changed_files, vec!["a"]);
+    }
 }

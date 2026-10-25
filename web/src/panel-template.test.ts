@@ -98,7 +98,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(15);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(16);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -553,19 +553,25 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.action-tooltip');
   });
 
-  it('removes the legacy logs, backups, and support report sections from navigation', () => {
-    for (const route of ['logs']) {
+  it('exposes the profiles, backups, change history, and logs pages through the backend', () => {
+    for (const route of ['profiles', 'snapshots', 'changes', 'logs']) {
+      expect(template).toContain(`id="navBtn-${route}"`);
+      expect(template).toContain(`id="tabContent-${route}"`);
+    }
+    for (const route of ['supportReport']) {
       expect(template).not.toContain(`id="navBtn-${route}"`);
       expect(template).not.toContain(`id="tabContent-${route}"`);
     }
-    for (const route of ['snapshots', 'supportReport']) {
-      expect(template).not.toContain(`id="navBtn-${route}"`);
-      expect(template).not.toContain(`id="tabContent-${route}"`);
-    }
-    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport']");
+    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
     expect(panelSource).toContain('nfqwsSnapshots.create(');
     expect(backendSource).toContain('"/api/snapshots"');
     expect(backendSource).toContain('get(get_snapshots).post(create_snapshot_api)');
+    expect(backendSource).toContain('delete_snapshot_api');
+    expect(panelSource).toContain('nfqwsProfiles.activate(id)');
+    expect(backendSource).toContain('"/api/change-history"');
+    expect(panelSource).toContain('nfqwsLogs.get(currentLogSource)');
+    expect(template).toContain('id="operationConfirmModal"');
+    expect(panelSource).toContain('requestDangerousConfirmation');
   });
 
   it('keeps the interface in TSX and removes the HTML entry file', () => {
@@ -594,7 +600,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('value="simplified"');
     expect(template).not.toContain('data-appearance-simplified-navigation');
     expect(template).toContain('data-simplified-group="site-check"');
-    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport']");
+    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
     expect(template).toContain('id="panelAuthEnabled"');
     expect(template).toContain('data-action-click="savePanelAuthSettings"');
     expect(entrySource).toContain('nfqwsAuth.status()');
@@ -782,7 +788,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('grid-template-columns: minmax(0, 1fr);');
     expect(panelStyles).toContain('max-height: 50vh; overflow-y: auto;');
     expect(template).toContain('Списки доменов и IP');
-    expect(template).not.toContain('Резервные копии');
+    expect(template).toContain('id="navBtn-snapshots"');
   });
 
   it('does not ship example credentials in login controls', () => {

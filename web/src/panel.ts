@@ -11,7 +11,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigProfileSummary, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -27,8 +27,8 @@ import { canShowToast, lifecycleMessage, toastPresentation } from './notificatio
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'snapshots' | 'supportReport' | 'appearance' | 'about';
-export const UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport'] as const;
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
+export const UNAVAILABLE_PANEL_ROUTES = ['supportReport'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
@@ -291,9 +291,20 @@ function showRoute(route: Route) {
   });
   syncNavigationLayout(route);
   if (route === 'lists') void loadList(activeListId);
+  if (route === 'profiles') void loadProfiles();
+  if (route === 'snapshots') void loadBackups();
+  if (route === 'changes') void loadChangeHistory();
+  if (route === 'logs') { void loadLogs(); startLogPolling(); } else stopLogPolling();
   if (route === 'about') void loadAboutStatus();
 }
 let snapshotOverview: SnapshotOverview | null = null;
+let logPollingTimer: number | null = null;
+let currentLogSource: LogSource = 'nfqws2-ui';
+let currentLogContent = '';
+let pendingConfirmation: (() => Promise<void>) | null = null;
+let pendingConfirmationCancel: (() => void) | null = null;
+let changeHistoryCache: ChangeHistoryEntry[] = [];
+let pendingProfileEdit: { kind: 'create' } | { kind: 'rename'; id: string } | null = null;
 function renderBackups(data: SnapshotOverview) {
   const host = $('#backupList'); if (!host) return;
   snapshotOverview = data;
@@ -322,7 +333,8 @@ function renderBackups(data: SnapshotOverview) {
     const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'backup-action'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.args = JSON.stringify([item.id]); restore.textContent = 'Восстановить';
     const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'backup-action'; pin.dataset.actionClick = 'pinSnapshot'; pin.dataset.args = JSON.stringify([item.id, !item.pinned]); pin.textContent = item.pinned ? 'Открепить' : 'Закрепить';
     pin.disabled = !item.local;
-    actions.append(download, restore, pin); row.append(details, actions); host.append(row);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'backup-action text-rose-200'; remove.dataset.actionClick = 'deleteSnapshot'; remove.dataset.args = JSON.stringify([item.id]); remove.textContent = 'Удалить'; remove.disabled = !item.local || item.pinned;
+    actions.append(download, restore, pin, remove); row.append(details, actions); host.append(row);
   }
 }
 async function loadBackups() {
@@ -335,21 +347,22 @@ function formatBytes(value: number): string { if (value < 1024) return `${value}
 function pluralize(value: number, one: string, few: string, many: string): string { const n = Math.abs(value) % 100; const last = n % 10; return n > 10 && n < 20 ? many : last > 1 && last < 5 ? few : last === 1 ? one : many; }
 function snapshotReason(reason: string): string { return ({ 'вручную': 'Вручную', 'перед изменением': 'Перед изменением', 'ежедневный': 'Ежедневный', 'перед восстановлением': 'Перед восстановлением', 'из файла': 'Из файла' } as Record<string, string>)[reason] ?? reason; }
 async function createSnapshot() {
-  const note = window.prompt('Подпись к снимку (необязательно):', ''); if (note === null) return;
-  try { const item = await nfqwsSnapshots.create(note); toast(`Снимок создан · ${new Date(item.ts * 1000).toLocaleString()}`); await loadBackups(); }
+  try { const item = await nfqwsSnapshots.create(); toast(`Снимок создан · ${new Date(item.ts * 1000).toLocaleString()}`); await loadBackups(); }
   catch (error) { toast(error instanceof Error ? error.message : 'Не удалось создать снимок.', 'error'); }
 }
 async function restoreSnapshot(id: string) {
-  if (!window.confirm('Восстановить конфигурацию, списки и настройки из этого снимка? Перед записью сохранится текущее состояние.')) return;
-  try { const result = await nfqwsSnapshots.restore(id); toast(result.message); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
-  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить снимок.', 'error'); }
+  requestDangerousConfirmation('Восстановить резервную копию?', 'Конфигурация, списки и настройки будут восстановлены из снимка. Перед записью панель сохранит текущее состояние.', async () => {
+    try { const result = await nfqwsSnapshots.restore(id); toast(result.message); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить снимок.', 'error'); }
+  });
 }
 async function restoreSnapshotFile(input: HTMLInputElement) {
   const file = input.files?.[0]; if (!file) return;
-  if (!window.confirm(`Восстановить состояние из «${file.name}»? Перед записью создастся снимок текущего состояния.`)) { input.value = ''; return; }
-  try { const result = await nfqwsSnapshots.restoreFile(file); toast(result.message ?? `Восстановлено файлов: ${result.changed?.length ?? 0}`); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
-  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить архив.', 'error'); }
-  finally { input.value = ''; }
+  requestDangerousConfirmation('Восстановить архив?', `Будут заменены файлы панели и nfqws2 из «${file.name}». Перед восстановлением создастся снимок текущего состояния.`, async () => {
+    try { const result = await nfqwsSnapshots.restoreFile(file); toast(result.message ?? `Восстановлено файлов: ${result.changed?.length ?? 0}`); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось восстановить архив.', 'error'); }
+    finally { input.value = ''; }
+  }, () => { input.value = ''; });
 }
 function readSnapshotSettings() {
   const current = snapshotOverview?.settings; if (!current) throw new Error('Сначала загрузите настройки снимков.');
@@ -370,6 +383,136 @@ async function runSnapshotRemote(action: 'test' | 'push' | 'key') {
     await loadBackups();
   } catch (error) { toast(error instanceof Error ? error.message : 'Операция с NAS не выполнена.', 'error'); }
 }
+async function deleteSnapshot(id: string) {
+  requestDangerousConfirmation('Удалить локальную копию?', 'Архив будет удалён с роутера. Если копия уже отправлена на NAS, она там останется.', async () => {
+    try { await nfqwsSnapshots.delete(id); toast('Локальная копия удалена.'); await loadBackups(); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось удалить снимок.', 'error'); }
+  });
+}
+
+function renderProfiles(profiles: ConfigProfileSummary[]) {
+  const host = $('#profileList'); if (!host) return;
+  host.replaceChildren();
+  if (!profiles.length) { const empty = document.createElement('p'); empty.className = 'text-sm text-slate-400'; empty.textContent = 'Сохранённых профилей пока нет. Создайте профиль из текущей конфигурации.'; host.append(empty); return; }
+  for (const profile of profiles) {
+    const row = document.createElement('article'); row.className = 'backup-row';
+    const text = document.createElement('div'); text.className = 'min-w-0';
+    const name = document.createElement('strong'); name.className = 'block text-sm text-white'; name.textContent = profile.name;
+    const meta = document.createElement('span'); meta.className = 'mt-1 block text-xs text-slate-400'; meta.textContent = `Изменён ${new Date(profile.updatedAt * 1000).toLocaleString()} · ${formatBytes(profile.bytes)}`;
+    text.append(name, meta);
+    const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-2';
+    for (const [action, label] of [['activateProfile', 'Активировать'], ['renameProfile', 'Переименовать'], ['deleteProfile', 'Удалить']] as const) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'backup-action'; button.dataset.actionClick = action; button.dataset.args = JSON.stringify([profile.id]); button.textContent = label;
+      if (action === 'activateProfile') button.classList.add('text-blue-200');
+      if (action === 'deleteProfile') button.classList.add('text-rose-200');
+      actions.append(button);
+    }
+    row.append(text, actions); host.append(row);
+  }
+}
+async function loadProfiles() {
+  const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профили…';
+  try { const result = await nfqwsProfiles.list(); renderProfiles(result.profiles); if (label) label.textContent = `${result.profiles.length} профилей · активация сохраняет текущую конфигурацию и перезапускает nfqws2.`; }
+  catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили.'; }
+}
+async function createProfile() {
+  pendingProfileEdit = { kind: 'create' };
+  setText('#profileDialogTitle', 'Сохранить профиль');
+  setValue('#profileNameInput', 'Мой профиль');
+  showProfileDialog();
+}
+async function renameProfile(id: string) {
+  const current = (await nfqwsProfiles.list()).profiles.find((profile) => profile.id === id); if (!current) return;
+  pendingProfileEdit = { kind: 'rename', id };
+  setText('#profileDialogTitle', 'Переименовать профиль');
+  setValue('#profileNameInput', current.name);
+  showProfileDialog();
+}
+function showProfileDialog() {
+  const modal = $('#profileDialog'); modal?.classList.remove('hidden'); modal?.classList.add('flex');
+  const input = $<HTMLInputElement>('#profileNameInput'); input?.focus(); input?.select();
+}
+function closeProfileDialog() {
+  pendingProfileEdit = null; const modal = $('#profileDialog'); modal?.classList.add('hidden'); modal?.classList.remove('flex');
+}
+async function saveProfileDialog() {
+  const edit = pendingProfileEdit; const name = $<HTMLInputElement>('#profileNameInput')?.value.trim() ?? '';
+  if (!edit || !name) return toast('Введите название профиля.', 'error');
+  closeProfileDialog();
+  try {
+    if (edit.kind === 'create') {
+      if (!config) await loadConfig();
+      if (!config) throw new Error('Сначала загрузите текущую конфигурацию.');
+      await nfqwsProfiles.create(name, config.content); toast('Профиль сохранён из текущей конфигурации.');
+    } else { await nfqwsProfiles.rename(edit.id, name); toast('Название профиля изменено.'); }
+    await loadProfiles();
+  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить профиль.', 'error'); }
+}
+async function activateProfile(id: string) {
+  requestDangerousConfirmation('Активировать профиль?', 'Текущая конфигурация сохранится в резервных копиях, затем nfqws2 перезапустится с выбранным профилем.', async () => {
+    setBusy(true); setRestartInProgress(true);
+    try { const result = await nfqwsProfiles.activate(id); config = result.config; const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) editor.value = config.content; await fetchStatus(); toast(result.message || lifecycleMessage('restart')); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось активировать профиль.', 'error'); }
+    finally { setRestartInProgress(false); setBusy(false); }
+  });
+}
+async function deleteProfile(id: string) {
+  requestDangerousConfirmation('Удалить профиль?', 'Удалится только сохранённая копия. Активная конфигурация nfqws2 не изменится.', async () => {
+    try { await nfqwsProfiles.delete(id); toast('Профиль удалён.'); await loadProfiles(); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось удалить профиль.', 'error'); }
+  });
+}
+function requestDangerousConfirmation(title: string, message: string, action: () => Promise<void>, onCancel: () => void = () => undefined) {
+  setText('#operationConfirmTitle', title); setText('#operationConfirmMessage', message); pendingConfirmation = action;
+  pendingConfirmationCancel = onCancel;
+  const modal = $('#operationConfirmModal'); modal?.classList.remove('hidden'); modal?.classList.add('flex');
+}
+function closeDangerousConfirmation(confirmed = false) {
+  const onCancel = pendingConfirmationCancel; pendingConfirmation = null; pendingConfirmationCancel = null;
+  if (!confirmed) onCancel?.();
+  const modal = $('#operationConfirmModal'); modal?.classList.add('hidden'); modal?.classList.remove('flex');
+}
+async function confirmDangerousOperation() {
+  const action = pendingConfirmation; closeDangerousConfirmation(true); if (action) await action();
+}
+async function loadChangeHistory(query = '') {
+  const host = $('#changeHistoryList'); if (!host) return;
+  const status = $('#changeHistoryStatus'); if (status) status.textContent = 'Загружаем историю снимков…';
+  try {
+    changeHistoryCache = (await nfqwsChangeHistory.list()).items;
+    renderChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? query);
+  } catch (error) { if (status) status.textContent = error instanceof Error ? error.message : 'Не удалось загрузить журнал изменений.'; }
+}
+function renderChangeHistory(query = '') {
+  const host = $('#changeHistoryList'); if (!host) return;
+  const needle = query.trim().toLocaleLowerCase();
+  const visible = changeHistoryCache.filter((item) => !needle || [item.reason, item.note, ...item.changedFiles].join(' ').toLocaleLowerCase().includes(needle));
+  host.replaceChildren();
+  for (const item of visible) {
+    const row = document.createElement('article'); row.className = 'backup-row';
+    const title = document.createElement('strong'); title.className = 'block text-sm text-white'; title.textContent = item.note || snapshotReason(item.reason);
+    const meta = document.createElement('span'); meta.className = 'mt-1 block text-xs text-slate-400'; meta.textContent = `${new Date(item.ts * 1000).toLocaleString()} · снимок ${item.id}`;
+    const files = document.createElement('p'); files.className = 'mt-2 break-all text-xs text-slate-300'; files.textContent = item.changedFiles.length ? `Изменено: ${item.changedFiles.join(', ')}` : 'Нет предыдущего снимка для сравнения';
+    row.append(title, meta, files); host.append(row);
+  }
+  setText('#changeHistoryStatus', `${visible.length} событий · история построена по изменениям хэшей файлов в снимках.`);
+}
+async function loadLogs() {
+  const status = $('#logsStatus'); if (status) status.textContent = `Загружаем журнал ${currentLogSource}…`;
+  try { const result = await nfqwsLogs.get(currentLogSource); currentLogContent = result.content; renderLogs(); if (status) status.textContent = `Получен хвост журнала ${currentLogSource} · ${result.content.split(/\r?\n/).filter(Boolean).length} строк.`; }
+  catch (error) { currentLogContent = error instanceof Error ? error.message : 'Не удалось загрузить журнал.'; renderLogs(); if (status) status.textContent = 'Источник журнала недоступен.'; }
+}
+function renderLogs() {
+  const output = $('#logsOutput'); if (!(output instanceof HTMLPreElement)) return;
+  const query = ($<HTMLInputElement>('#logsSearch')?.value ?? '').trim().toLocaleLowerCase();
+  output.textContent = currentLogContent.split(/\r?\n/).filter((line) => !query || line.toLocaleLowerCase().includes(query)).join('\n') || 'Совпадений нет.';
+}
+function startLogPolling() { stopLogPolling(); logPollingTimer = window.setInterval(() => { if (!document.getElementById('tabContent-logs')?.classList.contains('hidden')) void loadLogs(); }, 5000); }
+function stopLogPolling() { if (logPollingTimer !== null) window.clearInterval(logPollingTimer); logPollingTimer = null; }
+function downloadLogs() {
+  const url = URL.createObjectURL(new Blob([currentLogContent], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a'); link.href = url; link.download = `${currentLogSource}.log`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 function syncAppearanceControls() {
   all<HTMLInputElement>('input[name="appearanceTheme"]').forEach((input) => { input.checked = input.value === appearanceSettings.theme; });
   all<HTMLInputElement>('input[name="appearanceLayout"]').forEach((input) => { input.checked = input.value === appearanceSettings.layout; });
@@ -378,7 +521,7 @@ function syncAppearanceControls() {
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
 }
 function syncNavigationLayout(route?: Route) {
-  const routeToGroup: Record<string, string> = { conf: 'configuration', check: 'site-check', trace: 'site-check', diagnostic16k: 'site-check', configCheck: 'site-check', autotune: 'tuning', monitor: 'monitoring', lists: 'lists', appearance: 'system', about: 'system' };
+  const routeToGroup: Record<string, string> = { conf: 'configuration', check: 'site-check', trace: 'site-check', diagnostic16k: 'site-check', configCheck: 'site-check', autotune: 'tuning', monitor: 'monitoring', lists: 'lists', profiles: 'system', snapshots: 'system', changes: 'system', logs: 'system', appearance: 'system', about: 'system' };
   const activeRoute = route ?? (Object.keys(routeToGroup).find((key) => !document.getElementById(`tabContent-${key}`)?.classList.contains('hidden')) as Route | undefined);
   const group = activeRoute ? routeToGroup[activeRoute] : undefined;
   const navigation = $('#simplifiedNavigation');
@@ -2869,9 +3012,25 @@ function bindPrototypeActions() {
     logoutPanel: () => void logoutPanel(),
     createBackup: () => void createSnapshot(),
     createSnapshot: () => void createSnapshot(),
+    deleteSnapshot: (id: string) => void deleteSnapshot(id),
     refreshBackups: () => void loadBackups(),
     restoreSnapshot: (id: string) => void restoreSnapshot(id),
     pinSnapshot: (id: string, pinned: string | boolean) => void (async () => { try { await nfqwsSnapshots.pin(id, pinned === true || pinned === 'true'); await loadBackups(); } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось закрепить снимок.', 'error'); } })(),
+    createProfile: () => void createProfile(),
+    activateProfile: (id: string) => void activateProfile(id),
+    renameProfile: (id: string) => void renameProfile(id),
+    deleteProfile: (id: string) => void deleteProfile(id),
+    saveProfileDialog: () => void saveProfileDialog(),
+    cancelProfileDialog: () => closeProfileDialog(),
+    refreshProfiles: () => void loadProfiles(),
+    refreshChangeHistory: () => void loadChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
+    filterChangeHistory: () => renderChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
+    refreshLogs: () => void loadLogs(),
+    filterLogs: () => renderLogs(),
+    changeLogSource: (source: LogSource) => { currentLogSource = source === 'nfqws2' ? 'nfqws2' : 'nfqws2-ui'; void loadLogs(); },
+    downloadLogs: () => downloadLogs(),
+    cancelOperationConfirmation: () => closeDangerousConfirmation(),
+    confirmOperationConfirmation: () => void confirmDangerousOperation(),
     saveSnapshotRetention: () => void saveSnapshotSettings().catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить срок хранения.', 'error')),
     saveSnapshotRemote: () => void saveSnapshotSettings(true).catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить настройки NAS.', 'error')),
     testSnapshotRemote: () => void runSnapshotRemote('test'),
@@ -3103,6 +3262,9 @@ function boot() {
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && $('#listEditorPanel.list-editor-fullscreen')) toggleListEditorFullscreen();
+    if (event.key === 'Escape' && !$('#profileDialog')?.classList.contains('hidden')) closeProfileDialog();
+    if (event.key === 'Escape' && !$('#operationConfirmModal')?.classList.contains('hidden')) closeDangerousConfirmation();
+    if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.id === 'profileNameInput') { event.preventDefault(); void saveProfileDialog(); }
   });
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigScroll, { passive: true });
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());

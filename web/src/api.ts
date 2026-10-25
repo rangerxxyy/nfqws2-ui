@@ -70,6 +70,9 @@ export type SnapshotItem = { id: string; ts: number; reason: string; note: strin
 export type SnapshotRemoteSettings = { enabled: boolean; host: string; port: number; user: string; dir: string; keepLocal: number };
 export type SnapshotSettings = { maxCount: number; maxDays: number; remote: SnapshotRemoteSettings };
 export type SnapshotOverview = { items: SnapshotItem[]; settings: SnapshotSettings; directory: string; totalBytes: number; localCount: number; remote: { tool: string | null; publicKey: string; on: boolean; pending: number; stored: number; lastOk: number | null; error: string | null; setupCommand: string } };
+export type ConfigProfileSummary = { id: string; name: string; updatedAt: number; bytes: number };
+export type ChangeHistoryEntry = { id: string; ts: number; reason: string; note: string; changedFiles: string[] };
+export type LogSource = 'nfqws2-ui' | 'nfqws2';
 export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean };
 export type PanelAuthStatus = { enabled: boolean; hasPassword: boolean; authenticated: boolean; rememberDays: number };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
@@ -151,6 +154,7 @@ export const nfqwsSnapshots = {
   create: (note = '') => api<SnapshotItem>('/api/snapshots', { method: 'POST', body: JSON.stringify({ note }) }),
   saveSettings: (settings: SnapshotSettings) => api<{ saved: boolean }>('/api/snapshots/settings', { method: 'PUT', body: JSON.stringify(settings) }),
   pin: (id: string, pinned: boolean) => api<{ saved: boolean }>(`/api/snapshots/${encodeURIComponent(id)}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) }),
+  delete: (id: string) => api<{ deleted: boolean }>(`/api/snapshots/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   restore: (id: string) => api<{ changed: string[]; message: string }>(`/api/snapshots/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
   restoreFile: async (file: File) => {
     const response = await fetch('/api/snapshots/restore-file', { method: 'POST', body: file, headers: { 'Content-Type': 'application/gzip' }, credentials: 'same-origin' });
@@ -159,6 +163,22 @@ export const nfqwsSnapshots = {
   createKey: () => api<{ publicKey: string }>('/api/snapshots/remote/key', { method: 'POST' }),
   testRemote: () => api<{ ok: boolean; count: number }>('/api/snapshots/remote/test', { method: 'POST' }),
   pushRemote: () => api<{ sent: number }>('/api/snapshots/remote/push', { method: 'POST' }),
+};
+
+export const nfqwsProfiles = {
+  list: () => api<{ profiles: ConfigProfileSummary[] }>('/api/profiles'),
+  create: (name: string, content: string) => api<ConfigProfileSummary>('/api/profiles', { method: 'POST', body: JSON.stringify({ name, content }) }),
+  rename: (id: string, name: string) => api<ConfigProfileSummary>(`/api/profiles/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+  delete: (id: string) => api<{ deleted: boolean }>(`/api/profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  activate: (id: string) => api<{ config: ConfigResponse; message: string }>(`/api/profiles/${encodeURIComponent(id)}/activate`, { method: 'POST' }),
+};
+
+export const nfqwsChangeHistory = {
+  list: () => api<{ items: ChangeHistoryEntry[] }>('/api/change-history'),
+};
+
+export const nfqwsLogs = {
+  get: (source: LogSource, tail = 1000) => api<{ content: string }>(`/api/logs?source=${encodeURIComponent(source)}&tail=${tail}`),
 };
 
 export const nfqwsAppearance = {

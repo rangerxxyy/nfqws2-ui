@@ -381,6 +381,10 @@ export default function App() {
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>О nfqws2-UI</span>
               </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["profiles"])} id={"navBtn-profiles"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-violet-300"}>▤</span><span>Профили</span></button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-amber-300"}>◷</span><span>Резервные копии</span></button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["changes"])} id={"navBtn-changes"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-cyan-300"}>↺</span><span>Журнал изменений</span></button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["logs"])} id={"navBtn-logs"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-emerald-300"}>≡</span><span>Журнал</span></button>
             </nav>
           </div>
           {"\n\n        "}
@@ -399,7 +403,7 @@ export default function App() {
             {[['configuration', 'Конфигурация'], ['site-check', 'Проверка сайта'], ['tuning', 'Подбор'], ['monitoring', 'Мониторинг'], ['lists', 'Списки'], ['system', 'Система']].map(([group, label], index) => <button key={group} type={"button"} data-simplified-group={group} data-action-click={"switchSimplifiedNavGroup"} data-args={JSON.stringify([group])} aria-pressed={index === 0 ? "true" : "false"} className={"simplified-nav-button"}>{label}</button>)}
           </div>
           <div className={"simplified-nav-pages"} role={"group"} aria-label={"Страницы группы"}>
-            {[['conf', 'Конфигурация'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['diagnostic16k', 'Диагностика 16 КБ'], ['configCheck', 'Проверка конфигурации'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
+            {[['conf', 'Конфигурация'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['diagnostic16k', 'Диагностика 16 КБ'], ['configCheck', 'Проверка конфигурации'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['profiles', 'Профили'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
           </div>
         </nav>
         {"\n\n      "}
@@ -1300,6 +1304,25 @@ export default function App() {
             </div><p id={"aboutCopyStatus"} className={"mt-2 text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p><p className={"mt-3 text-xs text-slate-500"}><code>nfqws2-ui-ctl</code> — отдельная команда панели rangerxxyy; штатное управление nfqws2 не меняется.</p></div>
           </section>
         </section>
+        <section id={"tabContent-profiles"} className={"hidden view-animate space-y-4"}>
+          <div className={"flex flex-wrap items-end justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Профили</h1><p className={"mt-1 text-sm text-slate-400"}>Сохранённые варианты конфигурации nfqws2. Активация проходит проверку, создаёт снимок текущего состояния и перезапускает службу.</p></div><button type={"button"} data-action-click={"createProfile"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>＋ Сохранить текущую конфигурацию</button></div>
+          <section className={"ui-card max-w-5xl rounded-xl p-4 sm:p-5"}><p id={"profileStatus"} className={"mb-3 text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Профили хранятся отдельно от активного файла.</p><div id={"profileList"} className={"grid gap-2"}></div></section>
+        </section>
+        <section id={"tabContent-snapshots"} className={"hidden view-animate space-y-4"}>
+          <div><h1 className={"text-xl font-bold text-white"}>Резервные копии</h1><p className={"mt-1 text-sm text-slate-400"}>Снимки конфигурации и списков, созданные перед изменениями, вручную или по расписанию.</p></div>
+          <section className={"ui-card max-w-5xl rounded-xl p-4 sm:p-5"}>
+            <div className={"flex flex-wrap items-center justify-between gap-3"}><div><h2 className={"font-semibold text-white"}>Локальные снимки</h2><p id={"snapshotCount"} className={"mt-1 text-xs text-slate-400"}>—</p></div><div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"createSnapshot"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>＋ Создать снимок</button><label className={"backup-action cursor-pointer"}>Импортировать<input id={"snapshotRestoreFile"} type={"file"} accept={".tar.gz,application/gzip"} className={"hidden"} data-action-change={"restoreSnapshotFile"} data-args={JSON.stringify([{source:"self"}])} /></label></div></div>
+            <p id={"backupStatus"} className={"mt-3 text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Снимки загружаются с роутера…</p><p id={"snapshotDirectory"} className={"mt-1 break-all font-mono text-[11px] text-slate-500"}></p><div id={"backupList"} className={"mt-3 grid gap-2"}></div>
+          </section>
+        </section>
+        <section id={"tabContent-changes"} className={"hidden view-animate space-y-4"}>
+          <div><h1 className={"text-xl font-bold text-white"}>Журнал изменений</h1><p className={"mt-1 text-sm text-slate-400"}>История сравнивает отпечатки файлов в сохранённых снимках конфигурации и списков.</p></div>
+          <section className={"ui-card max-w-5xl rounded-xl p-4 sm:p-5"}><div className={"flex flex-wrap gap-2"}><input id={"changeHistorySearch"} type={"search"} placeholder={"Фильтр по подписи или файлу"} className={"min-w-[14rem] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} data-action-input={"filterChangeHistory"} /><button type={"button"} data-action-click={"refreshChangeHistory"} className={"backup-action"}>Обновить</button></div><p id={"changeHistoryStatus"} className={"my-3 text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p><div id={"changeHistoryList"} className={"grid gap-2"}></div></section>
+        </section>
+        <section id={"tabContent-logs"} className={"hidden view-animate space-y-4"}>
+          <div><h1 className={"text-xl font-bold text-white"}>Журнал</h1><p className={"mt-1 text-sm text-slate-400"}>Логи читаются backend на роутере ограниченным хвостом; панель обновляет их раз в 5 секунд, пока открыт этот раздел.</p></div>
+          <section className={"ui-card rounded-xl p-4 sm:p-5"}><div className={"flex flex-wrap items-center gap-2"}><label className={"text-sm text-slate-300"} htmlFor={"logsSource"}>Источник</label><select id={"logsSource"} defaultValue={"nfqws2-ui"} data-action-change={"changeLogSource"} data-value-source={"value"} className={"rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"}><option value={"nfqws2-ui"}>nfqws2-UI</option><option value={"nfqws2"}>nfqws2</option></select><input id={"logsSearch"} type={"search"} placeholder={"Фильтр строк"} data-action-input={"filterLogs"} className={"min-w-[12rem] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} /><button type={"button"} data-action-click={"refreshLogs"} className={"backup-action"}>Обновить</button><button type={"button"} data-action-click={"downloadLogs"} className={"backup-action"}>Скачать</button></div><p id={"logsStatus"} className={"my-3 text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Журнал загружается…</p><pre id={"logsOutput"} className={"max-h-[70vh] overflow-auto rounded-lg border border-slate-800 bg-[#060a12] p-3 font-mono text-xs leading-5 text-slate-200 whitespace-pre-wrap break-all"}></pre></section>
+        </section>
         {"\n\n      "}
         {"\n      "}
         {"\n      "}
@@ -1473,6 +1496,20 @@ export default function App() {
           <button type={"button"} data-action-click={"cancelDeleteCustomList"} title={"Закрыть подтверждение и оставить список"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button>
           <button id={"confirmCustomListDelete"} type={"button"} data-action-click={"confirmDeleteCustomList"} title={"Удалить только этот пользовательский файл списка"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Удалить</button>
         </div>
+      </section>
+    </div>
+    <div id={"operationConfirmModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[80] hidden items-center justify-center p-4"}>
+      <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"alertdialog"} aria-modal={"true"} aria-labelledby={"operationConfirmTitle"} aria-describedby={"operationConfirmMessage"}>
+        <h3 id={"operationConfirmTitle"} className={"text-base font-bold text-white"}>Подтвердите действие</h3>
+        <p id={"operationConfirmMessage"} className={"mt-2 text-sm leading-6 text-slate-300"}></p>
+        <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelOperationConfirmation"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"confirmOperationConfirmation"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Продолжить</button></div>
+      </section>
+    </div>
+    <div id={"profileDialog"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[75] hidden items-center justify-center p-4"}>
+      <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"profileDialogTitle"}>
+        <h3 id={"profileDialogTitle"} className={"text-base font-bold text-white"}>Сохранить профиль</h3>
+        <label className={"mt-4 block text-sm text-slate-300"} htmlFor={"profileNameInput"}>Название<input id={"profileNameInput"} maxLength={64} className={"mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} /></label>
+        <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelProfileDialog"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"saveProfileDialog"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button></div>
       </section>
     </div>
 {"\n\n  "}
