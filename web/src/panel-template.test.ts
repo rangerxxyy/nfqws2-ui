@@ -568,6 +568,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('get(get_snapshots).post(create_snapshot_api)');
     expect(backendSource).toContain('delete_snapshot_api');
     expect(panelSource).toContain('nfqwsProfiles.activate(id)');
+    expect(template).toContain('id="profileContentInput"');
+    expect(panelSource).toContain("['editProfile', 'Изменить']");
+    expect(panelSource).toContain('nfqwsProfiles.get(id)');
+    expect(panelSource).toContain('nfqwsProfiles.update(edit.id, name, content)');
+    expect(backendSource).toContain('.put(update_profile)');
     expect(backendSource).toContain('"/api/change-history"');
     expect(panelSource).toContain('nfqwsLogs.get(currentLogSource)');
     expect(template).toContain('id="operationConfirmModal"');

@@ -82,7 +82,7 @@ fn validate_content(content: &str) -> Result<(), String> {
 
 pub fn list(data_dir: &Path) -> Vec<ConfigProfileSummary> {
     let mut profiles = load(data_dir).profiles;
-    profiles.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    profiles.sort_by_key(|profile| profile.name.to_lowercase());
     profiles
         .into_iter()
         .map(|profile| ConfigProfileSummary {
@@ -172,6 +172,49 @@ pub fn delete(data_dir: &Path, id: &str) -> Result<(), String> {
     save(data_dir, &store)
 }
 
+pub fn get(data_dir: &Path, id: &str) -> Result<ConfigProfile, String> {
+    load(data_dir)
+        .profiles
+        .into_iter()
+        .find(|profile| profile.id == id)
+        .ok_or_else(|| "Профиль не найден".into())
+}
+
+pub fn update(
+    data_dir: &Path,
+    id: &str,
+    name: &str,
+    content: &str,
+    now: u64,
+) -> Result<ConfigProfileSummary, String> {
+    let name = validate_name(name)?;
+    validate_content(content)?;
+    let mut store = load(data_dir);
+    if store
+        .profiles
+        .iter()
+        .any(|profile| profile.id != id && profile.name.to_lowercase() == name.to_lowercase())
+    {
+        return Err("Профиль с таким названием уже существует".into());
+    }
+    let profile = store
+        .profiles
+        .iter_mut()
+        .find(|profile| profile.id == id)
+        .ok_or("Профиль не найден")?;
+    profile.name = name;
+    profile.content = content.to_owned();
+    profile.updated_at = now;
+    let summary = ConfigProfileSummary {
+        id: profile.id.clone(),
+        name: profile.name.clone(),
+        updated_at: now,
+        bytes: profile.content.len(),
+    };
+    save(data_dir, &store)?;
+    Ok(summary)
+}
+
 pub fn content(data_dir: &Path, id: &str) -> Result<String, String> {
     load(data_dir)
         .profiles
@@ -199,6 +242,38 @@ mod tests {
         assert_eq!(renamed.updated_at, 11);
         delete(dir.path(), &created.id).unwrap();
         assert!(list(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn updates_saved_profile_name_and_content_without_changing_its_id() {
+        let dir = tempdir().unwrap();
+        let created = create(dir.path(), "Дом", "NFQWS_ARGS=\"--filter-tcp=443\"\n", 10).unwrap();
+        let updated = update(
+            dir.path(),
+            &created.id,
+            "Домашняя сеть",
+            "NFQWS_ARGS=\"--filter-tcp=80,443\"\n",
+            11,
+        )
+        .unwrap();
+
+        assert_eq!(updated.id, created.id);
+        assert_eq!(updated.name, "Домашняя сеть");
+        assert_eq!(updated.updated_at, 11);
+        assert_eq!(
+            content(dir.path(), &created.id).unwrap(),
+            "NFQWS_ARGS=\"--filter-tcp=80,443\"\n"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_or_duplicate_profile_updates_without_changing_saved_data() {
+        let dir = tempdir().unwrap();
+        let first = create(dir.path(), "Дом", "before", 10).unwrap();
+        let second = create(dir.path(), "Работа", "other", 10).unwrap();
+        assert!(update(dir.path(), &first.id, "Дом", "  ", 11).is_err());
+        assert!(update(dir.path(), &first.id, &second.name, "after", 11).is_err());
+        assert_eq!(content(dir.path(), &first.id).unwrap(), "before");
     }
 
     #[test]

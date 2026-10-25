@@ -1506,9 +1506,11 @@ export default function App() {
       </section>
     </div>
     <div id={"profileDialog"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[75] hidden items-center justify-center p-4"}>
-      <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"profileDialogTitle"}>
+      <section className={"w-full max-w-3xl rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"profileDialogTitle"}>
         <h3 id={"profileDialogTitle"} className={"text-base font-bold text-white"}>Сохранить профиль</h3>
         <label className={"mt-4 block text-sm text-slate-300"} htmlFor={"profileNameInput"}>Название<input id={"profileNameInput"} maxLength={64} className={"mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} /></label>
+        <label className={"mt-4 block text-sm text-slate-300"} htmlFor={"profileContentInput"}>Конфигурация профиля<textarea id={"profileContentInput"} rows={18} spellCheck={false} className={"mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none"}></textarea></label>
+        <p className={"mt-2 text-xs text-slate-500"}>Сохранение проверяет конфигурацию; активация создаёт резервную копию и перезапускает nfqws2.</p>
         <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelProfileDialog"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"saveProfileDialog"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button></div>
       </section>
     </div>

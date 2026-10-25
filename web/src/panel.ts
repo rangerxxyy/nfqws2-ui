@@ -304,7 +304,7 @@ let currentLogContent = '';
 let pendingConfirmation: (() => Promise<void>) | null = null;
 let pendingConfirmationCancel: (() => void) | null = null;
 let changeHistoryCache: ChangeHistoryEntry[] = [];
-let pendingProfileEdit: { kind: 'create' } | { kind: 'rename'; id: string } | null = null;
+let pendingProfileEdit: { kind: 'create' } | { kind: 'edit'; id: string } | null = null;
 function renderBackups(data: SnapshotOverview) {
   const host = $('#backupList'); if (!host) return;
   snapshotOverview = data;
@@ -401,7 +401,7 @@ function renderProfiles(profiles: ConfigProfileSummary[]) {
     const meta = document.createElement('span'); meta.className = 'mt-1 block text-xs text-slate-400'; meta.textContent = `Изменён ${new Date(profile.updatedAt * 1000).toLocaleString()} · ${formatBytes(profile.bytes)}`;
     text.append(name, meta);
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-2';
-    for (const [action, label] of [['activateProfile', 'Активировать'], ['renameProfile', 'Переименовать'], ['deleteProfile', 'Удалить']] as const) {
+    for (const [action, label] of [['activateProfile', 'Активировать'], ['editProfile', 'Изменить'], ['deleteProfile', 'Удалить']] as const) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'backup-action'; button.dataset.actionClick = action; button.dataset.args = JSON.stringify([profile.id]); button.textContent = label;
       if (action === 'activateProfile') button.classList.add('text-blue-200');
       if (action === 'deleteProfile') button.classList.add('text-rose-200');
@@ -416,16 +416,22 @@ async function loadProfiles() {
   catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили.'; }
 }
 async function createProfile() {
+  if (!config) await loadConfig();
+  if (!config) return toast('Сначала загрузите текущую конфигурацию.', 'error');
   pendingProfileEdit = { kind: 'create' };
   setText('#profileDialogTitle', 'Сохранить профиль');
   setValue('#profileNameInput', 'Мой профиль');
+  setValue('#profileContentInput', config.content);
   showProfileDialog();
 }
-async function renameProfile(id: string) {
-  const current = (await nfqwsProfiles.list()).profiles.find((profile) => profile.id === id); if (!current) return;
-  pendingProfileEdit = { kind: 'rename', id };
-  setText('#profileDialogTitle', 'Переименовать профиль');
-  setValue('#profileNameInput', current.name);
+async function editProfile(id: string) {
+  try {
+    const current = await nfqwsProfiles.get(id);
+    pendingProfileEdit = { kind: 'edit', id };
+    setText('#profileDialogTitle', 'Изменить профиль');
+    setValue('#profileNameInput', current.name);
+    setValue('#profileContentInput', current.content);
+  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить профиль.', 'error'); return; }
   showProfileDialog();
 }
 function showProfileDialog() {
@@ -437,14 +443,13 @@ function closeProfileDialog() {
 }
 async function saveProfileDialog() {
   const edit = pendingProfileEdit; const name = $<HTMLInputElement>('#profileNameInput')?.value.trim() ?? '';
+  const content = $<HTMLTextAreaElement>('#profileContentInput')?.value ?? '';
   if (!edit || !name) return toast('Введите название профиля.', 'error');
-  closeProfileDialog();
+  if (!content.trim()) return toast('Конфигурация профиля не должна быть пустой.', 'error');
   try {
-    if (edit.kind === 'create') {
-      if (!config) await loadConfig();
-      if (!config) throw new Error('Сначала загрузите текущую конфигурацию.');
-      await nfqwsProfiles.create(name, config.content); toast('Профиль сохранён из текущей конфигурации.');
-    } else { await nfqwsProfiles.rename(edit.id, name); toast('Название профиля изменено.'); }
+    if (edit.kind === 'create') { await nfqwsProfiles.create(name, content); toast('Профиль сохранён.'); }
+    else { await nfqwsProfiles.update(edit.id, name, content); toast('Профиль обновлён.'); }
+    closeProfileDialog();
     await loadProfiles();
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить профиль.', 'error'); }
 }
@@ -3018,7 +3023,7 @@ function bindPrototypeActions() {
     pinSnapshot: (id: string, pinned: string | boolean) => void (async () => { try { await nfqwsSnapshots.pin(id, pinned === true || pinned === 'true'); await loadBackups(); } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось закрепить снимок.', 'error'); } })(),
     createProfile: () => void createProfile(),
     activateProfile: (id: string) => void activateProfile(id),
-    renameProfile: (id: string) => void renameProfile(id),
+    editProfile: (id: string) => void editProfile(id),
     deleteProfile: (id: string) => void deleteProfile(id),
     saveProfileDialog: () => void saveProfileDialog(),
     cancelProfileDialog: () => closeProfileDialog(),

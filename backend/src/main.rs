@@ -2647,8 +2647,9 @@ struct ProfileCreateRequest {
 }
 
 #[derive(Deserialize)]
-struct ProfileRenameRequest {
+struct ProfileUpdateRequest {
     name: String,
+    content: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9598,6 +9599,16 @@ async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
         .into_response()
 }
 
+async fn get_profile(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    match nfqws2_ui::profiles::get(&state.data_dir, &id) {
+        Ok(profile) => Json(profile).into_response(),
+        Err(message) => error(StatusCode::NOT_FOUND, message),
+    }
+}
+
 async fn create_profile(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ProfileCreateRequest>,
@@ -9622,12 +9633,27 @@ async fn create_profile(
     }
 }
 
-async fn rename_profile(
+async fn update_profile(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
-    Json(request): Json<ProfileRenameRequest>,
+    Json(request): Json<ProfileUpdateRequest>,
 ) -> Response {
-    match nfqws2_ui::profiles::rename(&state.data_dir, &id, &request.name, now_unix_seconds()) {
+    if request.content.len() > 512 * 1024 {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Конфигурация профиля превышает лимит 512 КиБ",
+        );
+    }
+    if let Err(message) = validate_nfqws2_config(&request.content) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    }
+    match nfqws2_ui::profiles::update(
+        &state.data_dir,
+        &id,
+        &request.name,
+        &request.content,
+        now_unix_seconds(),
+    ) {
         Ok(profile) => Json(profile).into_response(),
         Err(message) => error(StatusCode::BAD_REQUEST, message),
     }
@@ -10823,7 +10849,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/profiles", get(get_profiles).post(create_profile))
         .route(
             "/api/profiles/{id}",
-            axum::routing::put(rename_profile).delete(delete_profile),
+            get(get_profile).put(update_profile).delete(delete_profile),
         )
         .route("/api/profiles/{id}/activate", post(activate_profile))
         .route(
