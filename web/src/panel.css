@@ -1067,6 +1067,10 @@ textarea { line-height: 1.7; tab-size: 4; }
 .release-version-header { position: relative; display: block; width: 100%; min-height: 3.4rem; padding: .75rem 2.75rem .75rem .9rem; text-align: left; transition: background-color .16s ease; }
 .release-version-header:hover { background: rgb(96 165 250 / 7%); }
 .release-version-header:focus-visible { outline: 2px solid #60a5fa; outline-offset: -3px; }
+.release-retry-row { display:flex; justify-content:center; padding:.5rem .75rem 1rem; }
+.release-retry-button { display:inline-flex; align-items:center; gap:.4rem; border:1px solid #334155; border-radius:.55rem; padding:.4rem .7rem; background:#0b1220; color:#cbd5e1; font-size:.75rem; transition:border-color .16s ease, background-color .16s ease, color .16s ease; }
+.release-retry-button:hover { border-color:#60a5fa; background:#17233a; color:#fff; }
+.release-retry-button:focus-visible { outline:2px solid #60a5fa; outline-offset:2px; }
 .release-markdown-scroll { max-height: 12rem; overflow: auto; border-top: 1px solid rgb(71 85 105 / 45%); padding: .7rem .9rem; color: #f1f5f9; font-size: .8125rem; line-height: 1.55; }
 .release-markdown { color: inherit; overflow-wrap: anywhere; }
 .release-markdown :where(p, ul, ol, blockquote, pre, h1, h2, h3, h4, h5, h6) { margin: .35rem 0; }
@@ -1091,6 +1095,8 @@ textarea { line-height: 1.7; tab-size: 4; }
 .release-table tbody tr:nth-child(even) { background:rgb(15 23 42 / 34%); }
 [data-theme="light"] .release-version-card { border-color: #cbd5e1; background: #fff; }
 [data-theme="light"] .release-version-card.is-selected { border-color: #60a5fa; background: #eff6ff; }
+[data-theme="light"] .release-retry-button { border-color:#cbd5e1; background:#fff; color:#334155; }
+[data-theme="light"] .release-retry-button:hover { border-color:#3b82f6; background:#eff6ff; color:#1d4ed8; }
 [data-theme="light"] .release-markdown-scroll { border-color: #cbd5e1; color: #172033; }
 [data-theme="light"] .release-markdown :where(h1, h2, h3) { color: #172033; }
 [data-theme="light"] .release-markdown strong { color:#172033; }

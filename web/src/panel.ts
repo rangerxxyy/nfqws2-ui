@@ -2637,6 +2637,19 @@ async function cancelFreezeScan() {
 
 export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','applyCommunityPreset','pushBackupToNas','exportFullBackup','excludeBrokenDomain'] as const;
 
+function appendReleaseRetry(list: HTMLElement) {
+  const row = document.createElement('div');
+  row.className = 'release-retry-row';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'release-retry-button';
+  button.dataset.actionClick = 'retryUpdateList';
+  button.setAttribute('aria-label', 'Повторить загрузку списка версий');
+  button.textContent = '↻ Повторить';
+  row.append(button);
+  list.append(row);
+}
+
 function renderReleases() {
   const list = $('#updateVersionsList');
   const install = $('#confirmUpdateInstallBtn');
@@ -2647,6 +2660,7 @@ function renderReleases() {
     empty.className = 'py-8 text-center text-sm text-slate-400';
     empty.textContent = updateTarget === 'core' ? 'Для этой архитектуры нет релизов nfqws2 с проверяемым SHA-256.' : 'Стабильные версии панели с ARM64-пакетом не найдены.';
     list.append(empty);
+    appendReleaseRetry(list);
   }
   for (const release of availableReleases) {
     const selected = selectedReleaseTag === release.tag;
@@ -2717,7 +2731,14 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
     expandedReleaseTag = selectedReleaseTag;
     renderReleases();
   } catch (error) {
-    if (list) list.textContent = error instanceof Error ? error.message : 'Не удалось загрузить версии.';
+    if (list) {
+      list.replaceChildren();
+      const message = document.createElement('p');
+      message.className = 'px-3 py-6 text-center text-sm text-rose-300';
+      message.textContent = error instanceof Error ? error.message : 'Не удалось загрузить версии.';
+      list.append(message);
+      appendReleaseRetry(list);
+    }
     toast('Не удалось получить список версий из GitHub Releases.', 'error');
   }
 }
@@ -3013,6 +3034,7 @@ function bindPrototypeActions() {
     resetDefaultConf: () => void loadConfig(),
     closeUpdateModal: () => { const modal = $('#updateModalBackdrop'); modal?.classList.add('hidden'); modal?.classList.remove('flex'); },
     openUpdateModal: (target: 'ui' | 'core') => void openUpdatePicker(target),
+    retryUpdateList: () => void openUpdatePicker(updateTarget),
     openLatestUiUpdate: (tag: string) => { uiUpdateNoticeOpenedTag = tag; hideUiUpdateNotice(); void openUpdatePicker('ui'); },
     dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
     selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { const toggling = expandedReleaseTag === tag; selectedReleaseTag = tag; expandedReleaseTag = toggling ? null : tag; renderReleases(); } },

@@ -878,6 +878,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toMatch(/installSelectedRelease.*toast\('Эта функция пока не подключена/);
   });
 
+  it('offers an in-place retry when a release list is empty or cannot be loaded', () => {
+    expect(panelSource).toContain('function appendReleaseRetry(list: HTMLElement)');
+    expect(panelSource).toContain("button.dataset.actionClick = 'retryUpdateList'");
+    expect(panelSource).toContain("retryUpdateList: () => void openUpdatePicker(updateTarget)");
+    expect(panelStyles).toContain('.release-retry-button');
+  });
+
   it('does not register a beforeunload warning that blocks browser reload or close', () => {
     expect(panelSource).not.toMatch(/beforeunload|returnValue/);
     expect(entrySource).not.toMatch(/beforeunload|returnValue/);
