@@ -4765,6 +4765,7 @@ fn external_config_test_args(
     source: &str,
     active_args: &[String],
     isolated_auto_list: &Path,
+    blobs_directory: &Path,
     lists_directory: &Path,
     auto_list_sources: &mut Vec<(PathBuf, Option<PathBuf>)>,
 ) -> Result<Vec<String>, String> {
@@ -4784,16 +4785,6 @@ fn external_config_test_args(
                 .strip_prefix("--lua-init=")
                 .and_then(|path| path.trim_start_matches('@').rsplit('/').next())
                 .map(|filename| (filename.to_owned(), argument.as_str()))
-        })
-        .collect::<HashMap<_, _>>();
-    let active_blobs = active_args
-        .iter()
-        .filter(|argument| argument.starts_with("--blob="))
-        .filter_map(|argument| {
-            argument
-                .strip_prefix("--blob=")
-                .and_then(|value| value.split_once(':'))
-                .map(|(name, _)| (name.to_owned(), argument.as_str()))
         })
         .collect::<HashMap<_, _>>();
     let mut auto_list_index = 0usize;
@@ -4855,16 +4846,10 @@ fn external_config_test_args(
                     ));
                 };
                 mapped.push((*active_path).to_owned());
-            } else if let Some(blob) = argument.strip_prefix("--blob=") {
-                let blob_name = blob
-                    .split_once(':')
-                    .map(|(name, _)| name)
-                    .unwrap_or_default();
-                if let Some(active_blob) = active_blobs.get(blob_name) {
-                    mapped.push((*active_blob).to_owned());
-                } else {
-                    mapped.push(argument.to_owned());
-                }
+            } else if let Some(argument) = rewrite_foreign_blob_argument(argument, blobs_directory)
+                .map_err(|message| format!("{name}: {message}"))?
+            {
+                mapped.push(argument);
             } else {
                 mapped.push(argument.to_owned());
             }
@@ -5055,6 +5040,101 @@ fn rewrite_foreign_list_argument(
             .map(|path| Some(format!("{flag}={}", path.display())));
     }
     Ok(None)
+}
+
+fn resolve_foreign_blob_path(value: &str, blobs_directory: &Path) -> Result<PathBuf, String> {
+    const SOURCE_PREFIXES: [&str; 6] = [
+        "/opt/etc/nfqws2/blobs/",
+        "/etc/nfqws2/blobs/",
+        "/opt/etc/nfqws/blobs/",
+        "/etc/nfqws/blobs/",
+        "/opt/zapret2/files/fake/",
+        "/opt/zapret/files/fake/",
+    ];
+    if value.is_empty() || value.contains(['\\', '\0']) {
+        return Err("Путь к блобу пустой или содержит недопустимые символы".into());
+    }
+    let value = value.trim_start_matches('@');
+    let relative = if value.starts_with('/') {
+        if let Ok(relative) = Path::new(value).strip_prefix(blobs_directory) {
+            relative.to_path_buf()
+        } else if let Some(relative) = SOURCE_PREFIXES
+            .iter()
+            .find_map(|prefix| value.strip_prefix(prefix))
+        {
+            PathBuf::from(relative)
+        } else {
+            return Err(format!(
+                "путь блоба «{value}» не относится к поддерживаемой раскладке nfqws2/zapret"
+            ));
+        }
+    } else {
+        Path::new(value)
+            .strip_prefix("blobs")
+            .unwrap_or_else(|_| Path::new(value))
+            .to_path_buf()
+    };
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("путь блоба «{value}» выходит за каталог блобов"));
+    }
+    let root = blobs_directory
+        .canonicalize()
+        .map_err(|error| format!("каталог блобов не найден: {error}"))?;
+    let candidate = root.join(&relative);
+    let mut cursor = root.clone();
+    for component in relative.components() {
+        cursor.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&cursor)
+            .map_err(|_| format!("файл блоба «{value}» отсутствует в установленном каталоге"))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "путь блоба «{value}» содержит символическую ссылку"
+            ));
+        }
+    }
+    let metadata = std::fs::metadata(&candidate)
+        .map_err(|_| format!("файл блоба «{value}» отсутствует в установленном каталоге"))?;
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|_| format!("не удалось проверить путь блоба «{value}»"))?;
+    if !metadata.is_file() || !canonical.starts_with(&root) {
+        return Err(format!("путь блоба «{value}» не является обычным файлом"));
+    }
+    Ok(canonical)
+}
+
+fn rewrite_foreign_blob_argument(
+    argument: &str,
+    blobs_directory: &Path,
+) -> Result<Option<String>, String> {
+    let Some(value) = argument.strip_prefix("--blob=") else {
+        return Ok(None);
+    };
+    let Some((name, declaration)) = value.split_once(':') else {
+        return Ok(Some(argument.to_owned()));
+    };
+    let Some((offset, path)) = declaration.split_once('@') else {
+        // Inline hexadecimal blobs are part of the config itself and must not
+        // be replaced with a same-named blob from the active installation.
+        return Ok(Some(argument.to_owned()));
+    };
+    if !offset.is_empty()
+        && !offset
+            .strip_prefix('+')
+            .unwrap_or(offset)
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return Err(format!(
+            "неподдерживаемый формат смещения блоба «{offset}@»"
+        ));
+    }
+    let path = resolve_foreign_blob_path(path, blobs_directory)?;
+    Ok(Some(format!("--blob={name}:{offset}@{}", path.display())))
 }
 
 struct ForeignAutoListCleanup {
@@ -5458,6 +5538,7 @@ async fn start_foreign_config_check(
             &content,
             &active_args,
             &isolated_auto_list,
+            &paths.blobs_dir,
             &paths.lists_dir,
             &mut prepared_auto_lists,
         ) {
@@ -9239,9 +9320,12 @@ mod tests {
     fn foreign_config_parser_extracts_only_literal_tcp_groups_and_active_lua_paths() {
         let directory = tempfile::tempdir().unwrap();
         let lists = directory.path().join("lists");
+        let blobs = directory.path().join("blobs");
         std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&blobs).unwrap();
         std::fs::write(lists.join("user.list"), "example.org\n").unwrap();
         std::fs::write(lists.join("auto.list"), "auto.example.org\n").unwrap();
+        std::fs::write(blobs.join("tls_clienthello.bin"), b"tls hello").unwrap();
         let active = vec![
             "--lua-init=@/opt/nfqws/lua/zapret-lib.lua".to_string(),
             "--blob=tls_clienthello:@/opt/nfqws/blobs/tls_clienthello.bin".to_string(),
@@ -9250,13 +9334,22 @@ mod tests {
         let source = "NFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua --blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin --hostlist-auto=/opt/zapret/ipset/auto.list --hostlist-auto-debug=/var/log/auto.log\"\nNFQWS_ARGS=\"--filter-tcp=80,443 --hostlist=/opt/zapret/ipset/user.list --payload=tls_client_hello --lua-desync=fake\"\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443 --lua-desync=multisplit:pos=1\"\n";
         let isolated_auto_list = Path::new("/tmp/config-check/auto.list");
         let mut auto_lists = Vec::new();
-        let args =
-            external_config_test_args(source, &active, isolated_auto_list, &lists, &mut auto_lists)
-                .unwrap();
+        let args = external_config_test_args(
+            source,
+            &active,
+            isolated_auto_list,
+            &blobs,
+            &lists,
+            &mut auto_lists,
+        )
+        .unwrap();
         assert_eq!(args.len(), 10);
         assert!(args.contains(&"--new".to_string()));
         assert!(args.contains(&active[0]));
-        assert!(args.contains(&active[1]));
+        assert!(args.contains(&format!(
+            "--blob=tls_clienthello:@{}",
+            blobs.join("tls_clienthello.bin").canonicalize().unwrap().display()
+        )));
         assert!(args.contains(&format!("--hostlist-auto={}", isolated_auto_list.display())));
         assert_eq!(auto_lists.len(), 1);
         assert_eq!(
@@ -9283,6 +9376,7 @@ mod tests {
             mode_reference,
             &active,
             Path::new("/tmp/config-check/mode-auto.list"),
+            &blobs,
             &lists,
             &mut auto_lists,
         )
@@ -9316,6 +9410,7 @@ mod tests {
             &active,
             Path::new("/tmp/config-check/auto.list"),
             &lists,
+            &lists,
             &mut auto_lists,
         )
         .unwrap();
@@ -9345,6 +9440,74 @@ mod tests {
     }
 
     #[test]
+    fn foreign_config_parser_rejects_unmapped_blob_files_and_keeps_inline_blobs() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        let blobs = directory.path().join("blobs");
+        std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&blobs).unwrap();
+        std::fs::write(blobs.join("tls.bin"), b"tls blob").unwrap();
+        let active = vec![
+            "--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua".to_string(),
+            "--blob=inline:@/opt/etc/nfqws2/blobs/tls.bin".to_string(),
+        ];
+        let unknown_file = concat!(
+            "NFQWS_BASE_ARGS=\"--blob=foreign:@/etc/shadow\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=foreign\"\n",
+        );
+        assert!(
+            external_config_test_args(
+                unknown_file,
+                &active,
+                Path::new("/tmp/config-check/auto.list"),
+                &blobs,
+                &lists,
+                &mut Vec::new(),
+            )
+            .is_err()
+        );
+
+        let inline = concat!(
+            "NFQWS_BASE_ARGS=\"--blob=inline:0x1234\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=inline\"\n",
+        );
+        let args = external_config_test_args(
+            inline,
+            &active,
+            Path::new("/tmp/config-check/auto.list"),
+            &blobs,
+            &lists,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(
+            args.iter()
+                .any(|argument| argument == "--blob=inline:0x1234")
+        );
+
+        let offset = concat!(
+            "NFQWS_BASE_ARGS=\"--blob=custom:16@/opt/zapret2/files/fake/tls.bin\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake:blob=custom\"\n",
+        );
+        let args = external_config_test_args(
+            offset,
+            &active,
+            Path::new("/tmp/config-check/auto.list"),
+            &blobs,
+            &lists,
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert!(args.iter().any(|argument| {
+            argument
+                == &format!(
+                    "--blob=custom:16@{}",
+                    blobs.join("tls.bin").canonicalize().unwrap().display()
+                )
+        }));
+    }
+
+    #[test]
     fn foreign_config_parser_rejects_dynamic_values_new_lua_files_and_missing_tcp_filter() {
         let active = vec!["--lua-init=@/safe.lua".to_string()];
         let directory = tempfile::tempdir().unwrap();
@@ -9361,6 +9524,7 @@ mod tests {
                     source,
                     &active,
                     Path::new("/tmp/config-check/auto.list"),
+                    &lists,
                     &lists,
                     &mut Vec::new()
                 )
