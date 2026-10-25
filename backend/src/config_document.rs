@@ -332,6 +332,10 @@ impl<'a> ConfigDocument<'a> {
     pub fn literal_value(&self, name: &str) -> Result<String, String> {
         let assignment = self.unique(name)?;
         let raw = &self.source[assignment.value.clone()];
+        Self::literal_assignment_value(raw, name)
+    }
+
+    fn literal_assignment_value(raw: &str, name: &str) -> Result<String, String> {
         if raw.starts_with('"') || raw.starts_with('\'') {
             let quote = raw.as_bytes()[0];
             if raw.len() < 2 || raw.as_bytes().last() != Some(&quote) {
@@ -360,30 +364,87 @@ impl<'a> ConfigDocument<'a> {
     }
 
     /// Read a literal NFQWS_EXTRA_ARGS value or expand one exact `$MODE_*`
-    /// assignment from the same document. This is a narrow static lookup; it
-    /// never evaluates shell code or concatenated expressions.
+    /// assignment from the same document. Repeated assignments are accepted
+    /// only as static replacements or a single self-append of the previous
+    /// value, as used by Zemidala's custom profile editor.
     pub fn literal_or_mode_value(&self, name: &str) -> Result<String, String> {
-        if name != "NFQWS_EXTRA_ARGS" {
-            return self.literal_value(name);
+        let assignments = self
+            .assignments
+            .iter()
+            .filter(|assignment| assignment.name == name)
+            .collect::<Vec<_>>();
+        if assignments.is_empty() {
+            return Err(format!("Переменная {name} отсутствует"));
         }
-        if let Ok(value) = self.literal_value(name) {
-            return Ok(value);
+
+        let mut value = String::new();
+        for assignment in assignments {
+            let raw = &self.source[assignment.value.clone()];
+            if let Some(suffix) = Self::self_append_suffix(raw, name)? {
+                if !suffix.is_empty() {
+                    if !value.is_empty() {
+                        value.push(' ');
+                    }
+                    value.push_str(suffix.trim_start());
+                }
+                continue;
+            }
+
+            if name == "NFQWS_EXTRA_ARGS"
+                && let Some(variable) = Self::mode_reference(raw)
+            {
+                if !["MODE_LIST", "MODE_AUTO", "MODE_ALL"].contains(&variable) {
+                    return Err(format!("Недопустимая статическая ссылка в {name}"));
+                }
+                value = self
+                    .expand_mode_value(variable, &mut Vec::new(), &mut 0)
+                    .map_err(|message| {
+                        format!("{name}: не удалось безопасно раскрыть {variable}: {message}")
+                    })?;
+                continue;
+            }
+
+            value = Self::literal_assignment_value(raw, name)?;
         }
-        let raw = &self.source[self.unique(name)?.value.clone()];
-        let reference = raw
-            .strip_prefix("\"$MODE_")
+        Ok(value)
+    }
+
+    fn mode_reference(raw: &str) -> Option<&str> {
+        let value = raw.strip_prefix('"')?.strip_suffix('"')?;
+        if value.starts_with("${") {
+            value.strip_prefix("${")?.strip_suffix('}')
+        } else {
+            value.strip_prefix('$')
+        }
+    }
+
+    fn self_append_suffix<'b>(raw: &'b str, name: &str) -> Result<Option<&'b str>, String> {
+        let Some(value) = raw
+            .strip_prefix('"')
             .and_then(|value| value.strip_suffix('"'))
-            .ok_or_else(|| {
-                format!("Значение {name} не является литералом или одной ссылкой $MODE_*")
-            })?;
-        let variable = format!("MODE_{reference}");
-        if !["MODE_LIST", "MODE_AUTO", "MODE_ALL"].contains(&variable.as_str()) {
-            return Err(format!("Недопустимая статическая ссылка в {name}"));
+        else {
+            return Ok(None);
+        };
+        let short = format!("${name}");
+        let braced = format!("${{{name}}}");
+        let suffix = value
+            .strip_prefix(&braced)
+            .or_else(|| value.strip_prefix(&short));
+        let Some(suffix) = suffix else {
+            return Ok(None);
+        };
+        if !suffix.is_empty() && !suffix.chars().next().is_some_and(char::is_whitespace) {
+            return Ok(None);
         }
-        self.expand_mode_value(&variable, &mut Vec::new(), &mut 0)
-            .map_err(|message| {
-                format!("{name}: не удалось безопасно раскрыть {variable}: {message}")
-            })
+        if suffix
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || matches!(byte, b'$' | b'\\' | b'`' | b'"'))
+        {
+            return Err(format!(
+                "Значение {name} содержит неподдерживаемый shell-синтаксис в self-append"
+            ));
+        }
+        Ok(Some(suffix.trim_start()))
     }
 
     fn expand_mode_value(
@@ -638,6 +699,43 @@ mod tests {
                 .literal_or_mode_value("NFQWS_EXTRA_ARGS")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn foreign_config_reads_literal_and_self_appended_argument_assignments() {
+        let source = concat!(
+            "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --lua-desync=fake\"\n",
+            "NFQWS_ARGS_CUSTOM=\"$NFQWS_ARGS_CUSTOM --new --filter-tcp=80 --lua-desync=split\"\n",
+        );
+        let document = ConfigDocument::parse(source).unwrap();
+        assert_eq!(
+            document.literal_or_mode_value("NFQWS_ARGS_CUSTOM").unwrap(),
+            "--filter-tcp=443 --lua-desync=fake --new --filter-tcp=80 --lua-desync=split"
+        );
+
+        let braced = ConfigDocument::parse(
+            "NFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_ARGS=\"${NFQWS_ARGS} --lua-desync=fake\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            braced.literal_or_mode_value("NFQWS_ARGS").unwrap(),
+            "--filter-tcp=443 --lua-desync=fake"
+        );
+
+        let replaced = ConfigDocument::parse(
+            "NFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_ARGS=\"--filter-tcp=80\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            replaced.literal_or_mode_value("NFQWS_ARGS").unwrap(),
+            "--filter-tcp=80"
+        );
+
+        let unsupported = ConfigDocument::parse(
+            "NFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_ARGS=\"$HOME --filter-tcp=80\"\n",
+        )
+        .unwrap();
+        assert!(unsupported.literal_or_mode_value("NFQWS_ARGS").is_err());
     }
 
     #[test]

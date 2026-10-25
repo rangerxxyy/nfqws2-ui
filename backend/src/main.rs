@@ -9551,7 +9551,8 @@ mod tests {
         std::fs::write(lua.join("safe.lua"), "-- safe module\n").unwrap();
         let source = concat!(
             "NFQWS_BASE_ARGS=\"--qnum=17 --daemon --debug=/tmp/foreign.log --lua-init=@/opt/etc/nfqws2/lua/safe.lua\"\n",
-            "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --lua-desync=custom --new=video --filter-tcp=80 --lua-desync=custom2\"\n",
+            "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --lua-desync=custom\"\n",
+            "NFQWS_ARGS_CUSTOM=\"$NFQWS_ARGS_CUSTOM --new=video --filter-tcp=80 --lua-desync=custom2\"\n",
             "NFQWS_ARGS_UDP=\"--filter-udp=443 --payload=quic_initial\"\n",
             "NFQWS_ARGS_QUIC=\"--filter-udp=443 --payload=quic_initial --lua-desync=quic\"\n",
             "NFQWS_ARGS_IPSET=\"--ipset=lists/ips.txt\"\n",
