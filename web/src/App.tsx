@@ -1,1211 +1,21 @@
-import { useEffect } from 'react';
-import { bootPanel } from './panel';
-
-export default function App() {
-  useEffect(() => { bootPanel(); }, []);
-  return (
-    <>
-{"\n\n  "}
-{"\n  "}
-{"\n  "}
-{"\n  "}
-    <header className={"bg-[#090e1a]/95 backdrop-blur-md border-b border-slate-800/90 shrink-0 z-40 px-4 lg:px-6 py-2.5"}>
-      {"\n    "}
-      <div className={"max-w-[1920px] mx-auto grid grid-cols-1 lg:grid-cols-[repeat(3,minmax(0,1fr))] 2xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3"}>
-        {"\n      \n      "}
-        {"\n      "}
-        <div id={"headerStatusBar"} className={"min-w-0 flex flex-nowrap whitespace-nowrap items-center gap-2 justify-start overflow-x-auto py-1 lg:col-span-3 2xl:col-span-1"}>
-          {"\n        \n        "}
-          {"\n        "}
-          <div className={"status-pill flex items-center gap-2.5 bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg shadow-inner"}>
-            {"\n          "}
-            <div id={"statusIndicator"} className={"relative flex items-center justify-center w-3 h-3"}>
-              {"\n            "}
-              <span id={"statusRadarRing"} className={"absolute inline-flex h-full w-full rounded-full bg-slate-400"}></span>
-              {"\n            "}
-              <span id={"statusMainDot"} className={"relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400"}></span>
-              {"\n          "}
-            </div>
-            {"\n          "}
-            <span id={"statusTextLabel"} className={"text-[11px] sm:text-xs font-semibold text-slate-400 tracking-tight"}>
-              {"Ð¡Ñ‚Ð°Ñ‚ÑƒÑ Ð½ÐµÐ¸Ð·Ð²ÐµÑÑ‚ÐµÐ½"}
-            </span>
-            <span id={"statusDetail"} className={"sr-only"}></span>
-            {"\n        "}
-          </div>
-          {"\n\n        "}
-          {"\n        "}
-          <div id={"headerServiceControls"} className={"shrink-0 flex items-center gap-1"}>
-          <button data-action-click={"restartService"} data-action-tooltip={"ÐŸÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ nfqws2"} title={"ÐŸÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ nfqws2"} aria-label={"ÐŸÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ nfqws2"} className={"h-9 w-9 rounded-lg bg-slate-800/90 hover:bg-slate-700 hover:-translate-y-0.5 text-slate-100 border border-slate-700 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
-            {"\n          "}
-            <svg id={"restartIcon"} aria-hidden={"true"} className={"w-[18px] h-[18px] text-blue-400 transition-transform duration-500"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-              {"\n            "}
-              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"}></path>
-              {"\n          "}
-            </svg>
-            {"\n          "}
-            {"\n        "}
-          </button>
-          {"\n\n        "}
-          {"\n        "}
-          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} data-action-tooltip={"Ð—Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ nfqws2"} aria-label={"Ð—Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ nfqws2"} className={"h-9 w-9 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 hover:-translate-y-0.5 text-emerald-400 border border-emerald-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"}>
-            {"\n          "}
-            <svg aria-hidden={"true"} className={"w-[18px] h-[18px]"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-              {"\n            "}
-              <path data-power-icon={"play"} d={"M8 5.5v13L18 12 8 5.5Z"} fill={"currentColor"}></path>
-              <rect data-power-icon={"stop"} className={"hidden"} x={"7"} y={"7"} width={"10"} height={"10"} rx={"1"} fill={"currentColor"}></rect>
-              {"\n          "}
-            </svg>
-            {"\n          "}
-            <span id={"togglePowerText"} className={"sr-only"}>
-              {"Ð—Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ nfqws2"}
-            </span>
-            {"\n        "}
-          </button>
-          </div>
-          <div className={"metric-group flex items-center gap-2.5"}>
-            {"\n          \n          "}
-            {"\n          "}
-            <div className={"metric-chip min-w-[150px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
-              {"\n            "}
-              <div className={"p-1 rounded-md bg-sky-500/10 text-sky-400 border border-sky-500/20"} title={"ÐžÐ¿ÐµÑ€Ð°Ñ‚Ð¸Ð²Ð½Ð°Ñ Ð¿Ð°Ð¼ÑÑ‚ÑŒ Ñ€Ð¾ÑƒÑ‚ÐµÑ€Ð°"}>
-                {"\n              "}
-                <svg className={"w-3.5 h-3.5"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                  {"\n                "}
-                  <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"1.9"} d={"M3 7h18v7H3V7zm3 7v3m4-3v3m4-3v3m4-3v3M7 10h2m4 0h2"}></path>
-                  {"\n              "}
-                </svg>
-                {"\n            "}
-              </div>
-              {"\n            "}
-              <div>
-                {"\n              "}
-                <div className={"flex items-center gap-1.5 text-xs font-mono"}>
-                  {"\n                "}
-                  <span className={"metric-label text-slate-400 font-semibold"}>
-                    {"RAM"}
-                  </span>
-                  {"\n                "}
-                  <span id={"ramMetricText"} className={"text-slate-100 font-bold"}>
-                    {"â€”"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <div className={"metric-track w-28 sm:w-32 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
-                  {"\n                "}
-                  <div id={"ramProgressBar"} className={"bg-sky-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n\n          "}
-            {"\n          "}
-            <div className={"metric-chip min-w-[108px] bg-[#060a12] border border-slate-800/90 px-3 py-2 rounded-lg flex items-center gap-2.5"}>
-              {"\n            "}
-              <div className={"p-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"} title={"Ð—Ð°Ð³Ñ€ÑƒÐ·ÐºÐ° Ð¿Ñ€Ð¾Ñ†ÐµÑÑÐ¾Ñ€Ð°"}>
-                {"\n              "}
-                <svg className={"w-3.5 h-3.5"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                  {"\n                "}
-                  <rect x={"6"} y={"6"} width={"12"} height={"12"} rx={"2"} strokeWidth={"1.9"}></rect>
-                  {"\n                "}
-                  <rect x={"9"} y={"9"} width={"6"} height={"6"} rx={"1"} strokeWidth={"1.7"}></rect>
-                  {"\n                "}
-                  <path strokeLinecap={"round"} strokeWidth={"1.9"} d={"M9 3v3m6-3v3M9 18v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3"}></path>
-                  {"\n              "}
-                </svg>
-                {"\n            "}
-              </div>
-              {"\n            "}
-              <div>
-                {"\n              "}
-                <div className={"flex items-center gap-1.5 text-xs font-mono"}>
-                  {"\n                "}
-                  <span className={"metric-label text-slate-400 font-semibold"}>
-                    {"CPU"}
-                  </span>
-                  {"\n                "}
-                  <span id={"cpuMetricText"} className={"text-emerald-400 font-bold"}>
-                    {"â€”"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <div className={"metric-track w-16 sm:w-20 bg-slate-800/90 h-1.5 rounded-full overflow-hidden mt-1.5"}>
-                  {"\n                "}
-                  <div id={"cpuProgressBar"} className={"bg-emerald-400 h-full rounded-full transition-all duration-500"} style={{ width: "0%" }}></div>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n\n        "}
-          </div>
-          {"\n      "}
-        </div>
-        {"\n\n      "}
-        {"\n      "}
-        <div className={"flex items-center justify-center whitespace-nowrap order-first lg:order-none lg:col-start-2 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto"}>
-          {"\n        "}
-          <span className={"text-xl lg:text-2xl font-bold tracking-tight text-white select-none transition-transform duration-300 hover:scale-[1.03]"}>
-            {"\n          nfqws2"}
-            <span className={"text-blue-400 drop-shadow-[0_0_8px_rgba(96,165,250,0.35)]"}>
-              {"-UI"}
-            </span>
-            {"\n        "}
-          </span>
-          {"\n      "}
-        </div>
-        {"\n\n      "}
-        {"\n      "}
-        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:pr-2 lg:col-start-3 lg:row-start-2 lg:-translate-x-1 2xl:col-start-auto 2xl:row-start-auto 2xl:-translate-x-1"}>
-          {"\n        \n        "}
-          {"\n        "}
-          <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"ÐžÐ±Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ Ð±Ð¸Ð½Ð°Ñ€Ð½Ð¾Ðµ ÑÐ´Ñ€Ð¾ nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
-            {"\n          "}
-            <svg className={"w-4 h-4 text-slate-200"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-              {"\n            "}
-              <rect x={"6"} y={"6"} width={"12"} height={"12"} rx={"2"} strokeWidth={"1.9"}></rect>
-              {"\n            "}
-              <rect x={"9.5"} y={"9.5"} width={"5"} height={"5"} rx={"0.8"} strokeWidth={"1.7"}></rect>
-              {"\n            "}
-              <path strokeLinecap={"round"} strokeWidth={"1.9"} d={"M9 3v3m6-3v3M9 18v3m6-3v3M3 9h3m-3 6h3m12-6h3m-3 6h3"}></path>
-              {"\n          "}
-            </svg>
-            {"\n          "}
-            <span className={"font-bold text-white tracking-tight"}>
-              {"nfqws2"}
-            </span>
-            {"\n          "}
-            <span id={"headerCoreVersion"} className={"font-mono text-slate-400 font-medium"}>
-              {"â€”"}
-            </span>
-            {"\n        "}
-          </button>
-          {"\n\n        "}
-          {"\n        "}
-          <button id={"updateUiButton"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["ui"])} title={"ÐžÐ±Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ Ð²ÐµÐ±-Ð¿Ð°Ð½ÐµÐ»ÑŒ nfqws2-UI"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
-            {"\n          "}
-            <svg className={"w-4 h-4 text-slate-200"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-              {"\n            "}
-              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"1.9"} d={"M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"}></path>
-              {"\n            "}
-              <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"1.9"} d={"M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"}></path>
-              {"\n          "}
-            </svg>
-            {"\n          "}
-            <span className={"font-bold text-white"}>UI</span><span id={"headerUiVersion"} className={"font-bold text-white font-mono"}>
-              {"â€”"}
-            </span>
-            {"\n        "}
-          </button>
-          {"\n\n        "}
-          <div className={"h-5 w-[1px] bg-slate-800 mx-0.5 hidden sm:block"}></div>
-          {"\n\n        "}
-          {"\n        "}
-
-          {"\n\n      "}
-        </div>
-        {"\n\n    "}
-      </div>
-      {"\n  "}
-    </header>
-{"\n\n  "}
-{"\n  "}
-{"\n  "}
-{"\n  "}
-    <div className={"app-main-layout flex-1 min-h-0 flex overflow-hidden max-w-[1920px] w-full mx-auto"}>
-      {"\n\n    "}
-      {"\n    "}
-      <aside className={"w-64 lg:w-72 bg-[#090e1a] border-r border-slate-800/90 flex flex-col justify-between shrink-0 overflow-y-auto select-none"}>
-        {"\n      \n      "}
-        <div className={"p-3.5 space-y-5"}>
-          {"\n        \n        "}
-          {"\n        "}
-          <div>
-            {"\n          "}
-            <div className={"px-3 mb-2 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>
-              {"\n            Ð£Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ð¸Ðµ Ð¸ Ð¿Ñ€Ð°Ð²Ð¸Ð»Ð°\n          "}
-            </div>
-            {"\n          "}
-            <nav className={"space-y-1"}>
-              {"\n            \n            "}
-              {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["conf"])} id={"navBtn-conf"} className={"side-nav-btn active w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold border border-transparent text-left"}>
-                {"\n              "}
-                <div className={"flex items-center gap-3"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4 shrink-0"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span>
-                    {"ÐšÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ñ"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"text-[11px] font-mono px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300"}>
-                  {"conf"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n            "}
-              {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["lists"])} id={"navBtn-lists"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                {"\n              "}
-                <div className={"flex items-center gap-3"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span>
-                    {"Ð¡Ð¿Ð¸ÑÐºÐ¸ Ð´Ð¾Ð¼ÐµÐ½Ð¾Ð² Ð¸ IP"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300"}>
-                  {"5"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n          "}
-
-            </nav>
-            {"\n        "}
-          </div>
-          {"\n\n        "}
-          {"\n        "}
-          <div id={"diagnosticNavGroup"}>
-            {"\n          "}
-            <div className={"px-3 mb-2 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>
-              {"\n            Ð”Ð¸Ð°Ð³Ð½Ð¾ÑÑ‚Ð¸ÐºÐ° Ð¸ Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸ÐºÐ°\n          "}
-            </div>
-            {"\n          "}
-            <nav className={"space-y-1"}>
-              {"\n            \n            "}
-              {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["check"])} id={"navBtn-check"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                {"\n              "}
-                <div className={"flex items-center gap-3"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4 shrink-0 text-emerald-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span>
-                    {"ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° ÑÐ°Ð¹Ñ‚Ð°"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400"}>
-                  {"Ð”Ð¸Ð°Ð³Ð½Ð¾Ð·"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n            "}
-              {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["trace"])} id={"navBtn-trace"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <span className={"flex items-center gap-3"}><span className={"text-blue-400"}>âŒ</span><span>Ð¢Ñ€Ð°ÑÑÐ¸Ñ€Ð¾Ð²ÐºÐ°</span></span>
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300"}>--debug</span>
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["autotune"])} id={"navBtn-autotune"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                {"\n              "}
-                <div className={"flex items-center gap-3"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4 shrink-0 text-amber-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M13 10V3L4 14h7v7l9-11h-7z"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span>
-                    {"ÐÐ²Ñ‚Ð¾-Ð¿Ð¾Ð´Ð±Ð¾Ñ€ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¸"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300"}>
-                  {"TCP"}
-                </span>
-                {"\n            "}
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["diagnostic16k"])} id={"navBtn-diagnostic16k"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>â†”</span><span>Ð”Ð¸Ð°Ð³Ð½Ð¾ÑÑ‚Ð¸ÐºÐ° 16 ÐšÐ‘</span></span>
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"}>HTTPS</span>
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["configCheck"])} id={"navBtn-configCheck"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <span className={"flex items-center gap-3"}><span className={"text-violet-300"}>â‡„</span><span>ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸</span></span>
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300"}>.conf</span>
-              </button>
-              {"\n\n            "}
-              {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["monitor"])} id={"navBtn-monitor"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                {"\n              "}
-                <div className={"flex items-center gap-3"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4 shrink-0 text-cyan-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span>
-                    {"ÐœÐ¾Ð½Ð¸Ñ‚Ð¾Ñ€Ð¸Ð½Ð³"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span id={"sideMonitorBadge"} className={"w-2 h-2 rounded-full bg-slate-400"}></span>
-                {"\n            "}
-              </button>
-              {"\n\n            "}
-              {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["community"])} id={"navBtn-community"} className={"hidden side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                {"\n              "}
-                <div className={"flex items-center gap-3"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4 shrink-0 text-purple-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span>
-                    {"Ð¡Ð¾Ð¾Ð±Ñ‰ÐµÑÑ‚Ð²Ð¾ Ð¸ ASN"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300"}>
-                  {"RIPE"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n          "}
-            </nav>
-            {"\n        "}
-          </div>
-          {"\n\n        "}
-          {"\n        "}
-
-          {"\n\n      "}
-          <div>
-            {"\n          "}
-            <div className={"px-3 pt-3 pb-1 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>Ð¡Ð¸ÑÑ‚ÐµÐ¼Ð°</div>
-            <nav className={"space-y-1"}>
-
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-emerald-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 7h16M6 4h12v16H6zM9 11h6m-6 4h6"}></path></svg><span>Ð ÐµÐ·ÐµÑ€Ð²Ð½Ñ‹Ðµ ÐºÐ¾Ð¿Ð¸Ð¸</span>
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["appearance"])} id={"navBtn-appearance"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>ÐžÑ„Ð¾Ñ€Ð¼Ð»ÐµÐ½Ð¸Ðµ UI</span>
-              </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>Ðž nfqws2-UI</span>
-              </button>
-            </nav>
-          </div>
-          {"\n\n        "}
-        </div>
-        {"\n\n      "}
-        {"\n      "}
-        {"\n\n    "}
-      </aside>
-      {"\n\n    "}
-      {"\n    "}
-      {"\n    "}
-      {"\n    "}
-      <main className={"flex-1 min-h-0 overflow-y-auto p-4 lg:p-6 bg-slate-950"}>
-        {"\n\n      "}
-        {"\n      "}
-        {"\n      "}
-        {"\n      "}
-        <section id={"tabContent-conf"} className={"view-animate"}>
-          {"\n        "}
-          <div className={"ui-card mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3"}>
-            <div className={"flex items-center gap-2.5"}>
-              <span className={"h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_#60a5fa]"}></span>
-              <span id={"currentConfigPath"} className={"font-mono text-sm font-bold tracking-tight text-white sm:text-base"}>{"ÐšÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ñ"}</span>
-              <span id={"confLinesBadge"} className={"rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-300"}>{"â€” ÑÑ‚Ñ€Ð¾Ðº"}</span>
-            </div>
-          </div>
-          <nav aria-label={"Ð Ð°Ð·Ð´ÐµÐ» ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸"} className={"config-subtabs mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-[#090e1a] p-1.5"}>
-            <button id={"configTabEditor"} type={"button"} aria-pressed={"true"} aria-controls={"configEditorPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["editor"])} className={"config-subtab config-subtab-active rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
-              {"ÐšÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ñ"}
-            </button>
-            <button id={"configTabSettings"} type={"button"} aria-pressed={"false"} aria-controls={"configSettingsPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["settings"])} className={"config-subtab rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
-              {"ÐÐ°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸"}
-            </button>
-            <button id={"configTabScripts"} type={"button"} aria-pressed={"false"} aria-controls={"configScriptsPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["scripts"])} className={"config-subtab rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
-              {"Ð¡ÐºÑ€Ð¸Ð¿Ñ‚Ñ‹"}
-            </button>
-            <div className={"ml-auto flex flex-wrap items-center gap-2"}>
-              <button data-action-click={"copyConfigText"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"ÐšÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ"}</button>
-              <button data-action-click={"applyConfigAndRestart"} className={"rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all hover:bg-blue-500 active:scale-95"}>{"ÐŸÑ€Ð¸Ð¼ÐµÐ½Ð¸Ñ‚ÑŒ ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸ÑŽ"}</button>
-            </div>
-          </nav>
-          <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5 items-start"}>
-            {"\n          \n          "}
-            {"\n          "}
-            <div id={"configEditorPanel"} className={"config-section-panel config-panel-enter xl:col-span-12 ui-card rounded-2xl overflow-hidden shadow-2xl border border-slate-800 flex flex-col"}>
-              {"\n            \n            "}
-              {"\n            "}
-              {"\n            "}
-              <div className={"bg-[#070b14] px-4 py-2 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs font-mono"}>
-                {"\n              "}
-
-                {"\n\n              "}
-                <label className={"flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none"}>
-                  {"\n                "}
-                  <input type={"checkbox"} data-action-change={"toggleWordWrapConf"} data-args={JSON.stringify([{"source": "checked"}])} defaultChecked={true} className={"rounded bg-slate-900 border-slate-700 text-blue-500 focus:ring-0"} />
-                  {"\n                "}
-                  <span>
-                    {"ÐŸÐµÑ€ÐµÐ½Ð¾Ñ ÑÑ‚Ñ€Ð¾Ðº"}
-                  </span>
-                  {"\n              "}
-                </label>
-                <button id={"configStructureToggle"} type={"button"} aria-pressed={"true"} aria-expanded={"true"} aria-controls={"configOutline"} data-action-click={"toggleConfigOutline"} title={"Ð¡ÐºÑ€Ñ‹Ñ‚ÑŒ ÑÑ‚Ñ€ÑƒÐºÑ‚ÑƒÑ€Ñƒ Ð¿ÐµÑ€ÐµÐ¼ÐµÐ½Ð½Ñ‹Ñ… ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸ ÑÐ¿Ñ€Ð°Ð²Ð°"} className={"config-structure-toggle-active rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:border-blue-500/70 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
-                  {"Ð¡Ñ‚Ñ€ÑƒÐºÑ‚ÑƒÑ€Ð°"}
-                </button>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              {"\n            "}
-              <div id={"configEditorWorkspace"} className={"config-editor-workspace config-editor-workspace-open grid grid-cols-1 gap-3"}>
-                <div className={"mobile-code-editor flex h-[740px] min-w-0 bg-[#060a12] font-mono text-[14px] leading-[1.68] overflow-hidden"}>
-                  {"\n              "}
-                  <div id={"confLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3 w-13 overflow-hidden select-none text-xs leading-[1.68]"}>
-                    {"\n                1\n              "}
-                  </div>
-                  {"\n              "}
-                  <div className={"conf-editor-surface relative min-w-0 flex-1 overflow-hidden"}>
-                    <pre id={"confSyntaxHighlight"} aria-hidden={"true"} className={"conf-syntax-highlight absolute inset-0 m-0 overflow-hidden py-4 px-5 font-mono leading-[1.68]"}></pre>
-                    <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto focus:ring-0 border-none"}></textarea>
-                  </div>
-                  {"\n            "}
-                </div>
-                <aside id={"configOutline"} aria-label={"Ð¡Ñ‚Ñ€ÑƒÐºÑ‚ÑƒÑ€Ð° ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸"} className={"config-outline max-h-[740px] overflow-y-auto rounded-xl border border-slate-800 bg-[#070b14] p-2.5"}>
-                  <div className={"mb-2 px-2 text-[11px] font-bold uppercase tracking-wider text-slate-400"}>{"Ð¡Ñ‚Ñ€ÑƒÐºÑ‚ÑƒÑ€Ð°"}</div>
-                  <div id={"configOutlineEntries"} className={"space-y-0.5"}>
-                    <div className={"px-2 py-2 text-xs text-slate-500"}>{"Ð—Ð°Ð³Ñ€ÑƒÐ·ÐºÐ° ÑÑ‚Ñ€ÑƒÐºÑ‚ÑƒÑ€Ñ‹â€¦"}</div>
-                  </div>
-                </aside>
-              </div>
-              {"\n\n          "}
-            </div>
-            {"\n\n          "}
-            {"\n          "}
-            <div id={"configSettingsPanel"} className={"config-settings-panel config-section-panel hidden xl:col-span-12 grid grid-cols-1 xl:grid-cols-2 gap-4"}>
-              {"\n            \n            "}
-              {"\n            "}
-              <div className={"ui-card rounded-2xl p-4 shadow-lg"}>
-                {"\n              "}
-                <div className={"flex items-center justify-between pb-3 mb-3 border-b border-slate-800"}>
-                  {"\n                "}
-                  <div className={"flex items-center gap-2"}>
-                    {"\n                  "}
-                    <span className={"w-2 h-4 rounded-full bg-blue-500"}></span>
-                    {"\n                  "}
-                    <h3 className={"text-sm font-bold text-white"}>
-                      {"Ð‘Ñ‹ÑÑ‚Ñ€Ñ‹Ðµ Ð¿Ð°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ñ‹ Ð¾ÑÐ½Ð¾Ð²Ñ‹"}
-                    </h3>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <button data-action-click={"resetDefaultConf"} className={"text-xs text-slate-400 hover:text-blue-400 transition-colors"}>
-                    {"\n                  Ð¡Ð±Ñ€Ð¾ÑÐ¸Ñ‚ÑŒ Ðº ÑÑ‚Ð°Ð»Ð¾Ð½Ñƒ\n                "}
-                  </button>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <div className={"grid grid-cols-2 gap-3"}>
-                  {"\n                "}
-                  {"\n                "}
-                  <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
-                    {"\n                  "}
-                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
-                      {"\n                    "}
-                      <span>
-                        {"ISP_INTERFACE"}
-                      </span>
-                      {"\n                    "}
-                      <span className={"text-emerald-400"}>
-                        {"WAN"}
-                      </span>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <select defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      <option value={""}>{"Backend ÐµÑ‰Ñ‘ Ð½Ðµ Ð¾Ð±Ð½Ð°Ñ€ÑƒÐ¶Ð¸Ð» ÑÐµÑ‚ÐµÐ²Ñ‹Ðµ Ð¸Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹ÑÑ‹"}</option>
-                    </select>
-                    {"\n                "}
-                  </div>
-                  {"\n\n                "}
-                  {"\n                "}
-                  <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
-                    {"\n                  "}
-                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
-                      {"\n                    "}
-                      <span>
-                        {"NFQWS_EXTRA_ARGS"}
-                      </span>
-                      {"\n                    "}
-                      <span className={"text-blue-400"}>
-                        {"Ð Ð•Ð–Ð˜Ðœ"}
-                      </span>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["NFQWS_EXTRA_ARGS", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-blue-300 focus:outline-none focus:border-blue-500"}>
-                      {"\n                    "}
-                      <option value={"$MODE_LIST"}>
-                        {"$MODE_LIST (user.list)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"$MODE_AUTO"}>
-                        {"$MODE_AUTO (auto.list)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"$MODE_ALL"}>
-                        {"$MODE_ALL (Ð’ÐµÑÑŒ Ñ‚Ñ€Ð°Ñ„Ð¸Ðº)"}
-                      </option>
-                      {"\n                  "}
-                    </select>
-                    {"\n                "}
-                  </div>
-                  {"\n\n                "}
-                  {"\n                "}
-                  <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
-                    {"\n                  "}
-                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
-                      {"\n                    "}
-                      <span>
-                        {"NFQUEUE_NUM"}
-                      </span>
-                      {"\n                    "}
-                      <span className={"text-amber-400"}>
-                        {"QUEUE"}
-                      </span>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["NFQUEUE_NUM", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      {"\n                    "}
-                      <option value={"300"}>
-                        {"300 (Ð¨Ñ‚Ð°Ñ‚Ð½Ð°Ñ)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"200"}>
-                        {"200"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"100"}>
-                        {"100"}
-                      </option>
-                      {"\n                  "}
-                    </select>
-                    {"\n                "}
-                  </div>
-                  {"\n\n                "}
-                  {"\n                "}
-                  <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
-                    {"\n                  "}
-                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
-                      {"\n                    "}
-                      <span>
-                        {"POLICY_NAME"}
-                      </span>
-                      {"\n                    "}
-                      <span className={"text-indigo-400"}>
-                        {"NDM"}
-                      </span>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["POLICY_NAME", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      {"\n                    "}
-                      <option value={"nfqws"}>
-                        {"nfqws"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"zapret"}>
-                        {"zapret"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"default"}>
-                        {"default"}
-                      </option>
-                      {"\n                  "}
-                    </select>
-                    {"\n                "}
-                  </div>
-                  {"\n\n                "}
-                  {"\n                "}
-                  <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
-                    {"\n                  "}
-                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
-                      {"\n                    "}
-                      <span>
-                        {"IPV6_ENABLED"}
-                      </span>
-                      {"\n                    "}
-                      <span>
-                        {"IPv6"}
-                      </span>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["IPV6_ENABLED", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      {"\n                    "}
-                      <option value={"0"}>
-                        {"0 (Ð’Ñ‹ÐºÐ»ÑŽÑ‡ÐµÐ½)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"1"}>
-                        {"1 (Ð’ÐºÐ»ÑŽÑ‡ÐµÐ½)"}
-                      </option>
-                      {"\n                  "}
-                    </select>
-                    {"\n                "}
-                  </div>
-                  {"\n\n                "}
-                  {"\n                "}
-                  <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
-                    {"\n                  "}
-                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
-                      {"\n                    "}
-                      <span>
-                        {"LOG_LEVEL"}
-                      </span>
-                      {"\n                    "}
-                      <span>
-                        {"Ð›ÐžÐ“"}
-                      </span>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <select defaultValue={""} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["LOG_LEVEL", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      {"\n                    "}
-                      <option value={"0"}>
-                        {"0 (Ð’Ñ‹ÐºÐ»)"}
-                      </option>
-                      {"\n                    "}
-                      <option value={"1"}>
-                        {"1 (ÐžÑ‚Ð»Ð°Ð´ÐºÐ°)"}
-                      </option>
-                      {"\n                  "}
-                    </select>
-                    {"\n                "}
-                  </div>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              {"\n            "}
-              <div className={"ui-card rounded-2xl p-4 shadow-lg space-y-3 xl:col-span-2"}>
-                <div className={"flex items-center justify-between gap-3 border-b border-slate-800 pb-2.5"}>
-                  <div className={"flex items-center gap-2"}>
-                    <span className={"h-4 w-2 rounded-full bg-cyan-400"}></span>
-                    <h3 className={"text-sm font-bold text-white"}>{"ÐŸÐ°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ñ‹ nfqws2 Ð¿Ð¾ Ð³Ñ€ÑƒÐ¿Ð¿Ð°Ð¼"}</h3>
-                  </div>
-                  <span className={"text-[11px] text-slate-400"}>{"Ð˜Ð·Ð¼ÐµÐ½Ð¸Ñ‚Ðµ Ð½ÑƒÐ¶Ð½ÑƒÑŽ Ð³Ñ€ÑƒÐ¿Ð¿Ñƒ; ÑÐ¾Ñ…Ñ€Ð°Ð½Ð¸Ñ‚Ðµ ÐºÐ½Ð¾Ð¿ÐºÐ¾Ð¹ ÑÐ²ÐµÑ€Ñ…Ñƒ"}</span>
-                </div>
-                <p className={"text-xs leading-relaxed text-slate-400"}>{"ÐšÐ°Ð¶Ð´Ð¾Ðµ Ð¿Ð¾Ð»Ðµ Ñ€ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€ÑƒÐµÑ‚ Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½ÑƒÑŽ Ð¿ÐµÑ€ÐµÐ¼ÐµÐ½Ð½ÑƒÑŽ. Ð˜Ð·Ð¼ÐµÐ½ÐµÐ½Ð¸Ñ Ð¿Ð¾Ð¿Ð°Ð´Ð°ÑŽÑ‚ Ð² Ñ‡ÐµÑ€Ð½Ð¾Ð²Ð¸Ðº Ð¿Ð¾Ð»Ð½Ð¾Ð¹ ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸; Ð´Ð»Ñ Ð·Ð°Ð¿Ð¸ÑÐ¸ Ð¸ Ð¿ÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÐºÐ° Ð½Ð°Ð¶Ð¼Ð¸Ñ‚Ðµ Â«ÐŸÑ€Ð¸Ð¼ÐµÐ½Ð¸Ñ‚ÑŒ ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸ÑŽÂ»."}</p>
-                <div id={"nfqwsArgEditors"} className={"grid grid-cols-1 gap-3 lg:grid-cols-2"}>
-                  <div className={"text-xs text-slate-500"}>{"Ð—Ð°Ð³Ñ€ÑƒÐ·ÐºÐ° Ð°Ñ€Ð³ÑƒÐ¼ÐµÐ½Ñ‚Ð¾Ð² Ð¸Ð· ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸â€¦"}</div>
-                </div>
-              </div>
-              {"\n            "}
-              <div className={"ui-card rounded-2xl p-4 shadow-lg flex flex-col h-[315px]"}>
-                {"\n              "}
-                <div className={"flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-800"}>
-                  {"\n                "}
-                  <div className={"flex items-center gap-2"}>
-                    {"\n                  "}
-                    <span className={"w-2 h-4 rounded-full bg-amber-400"}></span>
-                    {"\n                  "}
-                    <h3 className={"text-sm font-bold text-white"}>
-                      {"Ð¡Ð¿Ñ€Ð°Ð²Ð¾Ñ‡Ð½Ð¸Ðº Ñ„Ð»Ð°Ð³Ð¾Ð² nfqws2"}
-                    </h3>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <span className={"text-[11px] text-slate-400"}>
-                    {"ÐšÐ»Ð¸Ðº = ÐºÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <input type={"text"} data-action-input={"filterDocs"} data-args={JSON.stringify([{"source": "value"}])} placeholder={"ÐŸÐ¾Ð¸ÑÐº Ñ„Ð»Ð°Ð³Ð° (circular, seqovl, hostfakesplit)..."} className={"w-full bg-[#070b14] border border-slate-800 rounded-xl px-3 py-1.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-2.5"} />
-                {"\n\n              "}
-                <div id={"docItemsContainer"} className={"flex-1 overflow-y-auto space-y-2 pr-1"}>
-                  {"\n                "}
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n\n          "}
-            </div>
-            <section id={"configScriptsPanel"} className={"config-section-panel hidden xl:col-span-12 ui-card rounded-2xl border border-slate-800 p-4 shadow-xl"} aria-label={"Lua-ÑÐºÑ€Ð¸Ð¿Ñ‚Ñ‹ nfqws2"}>
-              <div className={"mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3"}>
-                <div>
-                  <h3 className={"text-sm font-bold text-white"}>{"Ð¡ÐºÑ€Ð¸Ð¿Ñ‚Ñ‹ nfqws2"}</h3>
-                  <p className={"mt-1 text-xs text-slate-400"}>{"Ð¤Ð°Ð¹Ð»Ñ‹ Ñ‡Ð¸Ñ‚Ð°ÑŽÑ‚ÑÑ Ð¸Ð· ÐºÐ°Ñ‚Ð°Ð»Ð¾Ð³Ð° Lua Ð¾Ð±Ð½Ð°Ñ€ÑƒÐ¶ÐµÐ½Ð½Ð¾Ð¹ ÑƒÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ¸. ÐŸÑ€Ð¾ÑÐ¼Ð¾Ñ‚Ñ€ Ð´Ð¾ÑÑ‚ÑƒÐ¿ÐµÐ½ Ñ‚Ð¾Ð»ÑŒÐºÐ¾ Ð´Ð»Ñ Ñ‡Ñ‚ÐµÐ½Ð¸Ñ."}</p>
-                </div>
-                <button type={"button"} data-action-click={"refreshLuaScripts"} className={"rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"}>{"ÐžÐ±Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ ÑÐ¿Ð¸ÑÐ¾Ðº"}</button>
-              </div>
-              <nav id={"luaScriptTabs"} aria-label={"Lua-ÑÐºÑ€Ð¸Ð¿Ñ‚Ñ‹"} className={"mb-3 flex flex-wrap gap-1 border-b border-slate-800"}>
-                <span className={"px-3 py-2 text-xs text-slate-500"}>{"Ð¡Ð¿Ð¸ÑÐ¾Ðº Ð·Ð°Ð³Ñ€ÑƒÐ¶Ð°ÐµÑ‚ÑÑâ€¦"}</span>
-              </nav>
-              <div id={"luaScriptViewer"} className={"overflow-hidden rounded-xl border border-slate-800 bg-[#070b14]"}>
-                <div id={"luaScriptPath"} className={"border-b border-slate-800 px-3 py-2 font-mono text-xs text-slate-400"}>{"ÐŸÑƒÑ‚ÑŒ Ðº Ñ„Ð°Ð¹Ð»Ñƒ Ð¿Ð¾ÑÐ²Ð¸Ñ‚ÑÑ Ð¿Ð¾ÑÐ»Ðµ Ð·Ð°Ð³Ñ€ÑƒÐ·ÐºÐ¸"}</div>
-                <pre id={"luaScriptContent"} className={"max-h-[680px] min-h-36 overflow-auto p-4 font-mono text-xs leading-5 text-slate-200 whitespace-pre"}>{"Ð’Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ ÑÐºÑ€Ð¸Ð¿Ñ‚ Ð´Ð»Ñ Ð¿Ñ€Ð¾ÑÐ¼Ð¾Ñ‚Ñ€Ð°."}</pre>
-              </div>
-            </section>
-            {"\n\n        "}
-          </div>
-          {"\n      "}
-        </section>
-        {"\n\n      "}
-        {"\n      "}
-        {"\n      "}
-        {"\n      "}
-        <section id={"tabContent-lists"} className={"hidden view-animate space-y-5"}>
-          {"\n        \n        "}
-          <div className={"ui-card rounded-2xl overflow-hidden shadow-xl"}>
-            {"\n          "}
-            {"\n          "}
-            <div id={"listFileTabs"} className={"flex items-center overflow-x-auto bg-[#080d18] border-b border-slate-800 px-2"}>
-              {"\n            \n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["user.list"])} id={"listTab-user.list"} className={"list-file-tab active flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-bold text-white border-b-2 border-sky-400 bg-slate-800/40 transition-all whitespace-nowrap"}>
-                {"\n              "}
-                <svg className={"w-4 h-4 text-slate-200"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                  <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
-                </svg>
-                {"\n              "}
-                <span>
-                  {"user.list"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["exclude.list"])} id={"listTab-exclude.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
-                {"\n              "}
-                <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                  <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
-                </svg>
-                {"\n              "}
-                <span>
-                  {"exclude.list"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["auto.list"])} id={"listTab-auto.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
-                {"\n              "}
-                <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                  <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
-                </svg>
-                {"\n              "}
-                <span>
-                  {"auto.list"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["ipset.list"])} id={"listTab-ipset.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
-                {"\n              "}
-                <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                  <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
-                </svg>
-                {"\n              "}
-                <span>
-                  {"ipset.list"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["ipset_exclude.list"])} id={"listTab-ipset_exclude.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
-                {"\n              "}
-                <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                  <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
-                </svg>
-                {"\n              "}
-                <span>
-                  {"ipset_exclude.list"}
-                </span>
-                {"\n            "}
-              </button>
-              <div id={"customListTabs"} className={"flex items-center"}></div>
-              {"\n\n          "}
-            </div>
-            {"\n\n          "}
-            {"\n          "}
-            <div className={"p-4 bg-[#0b111e] border-b border-slate-800 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4"}>
-              {"\n            "}
-              <div className={"flex flex-wrap items-center gap-3"}>
-                {"\n              "}
-                <span id={"currentListFilePath"} className={"font-mono text-xs px-3 py-1 rounded-lg bg-slate-950 text-sky-400 border border-slate-800"}>
-                  {"Ð¡Ð¿Ð¸ÑÐ¾Ðº Ð½Ðµ Ð²Ñ‹Ð±Ñ€Ð°Ð½"}
-                </span>
-                {"\n              "}
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              <div className={"flex flex-wrap items-center gap-2"}>
-                {"\n              "}
-                <button data-action-click={"deduplicateCurrentList"} className={"px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
-                  {"Ð£Ð´Ð°Ð»Ð¸Ñ‚ÑŒ Ð´ÑƒÐ±Ð»Ð¸"}
-                </button>
-                {"\n              "}
-                <button data-action-click={"saveActiveListFile"} className={"px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-all"}>
-                  {"ÐŸÑ€Ð¸Ð¼ÐµÐ½Ð¸Ñ‚ÑŒ ÑÐ¿Ð¸ÑÐ¾Ðº"}
-                </button>
-                {"\n            "}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n\n          "}
-            <div className={"flex items-center justify-between gap-3 px-4 py-2 border-b border-slate-800 bg-[#080d18]"}>
-              <span className={"text-xs text-slate-400"}>Ð’Ð¸Ð´ ÑÐ¿Ð¸ÑÐºÐ°</span>
-              <div className={"flex gap-1 rounded-lg border border-slate-700 bg-slate-950 p-1"} role={"group"} aria-label={"Ð’Ð¸Ð´ ÑÐ¿Ð¸ÑÐºÐ°"}>
-                <button id={"listViewTextButton"} type={"button"} aria-pressed={"true"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["text"])} className={"list-view-button active rounded-md px-3 py-1 text-xs text-slate-300 transition-colors"}>Ð¢ÐµÐºÑÑ‚Ð¾Ð¼</button>
-                <button id={"listViewRowsButton"} type={"button"} aria-pressed={"false"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["rows"])} className={"list-view-button rounded-md px-3 py-1 text-xs text-slate-300 transition-colors"}>Ð¡Ð¿Ð¸ÑÐºÐ¾Ð¼</button>
-              </div>
-            </div>
-            <div className={"p-4 bg-[#090f1b] border-b border-slate-800 grid grid-cols-1 xl:grid-cols-[minmax(220px,1fr)_auto] gap-2 items-center"}>
-              <div className={"flex gap-2"}>
-                <input id={"listSearchInput"} type={"search"} placeholder={"ÐÐ°Ð¹Ñ‚Ð¸ Ð² ÑÐ¿Ð¸ÑÐºÐµ"} className={"min-w-0 flex-1 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500"} />
-                <button id={"findNextListEntryButton"} data-action-click={"findNextListEntry"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"ÐÐ°Ð¹Ñ‚Ð¸ Ð´Ð°Ð»ÐµÐµ"}</button>
-              </div>
-              <div className={"flex flex-wrap gap-2"}>
-                <button data-action-click={"removeSelectedListLines"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Ð£Ð´Ð°Ð»Ð¸Ñ‚ÑŒ ÑÑ‚Ñ€Ð¾ÐºÑƒ/Ð²Ñ‹Ð´ÐµÐ»ÐµÐ½Ð¸Ðµ"}</button>
-                <button data-action-click={"openListImport"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Ð˜Ð¼Ð¿Ð¾Ñ€Ñ‚"}</button>
-                <button data-action-click={"exportListDraft"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Ð­ÐºÑÐ¿Ð¾Ñ€Ñ‚"}</button>
-                <input id={"listImportFile"} type={"file"} accept={".list,.txt,text/plain"} className={"hidden"} data-action-change={"importListDraft"} />
-              </div>
-            </div>
-            {"\n          "}
-            <div id={"listTextView"} className={"mobile-list-editor flex h-[610px] bg-[#060a12] font-mono text-[14.5px] leading-7 overflow-hidden"}>
-              {"\n            "}
-              <div id={"listLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3.5 w-14 overflow-hidden select-none text-xs leading-7"}>
-                {"\n              1\n            "}
-              </div>
-              {"\n            "}
-              <textarea id={"listEditorTextarea"} data-action-input={"syncListLineNumbers"} data-action-scroll={"syncListScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"flex-1 bg-transparent text-slate-100 py-4 px-6 outline-none resize-none leading-7 font-mono overflow-y-auto border-none"}></textarea>
-              {"\n          "}
-            </div>
-            <div id={"listRowsView"} className={"hidden list-rows-view h-[610px] overflow-y-auto bg-[#060a12] p-3"} role={"list"} aria-label={"Ð—Ð°Ð¿Ð¸ÑÐ¸ ÑÐ¿Ð¸ÑÐºÐ°"}></div>
-            {"\n\n          "}
-            <div className={"list-editor-footer px-5 py-2.5 bg-[#080d18] border-t border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400"}>
-              {"\n            "}
-              <span id={"listFooterCount"}>
-                {"Ð’ÑÐµÐ³Ð¾ Ð·Ð°Ð¿Ð¸ÑÐµÐ¹: â€”"}
-              </span>
-              {"\n            "}
-              <span>
-                {"Ctrl+/ â€” ÐºÐ¾Ð¼Ð¼ÐµÐ½Ñ‚Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ ÑÑ‚Ñ€Ð¾ÐºÐ¸ Ð¸Ð»Ð¸ ÑÐ½ÑÑ‚ÑŒ ÐºÐ¾Ð¼Ð¼ÐµÐ½Ñ‚Ð°Ñ€Ð¸Ð¹ â€¢ ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° Ð²Ð°Ð»Ð¸Ð´Ð½Ð¾ÑÑ‚Ð¸ Ð´Ð¾Ð¼ÐµÐ½Ð¾Ð² Ð¸ CIDR-Ð¼Ð°ÑÐ¾Ðº Ð°ÐºÑ‚Ð¸Ð²Ð½Ð° â€¢ Ð¡Ð»ÑƒÐ¶Ð±Ð° Ð½Ðµ Ð¿ÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÐºÐ°ÐµÑ‚ÑÑ Ð¿Ñ€Ð¸ ÑÐ¾Ñ…Ñ€Ð°Ð½ÐµÐ½Ð¸Ð¸"}
-              </span>
-              {"\n          "}
-            </div>
-            {"\n        "}
-          </div>
-          {"\n\n      "}
-        </section>
-        {"\n\n      "}
-        {"\n      "}
-        {"\n      "}
-        {"\n      "}
-        <section id={"tabContent-check"} className={"hidden view-animate space-y-4"}>
-          <div className={"ui-card rounded-2xl p-5 sm:p-6"}>
-            <div className={"flex flex-wrap items-center justify-between gap-2 mb-4"}>
-              <h2 className={"text-lg font-bold text-white"}>Ð”Ð¸Ð°Ð³Ð½Ð¾Ð· Ð±Ð»Ð¾ÐºÐ¸Ñ€Ð¾Ð²ÐºÐ¸</h2>
-              <span className={"text-[10px] tracking-wider font-mono text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1"}>DNS Â· HTTPS Â· QUIC</span>
-            </div>
-            <div className={"flex flex-col sm:flex-row gap-2.5"}>
-              <input id={"diagDomainInput"} type={"text"} aria-label={"Ð”Ð¾Ð¼ÐµÐ½ Ð¸Ð»Ð¸ Ð¿ÑƒÐ±Ð»Ð¸Ñ‡Ð½Ñ‹Ð¹ IPv4 Ð´Ð»Ñ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐºÐ¸"} autoCapitalize={"none"} spellCheck={false} placeholder={"example.com Ð¸Ð»Ð¸ 8.8.8.8"} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-colors"} />
-              <button data-action-click={"runSiteDiagnosis"} className={"min-w-[140px] px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-colors shadow-lg shadow-blue-600/15"}>ÐŸÑ€Ð¾Ð²ÐµÑ€Ð¸Ñ‚ÑŒ</button>
-            </div>
-            <div className={"flex flex-wrap items-center gap-2 mt-3 text-[11px] font-mono"}>
-              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["example.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>example.com</button>
-              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["youtube.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>youtube.com</button>
-              <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["openai.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>openai.com</button>
-            </div>
-            <p className={"diagnosis-help mt-4 text-xs leading-relaxed"}>Ð”Ð»Ñ Ð´Ð¾Ð¼ÐµÐ½Ð° ÑÑ€Ð°Ð²Ð½Ð¸Ð²Ð°ÑŽÑ‚ÑÑ DNS, Ð¿Ñ€ÑÐ¼Ð¾Ð¹ Ð´Ð¾ÑÑ‚ÑƒÐ¿, Ñ‚ÐµÐºÑƒÑ‰Ð¸Ð¹ Ð¼Ð°Ñ€ÑˆÑ€ÑƒÑ‚ Ð¸ QUIC. Ð”Ð»Ñ IP DNS Ð¸ QUIC Ð¿Ñ€Ð¾Ð¿ÑƒÑÐºÐ°ÑŽÑ‚ÑÑ. nfqws2 Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð¸Ñ‚ Ñ€Ð°Ð±Ð¾Ñ‚Ð°Ñ‚ÑŒ.</p>
-          </div>
-          <div id={"diagResultContainer"} className={"diagnosis-results"}></div>
-        </section>
-        {"\n\n      "}
-        {"\n      "}
-        {"\n      "}
-        {"\n      "}
-        <section id={"tabContent-trace"} className={"hidden view-animate space-y-5"}>
-          <div className={"ui-card rounded-2xl p-6 shadow-xl"}>
-            <div className={"pb-5 border-b border-slate-800"}>
-              <span className={"px-2.5 py-0.5 rounded-md bg-blue-500/15 text-blue-300 border border-blue-500/30 text-xs font-mono font-bold"}>Ð”Ð¸Ð°Ð³Ð½Ð¾ÑÑ‚Ð¸ÐºÐ° nfqws2 --debug</span>
-              <h2 className={"mt-2 text-lg font-bold text-white"}>Ð¢Ñ€Ð°ÑÑÐ¸Ñ€Ð¾Ð²ÐºÐ° Ð´Ð¾Ð¼ÐµÐ½Ð°</h2>
-              <p className={"mt-1 text-xs sm:text-sm text-slate-400"}>Ð¡Ñ€Ð°Ð²Ð½Ð¸Ð²Ð°ÐµÑ‚ HTTP-Ð¾Ñ‚Ð²ÐµÑ‚ ÑÐ°Ð¹Ñ‚Ð° Ñ nfqws2 Ð¸ Ð±ÐµÐ· Ð½ÐµÐ³Ð¾. Ð—Ð°Ð¿Ñ€Ð¾Ñ Ð²Ñ‹Ð¿Ð¾Ð»Ð½ÑÐµÑ‚ÑÑ Ð½Ð° Ñ€Ð¾ÑƒÑ‚ÐµÑ€Ðµ; Ð¾ÑÐ½Ð¾Ð²Ð½Ð¾Ð¹ Ð¿Ñ€Ð¾Ñ†ÐµÑÑ Ð¸ ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ñ Ð½Ðµ Ð´Ð¾Ð»Ð¶Ð½Ñ‹ Ð¸Ð·Ð¼ÐµÐ½ÑÑ‚ÑŒÑÑ.</p>
-            </div>
-            <div className={"mt-5 flex flex-col sm:flex-row gap-3"}>
-              <div className={"trace-protocol-picker"}>
-                <select id={"traceProtoSelect"} aria-label={"ÐŸÑ€Ð¾Ñ‚Ð¾ÐºÐ¾Ð» Ñ‚Ñ€Ð°ÑÑÐ¸Ñ€Ð¾Ð²ÐºÐ¸"} className={"trace-protocol-select"}>
-                  <option value={"https"}>HTTPS</option>
-                  <option value={"http"}>HTTP</option>
-                </select>
-                <svg className={"trace-protocol-chevron"} aria-hidden={"true"} viewBox={"0 0 20 20"} fill={"none"}><path d={"m5 7.5 5 5 5-5"} stroke={"currentColor"} strokeWidth={"1.8"} strokeLinecap={"round"} strokeLinejoin={"round"}></path></svg>
-              </div>
-              <input id={"traceDomainInput"} type={"text"} placeholder={"Ð’Ð²ÐµÐ´Ð¸Ñ‚Ðµ Ð´Ð¾Ð¼ÐµÐ½, Ð½Ð°Ð¿Ñ€Ð¸Ð¼ÐµÑ€ example.com"} className={"flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-2.5 text-sm font-mono text-white focus:outline-none focus:border-blue-500"} />
-              <button data-action-click={"runSiteTrace"} className={"px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm transition-all shadow-lg shadow-blue-600/20"}>Ð—Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ Ñ‚Ñ€Ð°ÑÑÐ¸Ñ€Ð¾Ð²ÐºÑƒ</button>
-              <button id={"traceStopButton"} data-action-click={"stopSiteTrace"} className={"hidden px-5 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30 text-rose-300 font-bold text-sm transition-all"}>ÐžÑÑ‚Ð°Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ</button>
-            </div>
-            <p id={"traceOperationStatus"} className={"hidden mt-3 text-xs text-blue-300"} role={"status"} aria-live={"polite"}></p>
-              <p className={"trace-help mt-3 text-xs"}>Ð—Ð°Ð¿ÑƒÑÐºÐ°ÐµÑ‚ÑÑ Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½Ð°Ñ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐºÐ° Ñ ÐºÐ¾Ð¿Ð¸ÐµÐ¹ ÐºÐ¾Ð½Ñ„Ð¸Ð³Ð° Ð¸ Ð¿Ð¾Ð´Ñ€Ð¾Ð±Ð½Ñ‹Ð¼ Ð¶ÑƒÑ€Ð½Ð°Ð»Ð¾Ð¼. QUIC Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ÑÑ Ð² Ñ€Ð°Ð·Ð´ÐµÐ»Ðµ Â«ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° ÑÐ°Ð¹Ñ‚Ð°Â».</p>
-          </div>
-          <div id={"traceResultContainer"} className={"grid grid-cols-1 lg:grid-cols-2 gap-5"}></div>
-        </section>
-        <section id={"tabContent-autotune"} className={"hidden view-animate space-y-5"}>
-          {"\n        \n        "}
-          <div className={"ui-card rounded-2xl p-4 sm:p-5 shadow-xl"}>
-            {"\n          "}
-            <div className={"flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800"}>
-              {"\n            "}
-              <div>
-                {"\n              "}
-                <div className={"flex items-center gap-2.5"}>
-                  {"\n                "}
-                  <span className={"px-2.5 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30 text-xs font-mono font-bold"}>
-                    {"ÐÐ²Ñ‚Ð¾Ð¿Ð¾Ð´Ð±Ð¾Ñ€ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¹"}
-                  </span>
-                  {"\n                "}
-                  <h2 className={"text-lg font-bold text-white"}>
-                    {"ÐÐ²Ñ‚Ð¾-Ð¿Ð¾Ð´Ð±Ð¾Ñ€ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¸ nfqws2"}
-                  </h2>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <p className={"text-xs sm:text-sm text-slate-300 mt-1"}>
-                    {"ÐŸÑ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ Ñ€ÐµÐ°Ð»ÑŒÐ½Ñ‹Ðµ Ð·Ð°Ð¿Ñ€Ð¾ÑÑ‹ Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½Ñ‹Ð¼ ÑÐºÐ·ÐµÐ¼Ð¿Ð»ÑÑ€Ð¾Ð¼ nfqws2 Ð¸ Ð²Ñ€ÐµÐ¼ÐµÐ½Ð½Ñ‹Ð¼Ð¸ Ð¿Ñ€Ð°Ð²Ð¸Ð»Ð°Ð¼Ð¸ Ñ‚Ð¾Ð»ÑŒÐºÐ¾ Ð´Ð»Ñ Ñ‚ÐµÑÑ‚Ð¾Ð²Ñ‹Ñ… ÑÐ¾ÐµÐ´Ð¸Ð½ÐµÐ½Ð¸Ð¹. ÐžÑÐ½Ð¾Ð²Ð½Ð¾Ð¹ ÐºÐ¾Ð½Ñ„Ð¸Ð³ Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸Ñ‡ÐµÑÐºÐ¸ Ð½Ðµ Ð¼ÐµÐ½ÑÐµÑ‚ÑÑ."}
-                </p>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              <div className={"flex flex-wrap items-center gap-3"}>
-                {"\n              "}
-                <button id={"startScanBtn"} data-action-click={"startStrategyPick"} className={"px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all active:scale-95"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2.2"} d={"M13 10V3L4 14h7v7l9-11h-7z"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span id={"scanBtnText"}>ÐŸÐ¾Ð´Ð¾Ð±Ñ€Ð°Ñ‚ÑŒ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸ÑŽ</span>
-                  {"\n              "}
-                </button>
-                <button id={"strategyPickCancel"} data-action-click={"cancelStrategyPick"} className={"hidden px-4 py-2.5 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-200 text-sm font-semibold"}>ÐžÑÑ‚Ð°Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ</button>
-                {"\n            "}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n\n          "}
-            {"\n          "}
-            <div className={"grid grid-cols-1 gap-1 mt-3 strategy-settings-grid"}>
-              {"\n            "}
-              <div className={"strategy-setting-row"}>
-                {"\n              "}
-                <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Ð¢Ñ€Ð°Ð½ÑÐ¿Ð¾Ñ€Ñ‚"}
-                </label>
-                {"\n              "}
-                <select id={"strategyProtocolSelect"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  <option value={"https"}>HTTPS Â· TCP 443</option><option value={"http"}>HTTP Â· TCP 80</option>
-                </select>
-                <p className={"mt-2 text-[11px] leading-4 text-slate-400"}>{"QUIC Initial Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ÑÑ Ð² Ñ€Ð°Ð·Ð´ÐµÐ»Ðµ Â«ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° ÑÐ°Ð¹Ñ‚Ð°Â»; Ð¿ÐµÑ€ÐµÐ±Ð¾Ñ€ QUIC-ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¹ Ð¿Ð¾ÐºÐ° Ð½Ðµ Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡Ñ‘Ð½."}</p>
-                {"\n            "}
-              </div>
-
-              <div className={"strategy-setting-row"}>
-                <label htmlFor={"strategyRepeatsSelect"} className={"block text-xs font-mono text-slate-400"}>ÐŸÐ¾Ð²Ñ‚Ð¾Ñ€Ð¾Ð²</label>
-                <select id={"strategyRepeatsSelect"} defaultValue={"3"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  <option value={"2"}>2 Ð¿Ð¾Ð²Ñ‚Ð¾Ñ€Ð°</option><option value={"3"}>3 Ð¿Ð¾Ð²Ñ‚Ð¾Ñ€Ð°</option><option value={"4"}>4 Ð¿Ð¾Ð²Ñ‚Ð¾Ñ€Ð°</option><option value={"5"}>5 Ð¿Ð¾Ð²Ñ‚Ð¾Ñ€Ð¾Ð²</option>
-                </select>
-                <div className={"strategy-option-grid"}>
-                  <label htmlFor={"strategyStopAfterFirst"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-300"}>
-                    <input id={"strategyStopAfterFirst"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
-                    <span>ÐžÑÑ‚Ð°Ð½Ð¾Ð²Ð¸Ñ‚ÑŒÑÑ Ð½Ð° Ð¿ÐµÑ€Ð²Ð¾Ð¹ Ð¿Ð¾Ð´Ñ‚Ð²ÐµÑ€Ð¶Ð´Ñ‘Ð½Ð½Ð¾Ð¹ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¸</span>
-                  </label>
-                  <label htmlFor={"strategyRefineLighter"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
-                    <input id={"strategyRefineLighter"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
-                    <span>Ð˜ÑÐºÐ°Ñ‚ÑŒ Ð±Ð¾Ð»ÐµÐµ Ð»Ñ‘Ð³ÐºÐ¸Ð¹ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚ Ð¿Ð¾ÑÐ»Ðµ Ð¿Ð¾Ð´Ñ‚Ð²ÐµÑ€Ð¶Ð´ÐµÐ½Ð¸Ñ
-                      <span className={"mt-1 block text-[11px] font-normal leading-4 text-slate-400"}>ÐŸÑ€Ð¾Ð²ÐµÑ€Ð¸Ñ‚ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚Ñ‹ fake-ÑˆÐ°Ð³Ð° Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½Ð¾, Ð´Ð¾ 5 Ð¼Ð¸Ð½ÑƒÑ‚.</span>
-                    </span>
-                  </label>
-                  <label htmlFor={"strategyIncludeOtherHistory"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
-                    <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
-                    <span>Ð¡Ñ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¸ Ð¸Ð· Ð¸ÑÑ‚Ð¾Ñ€Ð¸Ð¸ Ð´Ñ€ÑƒÐ³Ð¸Ñ… ÑÐ°Ð¹Ñ‚Ð¾Ð²</span>
-                  </label>
-                  <label htmlFor={"strategyIncludeCommunity"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
-                    <input id={"strategyIncludeCommunity"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
-                    <span>Ð¡Ñ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¸ ÑÐ¾Ð¾Ð±Ñ‰ÐµÑÑ‚Ð²Ð° Ð´Ð»Ñ ASN Ð¿Ñ€Ð¾Ð²Ð°Ð¹Ð´ÐµÑ€Ð°</span>
-                  </label>
-                  <p className={"strategy-option-help"}>ÐŸÐ¾Ð´Ñ…Ð¾Ð´ÑÑ‰Ð¸Ðµ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚Ñ‹ Ð±ÑƒÐ´ÑƒÑ‚ Ð·Ð°Ð³Ñ€ÑƒÐ¶ÐµÐ½Ñ‹ Ð¸Ð· ÐºÐ°Ñ‚Ð°Ð»Ð¾Ð³Ð° Ð¸ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐµÐ½Ñ‹ Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½Ñ‹Ð¼Ð¸ Ð·Ð°Ð¿Ñ€Ð¾ÑÐ°Ð¼Ð¸.</p>
-                </div>
-              </div>
-              {"\n\n            "}
-              <div className={"strategy-setting-row"}>
-                {"\n              "}
-                <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Ð”Ð¾Ð¼ÐµÐ½ Ð¸Ð»Ð¸ Ð¿ÑƒÐ±Ð»Ð¸Ñ‡Ð½Ñ‹Ð¹ IPv4"}
-                </label>
-                {"\n              "}
-              <input id={"scanCustomHost"} type={"text"} placeholder={"example.com Ð¸Ð»Ð¸ 8.8.8.8"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              <div className={"strategy-setting-row strategy-mode-tile"}>
-                {"\n              "}
-                <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Ð ÐµÐ¶Ð¸Ð¼ Ñ‚ÐµÑÑ‚Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð¸Ñ"}
-                </label>
-                {"\n              "}
-                <select id={"strategyModeSelect"} data-action-change={"toggleStrategyCustomInput"} data-value-source={"value"} defaultValue={"quick"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                  <option value={"quick"}>Ð‘Ñ‹ÑÑ‚Ñ€Ñ‹Ð¹ Â· Ñ‚ÐµÐºÑƒÑ‰Ð¸Ðµ + Ð±Ð°Ð·Ð¾Ð²Ñ‹Ðµ</option><option value={"extended"}>Ð Ð°ÑÑˆÐ¸Ñ€ÐµÐ½Ð½Ñ‹Ð¹ Â· ÐºÐ°Ñ‚Ð°Ð»Ð¾Ð³ blockcheck2</option><option value={"full"}>ÐŸÐ¾Ð»Ð½Ñ‹Ð¹ Â· ÐºÐ°Ñ‚Ð°Ð»Ð¾Ð³ blockcheck2 (~3 000)</option><option value={"custom"}>Ð¡Ð²Ð¾Ñ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ñ</option>
-                </select>
-                <p id={"strategyModeHelp"} aria-live={"polite"} className={"strategy-mode-help mt-2 text-xs font-medium leading-5 text-slate-300"}>ÐŸÑ€Ð¾Ð²ÐµÑ€ÑÑŽÑ‚ÑÑ Ñ‚ÐµÐºÑƒÑ‰Ð¸Ðµ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¸ Ð¸ Ð½ÐµÐ±Ð¾Ð»ÑŒÑˆÐ¾Ð¹ Ð±Ð°Ð·Ð¾Ð²Ñ‹Ð¹ Ð½Ð°Ð±Ð¾Ñ€.</p>
-                <div id={"strategyCustomInputPanel"} className={"hidden mt-2 border-t border-slate-800 pt-2"}>
-                  <details id={"strategyCustomDetailsDisclosure"} open className={"group"}>
-                    <summary className={"flex cursor-pointer list-none items-center gap-2 text-xs font-mono text-slate-400 marker:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
-                      <span aria-hidden={"true"} className={"text-blue-400 transition-transform group-open:rotate-90"}>â€º</span>
-                      <span>Ð¡Ð²Ð¾Ð¸ Ð¿Ð°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ñ‹ Â· Ð´Ð»Ñ Ñ€ÐµÐ¶Ð¸Ð¼Ð° Â«Ð¡Ð²Ð¾Ñ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸ÑÂ»</span>
-                    </summary>
-                    <div className={"pt-2"}>
-                      <textarea id={"strategyCustomSteps"} rows={3} spellCheck={false} aria-label={"ÐŸÐ°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ñ‹ ÑÐ²Ð¾ÐµÐ¹ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ð¸"} placeholder={"Ð¾Ð´Ð½Ð° ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸Ñ Ð½Ð° ÑÑ‚Ñ€Ð¾ÐºÑƒ, Ð½Ð°Ð¿Ñ€Ð¸Ð¼ÐµÑ€:\n--lua-desync=multisplit:pos=1,midsld\n--lua-desync=fakedsplit:pos=1"} className={"w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono leading-5 text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
-                      <p className={"mt-1 text-xs leading-5 text-slate-400"}>ÐšÐ°Ð¶Ð´Ð°Ñ ÑÑ‚Ñ€Ð¾ÐºÐ° â€” Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½Ñ‹Ð¹ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚. ÐÐµÑÐºÐ¾Ð»ÑŒÐºÐ¾ --lua-desync Ð² Ð¾Ð´Ð½Ð¾Ð¹ ÑÑ‚Ñ€Ð¾ÐºÐµ â€” ÑˆÐ°Ð³Ð¸ Ð¾Ð´Ð½Ð¾Ð³Ð¾ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚Ð°; \ Ð² ÐºÐ¾Ð½Ñ†Ðµ ÑÑ‚Ñ€Ð¾ÐºÐ¸ Ð¿Ñ€Ð¾Ð´Ð¾Ð»Ð¶Ð°ÐµÑ‚ ÐµÐ³Ð¾ Ð½Ð° ÑÐ»ÐµÐ´ÑƒÑŽÑ‰ÐµÐ¹.</p>
-                      <p className={"mt-1 text-xs leading-5 text-slate-400"}>Ð Ð°Ð·Ñ€ÐµÑˆÐµÐ½Ñ‹ Ñ‚Ð¾Ð»ÑŒÐºÐ¾ Ð¿Ð°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ñ‹ --lua-desync.</p>
-                      <button type={"button"} data-action-click={"copyStrategyParams"} data-value-source={"self"} className={"strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200"}>ÐšÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ</button>
-                    </div>
-                  </details>
-                </div>
-                {"\n            "}
-              </div>
-              <div className={"strategy-progress-card"}>
-                {"\n              "}
-                <div className={"flex items-center justify-between text-xs font-mono"}>
-                  {"\n                "}
-                  <span className={"text-slate-400"}>
-                    {"Ð¡Ñ‚Ð°Ñ‚ÑƒÑ Ð°Ð²Ñ‚Ð¾Ð¿Ð¾Ð´Ð±Ð¾Ñ€Ð°:"}
-                  </span>
-                  {"\n                "}
-                  <span id={"scanProgressLabel"} className={"text-blue-400 font-bold"}>
-                    {"Ð“Ð¾Ñ‚Ð¾Ð² Ðº Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐºÐµ"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <div className={"w-full bg-slate-800 h-2.5 rounded-full overflow-hidden mt-2"}>
-                  {"\n                "}
-                  <div id={"scanProgressBar"} className={"bg-blue-500 h-full rounded-full transition-all duration-300"} style={{ width: "0%" }}></div>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n        "}
-          </div>
-          {"\n\n        "}
-          {"\n        "}
-          <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5"}>
-            {"\n          "}
-            <div className={"xl:col-span-8 space-y-3"} id={"autotuneStrategiesList"}></div>
-            <section id={"autotunePreviewPanel"} className={"hidden xl:col-span-8 ui-card rounded-2xl p-4 space-y-3"} aria-live={"polite"}>
-              <div>
-                <h3 className={"text-sm font-bold text-white"}>ÐŸÑ€ÐµÐ´Ð¿Ñ€Ð¾ÑÐ¼Ð¾Ñ‚Ñ€ Ð¿Ñ€Ð¸Ð¼ÐµÐ½ÐµÐ½Ð¸Ñ</h3>
-                <p id={"autotunePreviewSummary"} className={"mt-1 text-sm font-medium text-slate-300"}></p>
-              </div>
-              <div id={"autotunePreviewDiff"} className={"max-h-96 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
-              <p className={"text-xs font-medium text-slate-300"}>ÐŸÑ€Ð¾Ñ„Ð¸Ð»ÑŒ Ð¾Ð³Ñ€Ð°Ð½Ð¸Ñ‡ÐµÐ½ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐµÐ½Ð½Ñ‹Ð¼ Ð´Ð¾Ð¼ÐµÐ½Ð¾Ð¼. ÐŸÑ€Ð¾Ð²ÐµÑ€ÑŒÑ‚Ðµ diff Ð¿ÐµÑ€ÐµÐ´ Ð¿Ñ€Ð¸Ð¼ÐµÐ½ÐµÐ½Ð¸ÐµÐ¼; Ð±ÑƒÐ´ÐµÑ‚ ÑÐ¾Ð·Ð´Ð°Ð½Ð° Ñ€ÐµÐ·ÐµÑ€Ð²Ð½Ð°Ñ ÐºÐ¾Ð¿Ð¸Ñ, Ð·Ð°Ñ‚ÐµÐ¼ nfqws2 Ð¿ÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑÑ.</p>
-              <button id={"applyStrategyPickButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>
-                {"ÐŸÑ€Ð¸Ð¼ÐµÐ½Ð¸Ñ‚ÑŒ ÑÑ‚Ñ€Ð°Ñ‚ÐµÐ³Ð¸ÑŽ Ð¸ Ð¿ÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ"}
-              </button>
-            </section>
-            {"\n\n          "}
-            <div className={"xl:col-span-4 ui-card rounded-2xl p-5 flex flex-col min-h-[220px] xl:h-[540px]"}>
-              {"\n            "}
-              <div className={"pb-3 border-b border-slate-800 flex items-center justify-between"}>
-                {"\n              "}
-                <span className={"text-sm font-bold text-white font-mono"}>
-                  {"Ð˜ÑÑ‚Ð¾Ñ€Ð¸Ñ Ð¿Ð¾ÑÐ»ÐµÐ´Ð½Ð¸Ñ… Ð¿Ð¾Ð´Ð±Ð¾Ñ€Ð¾Ð²"}
-                </span>
-                {"\n              "}
-                <span className={"text-xs font-mono text-amber-400"}>
-                  {"Ð´Ð¾ 12 Ð·Ð°Ð´Ð°Ñ‡"}
-                </span>
-                {"\n            "}
-              </div>
-              {"\n            "}
-              <div id={"autotuneConsoleBox"} className={"flex-1 overflow-y-auto font-mono text-xs space-y-2 mt-3 pr-1 text-slate-300 leading-relaxed"}>
-                {"\n              "}
-                <div className={"text-slate-500"}>
-                  {"Ð˜ÑÑ‚Ð¾Ñ€Ð¸Ñ Ð¿Ð¾ÑÐ²Ð¸Ñ‚ÑÑ Ð¿Ð¾ÑÐ»Ðµ Ð·Ð°Ð²ÐµÑ€ÑˆÑ‘Ð½Ð½Ñ‹Ñ… Ð¿Ñ€Ð¾Ð²ÐµÑ€Ð¾Ðº. Ð’Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ Ð·Ð°Ð¿Ð¸ÑÑŒ, Ñ‡Ñ‚Ð¾Ð±Ñ‹ Ð¾Ñ‚ÐºÑ€Ñ‹Ñ‚ÑŒ ÐµÑ‘ Ñ€ÐµÐ·ÑƒÐ»ÑŒÑ‚Ð°Ñ‚Ñ‹."}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n        "}
-          </div>
-          {"\n\n      "}
-        </section>
-        {"\n\n      "}
-        {"\n      "}
-        {"\n      "}
-        {"\n      "}
-        <section id={"tabContent-diagnostic16k"} className={"hidden view-animate space-y-5"}>
-          <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
-            <div>
-              <h2 className={"text-lg font-bold text-white"}>ÐžÐ±Ñ€Ñ‹Ð² Ð½Ð° 16 ÐšÐ‘</h2>
-              <p className={"mt-1 text-sm font-semibold leading-relaxed text-slate-200"}>ÐžÐ´Ð¸Ð½ Ð¿Ð¾ÑÐ»ÐµÐ´Ð¾Ð²Ð°Ñ‚ÐµÐ»ÑŒÐ½Ñ‹Ð¹ Ñ‚ÐµÑÑ‚ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ Ð²Ð°ÑˆÐ¸ ÑÐ°Ð¹Ñ‚Ñ‹ Ð¸ Ð¾Ð¿Ð¾Ñ€Ð½Ñ‹Ðµ ÑÐµÑ‚Ð¸ Ð½Ð°Ð¿Ñ€ÑÐ¼ÑƒÑŽ, Ð·Ð°Ñ‚ÐµÐ¼ Ñ‡ÐµÑ€ÐµÐ· Ð¸Ð·Ð¾Ð»Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð½Ñ‹Ð¹ Ñ‚ÐµÑÑ‚ nfqws2. Ð”Ð»Ñ Ð¿Ð¾Ð´Ñ‚Ð²ÐµÑ€Ð¶Ð´Ñ‘Ð½Ð½Ñ‹Ñ… Ð·Ð°Ð²Ð¸ÑÐ°Ð½Ð¸Ð¹ Ð¿Ð°Ð½ÐµÐ»ÑŒ Ð¿Ð¾Ð´Ð±Ð¸Ñ€Ð°ÐµÑ‚ fake-SNI Ð¸ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ Ð½Ð°Ð¹Ð´ÐµÐ½Ð½Ñ‹Ð¹ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚ Ñ‚Ñ€Ð¸ Ñ€Ð°Ð·Ð°. ÐžÑÐ½Ð¾Ð²Ð½Ð°Ñ ÑÐ»ÑƒÐ¶Ð±Ð° Ð¸ Ñ‚Ñ€Ð°Ñ„Ð¸Ðº Ð´Ð¾Ð¼Ð°ÑˆÐ½Ð¸Ñ… ÑƒÑÑ‚Ñ€Ð¾Ð¹ÑÑ‚Ð² Ð½Ðµ Ð¼ÐµÐ½ÑÑŽÑ‚ÑÑ.</p>
-            </div>
-            <div className={"flex flex-col sm:flex-row sm:items-end gap-3"}>
-              <label htmlFor={"freezeScanHostsInput"} className={"min-w-0 flex-1 space-y-2 text-sm font-semibold text-slate-200"}>
-                <span>Ð¡Ð²Ð¾Ð¸ ÑÐ°Ð¹Ñ‚Ñ‹ <span className={"font-medium text-slate-400"}>(Ð½ÐµÐ¾Ð±ÑÐ·Ð°Ñ‚ÐµÐ»ÑŒÐ½Ð¾)</span></span>
-                <input id={"freezeScanHostsInput"} type={"text"} placeholder={"example.com, video.example"} autoCapitalize={"none"} spellCheck={false} className={"w-full bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white placeholder:text-slate-500"} />
-              </label>
-              <button data-action-click={"runFreezeScan"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Ð—Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ Ð¿Ñ€Ð¾Ð±Ñƒ</button>
-              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>ÐžÑÑ‚Ð°Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ</button>
-            </div>
-            <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
-            <div id={"freezeScanProgress"} className={"hidden rounded-xl border border-blue-400/25 bg-blue-500/5 p-4"} role={"status"} aria-live={"polite"}>
-              <div className={"flex items-center justify-between gap-3"}>
-                <strong id={"freezeScanProgressTitle"} className={"text-sm font-bold text-blue-100"}></strong>
-                <span id={"freezeScanProgressPercent"} className={"shrink-0 text-xs font-bold tabular-nums text-blue-200"}></span>
-              </div>
-              <div className={"mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"}>
-                <div id={"freezeScanProgressBar"} className={"h-full rounded-full bg-blue-400 transition-[width] duration-300"}></div>
-              </div>
-              <p id={"freezeScanProgressDetail"} className={"mt-2 text-xs leading-relaxed text-slate-300"}></p>
-              <ol id={"freezeScanProgressSteps"} className={"mt-3 grid gap-2 sm:grid-cols-3"}></ol>
-            </div>
-            <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-4 py-3 text-sm font-bold leading-relaxed"} role={"status"} aria-live={"polite"}></p>
-            <div id={"freezeScanResults"} className={"hidden overflow-x-auto rounded-xl border border-slate-800"}></div>
-            <section id={"freezeApplyPreviewPanel"} className={"hidden rounded-2xl border border-blue-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>
-              <div>
-                <h3 className={"text-sm font-bold text-white"}>ÐŸÑ€Ð¸Ð¼ÐµÐ½ÐµÐ½Ð¸Ðµ Ðº Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐµÐ½Ð½Ð¾Ð¼Ñƒ ÑÐ°Ð¹Ñ‚Ñƒ</h3>
-                <p id={"freezeApplyPreviewSummary"} className={"mt-1 text-sm font-medium text-slate-200"}></p>
-              </div>
-              <div id={"freezeApplyPreviewDiff"} className={"max-h-72 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
-              <p className={"text-xs font-medium text-slate-300"}>ÐŸÑ€Ð¾Ñ„Ð¸Ð»ÑŒ Ð¾Ð³Ñ€Ð°Ð½Ð¸Ñ‡ÐµÐ½ ÑÑ‚Ð¸Ð¼ Ð´Ð¾Ð¼ÐµÐ½Ð¾Ð¼. ÐŸÐµÑ€ÐµÐ´ Ð¿Ñ€Ð¸Ð¼ÐµÐ½ÐµÐ½Ð¸ÐµÐ¼ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑŒÑ‚Ðµ diff; Ð±ÑƒÐ´ÐµÑ‚ ÑÐ¾Ð·Ð´Ð°Ð½Ð° Ñ€ÐµÐ·ÐµÑ€Ð²Ð½Ð°Ñ ÐºÐ¾Ð¿Ð¸Ñ, Ð·Ð°Ñ‚ÐµÐ¼ nfqws2 Ð¿ÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑÑ.</p>
-              <button id={"applyFreezeStrategyButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>ÐŸÑ€Ð¸Ð¼ÐµÐ½Ð¸Ñ‚ÑŒ Ð¸ Ð¿ÐµÑ€ÐµÐ·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ</button>
-            </section>
-            <p className={"text-xs font-semibold leading-relaxed text-slate-300"}>ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ¸ Ð¸Ð´ÑƒÑ‚ Ð¿Ð¾ Ð¾Ñ‡ÐµÑ€ÐµÐ´Ð¸ Ñ Ð¾Ð³Ñ€Ð°Ð½Ð¸Ñ‡ÐµÐ½Ð¸ÐµÐ¼ Ð²Ñ€ÐµÐ¼ÐµÐ½Ð¸. ÐŸÑ€Ð¸Ñ‡Ð¸Ð½Ð° ÑÐ±Ð¾Ñ Ð¾Ñ‚Ð¼ÐµÑ‡Ð°ÐµÑ‚ÑÑ ÐºÐ°Ðº Ð²Ð¾Ð·Ð¼Ð¾Ð¶Ð½Ñ‹Ð¹ Ð¾Ð±Ñ€Ñ‹Ð², Ð° Ð½Ðµ ÐºÐ°Ðº Ð´Ð¾ÐºÐ°Ð·Ð°Ñ‚ÐµÐ»ÑŒÑÑ‚Ð²Ð¾ DPI. Ð ÐµÐ·ÑƒÐ»ÑŒÑ‚Ð°Ñ‚Ñ‹ Ð¸ Ð¿Ñ€Ð¾Ð³Ñ€ÐµÑÑ ÑÐ¾Ñ…Ñ€Ð°Ð½ÑÑŽÑ‚ÑÑ Ð¿Ñ€Ð¸ Ð¿ÐµÑ€ÐµÐ·Ð°Ð³Ñ€ÑƒÐ·ÐºÐµ ÑÑ‚Ñ€Ð°Ð½Ð¸Ñ†Ñ‹.</p>
-          </div>
-        </section>
-        <section id={"tabContent-configCheck"} className={"hidden view-animate space-y-4"}>
-          <div className={"ui-card rounded-2xl p-4 sm:p-5 space-y-4"}>
-            <div>
-              <h2 className={"text-lg font-bold text-white"}>ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° ÑÑ‚Ð¾Ñ€Ð¾Ð½Ð½ÐµÐ¹ ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸</h2>
-              <p className={"mt-1 max-w-none text-xs leading-5 text-slate-400"}>Ð¡Ñ€Ð°Ð²Ð½Ð¸Ñ‚Ðµ Ñ‚ÐµÐºÑƒÑ‰Ð¸Ð¹ ÐºÐ¾Ð½Ñ„Ð¸Ð³ Ð¸ Ð´Ð¾ 10 Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚Ð¾Ð² Ð½Ð° Ð¾Ð´Ð½Ð¸Ñ… ÑÐ°Ð¹Ñ‚Ð°Ñ…. ÐŸÐµÑ€ÐµÐ´ Ñ‚ÐµÑÑ‚Ð¾Ð¼ nfqws2 --dry-run Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ TCP, UDP, QUIC, IPSET Ð¸ Ð¿Ð¾Ð»ÑŒÐ·Ð¾Ð²Ð°Ñ‚ÐµÐ»ÑŒÑÐºÐ¸Ðµ Ð¿Ñ€Ð¾Ñ„Ð¸Ð»Ð¸. ÐšÐ°Ð¶Ð´Ñ‹Ð¹ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚ Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½Ð¾ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ÑÑ Ð¿Ð¾ HTTPS/TCP Ð²Ñ‹Ð±Ñ€Ð°Ð½Ð½Ð¾Ðµ Ñ‡Ð¸ÑÐ»Ð¾ Ñ€Ð°Ð· Ð¿Ð¾Ð´Ñ€ÑÐ´; Ð¿Ð¾ÑÐ»Ðµ Ð¿ÐµÑ€Ð²Ð¾Ð¹ Ð¾ÑˆÐ¸Ð±ÐºÐ¸ Ð¿Ð¾Ð²Ñ‚Ð¾Ñ€Ñ‹ Ð¿Ñ€ÐµÐºÑ€Ð°Ñ‰Ð°ÑŽÑ‚ÑÑ. Ð¢ÐµÐºÑƒÑ‰Ð¸Ð¹ ÐºÐ¾Ð½Ñ„Ð¸Ð³ Ð¸ Ð¾Ð±Ñ‹Ñ‡Ð½Ñ‹Ð¹ Ñ‚Ñ€Ð°Ñ„Ð¸Ðº Ð½Ðµ Ð¼ÐµÐ½ÑÑŽÑ‚ÑÑ. ÐŸÑƒÑ‚Ð¸ Lua, Ð±Ð»Ð¾Ð±Ð¾Ð² Ð¸ ÑÐ¿Ð¸ÑÐºÐ¾Ð² Ð±ÐµÑ€ÑƒÑ‚ÑÑ Ð¸Ð· ÑƒÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ¸, Ð°Ð²Ñ‚Ð¾ÑÐ¿Ð¸ÑÐ¾Ðº Ð¸Ð·Ð¾Ð»Ð¸Ñ€Ð¾Ð²Ð°Ð½, debug-Ð·Ð°Ð¿Ð¸ÑÑŒ Ð¾Ñ‚ÐºÐ»ÑŽÑ‡ÐµÐ½Ð°. ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° Ð¸Ð´Ñ‘Ñ‚ Ð¿Ð¾ÑÐ»ÐµÐ´Ð¾Ð²Ð°Ñ‚ÐµÐ»ÑŒÐ½Ð¾ Ð¸ Ð¼Ð¾Ð¶ÐµÑ‚ Ð·Ð°Ð½ÑÑ‚ÑŒ Ð²Ñ€ÐµÐ¼Ñ.</p>
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíãŽ=Ý:-jZ.¶›­–)Þ³V–×÷'B²W6TVffV7BÒg&öÒw&V7Bs°¦–×÷'B²&ö÷EæVÂÒg&öÒrâ÷æVÂs° ¦W‡÷'BFVfVÇBgVæ7F–öâ‚’°¢W6TVffV7B‚‚’Óâ²&ö÷EæVÂ‚“²ÒÂµÒ“°¢&WGW&â€¢Ãà§²%ÆåÆâ'Ð§²%Æâ'Ð§²%Æâ'Ð§²%Æâ'Ð¢Æ†VFW"6Æ74æÖS×²&&rÕ²3“SÒó“R&6¶G&÷Ö&ÇW"ÖÖB&÷&FW"Ö"&÷&FW"×6ÆFRÓƒó“6‡&–æ²Ó¢ÓC‚ÓBÆs§‚Ób’Ó"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&Ö‚×rÕ³“#…Ò×‚ÖWFòw&–Bw&–BÖ6öÇ2ÓÆs¦w&–BÖ6öÇ2Õ·&WVBƒ2ÆÖ–æÖ‚ƒÃg"’•Ò'†Ã¦w&–BÖ6öÇ2Õ¶Ö–æÖ‚ƒÃg"•öWFõöÖ–æÖ‚ƒÃg"•Ò—FV×2Ö6VçFW"vÓ2'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢ÆF—b–C×²&†VFW%7FGW4&"'Ò6Æ74æÖS×²&Ö–â×rÓfÆW‚fÆW‚Öæ÷w&v†—FW76RÖæ÷w&—FV×2Ö6VçFW"vÓ"§W7F–g’×7F'B÷fW&fÆ÷r×‚ÖWFò’ÓÆs¦6öÂ×7âÓ2'†Ã¦6öÂ×7âÓ'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'7FGW2×–ÆÂfÆW‚—FV×2Ö6VçFW"vÓ"ãR&rÕ²3c%Ò&÷&FW"&÷&FW"×6ÆFRÓƒó“‚Ó2’Ó"&÷VæFVBÖÆr6†F÷rÖ–ææW"'Óà¢²%Æâ'Ð¢ÆF—b–C×²'7FGW4–æF–6F÷"'Ò6Æ74æÖS×²'&VÆF—fRfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö6VçFW"rÓ2‚Ó2'Óà¢²%Æâ'Ð¢Ç7â–C×²'7FGW5&F%&–ær'Ò6Æ74æÖS×²&'6öÇWFR–æÆ–æRÖfÆW‚‚ÖgVÆÂrÖgVÆÂ&÷VæFVBÖgVÆÂ&r×6ÆFRÓC'ÓãÂ÷7ãà¢²%Æâ'Ð¢Ç7â–C×²'7FGW4Ö–äF÷B'Ò6Æ74æÖS×²'&VÆF—fR–æÆ–æRÖfÆW‚&÷VæFVBÖgVÆÂ‚Ó"ãRrÓ"ãR&r×6ÆFRÓC'ÓãÂ÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç7â–C×²'7FGW5FW‡DÆ&VÂ'Ò6Æ74æÖS×²'FW‡BÕ³…Ò6Ó§FW‡B×‡2föçB×6VÖ–&öÆBFW‡B×6ÆFRÓCG&6¶–ær×F–v‡B'Óà¢²-
+--=Ý]}-]-]Ò'Ð¢Â÷7ãà¢Ç7â–C×²'7FGW4FWF–Â'Ò6Æ74æÖS×²'7"ÖöæÇ’'ÓãÂ÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b–C×²&†VFW%6W'f–6T6öçG&öÇ2'Ò6Æ74æÖS×²'6‡&–æ²ÓfÆW‚—FV×2Ö6VçFW"vÓ'Óà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'&W7F'E6W'f–6R'ÒFFÖ7F–öâ×FööÇF—×²-	ý]]}ý=--Âægw3"'ÒF—FÆS×²-	ý]]}ý=--Âægw3"'Ò&–ÖÆ&VÃ×²-	ý]]}ý=--Âægw3"'Ò6Æ74æÖS×²&‚Ó’rÓ’&÷VæFVBÖÆr&r×6ÆFRÓƒó“†÷fW#¦&r×6ÆFRÓs†÷fW#¢×G&ç6ÆFR×’ÓãRFW‡B×6ÆFRÓ&÷&FW"&÷&FW"×6ÆFRÓsfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö6VçFW"G&ç6—F–öâÖÆÂ7F—fS§66ÆRÓ“Rfö7W2×f—6–&ÆS¦÷WFÆ–æRÖæöæRfö7W2×f—6–&ÆS§&–ærÓ"fö7W2×f—6–&ÆS§&–ærÖ&ÇVRÓC'Óà¢²%Æâ'Ð¢Ç7fr–C×²'&W7F'D–6öâ'Ò&–Ö†–FFVã×²'G'VR'Ò6Æ74æÖS×²'rÕ³‡…Ò‚Õ³‡…ÒFW‡BÖ&ÇVRÓCG&ç6—F–öâ×G&ç6f÷&ÒGW&F–öâÓS'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢²%Æâ'Ð¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$ÓBGcV‚ãSƒ&ÓRã3Sb$‚ã‚ãBãSƒ"–Óƒ–ÓbÓV‚ÒãSƒÓ‚ã2‚ã2ÓRã3SrÓ&ÓRã3Sr$ƒR'ÓãÂ÷Fƒà¢²%Æâ'Ð¢Â÷7fsà¢²%Æâ'Ð¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâ–C×²'FövvÆU÷vW$'Fâ'ÒFFÖ7F–öâÖ6Æ–6³×²'FövvÆTFVÖöå÷vW"'ÒFFÖ7F–öâ×FööÇF—×²-	}ý=--Âægw3"'Ò&–ÖÆ&VÃ×²-	}ý=--Âægw3"'Ò6Æ74æÖS×²&‚Ó’rÓ’&÷VæFVBÖÆr&rÖVÖW&ÆBÓSó†÷fW#¦&rÖVÖW&ÆBÓSó#†÷fW#¢×G&ç6ÆFR×’ÓãRFW‡BÖVÖW&ÆBÓC&÷&FW"&÷&FW"ÖVÖW&ÆBÓSó3fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö6VçFW"G&ç6—F–öâÖÆÂ7F—fS§66ÆRÓ“Rfö7W2×f—6–&ÆS¦÷WFÆ–æRÖæöæRfö7W2×f—6–&ÆS§&–ærÓ"fö7W2×f—6–&ÆS§&–ærÖVÖW&ÆBÓC'Óà¢²%Æâ'Ð¢Ç7fr&–Ö†–FFVã×²'G'VR'Ò6Æ74æÖS×²'rÕ³‡…Ò‚Õ³‡…Ò'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢²%Æâ'Ð¢ÇF‚FF×÷vW"Ö–6öã×²'Æ’'ÒC×²$Ó‚RãWc4Ã‚"‚RãU¢'Òf–ÆÃ×²&7W'&VçD6öÆ÷"'ÓãÂ÷Fƒà¢Ç&V7BFF×÷vW"Ö–6öã×²'7F÷'Ò6Æ74æÖS×²&†–FFVâ'Òƒ×²#r'Ò“×²#r'Òv–GFƒ×²#'Ò†V–v‡C×²#'Ò'ƒ×²#'Òf–ÆÃ×²&7W'&VçD6öÆ÷"'ÓãÂ÷&V7Cà¢²%Æâ'Ð¢Â÷7fsà¢²%Æâ'Ð¢Ç7â–C×²'FövvÆU÷vW%FW‡B'Ò6Æ74æÖS×²'7"ÖöæÇ’'Óà¢²-	}ý=--Âægw3"'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢ÂöF—cà¢ÆF—b6Æ74æÖS×²&ÖWG&–2Öw&÷WfÆW‚—FV×2Ö6VçFW"vÓ"ãR'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&ÖWG&–2Ö6†—Ö–â×rÕ³S…Ò&rÕ²3c%Ò&÷&FW"&÷&FW"×6ÆFRÓƒó“‚Ó2’Ó"&÷VæFVBÖÆrfÆW‚—FV×2Ö6VçFW"vÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'Ó&÷VæFVBÖÖB&r×6·’ÓSóFW‡B×6·’ÓC&÷&FW"&÷&FW"×6·’ÓSó#'ÒF—FÆS×²-	íý]--ÝòýÍý-Âí=-]'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓ2ãR‚Ó2ãR'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢²%Æâ'Ð¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#ã’'ÒC×²$Ó2vƒ‡ctƒ5cw¦Ó2wc6ÓBÓ7c6ÓBÓ7c6ÓBÓ7c4Órƒ&ÓBƒ"'ÓãÂ÷Fƒà¢²%Æâ'Ð¢Â÷7fsà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÆF—cà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓãRFW‡B×‡2föçBÖÖöæò'Óà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²&ÖWG&–2ÖÆ&VÂFW‡B×6ÆFRÓCföçB×6VÖ–&öÆB'Óà¢²%$Ò'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7â–C×²'&ÔÖWG&–5FW‡B'Ò6Æ74æÖS×²'FW‡B×6ÆFRÓföçBÖ&öÆB'Óà¢².(	B'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&ÖWG&–2×G&6²rÓ#‚6Ó§rÓ3"&r×6ÆFRÓƒó“‚ÓãR&÷VæFVBÖgVÆÂ÷fW&fÆ÷rÖ†–FFVâ×BÓãR'Óà¢²%Æâ'Ð¢ÆF—b–C×²'&Õ&öw&W74&"'Ò6Æ74æÖS×²&&r×6·’ÓC‚ÖgVÆÂ&÷VæFVBÖgVÆÂG&ç6—F–öâÖÆÂGW&F–öâÓS'Ò7G–ÆS×·²v–GFƒ¢#R"×ÓãÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&ÖWG&–2Ö6†—Ö–â×rÕ³‡…Ò&rÕ²3c%Ò&÷&FW"&÷&FW"×6ÆFRÓƒó“‚Ó2’Ó"&÷VæFVBÖÆrfÆW‚—FV×2Ö6VçFW"vÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'Ó&÷VæFVBÖÖB&rÖVÖW&ÆBÓSóFW‡BÖVÖW&ÆBÓC&÷&FW"&÷&FW"ÖVÖW&ÆBÓSó#'ÒF—FÆS×²-	}==}­ýím]í'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓ2ãR‚Ó2ãR'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢²%Æâ'Ð¢Ç&V7Bƒ×²#b'Ò“×²#b'Òv–GFƒ×²#"'Ò†V–v‡C×²#"'Ò'ƒ×²#"'Ò7G&ö¶Uv–GFƒ×²#ã’'ÓãÂ÷&V7Cà¢²%Æâ'Ð¢Ç&V7Bƒ×²#’'Ò“×²#’'Òv–GFƒ×²#b'Ò†V–v‡C×²#b'Ò'ƒ×²#'Ò7G&ö¶Uv–GFƒ×²#ãr'ÓãÂ÷&V7Cà¢²%Æâ'Ð¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#ã’'ÒC×²$Ó’7c6ÓbÓ7c4Ó’‡c6ÓbÓ7c4Ó2–ƒ6ÒÓ2fƒ6Ó"Ófƒ6ÒÓ2fƒ2'ÓãÂ÷Fƒà¢²%Æâ'Ð¢Â÷7fsà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÆF—cà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓãRFW‡B×‡2föçBÖÖöæò'Óà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²&ÖWG&–2ÖÆ&VÂFW‡B×6ÆFRÓCföçB×6VÖ–&öÆB'Óà¢²$5R'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7â–C×²&7TÖWG&–5FW‡B'Ò6Æ74æÖS×²'FW‡BÖVÖW&ÆBÓCföçBÖ&öÆB'Óà¢².(	B'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&ÖWG&–2×G&6²rÓb6Ó§rÓ#&r×6ÆFRÓƒó“‚ÓãR&÷VæFVBÖgVÆÂ÷fW&fÆ÷rÖ†–FFVâ×BÓãR'Óà¢²%Æâ'Ð¢ÆF—b–C×²&7U&öw&W74&"'Ò6Æ74æÖS×²&&rÖVÖW&ÆBÓC‚ÖgVÆÂ&÷VæFVBÖgVÆÂG&ç6—F–öâÖÆÂGW&F–öâÓS'Ò7G–ÆS×·²v–GFƒ¢#R"×ÓãÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö6VçFW"v†—FW76RÖæ÷w&÷&FW"Öf—'7BÆs¦÷&FW"ÖæöæRÆs¦6öÂ×7F'BÓ"Æs§&÷r×7F'BÓ"'†Ã¦6öÂ×7F'BÖWFò'†Ã§&÷r×7F'BÖWFò'Óà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡B×†ÂÆs§FW‡BÓ'†ÂföçBÖ&öÆBG&6¶–ær×F–v‡BFW‡B×v†—FR6VÆV7BÖæöæRG&ç6—F–öâ×G&ç6f÷&ÒGW&F–öâÓ3†÷fW#§66ÆRÕ³ã5Ò'Óà¢²%Æâægw3"'Ð¢Ç7â6Æ74æÖS×²'FW‡BÖ&ÇVRÓCG&÷×6†F÷rÕ³óó‡…÷&v&ƒ“bÃcRÃ#SÃã3R•Ò'Óà¢²"ÕT’'Ð¢Â÷7ãà¢²%Æâ'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b–C×²&†VFW%WFFW2'Ò6Æ74æÖS×²&fÆW‚fÆW‚Öæ÷w&—FV×2Ö6VçFW"§W7F–g’Ö6VçFW"vÓ2Æs¦§W7F–g’ÖVæBÆs§"Ó"Æs¦6öÂ×7F'BÓ2Æs§&÷r×7F'BÓ"Æs¢×G&ç6ÆFR×‚Ó'†Ã¦6öÂ×7F'BÖWFò'†Ã§&÷r×7F'BÖWFò'†Ã¢×G&ç6ÆFR×‚Ó'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâ–C×²'WFFTægw3$'WGFöâ'ÒFFÖ7F–öâÖ6Æ–6³×²&÷VåWFFTÖöFÂ'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&6÷&R%Ò—ÒF—FÆS×²-	íÝí--ÂÝÝíRýMâægw3"'Ò6Æ74æÖS×²'fW'6–öâ×–ÆÂ‚Ó2ãR’Ó"&÷VæFVB×†ÂfÆW‚—FV×2Ö6VçFW"vÓ"FW‡B×‡26Ó§FW‡B×6Ò7W'6÷"×ö–çFW"'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓBFW‡B×6ÆFRÓ#'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢²%Æâ'Ð¢Ç&V7Bƒ×²#b'Ò“×²#b'Òv–GFƒ×²#"'Ò†V–v‡C×²#"'Ò'ƒ×²#"'Ò7G&ö¶Uv–GFƒ×²#ã’'ÓãÂ÷&V7Cà¢²%Æâ'Ð¢Ç&V7Bƒ×²#’ãR'Ò“×²#’ãR'Òv–GFƒ×²#R'Ò†V–v‡C×²#R'Ò'ƒ×²#ã‚'Ò7G&ö¶Uv–GFƒ×²#ãr'ÓãÂ÷&V7Cà¢²%Æâ'Ð¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#ã’'ÒC×²$Ó’7c6ÓbÓ7c4Ó’‡c6ÓbÓ7c4Ó2–ƒ6ÒÓ2fƒ6Ó"Ófƒ6ÒÓ2fƒ2'ÓãÂ÷Fƒà¢²%Æâ'Ð¢Â÷7fsà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²&föçBÖ&öÆBFW‡B×v†—FRG&6¶–ær×F–v‡B'Óà¢²&ægw3"'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7â–C×²&†VFW$6÷&UfW'6–öâ'Ò6Æ74æÖS×²&föçBÖÖöæòFW‡B×6ÆFRÓCföçBÖÖVF—VÒ'Óà¢².(	B'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâ–C×²'WFFUV”'WGFöâ'ÒFFÖ7F–öâÖ6Æ–6³×²&÷VåWFFTÖöFÂ'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²'V’%Ò—ÒF—FÆS×²-	íÝí--Â-]ÝýÝ]½Âægw3"ÕT’'Ò6Æ74æÖS×²'fW'6–öâ×–ÆÂ‚Ó2ãR’Ó"&÷VæFVB×†ÂfÆW‚—FV×2Ö6VçFW"vÓ"FW‡B×‡26Ó§FW‡B×6Ò7W'6÷"×ö–çFW"'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓBFW‡B×6ÆFRÓ#'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢²%Æâ'Ð¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#ã’'ÒC×²$Ó#ec†""ÓÓãs6ÂÓrÓF""Ó"ÂÓrD""2‡c†""ãs6ÃrF"""ÃrÓD""#g¢'ÓãÂ÷Fƒà¢²%Æâ'Ð¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#ã’'ÒC×²$Ó2ã#rbã“dÃ""ãÃ‚ãs2ÓRãTÓ"#"ã…c"'ÓãÂ÷Fƒà¢²%Æâ'Ð¢Â÷7fsà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²&föçBÖ&öÆBFW‡B×v†—FR'ÓåT“Â÷7ããÇ7â–C×²&†VFW%V•fW'6–öâ'Ò6Æ74æÖS×²&föçBÖ&öÆBFW‡B×v†—FRföçBÖÖöæò'Óà¢².(	B'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢ÆF—b6Æ74æÖS×²&‚ÓRrÕ³…Ò&r×6ÆFRÓƒ×‚ÓãR†–FFVâ6Ó¦&Æö6²'ÓãÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð ¢²%ÆåÆâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Âö†VFW#à§²%ÆåÆâ'Ð§²%Æâ'Ð§²%Æâ'Ð§²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&ÖÖ–âÖÆ–÷WBfÆW‚ÓÖ–âÖ‚ÓfÆW‚÷fW&fÆ÷rÖ†–FFVâÖ‚×rÕ³“#…ÒrÖgVÆÂ×‚ÖWFò'Óà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢Æ6–FR6Æ74æÖS×²'rÓcBÆs§rÓs"&rÕ²3“SÒ&÷&FW"×"&÷&FW"×6ÆFRÓƒó“fÆW‚fÆW‚Ö6öÂ§W7F–g’Ö&WGvVVâ6‡&–æ²Ó÷fW&fÆ÷r×’ÖWFò6VÆV7BÖæöæR'Óà¢²%ÆâÆâ'Ð¢ÆF—b6Æ74æÖS×²'Ó2ãR76R×’ÓR'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢ÆF—cà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'‚Ó2Ö"Ó"FW‡BÕ³…ÒföçBÖÖöæòföçBÖ&öÆBG&6¶–ær×v–FW"FW‡B×6ÆFRÓS'Óà¢²%Æâ
+=ý-½]ÝR‚ý-½Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ææb6Æ74æÖS×²'76R×’Ó'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&6öæb%Ò—Ò–C×²&æd'FâÖ6öæb'Ò6Æ74æÖS×²'6–FRÖæbÖ'Fâ7F—fRrÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçB×6VÖ–&öÆB&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²Ó'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó#ÃBÓfÓBFÃBBÓBDÓbfÂÓBÓBBÓB'ÓãÂ÷Fƒà¢Â÷7fsà¢²%Æâ'Ð¢Ç7ãà¢²-	­íÝM==mò'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&rÖ&ÇVRÓSó#FW‡BÖ&ÇVRÓ3'Óà¢²&6öæb'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&Æ—7G2%Ò—Ò–C×²&æd'FâÖÆ—7G2'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡B×6·’ÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó’&ƒfÒÓbFƒfÓ"Tƒv""Ó"Ó%cV"""Ó&ƒRãSƒfãsrã#“6ÃRãCBRãCFã#“2ãsuc–""Ó"'¢'ÓãÂ÷Fƒà¢Â÷7fsà¢²%Æâ'Ð¢Ç7ãà¢²-
+ý­‚MíÍ]Ýí"‚•'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&r×6ÆFRÓƒFW‡B×6ÆFRÓ3'Óà¢²#R'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð ¢Âöæcà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b–C×²&F–væ÷7F–4ædw&÷W'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'‚Ó2Ö"Ó"FW‡BÕ³…ÒföçBÖÖöæòföçBÖ&öÆBG&6¶–ær×v–FW"FW‡B×6ÆFRÓS'Óà¢²%Æâ	M=Ýí-­‚--íÍ-­Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ææb6Æ74æÖS×²'76R×’Ó'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&6†V6²%Ò—Ò–C×²&æd'FâÖ6†V6²'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡BÖVÖW&ÆBÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó’&Ã""BÓFÓRãc‚ÓBãdã“SRã“SR""ã“CFã“SRã“SRÓ‚ãc‚2ãD"ã""ã"2–3RãS“2ãƒ#Bã#’’ãc#"RãsbÓã33"’Óbã2’Óãc#"ÓãC"Òã32Ó"ãS"Òã3ƒ"Ó2ãg¢'ÓãÂ÷Fƒà¢Â÷7fsà¢²%Æâ'Ð¢Ç7ãà¢²-	ýí-]­-'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&rÖVÖW&ÆBÓSóRFW‡BÖVÖW&ÆBÓC'Óà¢²-	M=Ýír'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²'G&6R%Ò—Ò–C×²&æd'Fâ×G&6R'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢Ç7â6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'ÓãÇ7â6Æ74æÖS×²'FW‡BÖ&ÇVRÓC'Óî(ÈÂ÷7ããÇ7ãí
+-í-­Â÷7ããÂ÷7ãà¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&rÖ&ÇVRÓSóRFW‡BÖ&ÇVRÓ3'ÓâÒÖFV'VsÂ÷7ãà¢Âö'WGFöãà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&WF÷GVæR%Ò—Ò–C×²&æd'FâÖWF÷GVæR'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡BÖÖ&W"ÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó2c4ÃBFƒwcvÃ’Ó‚Ów¢'ÓãÂ÷Fƒà¢Â÷7fsà¢²%Æâ'Ð¢Ç7ãà¢²-	--âÝýíMí--]=‚'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&rÖÖ&W"ÓSóRFW‡BÖÖ&W"Ó3'Óà¢²%D5'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&F–væ÷7F–3f²%Ò—Ò–C×²&æd'FâÖF–væ÷7F–3f²'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢Ç7â6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'ÓãÇ7â6Æ74æÖS×²'FW‡BÖ7–âÓ3'Óî(iCÂ÷7ããÇ7ãí	M=Ýí-­b	­	Â÷7ããÂ÷7ãà¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&rÖ7–âÓSóRFW‡BÖ7–âÓ3'Óä…EE3Â÷7ãà¢Âö'WGFöãà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&6öæf–t6†V6²%Ò—Ò–C×²&æd'FâÖ6öæf–t6†V6²'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢Ç7â6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'ÓãÇ7â6Æ74æÖS×²'FW‡B×f–öÆWBÓ3'Óî(xCÂ÷7ããÇ7ãí	ýí-]­­íÝM==mƒÂ÷7ããÂ÷7ãà¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&r×f–öÆWBÓSóRFW‡B×f–öÆWBÓ3'Óâæ6öæcÂ÷7ãà¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&Ööæ—F÷"%Ò—Ò–C×²&æd'FâÖÖöæ—F÷"'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡BÖ7–âÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$ÓRvƒVÂÓãCRÓãCT"ã3""ã3"‚BãS…cbã"bã"ÓBÓRãcS•cV""ÓBbã3C3rãcrbãcRb‚ã3ƒ‚bc2ãS–3ãS3‚Òã#BãSRÒãS“RãC3dÃBvƒVÓbc22ÓbbÓÓbƒ’'ÓãÂ÷Fƒà¢Â÷7fsà¢²%Æâ'Ð¢Ç7ãà¢²-	ÍíÝ-íÝ2'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç7â–C×²'6–FTÖöæ—F÷$&FvR'Ò6Æ74æÖS×²'rÓ"‚Ó"&÷VæFVBÖgVÆÂ&r×6ÆFRÓC'ÓãÂ÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&6öÖ×Væ—G’%Ò—Ò–C×²&æd'FâÖ6öÖ×Væ—G’'Ò6Æ74æÖS×²&†–FFVâ6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ2'Óà¢²%Æâ'Ð¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡B×W'ÆRÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'Óà¢ÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó2ãSRƒV"""'c"""""""'c"ã“CTÓ‚2ã“3UcRãT"ãR"ãRãR†‚ãV""""""B"""Ó&ƒãcDÓR#ãCƒ…c†"""Ó&ƒ2ãcDÓ#&’’Ó‚’’‚¢'ÓãÂ÷Fƒà¢Â÷7fsà¢²%Æâ'Ð¢Ç7ãà¢²-
+íí]--â‚4â'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÕ³…ÒföçBÖÖöæò‚ÓãR’ÓãR&÷VæFVB&r×W'ÆRÓSóRFW‡B×W'ÆRÓ3'Óà¢²%$•R'Ð¢Â÷7ãà¢²%Æâ'Ð¢Âö'WGFöãà¢²%ÆåÆâ'Ð¢Âöæcà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð ¢²%ÆåÆâ'Ð¢ÆF—cà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'‚Ó2BÓ2"ÓFW‡BÕ³…ÒföçBÖÖöæòföçBÖ&öÆBG&6¶–ær×v–FW"FW‡B×6ÆFRÓS'Óí
+-]ÍÂöF—cà¢Ææb6Æ74æÖS×²'76R×’Ó'Óà ¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²'6æ6†÷G2%Ò—Ò–C×²&æd'Fâ×6æ6†÷G2'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"vÓ2‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡BÖVÖW&ÆBÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'ÓãÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$ÓBvƒdÓbFƒ'cdƒg¤Ó’ƒfÒÓbFƒb'ÓãÂ÷FƒãÂ÷7fsãÇ7ãí
+]}]-Ý½R­íýƒÂ÷7ãà¢Âö'WGFöãà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²'7W÷'E&W÷'B%Ò—Ò–C×²&æd'Fâ×7W÷'E&W÷'B'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"vÓ2‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡BÖ7–âÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'ÓãÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó‚6ƒvÃRWc4ƒ‡¤ÓR7cfƒTÓBwcFƒ$Ó6ƒVÒÓRFƒR'ÓãÂ÷FƒãÂ÷7fsãÇ7ãí	í-}"M½òýíÍíƒÂ÷7ãà¢Âö'WGFöãà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&V&æ6R%Ò—Ò–C×²&æd'FâÖV&æ6R'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"vÓ2‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡B×f–öÆWBÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'ÓãÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶TÆ–æV¦ö–ã×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó"7c&ÓGc$Ó2&ƒ&ÓBƒ$ÓRãcBRãcFÃãC"ãC&Ó’ãƒ‚’ãƒ‚ãC"ãC&ÓÓ"ãs"ÓãC"ãC&ÒÓ’ãƒ‚’ãƒ‚ÓãC"ãC$Ó"†BB‚BBÓ‡¢'ÓãÂ÷FƒãÂ÷7fsãÇ7ãí	íMíÍ½]ÝRT“Â÷7ãà¢Âö'WGFöãà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'7v—F6„Ö–åF"'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&&÷WB%Ò—Ò–C×²&æd'FâÖ&÷WB'Ò6Æ74æÖS×²'6–FRÖæbÖ'FârÖgVÆÂfÆW‚—FV×2Ö6VçFW"vÓ2‚Ó2ãR’Ó"ãR&÷VæFVB×†ÂFW‡B×6ÒföçBÖÖVF—VÒFW‡B×6ÆFRÓC†÷fW#§FW‡B×6ÆFRÓ†÷fW#¦&r×6ÆFRÓƒóS&÷&FW"&÷&FW"×G&ç7&VçBFW‡BÖÆVgB'Óà¢Ç7fr6Æ74æÖS×²'rÓB‚ÓB6‡&–æ²ÓFW‡B×6·’ÓC'Òf–ÆÃ×²&æöæR'Ò7G&ö¶S×²&7W'&VçD6öÆ÷"'Òf–Wt&÷ƒ×²##B#B'ÓãÆ6—&6ÆR7ƒ×²#"'Ò7“×²#"'Ò#×²#’'Ò7G&ö¶Uv–GFƒ×²#"'ÓãÂö6—&6ÆSãÇF‚7G&ö¶TÆ–æV6×²'&÷VæB'Ò7G&ö¶Uv–GFƒ×²#"'ÒC×²$Ó"cVÓÓ†‚ã'ÓãÂ÷FƒãÂ÷7fsãÇ7ãí	âægw3"ÕT“Â÷7ãà¢Âö'WGFöãà¢Âöæcà¢ÂöF—cà¢²%ÆåÆâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢²%ÆåÆâ'Ð¢Âö6–FSà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢²%Æâ'Ð¢²%Æâ'Ð¢ÆÖ–â6Æ74æÖS×²&fÆW‚ÓÖ–âÖ‚Ó÷fW&fÆ÷r×’ÖWFòÓBÆs§Ób&r×6ÆFRÓ“S'Óà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢²%Æâ'Ð¢²%Æâ'Ð¢Ç6V7F–öâ–C×²'F$6öçFVçBÖ6öæb'Ò6Æ74æÖS×²'f–WrÖæ–ÖFR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'V’Ö6&BÖ"Ó2fÆW‚fÆW‚×w&—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâvÓ2&÷VæFVB×†Â‚ÓB’Ó2'Óà¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ"ãR'Óà¢Ç7â6Æ74æÖS×²&‚Ó"ãRrÓ"ãR&÷VæFVBÖgVÆÂ&rÖ&ÇVRÓC6†F÷rÕ³óó‡…ò3cVfÒ'ÓãÂ÷7ãà¢Ç7â–C×²&7W'&VçD6öæf–uF‚'Ò6Æ74æÖS×²&föçBÖÖöæòFW‡B×6ÒföçBÖ&öÆBG&6¶–ær×F–v‡BFW‡B×v†—FR6Ó§FW‡BÖ&6R'Óç²-	­íÝM==mò'ÓÂ÷7ãà¢Ç7â–C×²&6öædÆ–æW4&FvR'Ò6Æ74æÖS×²'&÷VæFVBÖÖB&÷&FW"&÷&FW"×6ÆFRÓs&r×6ÆFRÓƒ‚Ó"’ÓãRföçBÖÖöæòFW‡B×‡2FW‡B×6ÆFRÓ3'Óç².(	B-í¢'ÓÂ÷7ãà¢ÂöF—cà¢ÂöF—cà¢Ææb&–ÖÆ&VÃ×²-
+}M]²­íÝM==m‚'Ò6Æ74æÖS×²&6öæf–r×7V'F'2Ö"ÓBfÆW‚fÆW‚×w&—FV×2Ö6VçFW"vÓ"&÷VæFVB×†Â&÷&FW"&÷&FW"×6ÆFRÓƒ&rÕ²3“SÒÓãR'Óà¢Æ'WGFöâ–C×²&6öæf–uF$VF—F÷"'ÒG—S×²&'WGFöâ'Ò&–×&W76VC×²'G'VR'Ò&–Ö6öçG&öÇ3×²&6öæf–tVF—F÷%æVÂ'ÒFFÖ7F–öâÖ6Æ–6³×²'7v—F6„6öæf–u6V7F–öâ'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²&VF—F÷"%Ò—Ò6Æ74æÖS×²&6öæf–r×7V'F"6öæf–r×7V'F"Ö7F—fR&÷VæFVBÖÆr‚ÓB’Ó"FW‡B×6ÒföçB×6VÖ–&öÆBG&ç6—F–öâÖÆÂfö7W2×f—6–&ÆS¦÷WFÆ–æRÖæöæRfö7W2×f—6–&ÆS§&–ærÓ"fö7W2×f—6–&ÆS§&–ærÖ&ÇVRÓC'Óà¢²-	­íÝM==mò'Ð¢Âö'WGFöãà¢Æ'WGFöâ–C×²&6öæf–uF%6WGF–æw2'ÒG—S×²&'WGFöâ'Ò&–×&W76VC×²&fÇ6R'Ò&–Ö6öçG&öÇ3×²&6öæf–u6WGF–æw5æVÂ'ÒFFÖ7F–öâÖ6Æ–6³×²'7v—F6„6öæf–u6V7F–öâ'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²'6WGF–æw2%Ò—Ò6Æ74æÖS×²&6öæf–r×7V'F"&÷VæFVBÖÆr‚ÓB’Ó"FW‡B×6ÒföçB×6VÖ–&öÆBG&ç6—F–öâÖÆÂfö7W2×f—6–&ÆS¦÷WFÆ–æRÖæöæRfö7W2×f—6–&ÆS§&–ærÓ"fö7W2×f—6–&ÆS§&–ærÖ&ÇVRÓC'Óà¢²-	Ý-í­‚­íÝM==m‚'Ð¢Âö'WGFöãà¢Æ'WGFöâ–C×²&6öæf–uF%67&—G2'ÒG—S×²&'WGFöâ'Ò&–×&W76VC×²&fÇ6R'Ò&–Ö6öçG&öÇ3×²&6öæf–u67&—G5æVÂ'ÒFFÖ7F–öâÖ6Æ–6³×²'7v—F6„6öæf–u6V7F–öâ'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²'67&—G2%Ò—Ò6Æ74æÖS×²&6öæf–r×7V'F"&÷VæFVBÖÆr‚ÓB’Ó"FW‡B×6ÒföçB×6VÖ–&öÆBG&ç6—F–öâÖÆÂfö7W2×f—6–&ÆS¦÷WFÆ–æRÖæöæRfö7W2×f—6–&ÆS§&–ærÓ"fö7W2×f—6–&ÆS§&–ærÖ&ÇVRÓC'Óà¢²-
+­ý-²'Ð¢Âö'WGFöãà¢ÆF—b6Æ74æÖS×²&ÖÂÖWFòfÆW‚fÆW‚×w&—FV×2Ö6VçFW"vÓ"'Óà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²&6÷”6öæf–uFW‡B'Ò6Æ74æÖS×²'&÷VæFVBÖÆr&÷&FW"&÷&FW"×6ÆFRÓs&r×6ÆFRÓƒó“‚Ó2’ÓãRFW‡B×‡2föçBÖÖVF—VÒFW‡B×6ÆFRÓ#G&ç6—F–öâÖÆÂ†÷fW#¦&r×6ÆFRÓs'Óç²-	­íýí--Â'ÓÂö'WGFöãà¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²&Ç”6öæf–tæE&W7F'B'Ò6Æ74æÖS×²'&÷VæFVBÖÆr&rÖ&ÇVRÓc‚ÓB’ÓãRFW‡B×‡2föçB×6VÖ–&öÆBFW‡B×v†—FR6†F÷rÖÖB6†F÷rÖ&ÇVRÓcó#RG&ç6—F–öâÖÆÂ†÷fW#¦&rÖ&ÇVRÓS7F—fS§66ÆRÓ“R'Óç²-	ýÍ]Ý-Â­íÝM==mâ'ÓÂö'WGFöãà¢ÂöF—cà¢Âöæcà¢ÆF—b6Æ74æÖS×²&w&–Bw&–BÖ6öÇ2Ó†Ã¦w&–BÖ6öÇ2Ó"vÓR—FV×2×7F'B'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢ÆF—b–C×²&6öæf–tVF—F÷%æVÂ'Ò6Æ74æÖS×²&6öæf–r×6V7F–öâ×æVÂ6öæf–r×æVÂÖVçFW"†Ã¦6öÂ×7âÓ"V’Ö6&B&÷VæFVBÓ'†Â÷fW&fÆ÷rÖ†–FFVâ6†F÷rÓ'†Â&÷&FW"&÷&FW"×6ÆFRÓƒfÆW‚fÆW‚Ö6öÂ'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&&rÕ²3s#EÒ‚ÓB’Ó"&÷&FW"Ö"&÷&FW"×6ÆFRÓƒóƒfÆW‚fÆW‚×w&—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâvÓ"FW‡B×‡2föçBÖÖöæò'Óà¢²%Æâ'Ð ¢²%ÆåÆâ'Ð¢ÆÆ&VÂ6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓãRFW‡B×‡2FW‡B×6ÆFRÓC7W'6÷"×ö–çFW"6VÆV7BÖæöæR'Óà¢²%Æâ'Ð¢Æ–çWBG—S×²&6†V6¶&÷‚'ÒFFÖ7F–öâÖ6†ævS×²'FövvÆUv÷&Ew&6öæb'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…·²'6÷W&6R#¢&6†V6¶VB'ÕÒ—ÒFVfVÇD6†V6¶VC×·G'VWÒ6Æ74æÖS×²'&÷VæFVB&r×6ÆFRÓ“&÷&FW"×6ÆFRÓsFW‡BÖ&ÇVRÓSfö7W3§&–ærÓ'Òóà¢²%Æâ'Ð¢Ç7ãà¢²-	ý]]Ýí-í¢'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöÆ&VÃà¢Æ'WGFöâ–C×²&6öæf–u7G'V7GW&UFövvÆR'ÒG—S×²&'WGFöâ'Ò&–×&W76VC×²'G'VR'Ò&–ÖW‡æFVC×²'G'VR'Ò&–Ö6öçG&öÇ3×²&6öæf–t÷WFÆ–æR'ÒFFÖ7F–öâÖ6Æ–6³×²'FövvÆT6öæf–t÷WFÆ–æR'ÒF—FÆS×²-
+­½-Â-=­-=2ý]]Í]ÝÝ½R­íÝM==m‚ý-'Ò6Æ74æÖS×²&6öæf–r×7G'V7GW&R×FövvÆRÖ7F—fR&÷VæFVBÖÆr&÷&FW"&÷&FW"×6ÆFRÓs&r×6ÆFRÓƒó“‚Ó2’ÓãRFW‡B×‡2föçBÖÖVF—VÒFW‡B×6ÆFRÓ#G&ç6—F–öâÖÆÂ†÷fW#¦&÷&FW"Ö&ÇVRÓSós†÷fW#¦&r×6ÆFRÓsfö7W2×f—6–&ÆS¦÷WFÆ–æRÖæöæRfö7W2×f—6–&ÆS§&–ærÓ"fö7W2×f—6–&ÆS§&–ærÖ&ÇVRÓC'Óà¢²-
+-=­-='Ð¢Âö'WGFöãà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b–C×²&6öæf–tVF—F÷%v÷&·76R'Ò6Æ74æÖS×²&6öæf–rÖVF—F÷"×v÷&·76R6öæf–rÖVF—F÷"×v÷&·76RÖ÷Vâw&–Bw&–BÖ6öÇ2ÓvÓ2'Óà¢ÆF—b6Æ74æÖS×²&Öö&–ÆRÖ6öFRÖVF—F÷"fÆW‚‚Õ³sC…ÒÖ–â×rÓ&rÕ²3c%ÒföçBÖÖöæòFW‡BÕ³G…ÒÆVF–ærÕ³ãc…Ò÷fW&fÆ÷rÖ†–FFVâ'Óà¢²%Æâ'Ð¢ÆF—b–C×²&6öædÆ–æTçVÖ&W'2'Ò6Æ74æÖS×²&Æ–æRÖçVÖ&W'2Ö6öÂ&rÕ²3SƒeÒ&÷&FW"×"&÷&FW"×6ÆFRÓƒóƒ’ÓB‚Ó2rÓ2÷fW&fÆ÷rÖ†–FFVâ6VÆV7BÖæöæRFW‡B×‡2ÆVF–ærÕ³ãc…Ò'Óà¢²%ÆâÆâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&6öæbÖVF—F÷"×7W&f6R&VÆF—fRÖ–â×rÓfÆW‚Ó÷fW&fÆ÷rÖ†–FFVâ'Óà¢Ç&R–C×²&6öæe7–çF„†–v†Æ–v‡B'Ò&–Ö†–FFVã×²'G'VR'Ò6Æ74æÖS×²&6öæb×7–çF‚Ö†–v†Æ–v‡B'6öÇWFR–ç6WBÓÒÓ÷fW&fÆ÷rÖ†–FFVâ’ÓB‚ÓRföçBÖÖöæòÆVF–ærÕ³ãc…Ò'ÓãÂ÷&Sà¢ÇFW‡F&V–C×²&ægw46öæeFW‡F&V'ÒFFÖ7F–öâÖ–çWC×²&†æFÆT6öæd–çWB'ÒFFÖ7F–öâ×67&öÆÃ×²'7–æ46öæe67&öÆÂ'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…·²'6÷W&6R#¢'6VÆb'ÕÒ—Ò7VÆÄ6†V6³×²&fÇ6R'Ò6Æ74æÖS×²&6öæbÖVF—F÷"Ö–çWB'6öÇWFR–ç6WBÓÖ–â×rÓrÖgVÆÂ‚ÖgVÆÂ&r×G&ç7&VçB’ÓB‚ÓR÷WFÆ–æRÖæöæR&W6—¦RÖæöæRÆVF–ærÕ³ãc…ÒföçBÖÖöæò÷fW&fÆ÷r×’ÖWFòfö7W3§&–ærÓ&÷&FW"ÖæöæR'ÓãÂ÷FW‡F&Và¢ÂöF—cà¢²%Æâ'Ð¢ÂöF—cà¢Æ6–FR–C×²&6öæf–t÷WFÆ–æR'Ò&–ÖÆ&VÃ×²-
+-=­-=­íÝM==m‚'Ò6Æ74æÖS×²&6öæf–rÖ÷WFÆ–æRÖ‚Ö‚Õ³sC…Ò÷fW&fÆ÷r×’ÖWFò&÷VæFVB×†Â&÷&FW"&÷&FW"×6ÆFRÓƒ&rÕ²3s#EÒÓ"ãR'Óà¢ÆF—b6Æ74æÖS×²&Ö"Ó"‚Ó"FW‡BÕ³…ÒföçBÖ&öÆBWW&66RG&6¶–ær×v–FW"FW‡B×6ÆFRÓC'Óç²-
+-=­-='ÓÂöF—cà¢ÆF—b–C×²&6öæf–t÷WFÆ–æTVçG&–W2'Ò6Æ74æÖS×²'76R×’ÓãR'Óà¢ÆF—b6Æ74æÖS×²'‚Ó"’Ó"FW‡B×‡2FW‡B×6ÆFRÓS'Óç²-	}==}­-=­-=¾(
+b'ÓÂöF—cà¢ÂöF—cà¢Âö6–FSà¢ÂöF—cà¢²%ÆåÆâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b–C×²&6öæf–u6WGF–æw5æVÂ'Ò6Æ74æÖS×²&6öæf–r×6WGF–æw2×æVÂ6öæf–r×6V7F–öâ×æVÂ†–FFVâ†Ã¦6öÂ×7âÓ"w&–Bw&–BÖ6öÇ2Ó†Ã¦w&–BÖ6öÇ2Ó"vÓB'Óà¢²%ÆâÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²'V’Ö6&B&÷VæFVBÓ'†ÂÓB6†F÷rÖÆr'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâ"Ó2Ö"Ó2&÷&FW"Ö"&÷&FW"×6ÆFRÓƒ'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"vÓ"'Óà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'rÓ"‚ÓB&÷VæFVBÖgVÆÂ&rÖ&ÇVRÓS'ÓãÂ÷7ãà¢²%Æâ'Ð¢Æƒ26Æ74æÖS×²'FW‡B×6ÒföçBÖ&öÆBFW‡B×v†—FR'Óà¢²-	½-½RýÍ]-²íÝí-²'Ð¢Âöƒ3à¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Æ'WGFöâFFÖ7F–öâÖ6Æ–6³×²'&W6WDFVfVÇD6öæb'Ò6Æ74æÖS×²'FW‡B×‡2FW‡B×6ÆFRÓC†÷fW#§FW‡BÖ&ÇVRÓCG&ç6—F–öâÖ6öÆ÷'2'Óà¢²%Æâ
+í-Â¢Ý-½íÝ5Æâ'Ð¢Âö'WGFöãà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢ÆF—b6Æ74æÖS×²&w&–Bw&–BÖ6öÇ2Ó"vÓ2'Óà¢²%Æâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&&rÕ²3s#EÒ&÷&FW"&÷&FW"×6ÆFRÓƒó“&÷VæFVB×†ÂÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâFW‡BÕ³…ÒföçBÖÖöæòFW‡B×6ÆFRÓC'Óà¢²%Æâ'Ð¢Ç7ãà¢²$•5ô”åDU$d4R'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÖVÖW&ÆBÓC'Óà¢²%tâ'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç6VÆV7BFVfVÇEfÇVS×²"'ÒFFÖ¶W“×²$•5ô”åDU$d4R'ÒFFÖ7F–öâÖ6†ævS×²'WFFT6öæef&–&ÆR'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²$•5ô”åDU$d4R"Â²'6÷W&6R#¢'fÇVR'ÕÒ—Ò6Æ74æÖS×²&×BÓãRrÖgVÆÂ&r×6ÆFRÓ“&÷&FW"&÷&FW"×6ÆFRÓsó“&÷VæFVBÖÆr‚Ó"’ÓãRFW‡B×‡2föçBÖÖöæòföçBÖ&öÆBFW‡B×v†—FRfö7W3¦÷WFÆ–æRÖæöæRfö7W3¦&÷&FW"Ö&ÇVRÓS'Óà¢Æ÷F–öâfÇVS×²"'Óç²$&6¶VæB]ÝRíÝ=m²]-]-½RÝ-]M]²'ÓÂö÷F–öãà¢Â÷6VÆV7Cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&&rÕ²3s#EÒ&÷&FW"&÷&FW"×6ÆFRÓƒó“&÷VæFVB×†ÂÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâFW‡BÕ³…ÒföçBÖÖöæòFW‡B×6ÆFRÓC'Óà¢²%Æâ'Ð¢Ç7ãà¢²$äeu5ôU…E$ô$u2'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÖ&ÇVRÓC'Óà¢²-
+	]	m		Â'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç6VÆV7BFVfVÇEfÇVS×²"'ÒFFÖ7F–öâÖ6†ævS×²'WFFT6öæef&–&ÆR'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²$äeu5ôU…E$ô$u2"Â²'6÷W&6R#¢'fÇVR'ÕÒ—Ò6Æ74æÖS×²&×BÓãRrÖgVÆÂ&r×6ÆFRÓ“&÷&FW"&÷&FW"×6ÆFRÓsó“&÷VæFVBÖÆr‚Ó"’ÓãRFW‡B×‡2föçBÖÖöæòföçBÖ&öÆBFW‡BÖ&ÇVRÓ3fö7W3¦÷WFÆ–æRÖæöæRfö7W3¦&÷&FW"Ö&ÇVRÓS'Óà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²"DÔôDUôÄ•5B'Óà¢²"DÔôDUôÄ•5B‡W6W"æÆ—7B’'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²"DÔôDUôUDò'Óà¢²"DÔôDUôUDò†WFòæÆ—7B’'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²"DÔôDUôÄÂ'Óà¢²"DÔôDUôÄÂ	-]Â-M¢’'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Â÷6VÆV7Cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&&rÕ²3s#EÒ&÷&FW"&÷&FW"×6ÆFRÓƒó“&÷VæFVB×†ÂÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâFW‡BÕ³…ÒföçBÖÖöæòFW‡B×6ÆFRÓC'Óà¢²%Æâ'Ð¢Ç7ãà¢²$äeTUTUôåTÒ'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÖÖ&W"ÓC'Óà¢²%TUTR'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç6VÆV7BFVfVÇEfÇVS×²"'ÒFFÖ7F–öâÖ6†ævS×²'WFFT6öæef&–&ÆR'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²$äeTUTUôåTÒ"Â²'6÷W&6R#¢'fÇVR'ÕÒ—Ò6Æ74æÖS×²&×BÓãRrÖgVÆÂ&r×6ÆFRÓ“&÷&FW"&÷&FW"×6ÆFRÓsó“&÷VæFVBÖÆr‚Ó"’ÓãRFW‡B×‡2föçBÖÖöæòföçBÖ&öÆBFW‡B×v†—FRfö7W3¦÷WFÆ–æRÖæöæRfö7W3¦&÷&FW"Ö&ÇVRÓS'Óà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²#3'Óà¢²#3
+--Ýò’'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²##'Óà¢²##'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²#'Óà¢²#'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Â÷6VÆV7Cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&&rÕ²3s#EÒ&÷&FW"&÷&FW"×6ÆFRÓƒó“&÷VæFVB×†ÂÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâFW‡BÕ³…ÒföçBÖÖöæòFW‡B×6ÆFRÓC'Óà¢²%Æâ'Ð¢Ç7ãà¢²%ôÄ”5•ôäÔR'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7â6Æ74æÖS×²'FW‡BÖ–æF–vòÓC'Óà¢²$äDÒ'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç6VÆV7BFVfVÇEfÇVS×²"'ÒFFÖ7F–öâÖ6†ævS×²'WFFT6öæef&–&ÆR'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²%ôÄ”5•ôäÔR"Â²'6÷W&6R#¢'fÇVR'ÕÒ—Ò6Æ74æÖS×²&×BÓãRrÖgVÆÂ&r×6ÆFRÓ“&÷&FW"&÷&FW"×6ÆFRÓsó“&÷VæFVBÖÆr‚Ó"’ÓãRFW‡B×‡2föçBÖÖöæòföçBÖ&öÆBFW‡B×v†—FRfö7W3¦÷WFÆ–æRÖæöæRfö7W3¦&÷&FW"Ö&ÇVRÓS'Óà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²&ægw2'Óà¢²&ægw2'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²'¦&WB'Óà¢²'¦&WB'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²&FVfVÇB'Óà¢²&FVfVÇB'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Â÷6VÆV7Cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&&rÕ²3s#EÒ&÷&FW"&÷&FW"×6ÆFRÓƒó“&÷VæFVB×†ÂÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâFW‡BÕ³…ÒföçBÖÖöæòFW‡B×6ÆFRÓC'Óà¢²%Æâ'Ð¢Ç7ãà¢²$•ceôTä$ÄTB'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7ãà¢²$•cb'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç6VÆV7BFVfVÇEfÇVS×²"'ÒFFÖ7F–öâÖ6†ævS×²'WFFT6öæef&–&ÆR'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²$•ceôTä$ÄTB"Â²'6÷W&6R#¢'fÇVR'ÕÒ—Ò6Æ74æÖS×²&×BÓãRrÖgVÆÂ&r×6ÆFRÓ“&÷&FW"&÷&FW"×6ÆFRÓsó“&÷VæFVBÖÆr‚Ó"’ÓãRFW‡B×‡2föçBÖÖöæòföçBÖ&öÆBFW‡B×v†—FRfö7W3¦÷WFÆ–æRÖæöæRfö7W3¦&÷&FW"Ö&ÇVRÓS'Óà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²#'Óà¢²#	-½­½í}]Ò’'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Æ÷F–öâfÇVS×²#'Óà¢²#	-­½í}]Ò’'Ð¢Âö÷F–öãà¢²%Æâ'Ð¢Â÷6VÆV7Cà¢²%Æâ'Ð¢ÂöF—cà¢²%ÆåÆâ'Ð¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&&rÕ²3s#EÒ&÷&FW"&÷&FW"×6ÆFRÓƒó“&÷VæFVB×†ÂÓ"ãR'Óà¢²%Æâ'Ð¢ÆF—b6Æ74æÖS×²&fÆW‚—FV×2Ö6VçFW"§W7F–g’Ö&WGvVVâFW‡BÕ³…ÒföçBÖÖöæòFW‡B×6ÆFRÓC'Óà¢²%Æâ'Ð¢Ç7ãà¢²$ÄôuôÄUdTÂ'Ð¢Â÷7ãà¢²%Æâ'Ð¢Ç7ãà¢²-	½	í	2'Ð¢Â÷7ãà¢²%Æâ'Ð¢ÂöF—cà¢²%Æâ'Ð¢Ç6VÆV7BFVfVÇEfÇVS×²"'ÒFFÖ7F–öâÖ6†ævS×²'WFFT6öæef&–&ÆR'ÒFFÖ&w3×´¥4ôâç7G&–æv–g’…²$ÄôuôÄUdTÂ"Â²'6÷W&6R#¢'fÇVR'ÕÒ—Ò6Æ74æÖS×²&×BÓãRrÖgVÆÂ&r×6ÆFRÓ“&÷&FW"&÷&FW"×6ÆFRÓsó“&÷VæFVBÖÆr‚Ó"’ÓãRFW‡B×‡2föçBÖÖöæòföçBÖ&öÆBFW‡B×v†—FRfö7W3¦÷WFÆ–æRÖæöæRfö7W3¦&÷&FW"Ö&ÇVRÓSxãÝí¢G§²ÚîÆ­yÑÐºÐ¸Ðµ Ð¿Ñ€Ð¾Ñ„Ð¸Ð»Ð¸. ÐšÐ°Ð¶Ð´Ñ‹Ð¹ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚ Ð¾Ñ‚Ð´ÐµÐ»ÑŒÐ½Ð¾ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ÑÑ Ð¿Ð¾ HTTPS/TCP Ð²Ñ‹Ð±Ñ€Ð°Ð½Ð½Ð¾Ðµ Ñ‡Ð¸ÑÐ»Ð¾ Ñ€Ð°Ð· Ð¿Ð¾Ð´Ñ€ÑÐ´; Ð¿Ð¾ÑÐ»Ðµ Ð¿ÐµÑ€Ð²Ð¾Ð¹ Ð¾ÑˆÐ¸Ð±ÐºÐ¸ Ð¿Ð¾Ð²Ñ‚Ð¾Ñ€Ñ‹ Ð¿Ñ€ÐµÐºÑ€Ð°Ñ‰Ð°ÑŽÑ‚ÑÑ. Ð¢ÐµÐºÑƒÑ‰Ð¸Ð¹ ÐºÐ¾Ð½Ñ„Ð¸Ð³ Ð¸ Ð¾Ð±Ñ‹Ñ‡Ð½Ñ‹Ð¹ Ñ‚Ñ€Ð°Ñ„Ð¸Ðº Ð½Ðµ Ð¼ÐµÐ½ÑÑŽÑ‚ÑÑ. ÐŸÑƒÑ‚Ð¸ Lua, Ð±Ð»Ð¾Ð±Ð¾Ð² Ð¸ ÑÐ¿Ð¸ÑÐºÐ¾Ð² Ð±ÐµÑ€ÑƒÑ‚ÑÑ Ð¸Ð· ÑƒÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ¸, Ð°Ð²Ñ‚Ð¾ÑÐ¿Ð¸ÑÐ¾Ðº Ð¸Ð·Ð¾Ð»Ð¸Ñ€Ð¾Ð²Ð°Ð½, debug-Ð·Ð°Ð¿Ð¸ÑÑŒ Ð¾Ñ‚ÐºÐ»ÑŽÑ‡ÐµÐ½Ð°. ÐŸÑ€Ð¾Ð²ÐµÑ€ÐºÐ° Ð¸Ð´Ñ‘Ñ‚ Ð¿Ð¾ÑÐ»ÐµÐ´Ð¾Ð²Ð°Ñ‚ÐµÐ»ÑŒÐ½Ð¾ Ð¸ Ð¼Ð¾Ð¶ÐµÑ‚ Ð·Ð°Ð½ÑÑ‚ÑŒ Ð²Ñ€ÐµÐ¼Ñ.</p>
             </div>
             <div className={"flex flex-wrap items-center gap-2"}>
               <button data-action-click={"openForeignConfigText"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>Ð¢ÐµÐºÑÑ‚Ð¾Ð¼</button>
@@ -1291,6 +101,14 @@ export default function App() {
             <div className={"grid gap-2 border-t border-slate-800 pt-3 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-start"}><span className={"text-sm text-slate-400"}>ÐšÐ»ÑŽÑ‡ Ñ€Ð¾ÑƒÑ‚ÐµÑ€Ð°</span><div className={"space-y-2"}><button id={"snapshotCreateKey"} data-action-click={"createSnapshotKey"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>ï¼‹ Ð¡Ð¾Ð·Ð´Ð°Ñ‚ÑŒ ÐºÐ»ÑŽÑ‡ Ñ€Ð¾ÑƒÑ‚ÐµÑ€Ð°</button><code id={"snapshotPublicKey"} className={"block break-all text-xs text-slate-300"}></code><details id={"snapshotSetupDetails"} className={"hidden"}><summary className={"cursor-pointer text-sm text-blue-300"}>ÐšÐ¾Ð¼Ð°Ð½Ð´Ð° Ð´Ð»Ñ NAS â€” Ð²Ñ‹Ð¿Ð¾Ð»Ð½Ð¸Ñ‚ÑŒ Ð¾Ð´Ð¸Ð½ Ñ€Ð°Ð·</summary><textarea id={"snapshotSetupCommand"} readOnly rows={6} className={"backup-input mt-2 font-mono text-xs"}></textarea><button data-action-click={"copySnapshotSetup"} className={"mt-2 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-100"}>ÐšÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ ÐºÐ¾Ð¼Ð°Ð½Ð´Ñƒ</button></details></div></div>
           </section>
           <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}><div className={"flex items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>Ð¡Ð½Ð¸Ð¼ÐºÐ¸</h2><button data-action-click={"refreshBackups"} className={"rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800"}>â†» ÐžÐ±Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ</button></div><div id={"backupList"} className={"space-y-2"} aria-live={"polite"}></div></section>
+        </section>
+        <section id={"tabContent-supportReport"} className={"hidden view-animate space-y-4"}>
+          <div className={"ui-card max-w-4xl rounded-2xl p-4 sm:p-5 space-y-4"}>
+            <div><h1 className={"text-lg font-bold text-white"}>ÐžÑ‚Ñ‡Ñ‘Ñ‚ Ð´Ð»Ñ Ð¿Ð¾Ð¼Ð¾Ñ‰Ð¸</h1><p className={"mt-1 text-xs leading-5 text-slate-400"}>Ð¡Ð¾Ð±ÐµÑ€Ð¸Ñ‚Ðµ Ñ‚ÐµÑ…Ð½Ð¸Ñ‡ÐµÑÐºÑƒÑŽ ÑÐ²Ð¾Ð´ÐºÑƒ Ð´Ð»Ñ Ñ‡Ð°Ñ‚Ð° Ð¸Ð»Ð¸ issue. Ð’ Ð¾Ñ‚Ñ‡Ñ‘Ñ‚ Ð½Ðµ Ð¿Ð¾Ð¿Ð°Ð´Ð°ÑŽÑ‚ ÑÐ¾Ð´ÐµÑ€Ð¶Ð¸Ð¼Ð¾Ðµ ÐºÐ¾Ð½Ñ„Ð¸Ð³Ð° Ð¸ ÑÐ¿Ð¸ÑÐºÐ¾Ð², Ñ‚Ð¾ÐºÐµÐ½ Telegram Ð¸Ð»Ð¸ Ð¿Ð¾Ð´Ñ€Ð¾Ð±Ð½Ñ‹Ð¹ Ð²Ñ‹Ð²Ð¾Ð´ ÐºÐ¾Ð¼Ð°Ð½Ð´. ÐžÑ‚Ñ‡Ñ‘Ñ‚ Ð½Ð¸ÐºÑƒÐ´Ð° Ð½Ðµ Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÐµÑ‚ÑÑ Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸Ñ‡ÐµÑÐºÐ¸ â€” Ð¿ÐµÑ€ÐµÐ´ Ð¾Ñ‚Ð¿Ñ€Ð°Ð²ÐºÐ¾Ð¹ Ð²Ñ‹ ÑÐ¼Ð¾Ð¶ÐµÑ‚Ðµ ÐµÐ³Ð¾ Ð¿Ñ€Ð¾Ñ‡Ð¸Ñ‚Ð°Ñ‚ÑŒ.</p></div>
+            <label className={"flex items-start gap-2 text-sm text-slate-200"}><input id={"supportReportAnonymize"} type={"checkbox"} defaultChecked className={"mt-0.5 accent-blue-500"} /><span>Ð¡ÐºÑ€Ñ‹Ñ‚ÑŒ Ð¸Ð¼ÐµÐ½Ð° ÑÐ°Ð¹Ñ‚Ð¾Ð² Ð¼Ð¾Ð½Ð¸Ñ‚Ð¾Ñ€Ð¸Ð½Ð³Ð° <span className={"block text-xs font-normal text-slate-400"}>Ð—Ð°Ð¼ÐµÐ½Ð¸Ñ‚ÑŒ Ð½Ð° Â«ÑÐ°Ð¹Ñ‚-1Â», Â«ÑÐ°Ð¹Ñ‚-2Â» Ð¸ Ñ‚Ð°Ðº Ð´Ð°Ð»ÐµÐµ.</span></span></label>
+            <div className={"flex flex-wrap gap-2"}><button data-action-click={"buildSupportReport"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Ð¡Ð¾Ð±Ñ€Ð°Ñ‚ÑŒ Ð¾Ñ‚Ñ‡Ñ‘Ñ‚</button><button id={"copySupportReport"} data-action-click={"copySupportReport"} className={"hidden rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"}>Ð¡ÐºÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ</button><button id={"downloadSupportReport"} data-action-click={"downloadSupportReport"} className={"hidden rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800"}>Ð¡ÐºÐ°Ñ‡Ð°Ñ‚ÑŒ .txt</button></div>
+            <textarea id={"supportReportText"} rows={16} readOnly className={"hidden w-full resize-y rounded-lg border border-slate-700 bg-[#060a12] p-3 font-mono text-xs leading-5 text-slate-100"} aria-label={"Ð¡Ñ„Ð¾Ñ€Ð¼Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð½Ñ‹Ð¹ Ð¾Ñ‚Ñ‡Ñ‘Ñ‚ Ð´Ð»Ñ Ð¿Ð¾Ð¼Ð¾Ñ‰Ð¸"}></textarea>
+          </div>
         </section>
         <section id={"tabContent-appearance"} className={"hidden view-animate space-y-5"}>
           <div><h1 className={"text-xl font-bold text-white"}>ÐžÑ„Ð¾Ñ€Ð¼Ð»ÐµÐ½Ð¸Ðµ UI</h1><p className={"mt-1 text-sm text-slate-400"}>ÐÐ°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ ÑÐ¾Ñ…Ñ€Ð°Ð½ÑÑŽÑ‚ÑÑ Ð² ÑÑ‚Ð¾Ð¼ Ð±Ñ€Ð°ÑƒÐ·ÐµÑ€Ðµ.</p></div>

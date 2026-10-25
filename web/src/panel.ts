@@ -1,2056 +1,28 @@
-import { diagnosisRows } from './diagnosis-layout';
-import { parseCustomStrategies } from './custom-strategy-input';
-import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
-import { summarizeFreezeScan } from './freeze-summary';
-import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentation';
-import { freezeProgressPresentation } from './freeze-progress';
-import { uiUpdateNoticePresentation } from './ui-update-notice';
-import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
-import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries } from './config-values';
-import '@fontsource-variable/inter';
-import '@fontsource-variable/jetbrains-mono';
-import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
-import { availableNfqwsModes } from './config-facts';
-import { resourceUsagePercent, usageTone } from './metrics';
-import { installStyledSelects } from './styled-select';
-import { installActionTooltips } from './action-tooltips';
-import { strategyNeedsWindowsTcpTimestamps } from './strategy-capability';
-import { serviceControlPresentation } from './service-control';
-import { renderReleaseMarkdown } from './release-markdown';
-import { diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
-import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
-import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
-import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
-
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'community' | 'snapshots' | 'appearance' | 'about';
-export const UNAVAILABLE_PANEL_ROUTES = ['community'] as const;
-let status: StatusResponse | null = null;
-let config: ConfigResponse | null = null;
-let luaScripts: NfqwsLuaScriptInfo[] = [];
-let activeLuaScript: string | null = null;
-let discoveredNetworkInterfaces: string[] = [];
-let activeList: NfqwsListResponse | null = null;
-let activeListId: NfqwsListId = 'user.list';
-const LIST_EDITOR_VIEW_KEY = 'nfqws2-ui-list-editor-view';
-let listEditorView: 'text' | 'rows' = (() => {
-  try { return localStorage.getItem(LIST_EDITOR_VIEW_KEY) === 'rows' ? 'rows' : 'text'; }
-  catch { return 'text'; }
-})();
-const selectedListRows = new Set<number>();
-let busy = false;
-let statusPolling = false;
-let diagnosisRunning = false;
-let monitoringRunning = false;
-let monitoringState: MonitoringState | null = null;
-let monitoringIntervalMinutes = 30;
-let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
-let traceRunning = false;
-let activeTraceOperationId: string | null = null;
-let strategyPickRunning = false;
-let activeStrategyPickId: string | null = null;
-type ForeignConfigInput = { name: string; source: '–¢–µ–∫—Å—Ç' | '–§–∞–π–ª' | '–°—Å—ã–ª–∫–∞'; content?: string; url?: string };
-let foreignConfigInputs: ForeignConfigInput[] = [];
-let activeForeignConfigCheckId: string | null = null;
-let foreignConfigCheckRunning = false;
-let freezeScanRunning = false;
-let activeFreezeScanId: string | null = null;
-const freezeStrategyApplyPending = new Set<string>();
-const freezeStrategyApplyDone = new Set<string>();
-let activeStrategyPreview: { source: 'strategyPick' | 'freezeScan'; operationId: string; candidateIndex: number; revision: string; panel: 'autotune' | 'freeze' } | null = null;
-let restartInProgress = false;
-let availableReleases: PanelRelease[] = [];
-let selectedReleaseTag: string | null = null;
-let expandedReleaseTag: string | null = null;
-let updatePolling = false;
-let updateTarget: 'ui' | 'core' = 'ui';
-let installedCoreTag: string | null = null;
-let uiUpdateStatusPolling = false;
-let uiUpdateNoticeOpenedTag: string | null = null;
-const UPDATE_NOTICE_KEY = 'nfqws2-ui-update-notice';
-const UI_UPDATE_DISMISSED_TAG_KEY = 'nfqws2-ui-update-dismissed-tag';
-const LIST_DISPLAY_NAMES: Partial<Record<NfqwsListId, string>> = {
-  'user.list': '–ü–æ–ª—å–∑–æ–≤–∞—Ç–µ–ª—å—Å–∫–∏–µ –¥–æ–º–µ–Ω—ã',
-  'auto.list': '–î–æ–º–µ–Ω—ã –¥–ª—è –∞–≤—Ç–æ–æ–±—É—á–µ–Ω–∏—è',
-  'exclude.list': '–ò—Å–∫–ª—é—á—ë–Ω–Ω—ã–µ –¥–æ–º–µ–Ω—ã',
-  'ipset.list': 'IP-–∞–¥—Ä–µ—Å–∞',
-  'ipset_exclude.list': '–ò—Å–∫–ª—é—á—ë–Ω–Ω—ã–µ IP-–∞–¥—Ä–µ—Å–∞',
-};
-export const listDisplayName = (id: NfqwsListId) => LIST_DISPLAY_NAMES[id] ?? id;
-const $ = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector);
-const all = <T extends HTMLElement>(selector: string) => [...document.querySelectorAll<T>(selector)];
-const setText = (selector: string, value: string) => { const node = $(selector); if (node) node.textContent = value; };
-const setWidth = (selector: string, value: number | null) => { const node = $(selector); if (node) node.style.width = `${Math.min(100, Math.max(0, value ?? 0))}%`; };
-const recentToastTimes = new Map<string, number>();
-function toast(message: string, type: 'success' | 'error' = 'success') {
-  const host = $('#toastWrapper'); if (!host) return;
-  if (!message.trim() || !canShowToast(message, type, Date.now(), recentToastTimes)) return;
-  const presentation = toastPresentation(type);
-  const item = document.createElement('div');
-  item.className = `toast-card toast-card-${type} pointer-events-auto`;
-  item.setAttribute('role', presentation.role);
-  item.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
-  const icon = document.createElement('span');
-  icon.className = `toast-card-icon toast-card-icon-${type}`;
-  icon.setAttribute('aria-hidden', 'true');
-  const iconSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  iconSvg.setAttribute('viewBox', '0 0 24 24');
-  iconSvg.setAttribute('fill', 'none');
-  iconSvg.setAttribute('stroke', 'currentColor');
-  iconSvg.setAttribute('stroke-width', '2');
-  iconSvg.setAttribute('stroke-linecap', 'round');
-  iconSvg.setAttribute('stroke-linejoin', 'round');
-  iconSvg.setAttribute('width', '20');
-  iconSvg.setAttribute('height', '20');
-  if (type === 'success') {
-    // Match XKeen UI's Tabler IconCircleCheck instead of a font glyph inside a hand-drawn circle.
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    circle.setAttribute('d', 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0');
-    const check = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    check.setAttribute('d', 'M9 12l2 2l4 -4');
-    iconSvg.append(circle, check);
-  } else {
-    // XKeen UI uses Tabler IconAlertCircle for error notifications.
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    circle.setAttribute('d', 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18');
-    const mark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    mark.setAttribute('d', 'M12 8v4');
-    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    dot.setAttribute('d', 'M12 16h.01');
-    iconSvg.append(circle, mark, dot);
-  }
-  icon.append(iconSvg);
-  const copy = document.createElement('span'); copy.className = 'toast-card-copy';
-  const title = document.createElement('strong'); title.textContent = presentation.title;
-  const detail = document.createElement('span'); detail.textContent = message;
-  copy.append(title, detail); item.append(icon, copy); host.append(item);
-  window.setTimeout(() => item.remove(), 5200);
-}
-function schedulePanelRefreshAfterUpdate(message: string) {
-  try { window.sessionStorage.setItem(UPDATE_NOTICE_KEY, message); }
-  catch { toast(`${message} –°—Ç—Ä–∞–Ω–∏—Ü–∞ –æ–±–Ω–æ–≤–∏—Ç—Å—è –∞–≤—Ç–æ–º–∞—Ç–∏—á–µ—Å–∫–∏.`); }
-  window.setTimeout(() => window.location.reload(), 1200);
-}
-function showPendingUpdateNotice() {
-  try {
-    const message = window.sessionStorage.getItem(UPDATE_NOTICE_KEY);
-    if (!message) return;
-    window.sessionStorage.removeItem(UPDATE_NOTICE_KEY);
-    window.setTimeout(() => toast(message), 100);
-  } catch { /* Storage can be unavailable in restricted browser contexts. */ }
-}
-function hideUiUpdateNotice() { $('#uiUpdateNotice')?.remove(); }
-function dismissUiUpdateNotice(tag: string) {
-  try { window.localStorage.setItem(UI_UPDATE_DISMISSED_TAG_KEY, tag); } catch { /* Still allow the notice to be closed if storage is blocked. */ }
-  hideUiUpdateNotice();
-}
-function renderUiUpdateNotice(status: UiUpdateStatus, manualCheck = false) {
-  let dismissedTag: string | null = null;
-  try { dismissedTag = window.localStorage.getItem(UI_UPDATE_DISMISSED_TAG_KEY); } catch { /* Treat storage failure as not dismissed. */ }
-  const suppressedTag = status.latestVersion && ((dismissedTag === status.latestVersion && !manualCheck) || uiUpdateNoticeOpenedTag === status.latestVersion)
-    ? status.latestVersion
-    : null;
-  const presentation = uiUpdateNoticePresentation(status, suppressedTag);
-  const updateButton = $('#updateUiButton');
-  updateButton?.classList.toggle('update-available', presentation.highlight);
-  updateButton?.setAttribute('aria-label', presentation.highlight
-    ? `–î–æ—Å—Ç—É–ø–Ω–æ –æ–±–Ω–æ–≤–ª–µ–Ω–∏–µ –ø–∞–Ω–µ–ª–∏: ${presentation.version}`
-    : `–í–µ—Ä—Å–∏—è –ø–∞–Ω–µ–ª–∏ ${status.currentVersion}`);
-  if (!presentation.notify || !presentation.version || !status.releaseUrl) {
-    hideUiUpdateNotice();
-    return;
-  }
-  const host = $('#uiUpdateNoticeWrapper');
-  if (!host || $('#uiUpdateNotice')?.getAttribute('data-version') === presentation.version) return;
-  hideUiUpdateNotice();
-  const item = document.createElement('section');
-  item.id = 'uiUpdateNotice';
-  item.dataset.version = presentation.version;
-  item.className = 'ui-update-notice pointer-events-auto relative w-[22.5rem] max-w-[calc(100vw-2.5rem)] rounded-xl border px-4 py-3 text-slate-100 shadow-2xl';
-  item.setAttribute('role', 'status');
-  item.setAttribute('aria-live', 'polite');
-  const heading = document.createElement('div');
-  heading.className = 'flex min-w-0 items-center gap-2 text-sm font-bold text-blue-100';
-  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  icon.setAttribute('viewBox', '0 0 24 24');
-  icon.setAttribute('fill', 'none');
-  icon.setAttribute('stroke', 'currentColor');
-  icon.setAttribute('stroke-width', '2');
-  icon.setAttribute('stroke-linecap', 'round');
-  icon.setAttribute('stroke-linejoin', 'round');
-  icon.setAttribute('aria-hidden', 'true');
-  icon.classList.add('h-[18px]', 'w-[18px]', 'shrink-0', 'text-slate-100');
-  icon.innerHTML = '<path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12l2 2l4 -4"/>';
-  const title = document.createElement('span');
-  title.textContent = '–î–æ—Å—Ç—É–ø–Ω–æ –æ–±–Ω–æ–≤–ª–µ–Ω–∏–µ';
-  const releaseLink = document.createElement('a');
-  releaseLink.href = status.releaseUrl;
-  releaseLink.target = '_blank';
-  releaseLink.rel = 'noopener noreferrer';
-  releaseLink.setAttribute('aria-label', '–û—Ç–∫—Ä—ã—Ç—å —Ä–µ–ª–∏–∑ –Ω–∞ GitHub');
-  releaseLink.className = 'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-300 transition-colors hover:bg-slate-700 hover:text-white';
-  releaseLink.innerHTML = '<svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor" class="h-4 w-4"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38v-1.33c-2.23.49-2.7-.95-2.7-.95-.36-.93-.89-1.18-.89-1.18-.73-.5.06-.49.06-.49.8.06 1.22.82 1.22.82.72 1.22 1.9.87 2.36.66.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.88.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.7 7.7 0 0 1 8 4.99c.68 0 1.36.09 2 .27 1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.08-1.87 3.75-3.66 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>';
-  const actions = document.createElement('span');
-  actions.className = 'ml-auto flex shrink-0 items-center gap-1';
-  actions.append(releaseLink);
-  const body = document.createElement('button');
-  body.type = 'button';
-  body.dataset.actionClick = 'openLatestUiUpdate';
-  body.dataset.args = JSON.stringify([presentation.version]);
-  body.className = 'mt-1 block w-full text-left text-sm leading-relaxed text-slate-300 hover:text-white';
-  body.textContent = `–î–æ—Å—Ç—É–ø–Ω–∞ –Ω–æ–≤–∞—è –≤–µ—Ä—Å–∏—è nfqws2-UI ${presentation.version}`;
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.dataset.actionClick = 'dismissUiUpdateNotice';
-  close.dataset.args = JSON.stringify([presentation.version]);
-  close.className = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-[18px] leading-none text-slate-400 transition-colors hover:bg-slate-700/70 hover:text-white';
-  close.setAttribute('aria-label', '–°–∫—Ä—ã—Ç—å —É–≤–µ–¥–æ–º–ª–µ–Ω–∏–µ –æ–± –æ–±–Ω–æ–≤–ª–µ–Ω–∏–∏');
-  close.textContent = '√ó';
-  actions.append(close);
-  heading.append(icon, title, actions);
-  item.append(heading, body);
-  host.append(item);
-}
-async function refreshUiUpdateStatus() {
-  if (uiUpdateStatusPolling) return;
-  uiUpdateStatusPolling = true;
-  try { renderUiUpdateNotice(await nfqwsUpdates.uiStatus()); }
-  catch { /* Background update checks must not interrupt panel use. */ }
-  finally { uiUpdateStatusPolling = false; }
-}
-function showDiagnosisProgress(host: HTMLElement, domain: string) {
-  const item = document.createElement('div');
-  item.className = 'pointer-events-auto max-w-sm rounded-xl border border-blue-500/40 bg-slate-900 px-4 py-3 text-sm text-slate-100 shadow-2xl';
-  item.setAttribute('role', 'status');
-  item.setAttribute('aria-live', 'polite');
-  const heading = document.createElement('p');
-  heading.className = 'flex items-center gap-2 font-semibold text-blue-200';
-  const spinner = document.createElement('span');
-  spinner.className = 'diagnosis-spinner inline-block h-3.5 w-3.5 shrink-0 rounded-full border-2 border-blue-300/30 border-t-blue-300';
-  spinner.setAttribute('aria-hidden', 'true');
-  const title = document.createElement('span');
-  title.textContent = `–ü—Ä–æ–≤–µ—Ä–∫–∞ –¥–æ–º–µ–Ω–∞ ${domain}`;
-  heading.append(spinner, title);
-  const details = document.createElement('p');
-  details.className = 'mt-1 text-xs leading-5 text-slate-400';
-  details.textContent = '–ù–∞ —Ä–æ—É—Ç–µ—Ä–µ –ø—Ä–æ–≤–µ—Ä—è—é—Ç—Å—è DNS –∏ —Å–≤–µ—Ä–∫–∞ DoH, TCP/HTTPS, HTTP, –º–∞—Ä—à—Ä—É—Ç, –∫–æ–Ω—Ç—Ä–æ–ª—å–Ω–æ–µ SNI –∏ –ø–æ–¥–¥–µ—Ä–∂–∫–∞ QUIC.';
-  item.append(heading, details);
-  host.append(item);
-  return () => item.remove();
-}
-function setBusy(value: boolean) {
-  busy = value;
-  all<HTMLButtonElement>('button[data-action-click]').forEach((button) => {
-    if (value && !button.disabled) { button.disabled = true; button.dataset.busyDisabled = 'true'; }
-    else if (!value && button.dataset.busyDisabled === 'true') { button.disabled = false; delete button.dataset.busyDisabled; }
-  });
-  all<HTMLSelectElement>('select[data-action-change]').forEach((select) => {
-    if (value && !select.disabled) { select.disabled = true; select.dataset.busyDisabled = 'true'; }
-    else if (!value && select.dataset.busyDisabled === 'true') { select.disabled = false; delete select.dataset.busyDisabled; }
-  });
-  all<HTMLTextAreaElement>('textarea[data-config-argument]').forEach((field) => {
-    if (value && !field.disabled) { field.disabled = true; field.dataset.busyDisabled = 'true'; }
-    else if (!value && field.dataset.busyDisabled === 'true') { field.disabled = false; delete field.dataset.busyDisabled; }
-  });
-}
-function setRestartInProgress(value: boolean) {
-  restartInProgress = value;
-  const indicator = $('#statusIndicator');
-  indicator?.classList.toggle('status-restarting', value);
-  indicator?.setAttribute('aria-busy', String(value));
-  $('#headerStatusBar')?.classList.toggle('status-restarting', value);
-  const label = $('#statusTextLabel');
-  if (value && label) {
-    label.textContent = '–ü–µ—Ä–µ–∑–∞–ø—É—Å–∫ nfqws2‚Ä¶';
-    label.className = 'text-xs sm:text-sm font-semibold text-blue-300 tracking-tight';
-  }
-}
-function showRoute(route: Route) {
-  if ((UNAVAILABLE_PANEL_ROUTES as readonly string[]).includes(route)) return;
-  document.querySelectorAll<HTMLElement>('[id^="tabContent-"]').forEach((section) => section.classList.toggle('hidden', section.id !== `tabContent-${route}`));
-  all<HTMLButtonElement>('.side-nav-btn').forEach((button) => {
-    const active = button.id === `navBtn-${route}`;
-    button.classList.toggle('active', active);
-    button.classList.toggle('text-slate-400', !active);
-  });
-  if (route === 'lists') void loadList(activeListId);
-  if (route === 'snapshots') void loadBackups();
-  if (route === 'about') void loadAboutStatus();
-}
-let snapshotOverview: SnapshotOverview | null = null;
-function renderBackups(data: SnapshotOverview) {
-  const host = $('#backupList'); if (!host) return;
-  snapshotOverview = data;
-  setText('#snapshotCount', `${data.localCount} ${pluralize(data.localCount, '—Å–Ω–∏–º–æ–∫', '—Å–Ω–∏–º–∫–∞', '—Å–Ω–∏–º–∫–æ–≤')} ¬∑ ${formatBytes(data.totalBytes)}`);
-  setText('#snapshotDirectory', data.directory);
-  setText('#snapshotRemoteStatus', !data.remote.tool ? '–ù–∞ —Ä–æ—É—Ç–µ—Ä–µ –Ω–µ—Ç SSH-–∫–ª–∏–µ–Ω—Ç–∞' : data.remote.error ? `–û—à–∏–±–∫–∞ –æ—Ç–ø—Ä–∞–≤–∫–∏: ${data.remote.error}` : data.remote.on ? `–í–∫–ª—é—á–µ–Ω–æ ¬∑ –Ω–∞ NAS ${data.remote.stored} ¬∑ –∂–¥—É—Ç –æ—Ç–ø—Ä–∞–≤–∫–∏ ${data.remote.pending}` : '–û—Ç–ø—Ä–∞–≤–∫–∞ –≤—ã–∫–ª—é—á–µ–Ω–∞ ‚Äî —Å–Ω–∏–º–∫–∏ —Ö—Ä–∞–Ω—è—Ç—Å—è –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ');
-  setValue('#snapshotDays', String(data.settings.maxDays)); setValue('#snapshotMaxCount', String(data.settings.maxCount));
-  setValue('#snapshotRemoteEnabled', String(data.settings.remote.enabled), true); setValue('#snapshotRemoteHost', data.settings.remote.host); setValue('#snapshotRemotePort', String(data.settings.remote.port)); setValue('#snapshotRemoteUser', data.settings.remote.user); setValue('#snapshotRemoteDir', data.settings.remote.dir); setValue('#snapshotRemoteKeep', String(data.settings.remote.keepLocal));
-  setText('#snapshotPublicKey', data.remote.publicKey);
-  const command = $('#snapshotSetupCommand'); if (command instanceof HTMLTextAreaElement) command.value = data.remote.setupCommand;
-  $('#snapshotSetupDetails')?.classList.toggle('hidden', !data.remote.setupCommand);
-  const keyButton = $('#snapshotCreateKey'); if (keyButton instanceof HTMLButtonElement) { keyButton.textContent = data.remote.publicKey ? '–ö–ª—é—á —Ä–æ—É—Ç–µ—Ä–∞ –≥–æ—Ç–æ–≤' : 'Ôºã –°–æ–∑–¥–∞—Ç—å –∫–ª—é—á —Ä–æ—É—Ç–µ—Ä–∞'; keyButton.disabled = Boolean(data.remote.publicKey) || !data.remote.tool; }
-  const pushButton = $('#snapshotRemotePush'); if (pushButton instanceof HTMLButtonElement) pushButton.disabled = !data.remote.on || data.remote.pending === 0;
-  const testButton = $('#snapshotRemoteTest'); if (testButton instanceof HTMLButtonElement) testButton.disabled = !data.remote.tool || !data.remote.publicKey;
-  host.replaceChildren();
-  if (!data.items.length) { const empty = document.createElement('p'); empty.className = 'rounded-xl border border-slate-800 bg-[#060a12] p-4 text-sm text-slate-400'; empty.textContent = '–°–Ω–∏–º–∫–æ–≤ –ø–æ–∫–∞ –Ω–µ—Ç. –°–æ–∑–¥–∞–π—Ç–µ –ø–µ—Ä–≤—ã–π —Å–Ω–∏–º–æ–∫ –≤—Ä—É—á–Ω—É—é.'; host.append(empty); return; }
-  for (const item of data.items) {
-    const row = document.createElement('article'); row.className = 'backup-row';
-    const details = document.createElement('div'); details.className = 'min-w-0';
-    const title = document.createElement('strong'); title.className = 'block text-sm text-white'; title.textContent = `${snapshotReason(item.reason)}${item.pinned ? ' ¬∑ –∑–∞–∫—Ä–µ–ø–ª—ë–Ω' : ''}`;
-    const date = document.createElement('span'); date.className = 'mt-1 block text-xs text-slate-400'; date.textContent = new Date(item.ts * 1000).toLocaleString();
-    const note = document.createElement('span'); note.className = 'mt-1 block break-words text-xs text-slate-500'; note.textContent = item.note || `${item.local && item.remote ? '–†–æ—É—Ç–µ—Ä –∏ NAS' : item.local ? '–ù–∞ —Ä–æ—É—Ç–µ—Ä–µ' : '–ù–∞ NAS'} ¬∑ ${formatBytes(item.size)}`;
-    details.append(title, date, note);
-    const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-2';
-    const download = document.createElement('a'); download.className = 'backup-action'; download.href = `/api/snapshots/${encodeURIComponent(item.id)}/archive`; download.textContent = '–°–∫–∞—á–∞—Ç—å';
-    const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'backup-action'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.args = JSON.stringify([item.id]); restore.textContent = '–í–æ—Å—Å—Ç–∞–Ω–æ–≤–∏—Ç—å';
-    const pin = document.createElement('button'); pin.type = 'button'; pin.className = 'backup-action'; pin.dataset.actionClick = 'pinSnapshot'; pin.dataset.args = JSON.stringify([item.id, !item.pinned]); pin.textContent = item.pinned ? '–û—Ç–∫—Ä–µ–ø–∏—Ç—å' : '–ó–∞–∫—Ä–µ–ø–∏—Ç—å';
-    pin.disabled = !item.local;
-    actions.append(download, restore, pin); row.append(details, actions); host.append(row);
-  }
-}
-async function loadBackups() {
-  const label = $('#backupStatus'); if (label) label.textContent = '–ó–∞–≥—Ä—É–∂–∞–µ–º —Å–ø–∏—Å–æ–∫ —Å–Ω–∏–º–∫–æ–≤ —Å —Ä–æ—É—Ç–µ—Ä–∞‚Ä¶';
-  try { renderBackups(await nfqwsSnapshots.get()); if (label) label.textContent = '–ê–≤—Ç–æ—Å–Ω–∏–º–∫–∏ —Å–æ–∑–¥–∞—é—Ç—Å—è –ø–µ—Ä–µ–¥ –∏–∑–º–µ–Ω–µ–Ω–∏—è–º–∏ —á–µ—Ä–µ–∑ –ø–∞–Ω–µ–ª—å –∏ –µ–∂–µ–¥–Ω–µ–≤–Ω–æ –≤ 04:05.'; }
-  catch (error) { if (label) label.textContent = error instanceof Error ? `–ù–µ —É–¥–∞–ª–æ—Å—å –∑–∞–≥—Ä—É–∑–∏—Ç—å —Å–Ω–∏–º–∫–∏: ${error.message}` : '–ù–µ —É–¥–∞–ª–æ—Å—å –∑–∞–≥—Ä—É–∑–∏—Ç—å —Ä–µ–∑–µ—Ä–≤–Ω—ã–µ –∫–æ–ø–∏–∏.'; }
-}
-function setValue(selector: string, value: string, checked = false) { const element = $(selector); if (element instanceof HTMLInputElement) { if (checked) element.checked = value === 'true'; else element.value = value; } }
-function formatBytes(value: number): string { if (value < 1024) return `${value} –ë`; if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} –ö–ë`; return `${(value / (1024 * 1024)).toFixed(1)} –ú–ë`; }
-function pluralize(value: number, one: string, few: string, many: string): string { const n = Math.abs(value) % 100; const last = n % 10; return n > 10 && n < 20 ? many : last > 1 && last < 5 ? few : last === 1 ? one : many; }
-function snapshotReason(reason: string): string { return ({ '–≤—Ä—É—á–Ω—É—é': '–í—Ä—É—á–Ω—É—é', '–ø–µ—Ä–µ–¥ –∏–∑–º–µ–Ω–µ–Ω–∏–µ–º': '–ü–µ—Ä–µ–¥ –∏–∑–º–µ–Ω–µ–Ω–∏–µ–º', '–µ–∂–µ–¥–Ω–µ–≤–Ω—ã–π': '–ï–∂–µ–¥–Ω–µ–≤–Ω—ã–π', '–ø–µ—Ä–µ–¥ –≤–æ—Å—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω–∏–µ–º': '–ü–µ—Ä–µ–¥ –≤–æ—Å—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω–∏–µ–º', '–∏–∑ —Ñ–∞–π–ª–∞': '–ò–∑ —Ñ–∞–π–ª–∞' } as Record<string, string>)[reason] ?? reason; }
-async function createSnapshot() {
-  const note = window.prompt('–ü–æ–¥–ø–∏—Å—å –∫ —Å–Ω–∏–º–∫—É (–Ω–µ–æ–±—è–∑–∞—Ç–µ–ª—å–Ω–æ):', ''); if (note === null) return;
-  try { const item = await nfqwsSnapshots.create(note); toast(`–°–Ω–∏–º–æ–∫ —Å–æ–∑–¥–∞–Ω ¬∑ ${new Date(item.ts * 1000).toLocaleString()}`); await loadBackups(); }
-  catch (error) { toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å —Å–æ–∑–¥–∞—Ç—å —Å–Ω–∏–º–æ–∫.', 'error'); }
-}
-async function restoreSnapshot(id: string) {
-  if (!window.confirm('–í–æ—Å—Å—Ç–∞–Ω–æ–≤–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é, —Å–ø–∏—Å–∫–∏ –∏ –Ω–∞—Å—Ç—Ä–æ–π–∫–∏ –∏–∑ —ç—Ç–æ–≥–æ —Å–Ω–∏–º–∫–∞? –ü–µ—Ä–µ–¥ –∑–∞–ø–∏—Å—å—é —Å–æ—Ö—Ä–∞–Ω–∏—Ç—Å—è —Ç–µ–∫—É—â–µ–µ —Å–æ—Å—Ç–æ—è–Ω–∏–µ.')) return;
-  try { const result = await nfqwsSnapshots.restore(id); toast(result.message); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
-  catch (error) { toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –≤–æ—Å—Å—Ç–∞–Ω–æ–≤–∏—Ç—å —Å–Ω–∏–º–æ–∫.', 'error'); }
-}
-async function restoreSnapshotFile(input: HTMLInputElement) {
-  const file = input.files?.[0]; if (!file) return;
-  if (!window.confirm(`–í–æ—Å—Å—Ç–∞–Ω–æ–≤–∏—Ç—å —Å–æ—Å—Ç–æ—è–Ω–∏–µ –∏–∑ ¬´${file.name}¬ª? –ü–µ—Ä–µ–¥ –∑–∞–ø–∏—Å—å—é —Å–æ–∑–¥–∞—Å—Ç—Å—è —Å–Ω–∏–º–æ–∫ —Ç–µ–∫—É—â–µ–≥–æ —Å–æ—Å—Ç–æ—è–Ω–∏—è.`)) { input.value = ''; return; }
-  try { const result = await nfqwsSnapshots.restoreFile(file); toast(result.message ?? `–í–æ—Å—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω–æ —Ñ–∞–π–ª–æ–≤: ${result.changed?.length ?? 0}`); await Promise.all([loadBackups(), loadConfig(), fetchStatus(), syncAppearanceFromRouter()]); }
-  catch (error) { toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –≤–æ—Å—Å—Ç–∞–Ω–æ–≤–∏—Ç—å –∞—Ä—Ö–∏–≤.', 'error'); }
-  finally { input.value = ''; }
-}
-function readSnapshotSettings() {
-  const current = snapshotOverview?.settings; if (!current) throw new Error('–°–Ω–∞—á–∞–ª–∞ –∑–∞–≥—Ä—É–∑–∏—Ç–µ –Ω–∞—Å—Ç—Ä–æ–π–∫–∏ —Å–Ω–∏–º–∫–æ–≤.');
-  const number = (selector: string, fallback: number) => Number.parseInt(($<HTMLInputElement>(selector)?.value ?? ''), 10) || fallback;
-  return { ...current, maxDays: number('#snapshotDays', current.maxDays), maxCount: number('#snapshotMaxCount', current.maxCount), remote: { ...current.remote, enabled: ($<HTMLInputElement>('#snapshotRemoteEnabled')?.checked ?? false), host: $<HTMLInputElement>('#snapshotRemoteHost')?.value.trim() ?? '', port: number('#snapshotRemotePort', current.remote.port), user: $<HTMLInputElement>('#snapshotRemoteUser')?.value.trim() ?? '', dir: $<HTMLInputElement>('#snapshotRemoteDir')?.value.trim() ?? '', keepLocal: number('#snapshotRemoteKeep', current.remote.keepLocal) } };
-}
-async function saveSnapshotSettings(remoteOnly = false) {
-  const settings = readSnapshotSettings();
-  if (remoteOnly && snapshotOverview) { settings.maxDays = snapshotOverview.settings.maxDays; settings.maxCount = snapshotOverview.settings.maxCount; }
-  await nfqwsSnapshots.saveSettings(settings); toast('–ù–∞—Å—Ç—Ä–æ–π–∫–∏ —Ä–µ–∑–µ—Ä–≤–Ω—ã—Ö –∫–æ–ø–∏–π —Å–æ—Ö—Ä–∞–Ω–µ–Ω—ã.'); await loadBackups();
-}
-async function runSnapshotRemote(action: 'test' | 'push' | 'key') {
-  try {
-    if (action !== 'key') await saveSnapshotSettings(true);
-    if (action === 'test') { const result = await nfqwsSnapshots.testRemote(); toast(`–°–≤—è–∑—å —Å NAS –µ—Å—Ç—å ¬∑ –Ω–∞–π–¥–µ–Ω–æ —Ñ–∞–π–ª–æ–≤: ${result.count}`); }
-    else if (action === 'push') { const result = await nfqwsSnapshots.pushRemote(); toast(`–û—Ç–ø—Ä–∞–≤–ª–µ–Ω–æ —Å–Ω–∏–º–∫–æ–≤: ${result.sent}`); }
-    else { await nfqwsSnapshots.createKey(); toast('–ö–ª—é—á —Å–æ–∑–¥–∞–Ω. –í—ã–ø–æ–ª–Ω–∏—Ç–µ –∫–æ–º–∞–Ω–¥—É –¥–ª—è NAS, –∑–∞—Ç–µ–º –ø—Ä–æ–≤–µ—Ä—å—Ç–µ —Å–≤—è–∑—å.'); }
-    await loadBackups();
-  } catch (error) { toast(error instanceof Error ? error.message : '–û–ø–µ—Ä–∞—Ü–∏—è —Å NAS –Ω–µ –≤—ã–ø–æ–ª–Ω–µ–Ω–∞.', 'error'); }
-}
-function syncAppearanceControls() {
-  all<HTMLInputElement>('input[name="appearanceTheme"]').forEach((input) => { input.checked = input.value === appearanceSettings.theme; });
-  all<HTMLInputElement>('input[name="appearanceLayout"]').forEach((input) => { input.checked = input.value === appearanceSettings.layout; });
-  all<HTMLInputElement>('input[name="appearanceAccent"]').forEach((input) => { input.checked = input.value === appearanceSettings.accent; });
-  all<HTMLInputElement>('input[name="appearanceStatusBar"]').forEach((input) => { input.checked = input.value === appearanceSettings.statusBar; });
-  all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
-}
-function updateAppearance(change: Partial<AppearanceSettings>) {
-  let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Apply for this session without persistent storage. */ }
-  appearanceSettings = saveAppearance(storage, { ...appearanceSettings, ...change });
-  applyAppearance(appearanceSettings);
-  syncAppearanceControls();
-  void nfqwsAppearance.save(appearanceSettings).catch((error) => toast(error instanceof Error ? `–û—Ñ–æ—Ä–º–ª–µ–Ω–∏–µ —Å–æ—Ö—Ä–∞–Ω–µ–Ω–æ —Ç–æ–ª—å–∫–æ –≤ —ç—Ç–æ–º –±—Ä–∞—É–∑–µ—Ä–µ: ${error.message}` : '–û—Ñ–æ—Ä–º–ª–µ–Ω–∏–µ —Å–æ—Ö—Ä–∞–Ω–µ–Ω–æ —Ç–æ–ª—å–∫–æ –≤ —ç—Ç–æ–º –±—Ä–∞—É–∑–µ—Ä–µ.', 'error'));
-}
-async function syncAppearanceFromRouter() {
-  const saved = await nfqwsAppearance.get(); if (!saved) return;
-  let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Use the restored settings for this session. */ }
-  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
-}
-function initializeAppearanceSettings() {
-  let storage: Storage | null = null;
-  try { storage = window.localStorage; } catch { /* Use safe defaults if browser storage is blocked. */ }
-  appearanceSettings = loadAppearance(storage);
-  applyAppearance(appearanceSettings);
-  syncAppearanceControls();
-  void nfqwsAppearance.get().then((saved) => {
-    if (!saved) { void nfqwsAppearance.save(appearanceSettings).catch(() => undefined); return; }
-    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls();
-  }).catch(() => undefined);
-}
-async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
-  try {
-    const result = statusOverride ?? await nfqwsUpdates.uiStatus();
-    setText('#aboutCurrentVersion', result.currentVersion);
-    setText('#aboutLatestVersion', result.latestVersion ?? '–Ω–µ —É–¥–∞–ª–æ—Å—å –æ–ø—Ä–µ–¥–µ–ª–∏—Ç—å');
-    setText('#aboutUpdateStatus', result.updateAvailable ? `–î–æ—Å—Ç—É–ø–Ω–∞ –≤–µ—Ä—Å–∏—è ${result.latestVersion}. –û–±–Ω–æ–≤–∏—Ç–µ –ø–∞–Ω–µ–ª—å —á–µ—Ä–µ–∑ –∫–Ω–æ–ø–∫—É –æ–±–Ω–æ–≤–ª–µ–Ω–∏—è –≤ –≤–µ—Ä—Ö–Ω–µ–π –ø–∞–Ω–µ–ª–∏.` : result.latestVersion ? `–£—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω–∞ –∞–∫—Ç—É–∞–ª—å–Ω–∞—è –≤–µ—Ä—Å–∏—è ${result.currentVersion}.` : '–ü–æ—Å–ª–µ–¥–Ω—é—é –≤–µ—Ä—Å–∏—é –ø–æ–∫–∞ –Ω–µ —É–¥–∞–ª–æ—Å—å –æ–ø—Ä–µ–¥–µ–ª–∏—Ç—å. –ü—Ä–æ–≤–µ—Ä—å—Ç–µ —Å–æ–µ–¥–∏–Ω–µ–Ω–∏–µ —Å GitHub.');
-  } catch (error) { setText('#aboutUpdateStatus', error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –∑–∞–≥—Ä—É–∑–∏—Ç—å —Å–≤–µ–¥–µ–Ω–∏—è –æ–± –æ–±–Ω–æ–≤–ª–µ–Ω–∏–∏.'); }
-}
-async function checkUiUpdate() {
-  const button = $('[data-action-click="checkUiUpdate"]'); if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = '–ü—Ä–æ–≤–µ—Ä—è–µ–º‚Ä¶'; }
-  setText('#aboutUpdateStatus', '–ó–∞–ø—Ä–∞—à–∏–≤–∞–µ–º —Å–ø–∏—Å–æ–∫ —Ä–µ–ª–∏–∑–æ–≤ GitHub‚Ä¶');
-  try { const response = await nfqwsUpdates.releases(); await loadAboutStatus(response.updateStatus); renderUiUpdateNotice(response.updateStatus, true); }
-  catch (error) { setText('#aboutUpdateStatus', error instanceof Error ? `–ü—Ä–æ–≤–µ—Ä–∫–∞ –Ω–µ —É–¥–∞–ª–∞—Å—å: ${error.message}` : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ–≤–µ—Ä–∏—Ç—å –æ–±–Ω–æ–≤–ª–µ–Ω–∏—è.'); }
-  finally { if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '‚Üª –ü—Ä–æ–≤–µ—Ä–∏—Ç—å –æ–±–Ω–æ–≤–ª–µ–Ω–∏–µ'; } }
-}
-function renderMonitoringSites() {
-  const host = $('#monitorSites'); if (!host || !monitoringState) return;
-  host.replaceChildren();
-  if (!monitoringState.sites.length) {
-    const empty = document.createElement('p'); empty.className = 'rounded-xl border border-slate-800 bg-[#060a12] p-4 text-sm text-slate-400'; empty.textContent = '–î–æ–±–∞–≤—å—Ç–µ –¥–æ–º–µ–Ω—ã, –∫–æ—Ç–æ—Ä—ã–µ —Ö–æ—Ç–∏—Ç–µ –ø—Ä–æ–≤–µ—Ä—è—Ç—å –≤—Ä—É—á–Ω—É—é.'; host.append(empty); return;
-  }
-  for (const site of monitoringState.sites) {
-    const card = document.createElement('article'); card.className = 'monitor-site-card';
-    const heading = document.createElement('div'); heading.className = 'monitor-site-heading';
-    const name = document.createElement('strong'); name.className = 'font-mono text-sm text-white'; name.textContent = site.host;
-    const latest = site.results[0];
-    const summary = document.createElement('span'); summary.className = `monitor-site-status monitor-status-${latest?.status ?? 'unavailable'}`;
-    summary.textContent = latest ? `${latest.status === 'ok' ? '–î–æ—Å—Ç—É–ø–µ–Ω' : latest.status === 'error' ? '–û—à–∏–±–∫–∞' : latest.status === 'warning' ? '–ï—Å—Ç—å –ø—Ä–µ–¥—É–ø—Ä–µ–∂–¥–µ–Ω–∏–µ' : '–ù–µ—Ç —Ä–µ–∑—É–ª—å—Ç–∞—Ç–∞'}${latest.latencyMs === null ? '' : ` ¬∑ ${latest.latencyMs} –º—Å`}` : '–ï—â—ë –Ω–µ –ø—Ä–æ–≤–µ—Ä—è–ª—Å—è';
-    heading.append(name, summary);
-    const check = document.createElement('button'); check.type = 'button'; check.className = 'monitor-row-action'; check.dataset.actionClick = 'checkMonitoringSite'; check.dataset.args = JSON.stringify([site.host]); check.textContent = '‚ü≥ –ü—Ä–æ–≤–µ—Ä–∏—Ç—å'; check.title = `–ü—Ä–æ–≤–µ—Ä–∏—Ç—å ${site.host}`;
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'monitor-remove'; remove.dataset.actionClick = 'removeMonitoringSite'; remove.dataset.args = JSON.stringify([site.host]); remove.textContent = '√ó'; remove.title = `–£–±—Ä–∞—Ç—å ${site.host} –∏–∑ –º–æ–Ω–∏—Ç–æ—Ä–∏–Ω–≥–∞`;
-    heading.append(check, remove); card.append(heading);
-    if (latest) {
-      const bars = document.createElement('div'); bars.className = 'monitor-history-bars'; bars.setAttribute('aria-label', `–ò—Å—Ç–æ—Ä–∏—è: ${site.results.length} —Ü–∏–∫–ª–æ–≤ –ø—Ä–æ–≤–µ—Ä–∫–∏`);
-      for (const result of [...site.results].slice(0, 48).reverse()) { const bar = document.createElement('span'); bar.dataset.status = result.status; bar.title = `${new Date(result.checkedAt).toLocaleString()}: ${result.summary}`; bars.append(bar); }
-      card.append(bars);
-      const detail = document.createElement('p'); detail.className = 'mt-2 text-xs text-slate-400'; detail.textContent = `${new Date(latest.checkedAt).toLocaleString()} ¬∑ ${latest.summary}`; card.append(detail);
-      if (latest.steps.length) {
-        const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: '–ü–µ—Ä–µ–¥–∞—á–∞' };
-        const stageDetails = document.createElement('details'); stageDetails.className = 'monitor-stage-list mt-2';
-        const stageSummary = document.createElement('summary'); stageSummary.textContent = `–≠—Ç–∞–ø—ã –ø–æ—Å–ª–µ–¥–Ω–µ–≥–æ —Ü–∏–∫–ª–∞ ¬∑ ${latest.steps.filter((step) => step.status === 'ok').length}/${latest.steps.length} —É—Å–ø–µ—à–Ω–æ`;
-        const stageList = document.createElement('div'); stageList.className = 'mt-2 space-y-1.5';
-        for (const step of latest.steps) {
-          const row = document.createElement('div'); row.className = 'monitor-stage-row';
-          const stageName = document.createElement('strong'); stageName.textContent = labels[step.id] ?? step.id;
-          const stageInfo = document.createElement('span'); stageInfo.textContent = `${step.detail}${step.durationMs === null ? '' : ` ¬∑ ${step.durationMs} –º—Å`}`;
-          row.dataset.status = step.status;
-          row.append(stageName, stageInfo); stageList.append(row);
-        }
-        stageDetails.append(stageSummary, stageList); card.append(stageDetails);
-      }
-    }
-    if (site.results.length) { const history = document.createElement('p'); history.className = 'mt-1 text-[11px] text-slate-500'; history.textContent = `–ü—Ä–æ–≤–µ—Ä–æ–∫ –≤ –∏—Å—Ç–æ—Ä–∏–∏: ${site.results.length} ¬∑ –¥–æ—Å—Ç—É–ø–Ω–æ—Å—Ç—å: ${Math.round(site.results.filter((r) => r.status === 'ok').length * 100 / site.results.length)}%`; card.append(history); }
-    host.append(card);
-  }
-}
-function getMonitoringStorage(): Storage | null { try { return window.localStorage; } catch { return null; } }
-function currentMonitoringInterval() {
-  const choice = ($('#monitoringInterval') as HTMLSelectElement | null)?.value ?? String(monitoringIntervalMinutes);
-  if (choice !== 'custom') return Number(choice) || 30;
-  const hours = Number(($('#monitoringHours') as HTMLInputElement | null)?.value ?? 0);
-  const minutes = Number(($('#monitoringMinutes') as HTMLInputElement | null)?.value ?? 30);
-  return normalizeMonitoringInterval(hours, minutes);
-}
-function persistMonitoring() {
-  if (!monitoringState) return;
-  saveMonitoringState(getMonitoringStorage(), monitoringState); renderMonitoringSites();
-  const enabled = ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? true;
-  void nfqwsMonitoring.save({ enabled, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) }).catch((e) => toast(e instanceof Error ? e.message : '–ù–µ —É–¥–∞–ª–æ—Å—å —Å–æ—Ö—Ä–∞–Ω–∏—Ç—å –º–æ–Ω–∏—Ç–æ—Ä–∏–Ω–≥ –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ.', 'error'));
-}
-async function loadBackendMonitoring() {
-  const saved = await nfqwsMonitoring.get();
-  monitoringIntervalMinutes = saved.intervalMinutes;
-  const select = $('#monitoringInterval') as HTMLSelectElement | null; const custom = $('#monitoringCustom');
-  const quick = [30, 60, 120].includes(saved.intervalMinutes);
-  if (select) select.value = quick ? String(saved.intervalMinutes) : 'custom';
-  if (custom) custom.classList.toggle('hidden', quick);
-  if (!quick) { const hours = $('#monitoringHours') as HTMLInputElement | null; const minutes = $('#monitoringMinutes') as HTMLInputElement | null; if (hours) hours.value = String(Math.floor(saved.intervalMinutes / 60)); if (minutes) minutes.value = String(saved.intervalMinutes % 60); }
-  const enabled = $('#monitoringEnabled') as HTMLInputElement | null; if (enabled) enabled.checked = saved.enabled;
-  const legacy = monitoringState?.sites ?? [];
-  monitoringState = { version: 1, sites: (saved.sites.length ? saved.sites : legacy).map((site) => ({ host: site.host, results: site.results.slice(0, 96) })) };
-  if (!saved.sites.length && legacy.length) await nfqwsMonitoring.save({ enabled: saved.enabled, intervalMinutes: saved.intervalMinutes, sites: monitoringState.sites });
-  renderMonitoringSites();
-  const last = saved.lastAutoCheck ? new Date(saved.lastAutoCheck * 1000).toLocaleString() : '–µ—â—ë –Ω–µ –∑–∞–ø—É—Å–∫–∞–ª–∞—Å—å';
-  setText('#monitoringStatus', `–ü–æ—Å–ª–µ–¥–Ω—è—è –∞–≤—Ç–æ–º–∞—Ç–∏—á–µ—Å–∫–∞—è –ø—Ä–æ–≤–µ—Ä–∫–∞: ${last}. –ò–Ω—Ç–µ—Ä–≤–∞–ª: ${saved.intervalMinutes} –º–∏–Ω.`);
-}
-function showMonitorSection(section: 'sites' | 'telegram') {
-  $('#monitorSection-sites')?.classList.toggle('hidden', section !== 'sites');
-  $('#monitorSection-telegram')?.classList.toggle('hidden', section !== 'telegram');
-  all<HTMLButtonElement>('.monitor-subtab').forEach((button) => button.classList.toggle('active', button.textContent?.includes(section === 'sites' ? '–ú–æ–Ω–∏—Ç–æ—Ä–∏–Ω–≥' : 'Telegram') ?? false));
-  if (section === 'telegram') void loadTelegramNotifications().catch(() => {});
-}
-async function saveMonitoringSettings() {
-  if (!monitoringState) return;
-  monitoringIntervalMinutes = currentMonitoringInterval();
-  await nfqwsMonitoring.save({ enabled: ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? false, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) });
-  toast('–ù–∞—Å—Ç—Ä–æ–π–∫–∏ –º–æ–Ω–∏—Ç–æ—Ä–∏–Ω–≥–∞ —Å–æ—Ö—Ä–∞–Ω–µ–Ω—ã –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ.');
-}
-async function loadTelegramSettings() {
-  const cfg = await nfqwsMonitoring.telegram();
-  const via = $('#telegramVia') as HTMLSelectElement | null; if (via) via.value = cfg.sendVia;
-  toggleTelegramTransportFields(cfg.sendVia);
-  const iface = $('#telegramInterface') as HTMLInputElement | null; if (iface) iface.value = cfg.interface;
-  const proxy = $('#telegramProxy') as HTMLInputElement | null; if (proxy) proxy.value = cfg.proxy;
-  const chat = $('#telegramChatId') as HTMLInputElement | null; if (chat) chat.value = cfg.chatId;
-  setText('#telegramStatus', cfg.tokenSet ? '–¢–æ–∫–µ–Ω –±–æ—Ç–∞ —Å–æ—Ö—Ä–∞–Ω—ë–Ω –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ.' : '–¢–æ–∫–µ–Ω –µ—â—ë –Ω–µ –∑–∞–¥–∞–Ω.');
-  renderTelegramNotifications(cfg.notifications);
-}
-function toggleTelegramTransportFields(via: string) {
-  $('#telegramInterfaceField')?.classList.toggle('hidden', via !== 'interface');
-  $('#telegramProxyField')?.classList.toggle('hidden', via !== 'proxy');
-}
-async function loadTelegramNotifications() {
-  renderTelegramNotifications(await nfqwsMonitoring.telegramNotifications());
-}
-function renderTelegramNotifications(notifications: { queue: Array<{ timestamp: number; text: string; tries: number; error?: string | null }>; log: Array<{ timestamp: number; eventTimestamp: number; text: string; ok: boolean; error?: string | null }> }) {
-  const host = $('#telegramNotifications'); if (!host) return;
-  host.replaceChildren();
-  if (!notifications.queue.length && !notifications.log.length) return;
-  const heading = document.createElement('h3'); heading.className = 'text-sm font-semibold text-white'; heading.textContent = '–ü–æ—Å–ª–µ–¥–Ω–∏–µ —Å–æ–æ–±—â–µ–Ω–∏—è'; host.append(heading);
-  const date = (seconds: number) => new Date(seconds * 1000).toLocaleString();
-  for (const message of notifications.queue) {
-    const row = document.createElement('article'); row.className = 'rounded-lg border border-amber-500/30 bg-amber-500/5 p-3';
-    const status = document.createElement('strong'); status.className = 'text-sm text-amber-300'; status.textContent = `–ñ–¥—ë—Ç –æ—Ç–ø—Ä–∞–≤–∫–∏ ¬∑ ${date(message.timestamp)}`;
-    const body = document.createElement('p'); body.className = 'mt-1 whitespace-pre-wrap break-words text-sm text-slate-200'; body.textContent = message.text;
-    const detail = document.createElement('p'); detail.className = 'mt-1 text-xs text-slate-400'; detail.textContent = `–ü–æ–ø—ã—Ç–æ–∫: ${message.tries}. ${message.error || '–ü–æ–≤—Ç–æ—Ä–Ω–∞—è –æ—Ç–ø—Ä–∞–≤–∫–∞ –±—É–¥–µ—Ç –≤—ã–ø–æ–ª–Ω–µ–Ω–∞ –∞–≤—Ç–æ–º–∞—Ç–∏—á–µ—Å–∫–∏, —Å—Ä–æ–∫ —Ö—Ä–∞–Ω–µ–Ω–∏—è ‚Äî 24 —á–∞—Å–∞.'}`;
-    row.append(status, body, detail); host.append(row);
-  }
-  for (const message of notifications.log.slice(0, 20)) {
-    const row = document.createElement('article'); row.className = `rounded-lg border p-3 ${message.ok ? 'border-emerald-500/25 bg-emerald-500/5' : 'border-rose-500/25 bg-rose-500/5'}`;
-    const status = document.createElement('strong'); status.className = `text-sm ${message.ok ? 'text-emerald-300' : 'text-rose-300'}`; status.textContent = `${message.ok ? '–û—Ç–ø—Ä–∞–≤–ª–µ–Ω–æ' : '–ù–µ –æ—Ç–ø—Ä–∞–≤–ª–µ–Ω–æ'} ¬∑ ${date(message.eventTimestamp)}`;
-    const body = document.createElement('p'); body.className = 'mt-1 whitespace-pre-wrap break-words text-sm text-slate-200'; body.textContent = message.text;
-    row.append(status, body);
-    if (message.error) { const detail = document.createElement('p'); detail.className = 'mt-1 text-xs text-rose-300'; detail.textContent = message.error; row.append(detail); }
-    if (message.ok && message.timestamp - message.eventTimestamp > 120) { const detail = document.createElement('p'); detail.className = 'mt-1 text-xs text-slate-400'; detail.textContent = `–î–æ—Å—Ç–∞–≤–ª–µ–Ω–æ —Å –∑–∞–¥–µ—Ä–∂–∫–æ–π ¬∑ ${date(message.timestamp)}`; row.append(detail); }
-    host.append(row);
-  }
-}
-async function saveTelegramSettings() {
-  const token = ($('#telegramToken') as HTMLInputElement | null)?.value ?? '';
-  const result = await nfqwsMonitoring.saveTelegram({ ...(token ? { token } : {}), chatId: ($('#telegramChatId') as HTMLInputElement | null)?.value ?? '', sendVia: ($('#telegramVia') as HTMLSelectElement | null)?.value ?? 'direct', interface: ($('#telegramInterface') as HTMLInputElement | null)?.value ?? '', proxy: ($('#telegramProxy') as HTMLInputElement | null)?.value ?? '' });
-  const field = $('#telegramToken') as HTMLInputElement | null; if (field) field.value = '';
-  setText('#telegramStatus', result.tokenSet ? '–ù–∞—Å—Ç—Ä–æ–π–∫–∏ –∏ —Ç–æ–∫–µ–Ω —Å–æ—Ö—Ä–∞–Ω–µ–Ω—ã –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ.' : '–ù–∞—Å—Ç—Ä–æ–π–∫–∏ —Å–æ—Ö—Ä–∞–Ω–µ–Ω—ã. –£–∫–∞–∂–∏—Ç–µ —Ç–æ–∫–µ–Ω –±–æ—Ç–∞.'); toast('–ù–∞—Å—Ç—Ä–æ–π–∫–∏ Telegram —Å–æ—Ö—Ä–∞–Ω–µ–Ω—ã.');
-}
-async function findTelegramChatId() {
-  await saveTelegramSettings();
-  const result = await nfqwsMonitoring.findTelegramChats();
-  if (!result.chats.length) return toast('–ß–∞—Ç—ã –Ω–µ –Ω–∞–π–¥–µ–Ω—ã. –ù–∞–ø–∏—à–∏—Ç–µ –±–æ—Ç—É –ª—é–±–æ–µ —Å–æ–æ–±—â–µ–Ω–∏–µ –∏ –Ω–∞–∂–º–∏—Ç–µ ¬´–ù–∞–π—Ç–∏¬ª –µ—â—ë —Ä–∞–∑.', 'error');
-  const chat = result.chats[0]; const field = $('#telegramChatId') as HTMLInputElement | null; if (field) field.value = chat.id;
-  setText('#telegramStatus', `–ù–∞–π–¥–µ–Ω —á–∞—Ç: ${chat.title} (${chat.id}). –°–æ—Ö—Ä–∞–Ω–∏—Ç–µ –Ω–∞—Å—Ç—Ä–æ–π–∫–∏.`);
-}
-async function sendTestTelegram() { await saveTelegramSettings(); await nfqwsMonitoring.testTelegram(); toast('–ü—Ä–æ–≤–µ—Ä–æ—á–Ω–æ–µ —Å–æ–æ–±—â–µ–Ω–∏–µ –æ—Ç–ø—Ä–∞–≤–ª–µ–Ω–æ –≤ Telegram.'); }
-async function runMonitoring(host?: string) {
-  if (monitoringRunning || !monitoringState) return;
-  const hosts = host ? monitoringState.sites.filter((site) => site.host === host).map((site) => site.host) : monitoringState.sites.map((site) => site.host);
-  if (!hosts.length) return toast('–°–Ω–∞—á–∞–ª–∞ –¥–æ–±–∞–≤—å—Ç–µ –¥–æ–º–µ–Ω –¥–ª—è –ø—Ä–æ–≤–µ—Ä–∫–∏.', 'error');
-  monitoringRunning = true;
-  const button = $('[data-action-click="runMonitoring"]'); if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = '–ü—Ä–æ–≤–µ—Ä—è–µ–º‚Ä¶'; }
-  const statusNode = $('#monitoringStatus'); if (statusNode) { statusNode.textContent = `–ü—Ä–æ–≤–µ—Ä–∫–∞ 0 –∏–∑ ${hosts.length}`; statusNode.setAttribute('aria-busy', 'true'); }
-  try {
-    if (statusNode) statusNode.textContent = `–ü—Ä–æ–≤–µ—Ä–∫–∞ ${hosts.length} —Å–∞–π—Ç–æ–≤ –ø–∞—Ä–∞–ª–ª–µ–ª—å–Ω–æ: DNS ‚Üí TCP ‚Üí TLS ‚Üí HTTP –∏ –¥–æ 64 –ö–∏–ë`;
-    await nfqwsMonitoring.run(hosts);
-    await loadBackendMonitoring();
-    toast(`–ú–æ–Ω–∏—Ç–æ—Ä–∏–Ω–≥ –∑–∞–≤–µ—Ä—à—ë–Ω: ${hosts.length} —Å–∞–π—Ç–æ–≤ –ø—Ä–æ–≤–µ—Ä–µ–Ω–æ.`);
-  } finally {
-    monitoringRunning = false;
-    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '–ü—Ä–æ–≤–µ—Ä–∏—Ç—å —Å–∞–π—Ç—ã'; }
-    if (statusNode) { statusNode.textContent = '–ü—Ä–æ–≤–µ—Ä–∫–∞ –∑–∞–≤–µ—Ä—à–µ–Ω–∞'; statusNode.removeAttribute('aria-busy'); }
-  }
-}
-function addMonitoringSite() {
-  const input = $('#monitorHostInput');
-  if (!(input instanceof HTMLInputElement) || !monitoringState) return;
-  const host = normalizeMonitoringHost(input.value);
-  if (!host) return toast('–í–≤–µ–¥–∏—Ç–µ –¥–æ–º–µ–Ω–Ω–æ–µ –∏–º—è –±–µ–∑ https://, –ø—É—Ç–∏ –∏–ª–∏ IP-–∞–¥—Ä–µ—Å–∞.', 'error');
-  if (monitoringState.sites.some((site) => site.host === host)) return toast('–≠—Ç–æ—Ç –¥–æ–º–µ–Ω —É–∂–µ –¥–æ–±–∞–≤–ª–µ–Ω.', 'error');
-  if (monitoringState.sites.length >= 20) return toast('–ú–æ–∂–Ω–æ –¥–æ–±–∞–≤–∏—Ç—å –Ω–µ –±–æ–ª–µ–µ 20 –¥–æ–º–µ–Ω–æ–≤.', 'error');
-  monitoringState = { ...monitoringState, sites: [{ host, results: [] }, ...monitoringState.sites] };
-  input.value = ''; persistMonitoring();
-}
-async function fetchStatus() {
-  if (statusPolling) return;
-  statusPolling = true;
-  try {
-    status = await api<StatusResponse>('/api/status');
-    const service = status.service.state;
-    const running = service === 'running';
-    const stopped = service === 'stopped';
-    const label = running ? 'nfqws2 –∑–∞–ø—É—â–µ–Ω' : stopped ? 'nfqws2 –æ—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω' : service === 'error' ? '–û—à–∏–±–∫–∞ nfqws2' : '–°—Ç–∞—Ç—É—Å –Ω–µ–∏–∑–≤–µ—Å—Ç–µ–Ω';
-    const tone = running ? 'emerald' : stopped || service === 'error' ? 'rose' : 'slate';
-    if (!restartInProgress) {
-      const text = $('#statusTextLabel'); if (text) { text.textContent = label; text.className = `text-xs sm:text-sm font-semibold text-${tone}-400 tracking-tight`; }
-      const dot = $('#statusMainDot'); if (dot) dot.className = `${running ? 'status-dot-active' : ''} relative inline-flex rounded-full h-2.5 w-2.5 bg-${tone}-400`;
-      const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${running ? 'emerald' : stopped ? 'rose' : 'slate'}-400`;
-    }
-    const monitorBadge = $('#sideMonitorBadge'); if (monitorBadge) monitorBadge.className = `w-2 h-2 rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
-    const used = status.system.memoryUsedBytes, total = status.system.memoryTotalBytes;
-    const ramPercent = resourceUsagePercent(used, total);
-    setText('#ramMetricText', used !== null && total !== null ? `${fmtMb(used)} / ${fmtMb(total)} –ú–ë` : '‚Äî');
-    const ramText = $('#ramMetricText');
-    if (ramText) ramText.title = ramPercent === null ? '–ó–∞–≥—Ä—É–∑–∫–∞ –ø–∞–º—è—Ç–∏ –Ω–µ–∏–∑–≤–µ—Å—Ç–Ω–∞' : `–ò—Å–ø–æ–ª—å–∑–æ–≤–∞–Ω–æ ${Math.round(ramPercent)}%. –ò—Å—Ç–æ—á–Ω–∏–∫: ${status.system.source === 'keenetic-rci' ? 'Keenetic RCI, –∫–∞–∫ –≤ XKeen UI' : 'Linux /proc/meminfo; –æ–±—ä—ë–º –ø–æ—Å–ª–µ —Ä–µ–∑–µ—Ä–≤–∏—Ä–æ–≤–∞–Ω–∏—è –ø–∞–º—è—Ç–∏ –ø—Ä–æ—à–∏–≤–∫–æ–π'}`;
-    setWidth('#ramProgressBar', ramPercent);
-    applyMetricTone('#ramMetricText', '#ramProgressBar', ramPercent);
-    const cpu = status.system.cpuPercent;
-    setText('#cpuMetricText', cpu === null ? '‚Äî' : `${Math.round(cpu)}%`);
-    setWidth('#cpuProgressBar', cpu);
-    applyMetricTone('#cpuMetricText', '#cpuProgressBar', cpu);
-    setText('#headerCoreVersion', status.service.version ?? '‚Äî'); setText('#headerUiVersion', status.panel.version);
-    syncServiceControl(service);
-    setText('#checkedAt', status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '‚Äî');
-    setText('#statusDetail', `–û–ø—Ä–æ—Å: ${status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '–≤—ã–ø–æ–ª–Ω—è–µ—Ç—Å—è'} ¬∑ –º–µ—Ç—Ä–∏–∫–∏: ${status.system.source === 'keenetic-rci' ? 'Keenetic RCI' : 'Linux'}`);
-  } catch (error) {
-    status = null;
-    if (!restartInProgress) {
-      const label = $('#statusTextLabel'); if (label) { label.textContent = '–°—Ç–∞—Ç—É—Å –Ω–µ–∏–∑–≤–µ—Å—Ç–µ–Ω'; label.className = 'text-xs sm:text-sm font-semibold text-slate-400 tracking-tight'; }
-      const dot = $('#statusMainDot'); if (dot) dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400';
-      const ring = $('#statusRadarRing'); if (ring) ring.className = 'absolute inline-flex h-full w-full rounded-full bg-slate-400';
-    }
-    setText('#ramMetricText', '‚Äî'); setWidth('#ramProgressBar', null); applyMetricTone('#ramMetricText', '#ramProgressBar', null);
-    setText('#cpuMetricText', '‚Äî'); setWidth('#cpuProgressBar', null); applyMetricTone('#cpuMetricText', '#cpuProgressBar', null);
-    setText('#headerCoreVersion', '‚Äî'); setText('#headerUiVersion', '‚Äî');
-    syncServiceControl('unknown');
-    const detail = $('#statusDetail'); if (detail) detail.textContent = error instanceof Error ? error.message : '–û—à–∏–±–∫–∞ –ø—Ä–æ–≤–µ—Ä–∫–∏ —Å—Ç–∞—Ç—É—Å–∞';
-  } finally { statusPolling = false; }
-}
-
-function syncServiceControl(state: string) {
-  const presentation = serviceControlPresentation(state);
-  const button = $('#togglePowerBtn');
-  if (!button) return;
-  const label = $('#togglePowerText'); if (label) label.textContent = presentation.label;
-  button.setAttribute('aria-label', presentation.label);
-  button.dataset.actionTooltip = presentation.label;
-  button.dataset.serviceAction = presentation.action;
-  button.querySelector<SVGElement>('[data-power-icon="play"]')?.classList.toggle('hidden', presentation.icon !== 'play');
-  button.querySelector<SVGElement>('[data-power-icon="stop"]')?.classList.toggle('hidden', presentation.icon !== 'stop');
-  const tones = {
-    success: ['text-emerald-400', 'bg-emerald-500/10', 'hover:bg-emerald-500/20', 'border-emerald-500/30', 'focus-visible:ring-emerald-400'],
-    danger: ['text-rose-400', 'bg-rose-500/10', 'hover:bg-rose-500/20', 'border-rose-500/30', 'focus-visible:ring-rose-400'],
-    neutral: ['text-slate-400', 'bg-slate-500/10', 'hover:bg-slate-500/20', 'border-slate-500/30', 'focus-visible:ring-slate-400'],
-  } as const;
-  for (const tone of Object.values(tones)) for (const className of tone) button.classList.toggle(className, tone === tones[presentation.tone]);
-}
-
-function fmtMb(bytes: number) { return (bytes / 1024 / 1024).toFixed(0); }
-function applyMetricTone(textSelector: string, barSelector: string, percent: number | null) {
-  const tone = usageTone(percent);
-  const textClass = tone === 'critical' ? 'text-rose-400' : tone === 'warning' ? 'text-amber-400' : 'text-slate-400';
-  const barClass = tone === 'critical' ? 'bg-rose-400' : tone === 'warning' ? 'bg-amber-400' : 'bg-slate-400';
-  const metric = $(textSelector);
-  if (metric) {
-    metric.classList.remove('text-slate-100', 'text-slate-400', 'text-emerald-400', 'text-amber-400', 'text-rose-400');
-    metric.classList.add(textClass);
-  }
-  const bar = $(barSelector);
-  if (bar) {
-    bar.classList.remove('bg-sky-400', 'bg-emerald-400', 'bg-slate-400', 'bg-amber-400', 'bg-rose-400');
-    bar.classList.add(barClass);
-  }
-}
-async function loadConfig() {
-
-  try {
-    config = await api<ConfigResponse>('/api/config?file=nfqws2.conf');
-    const applyButton = $('[data-action-click="applyConfigAndRestart"]');
-    let canWriteConfig = false;
-    let networkInterfaces: string[] = [];
-    try {
-      const installation = await nfqwsInstallation.get();
-      canWriteConfig = installation.config?.writable === true;
-      networkInterfaces = installation.networkInterfaces ?? [];
-      discoveredNetworkInterfaces = networkInterfaces;
-    } catch (error) {
-      toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ–≤–µ—Ä–∏—Ç—å –ø—Ä–∞–≤–∞ –∑–∞–ø–∏—Å–∏ –≤ –∫–æ–Ω—Ñ–∏–≥', 'error');
-    }
-    if (applyButton instanceof HTMLButtonElement) {
-      applyButton.disabled = !canWriteConfig;
-      applyButton.title = canWriteConfig ? '' : 'Backend –Ω–µ –ø–æ–¥—Ç–≤–µ—Ä–¥–∏–ª –ø—Ä–∞–≤–æ –∑–∞–ø–∏—Å–∏ –≤ –æ–±–Ω–∞—Ä—É–∂–µ–Ω–Ω—ã–π –∫–æ–Ω—Ñ–∏–≥';
-    }
-    const editor = $('#nfqwsConfTextarea');
-    if (editor instanceof HTMLTextAreaElement) editor.value = config.content;
-    setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} —Å—Ç—Ä–æ–∫`);
-    setText('#currentConfigPath', '–ö–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è');
-    const configTitle = $('#currentConfigPath'); if (configTitle) configTitle.title = config.file;
-    renderNfqwsArgumentEditors(config.content);
-    updateQuickParameters(config.content, networkInterfaces);
-    const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
-    setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:‚Äî');
-    syncConfigLines();
-    renderConfigOutline();
-  } catch (error) { toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ—á–∏—Ç–∞—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é', 'error'); }
-}
-function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
-  const selectedId = { editor: 'configEditorPanel', settings: 'configSettingsPanel', scripts: 'configScriptsPanel' }[section];
-  for (const id of ['configEditorPanel', 'configSettingsPanel', 'configScriptsPanel']) {
-    const panel = document.getElementById(id);
-    if (!panel) continue;
-    panel.classList.toggle('hidden', id !== selectedId);
-  }
-  const activePanel = document.getElementById(selectedId);
-  if (!activePanel) return;
-  activePanel.classList.remove('config-panel-enter');
-  void activePanel.offsetWidth;
-  activePanel.classList.add('config-panel-enter');
-  for (const [id, selected] of [['configTabEditor', section === 'editor'], ['configTabSettings', section === 'settings'], ['configTabScripts', section === 'scripts']] as const) {
-    const button = document.getElementById(id);
-    if (!button) continue;
-    button.setAttribute('aria-pressed', String(selected));
-    button.classList.toggle('config-subtab-active', selected);
-  }
-  if (section === 'scripts') void loadLuaScripts();
-}
-
-function renderLuaScriptTabs() {
-  const host = $('#luaScriptTabs');
-  if (!host) return;
-  host.replaceChildren();
-  for (const script of luaScripts) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `lua-script-tab px-3 py-2 text-xs font-medium transition-colors ${script.name === activeLuaScript ? 'lua-script-tab-active text-cyan-200' : 'text-slate-400 hover:text-slate-100'}`;
-    button.setAttribute('aria-pressed', String(script.name === activeLuaScript));
-    button.textContent = script.name;
-    button.addEventListener('click', () => void showLuaScript(script.name));
-    host.append(button);
-  }
-}
-
-async function loadLuaScripts() {
-  const host = $('#luaScriptTabs');
-  if (!host) return;
-  host.textContent = '–ß–∏—Ç–∞—é —Å–ø–∏—Å–æ–∫ —Å–∫—Ä–∏–ø—Ç–æ–≤‚Ä¶';
-  try {
-    luaScripts = await nfqwsScripts.list();
-    renderLuaScriptTabs();
-    const selected = activeLuaScript && luaScripts.some((script) => script.name === activeLuaScript)
-      ? activeLuaScript
-      : luaScripts.find((script) => script.exists)?.name ?? luaScripts[0]?.name;
-    if (selected) await showLuaScript(selected);
-    else setText('#luaScriptContent', 'Backend –Ω–µ –æ–±–Ω–∞—Ä—É–∂–∏–ª —É—Å—Ç–∞–Ω–æ–≤–∫—É nfqws2 –∏ –∫–∞—Ç–∞–ª–æ–≥ —Å–∫—Ä–∏–ø—Ç–æ–≤.');
-  } catch (error) {
-    host.textContent = '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ—á–∏—Ç–∞—Ç—å —Å–ø–∏—Å–æ–∫ —Å–∫—Ä–∏–ø—Ç–æ–≤';
-    setText('#luaScriptContent', error instanceof Error ? error.message : '–û—à–∏–±–∫–∞ —á—Ç–µ–Ω–∏—è —Å–ø–∏—Å–∫–∞');
-  }
-}
-
-async function showLuaScript(name: string) {
-  activeLuaScript = name;
-  renderLuaScriptTabs();
-  setText('#luaScriptPath', `${name} ¬∑ —á—Ç–µ–Ω–∏–µ‚Ä¶`);
-  setText('#luaScriptContent', '–ó–∞–≥—Ä—É–∂–∞—é —Ñ–∞–π–ª‚Ä¶');
-  try {
-    const script = await nfqwsScripts.get(name);
-    setText('#luaScriptPath', `${script.path}${script.compressed ? ' ¬∑ gzip' : ''}${script.truncated ? ' ¬∑ –ø–æ–∫–∞–∑–∞–Ω—ã –ø–µ—Ä–≤—ã–µ 512 –ö–ë' : ''}`);
-    setText('#luaScriptContent', script.content || '(—Ñ–∞–π–ª –ø—É—Å—Ç)');
-  } catch (error) {
-    setText('#luaScriptPath', `${name} ¬∑ —Ñ–∞–π–ª –æ—Ç—Å—É—Ç—Å—Ç–≤—É–µ—Ç –∏–ª–∏ –Ω–µ–¥–æ—Å—Ç—É–ø–µ–Ω`);
-    setText('#luaScriptContent', error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ—á–∏—Ç–∞—Ç—å —Ñ–∞–π–ª');
-  }
-}
-const NFQWS_ARGUMENT_GROUPS = [
-  ['NFQWS_EXTRA_ARGS', '–†–µ–∂–∏–º –∏ –æ–±—â–∏–µ –ø–∞—Ä–∞–º–µ—Ç—Ä—ã'],
-  ['NFQWS_BASE_ARGS', '–ë–∞–∑–æ–≤—ã–µ –ø–∞—Ä–∞–º–µ—Ç—Ä—ã'],
-  ['NFQWS_ARGS', 'TCP / TLS'],
-  ['NFQWS_ARGS_QUIC', 'QUIC'],
-  ['NFQWS_ARGS_UDP', 'UDP'],
-  ['NFQWS_ARGS_IPSET', 'IPSET'],
-  ['NFQWS_ARGS_CUSTOM', '–ü–æ–ª—å–∑–æ–≤–∞—Ç–µ–ª—å—Å–∫–∏–µ –¥–æ–º–µ–Ω–Ω—ã–µ –ø—Ä–æ—Ñ–∏–ª–∏'],
-] as const;
-function renderNfqwsArgumentEditors(content: string) {
-  const host = $('#nfqwsArgEditors');
-  if (!host) return;
-  host.replaceChildren();
-  for (const [key, label] of NFQWS_ARGUMENT_GROUPS) {
-    const card = document.createElement('section');
-    card.className = 'block rounded-xl border border-slate-800 bg-[#070b14] p-3';
-    const heading = document.createElement('label');
-    const fieldId = `configArgument-${key}`;
-    heading.htmlFor = fieldId;
-    heading.className = 'mb-2 block font-mono text-xs font-bold text-cyan-200';
-    heading.textContent = `${key} ¬∑ ${label}`;
-    const field = document.createElement('textarea');
-    const minimumRows = key === 'NFQWS_ARGS_CUSTOM' ? 5 : 3;
-    field.id = fieldId;
-    field.rows = minimumRows;
-    field.spellcheck = false;
-    field.dataset.configArgument = 'true';
-    field.className = 'min-h-0 min-w-0 flex-1 resize-y border-0 bg-transparent px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none focus:ring-0 disabled:opacity-60';
-    field.value = configAssignmentValue(content, key);
-    field.placeholder = key === 'NFQWS_ARGS_CUSTOM' ? '--new --filter-tcp=443 --hostlist-domains=example.com ‚Ä¶' : '–í–≤–µ–¥–∏—Ç–µ –∞—Ä–≥—É–º–µ–Ω—Ç—ã –¥–ª—è —ç—Ç–æ–π –≥—Ä—É–ø–ø—ã';
-    field.title = '–ò–∑–º–µ–Ω–µ–Ω–∏–µ –æ–±–Ω–æ–≤–∏—Ç —á–µ—Ä–Ω–æ–≤–∏–∫; —Å–æ—Ö—Ä–∞–Ω–∏—Ç—å –µ–≥–æ –º–æ–∂–Ω–æ –∫–Ω–æ–ø–∫–æ–π ¬´–ü—Ä–∏–º–µ–Ω–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é¬ª.';
-    const editor = document.createElement('div');
-    editor.className = 'config-argument-editor flex min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20';
-    const gutter = document.createElement('div');
-    gutter.className = 'config-argument-line-numbers line-numbers-col min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[#05080f] px-2.5 py-2 font-mono text-xs leading-5 text-slate-500';
-    gutter.setAttribute('aria-hidden', 'true');
-    editor.append(gutter, field);
-    const syncEditor = () => {
-      const layout = configEditorLayout(field.value, minimumRows);
-      const viewportHeight = configEditorViewportHeight(layout.visibleRows);
-      field.rows = layout.visibleRows;
-      field.style.maxHeight = viewportHeight;
-      gutter.style.maxHeight = viewportHeight;
-      gutter.textContent = layout.lineNumbers;
-      gutter.scrollTop = field.scrollTop;
-    };
-    field.addEventListener('input', syncEditor);
-    field.addEventListener('scroll', syncEditor);
-    syncEditor();
-    field.addEventListener('change', () => void updateConfigVariable(key, field.value));
-    card.append(heading, editor);
-    host.append(card);
-  }
-}
-function updateQuickParameters(content: string, networkInterfaces: string[] = []) {
-  const availableModes = new Set(availableNfqwsModes(content));
-  const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
-  if (interfaceSelect instanceof HTMLSelectElement) {
-    const configured = configAssignmentValue(content, 'ISP_INTERFACE');
-    interfaceSelect.replaceChildren(new Option('–í—ã–±–µ—Ä–∏—Ç–µ –æ–±–Ω–∞—Ä—É–∂–µ–Ω–Ω—ã–π –∏–Ω—Ç–µ—Ä—Ñ–µ–π—Å', '', !configured, false));
-    for (const name of [...new Set(networkInterfaces)].sort()) interfaceSelect.add(new Option(name, name));
-    if (configured && !networkInterfaces.includes(configured)) {
-      interfaceSelect.add(new Option(`${configured} (–Ω–∞—Å—Ç—Ä–æ–µ–Ω, –Ω–æ –Ω–µ –æ–±–Ω–∞—Ä—É–∂–µ–Ω)`, configured, true, true));
-    } else {
-      interfaceSelect.value = configured;
-    }
-    interfaceSelect.disabled = networkInterfaces.length === 0;
-    interfaceSelect.title = networkInterfaces.length ? '–í–∞—Ä–∏–∞–Ω—Ç—ã –ø–æ–ª—É—á–µ–Ω—ã –∏–∑ /sys/class/net –Ω–∞ —É—Å—Ç—Ä–æ–π—Å—Ç–≤–µ' : 'Backend –Ω–µ –æ–±–Ω–∞—Ä—É–∂–∏–ª —Å–µ—Ç–µ–≤—ã–µ –∏–Ω—Ç–µ—Ä—Ñ–µ–π—Å—ã; –∏–∑–º–µ–Ω–∏—Ç–µ ISP_INTERFACE –≤ raw-–∫–æ–Ω—Ñ–∏–≥–µ –ø–æ—Å–ª–µ –ø—Ä–æ–≤–µ—Ä–∫–∏ —É—Å—Ç—Ä–æ–π—Å—Ç–≤–∞';
-  }
-  all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-key]').forEach((select) => {
-    const key = select.dataset.key;
-    if (!key) return;
-    const value = configAssignmentValue(content, key);
-    select.value = [...select.options].some((option) => option.value === value) ? value : '';
-  });
-  all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-args]').forEach((select) => {
-    let key = '';
-    try { key = (JSON.parse(select.dataset.args ?? '[]') as unknown[])[0] as string ?? ''; } catch { return; }
-    if (key !== 'NFQWS_EXTRA_ARGS') return;
-    const selectedMode = configAssignmentValue(content, key);
-    select.value = [...select.options].some((option) => option.value === selectedMode) ? selectedMode : '';
-    for (const option of [...select.options]) {
-      if (!/^\$MODE_(?:LIST|AUTO|ALL)$/.test(option.value)) continue;
-      option.disabled = !availableModes.has(option.value);
-      option.title = option.disabled ? `${option.value.slice(1)} –æ—Ç—Å—É—Ç—Å—Ç–≤—É–µ—Ç –∏–ª–∏ –ø—É—Å—Ç –≤ –∑–∞–≥—Ä—É–∂–µ–Ω–Ω–æ–º –∫–æ–Ω—Ñ–∏–≥–µ` : '';
-    }
-  });
-}
-async function updateConfigVariable(key: string, value: string) {
-  if (busy || !config) return;
-  const editor = $('#nfqwsConfTextarea');
-  if (!(editor instanceof HTMLTextAreaElement)) return;
-  const before = editor.value;
-  setBusy(true);
-  try {
-    const preview = await nfqwsConfig.preview(before, key, value);
-    if (editor.value !== before) throw new Error('–ß–µ—Ä–Ω–æ–≤–∏–∫ –∏–∑–º–µ–Ω–∏–ª—Å—è –≤–æ –≤—Ä–µ–º—è –∑–∞–ø—Ä–æ—Å–∞; –ø–æ–≤—Ç–æ—Ä–∏—Ç–µ –≤—ã–±–æ—Ä –Ω–∞—Å—Ç—Ä–æ–π–∫–∏.');
-    editor.value = preview.content;
-    syncConfigLines();
-    renderConfigOutline();
-    renderNfqwsArgumentEditors(editor.value);
-    toast('–ß–µ—Ä–Ω–æ–≤–∏–∫ –∏–∑–º–µ–Ω—ë–Ω. –ù–∞–∂–º–∏—Ç–µ ¬´–ü—Ä–∏–º–µ–Ω–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é¬ª, —á—Ç–æ–±—ã —Å–æ—Ö—Ä–∞–Ω–∏—Ç—å.');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –∏–∑–º–µ–Ω–∏—Ç—å —á–µ—Ä–Ω–æ–≤–∏–∫', 'error');
-  } finally {
-    setBusy(false);
-    updateQuickParameters(editor.value, discoveredNetworkInterfaces);
-  }
-}
-function syncConfigLines() {
-  const editor = $('#nfqwsConfTextarea'); const gutter = $('#confLineNumbers');
-  if (!(editor instanceof HTMLTextAreaElement) || !gutter) return;
-  const count = Math.max(1, editor.value.split('\n').length);
-  gutter.innerHTML = Array.from({ length: count }, (_, i) => `${i + 1}`).join('<br>');
-  gutter.scrollTop = editor.scrollTop;
-  syncConfigHighlight(editor);
-  setText('#confLinesBadge', `${count} —Å—Ç—Ä–æ–∫`);
-}
-function escapeConfigHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character);
-}
-function highlightConfigTokens(source: string, comments: boolean): string {
-  let html = '';
-  let index = 0;
-  let inLua = false;
-  let afterLuaFlag = false;
-  let awaitingLuaMode = false;
-  let awaitingParamKey = false;
-  let awaitingParamValue = false;
-  const append = (value: string, token?: string) => {
-    const safe = escapeConfigHtml(value);
-    html += token ? `<span class="conf-token-${token}">${safe}</span>` : safe;
-  };
-  while (index < source.length) {
-    const rest = source.slice(index);
-    if (comments && rest.startsWith('#')) { append(rest, 'comment'); break; }
-    if (rest[0] === '"' || rest[0] === "'") {
-      const quote = rest[0]; let end = 1; let escaped = false;
-      while (end < rest.length) { const ch = rest[end]; if (ch === quote && !escaped) break; escaped = ch === '\\' && !escaped; if (ch !== '\\') escaped = false; end += 1; }
-      if (end < rest.length) {
-        append(quote, 'string');
-        if (quote === '"') html += highlightConfigTokens(rest.slice(1, end), false);
-        else append(rest.slice(1, end), 'string');
-        append(quote, 'string'); index += end + 1; continue;
-      }
-      append(quote, 'string'); index += 1; continue;
-    }
-    const variable = rest.match(/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/);
-    if (variable) { append(variable[0], 'variable'); index += variable[0].length; continue; }
-    const flag = rest.match(/^--[A-Za-z0-9_-]+/);
-    if (flag) {
-      append(flag[0], 'flag');
-      if (flag[0] === '--lua-desync') { inLua = true; afterLuaFlag = true; awaitingLuaMode = false; awaitingParamKey = false; awaitingParamValue = false; }
-      index += flag[0].length; continue;
-    }
-    const delimiter = rest.match(/^[=,:]/);
-    if (delimiter) {
-      append(delimiter[0], 'operator');
-      if (delimiter[0] === '=' && afterLuaFlag) { afterLuaFlag = false; awaitingLuaMode = true; }
-      else if (delimiter[0] === ':') { awaitingParamKey = true; awaitingParamValue = false; }
-      else if (delimiter[0] === '=' && awaitingParamKey) { awaitingParamKey = false; awaitingParamValue = true; }
-      index += 1; continue;
-    }
-    const number = rest.match(/^-?\d+(?:[._+-]\d+)*%?/);
-    if (number) { append(number[0], 'number'); index += number[0].length; continue; }
-    const word = rest.match(/^[A-Za-z_][A-Za-z0-9_.-]*/);
-    if (word) {
-      const value = word[0]; const isKey = rest.slice(value.length).startsWith('=');
-      if (isKey) append(value, 'key');
-      else if (awaitingLuaMode) { append(value, 'mode'); awaitingLuaMode = false; }
-      else if (awaitingParamKey) { append(value, 'mode'); awaitingParamKey = false; }
-      else if (awaitingParamValue && inLua) append(value, 'value');
-      else if (/^(if|then|else|elif|fi|for|while|do|done|case|esac|in|export|local|return|function)$/i.test(value)) append(value, 'keyword');
-      else append(value, 'word');
-      index += value.length; continue;
-    }
-    append(source[index]); index += 1;
-  }
-  return html;
-}
-function highlightConfigLine(line: string): string {
-  const trimmed = line.trimStart();
-  if (trimmed.startsWith('#')) return escapeConfigHtml(line.slice(0, line.length - trimmed.length)) + highlightConfigTokens(trimmed, true);
-  return highlightConfigTokens(line, true) || '&nbsp;';
-}
-function syncConfigHighlight(editor?: HTMLTextAreaElement) {
-  const input = editor ?? $('#nfqwsConfTextarea'); const highlight = $('#confSyntaxHighlight');
-  if (!(input instanceof HTMLTextAreaElement) || !highlight) return;
-  highlight.innerHTML = input.value.split('\n').map(highlightConfigLine).join('\n');
-  highlight.scrollTop = input.scrollTop;
-  highlight.scrollLeft = input.scrollLeft;
-  highlight.style.whiteSpace = input.style.whiteSpace || 'pre-wrap';
-}
-function renderConfigOutline() {
-  const editor = $('#nfqwsConfTextarea');
-  const entriesHost = $('#configOutlineEntries');
-  if (!(editor instanceof HTMLTextAreaElement) || !entriesHost) return;
-  const entries = configOutlineEntries(editor.value);
-  const active = entries.filter((entry) => entry.offset <= editor.selectionStart).at(-1);
-  entriesHost.replaceChildren();
-  if (!entries.length) {
-    const empty = document.createElement('div');
-    empty.className = 'px-2 py-2 text-xs text-slate-500';
-    empty.textContent = '–í –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏ –Ω–µ –Ω–∞–π–¥–µ–Ω—ã –ø–µ—Ä–µ–º–µ–Ω–Ω—ã–µ.';
-    entriesHost.append(empty);
-    return;
-  }
-  for (const entry of entries) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `config-outline-entry flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left font-mono text-xs transition-colors hover:bg-slate-800 ${active?.offset === entry.offset ? 'bg-blue-500/10 text-blue-200' : 'text-slate-200'}`;
-    button.title = `–ü–µ—Ä–µ–π—Ç–∏ –∫ —Å—Ç—Ä–æ–∫–µ ${entry.line}`;
-    const name = document.createElement('span');
-    name.className = 'min-w-0 truncate';
-    name.textContent = entry.name;
-    const line = document.createElement('span');
-    line.className = 'shrink-0 tabular-nums text-slate-500';
-    line.textContent = String(entry.line);
-    button.append(name, line);
-    button.addEventListener('click', () => {
-      editor.focus();
-      editor.setSelectionRange(entry.offset, entry.offset + entry.name.length);
-      const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 23;
-      editor.scrollTop = Math.max(0, (entry.line - 1) * lineHeight);
-      renderConfigOutline();
-    });
-    entriesHost.append(button);
-  }
-}
-function toggleConfigOutline() {
-  const outline = $('#configOutline');
-  const workspace = $('#configEditorWorkspace');
-  const button = $('#configStructureToggle');
-  if (!outline || !workspace || !button) return;
-  const open = outline.classList.contains('hidden');
-  outline.classList.toggle('hidden', !open);
-  workspace.classList.toggle('config-editor-workspace-open', open);
-  button.setAttribute('aria-expanded', String(open));
-  button.setAttribute('aria-pressed', String(open));
-  button.title = open ? '–°–∫—Ä—ã—Ç—å —Å—Ç—Ä—É–∫—Ç—É—Ä—É –ø–µ—Ä–µ–º–µ–Ω–Ω—ã—Ö –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏ —Å–ø—Ä–∞–≤–∞' : '–ü–æ–∫–∞–∑–∞—Ç—å —Å—Ç—Ä—É–∫—Ç—É—Ä—É –ø–µ—Ä–µ–º–µ–Ω–Ω—ã—Ö –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏ —Å–ø—Ä–∞–≤–∞';
-  button.classList.toggle('config-structure-toggle-active', open);
-  if (open) renderConfigOutline();
-}
-async function saveConfigAndApply() {
-  if (busy) return;
-  if (!config) return toast('–°–Ω–∞—á–∞–ª–∞ –∑–∞–≥—Ä—É–∑–∏—Ç–µ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é backend.', 'error');
-  const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
-  const draft = editor.value;
-  setBusy(true);
-  let validation: ConfigValidationResponse;
-  try {
-    validation = await nfqwsConfig.validate(draft);
-  } catch (error) {
-    setBusy(false);
-    return toast(error instanceof Error ? `–ü—Ä–æ–≤–µ—Ä–∫–∞ backend –Ω–µ –≤—ã–ø–æ–ª–Ω–µ–Ω–∞: ${error.message}` : '–ü—Ä–æ–≤–µ—Ä–∫–∞ backend –Ω–µ –≤—ã–ø–æ–ª–Ω–µ–Ω–∞', 'error');
-  }
-  if (editor.value !== draft) {
-    setBusy(false);
-    return toast('–ß–µ—Ä–Ω–æ–≤–∏–∫ –∏–∑–º–µ–Ω–∏–ª—Å—è –≤–æ –≤—Ä–µ–º—è –ø—Ä–æ–≤–µ—Ä–∫–∏. –ü—Ä–æ–≤–µ—Ä—å—Ç–µ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é –ø–æ–≤—Ç–æ—Ä–Ω–æ.', 'error');
-  }
-  if (!validation.valid) {
-    setBusy(false);
-    const messages = validation.diagnostics.filter((item) => item.severity === 'error')
-      .map((item) => `${item.line ? `–°—Ç—Ä–æ–∫–∞ ${item.line}: ` : ''}${item.message}`);
-    return toast(`–ö–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è –Ω–µ –ø—Ä–æ—à–ª–∞ –ø—Ä–æ–≤–µ—Ä–∫—É: ${messages.join(' ¬∑ ')}`, 'error');
-  }
-  const warnings = validation.diagnostics.filter((item) => item.severity === 'warning');
-  const binaryCheckNote = validation.checks.installedBinary === 'not_run'
-    ? '–ü—Ä–æ–≤–µ—Ä–∫–∞ —É—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω–Ω—ã–º –±–∏–Ω–∞—Ä–Ω–∏–∫–æ–º –Ω–µ –≤—ã–ø–æ–ª–Ω—è–ª–∞—Å—å.'
-    : '–ü—Ä–æ–≤–µ—Ä–∫–∞ —É—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω–Ω—ã–º –±–∏–Ω–∞—Ä–Ω–∏–∫–æ–º –≤—ã–ø–æ–ª–Ω–µ–Ω–∞.';
-  if ((warnings.length || validation.checks.installedBinary === 'not_run') && !window.confirm([
-    'Backend –ø—Ä–æ–≤–µ—Ä–∏–ª —Ç–æ–ª—å–∫–æ –±–µ–∑–æ–ø–∞—Å–Ω–æ —Ä–∞–∑–±–∏—Ä–∞–µ–º—ã–π —Å–∏–Ω—Ç–∞–∫—Å–∏—Å –∏ –∏–∑–≤–µ—Å—Ç–Ω—ã–µ –æ–≥—Ä–∞–Ω–∏—á–µ–Ω–∏—è init-—Å–∫—Ä–∏–ø—Ç–∞.',
-    ...warnings.map((item) => `${item.line ? `–°—Ç—Ä–æ–∫–∞ ${item.line}: ` : ''}${item.message}`),
-    binaryCheckNote,
-    '–ü—Ä–æ–¥–æ–ª–∂–∏—Ç—å –∑–∞–ø–∏—Å—å –∏ –ø–µ—Ä–µ–∑–∞–ø—É—Å–∫?'
-  ].join('\n\n'))) {
-    setBusy(false);
-    return;
-  }
-  setRestartInProgress(true);
-  try {
-    const result = await nfqwsApply.apply(draft, config.revision);
-    config = result.config;
-    setRestartInProgress(false);
-    await fetchStatus();
-    toast(lifecycleMessage('restart'));
-  } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å —Å–æ—Ö—Ä–∞–Ω–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é', 'error'); }
-  finally { setRestartInProgress(false); setBusy(false); }
-}
-async function serviceAction(action: 'start' | 'stop' | 'restart') {
-  if (busy) return;
-
-  setBusy(true);
-  if (action === 'restart') setRestartInProgress(true);
-  try { await api('/api/service', { method: 'POST', body: JSON.stringify({ action }) }); toast(lifecycleMessage(action)); }
-  catch (error) { toast(error instanceof Error ? error.message : '–ö–æ–º–∞–Ω–¥–∞ –Ω–µ –≤—ã–ø–æ–ª–Ω–µ–Ω–∞', 'error'); }
-  finally {
-    if (action === 'restart') setRestartInProgress(false);
-    setBusy(false);
-    await fetchStatus();
-  }
-}
-async function loadList(id: NfqwsListId) {
-
-  try {
-    const index = await nfqwsLists.index();
-    renderCustomListTabs(index.files);
-    const summary = index.files.find((file) => file.id === id);
-    const availableListIds = new Set(index.files.map((file) => file.id));
-    for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
-      const tabId = listIdFromTabElementId(candidate.id);
-      const available = tabId !== null && availableListIds.has(tabId);
-      candidate.disabled = !available;
-      candidate.classList.toggle('opacity-40', !available);
-      const discovered = index.files.find((file) => file.id === tabId);
-      candidate.title = discovered ? `${tabId ? listDisplayName(tabId) : '–°–ø–∏—Å–æ–∫'} ‚Äî ${discovered.path}` : '–§–∞–π–ª –Ω–µ –Ω–∞–π–¥–µ–Ω –Ω–∏ –ø–æ —Å—Å—ã–ª–∫–µ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏, –Ω–∏ –≤ —à—Ç–∞—Ç–Ω–æ–º –∫–∞—Ç–∞–ª–æ–≥–µ lists';
-    }
-    if (!summary) {
-      activeList = null;
-      const editor = $('#listEditorTextarea');
-      if (editor instanceof HTMLTextAreaElement) { editor.value = ''; editor.placeholder = '–§–∞–π–ª –æ—Ç—Å—É—Ç—Å—Ç–≤—É–µ—Ç; –ø–∞–Ω–µ–ª—å –Ω–µ —Å–æ–∑–¥–∞—ë—Ç —Å–ø–∏—Å–∫–∏ –∞–≤—Ç–æ–º–∞—Ç–∏—á–µ—Å–∫–∏.'; }
-      setText('#currentListFilePath', '–§–∞–π–ª –Ω–µ –Ω–∞–π–¥–µ–Ω');
-      setText('#listFooterCount', '–°–ø–∏—Å–æ–∫ –Ω–µ–¥–æ—Å—Ç—É–ø–µ–Ω');
-      return toast(`–§–∞–π–ª ${id} –Ω–µ –Ω–∞–π–¥–µ–Ω –ø–æ –Ω–∞—Å—Ç—Ä–æ–π–∫–∞–º nfqws2 –∏–ª–∏ –≤ —à—Ç–∞—Ç–Ω–æ–º –∫–∞—Ç–∞–ª–æ–≥–µ lists.`, 'error');
-    }
-    const result = await nfqwsLists.get(id);
-    activeList = result;
-    activeListId = id;
-    selectedListRows.clear();
-    const editor = $('#listEditorTextarea');
-    if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
-    const locationLabel = $('#currentListFilePath');
-    if (locationLabel) {
-      locationLabel.textContent = listDisplayName(id);
-      locationLabel.title = result.path;
-      locationLabel.setAttribute('aria-label', `${listDisplayName(id)}. –ü—É—Ç—å: ${result.path}`);
-    }
-    for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
-      const selected = isListTabSelected(candidate.id, id);
-      candidate.classList.toggle('active', selected);
-      candidate.classList.toggle('text-white', selected);
-      candidate.classList.toggle('font-bold', selected);
-      candidate.classList.toggle('border-sky-400', selected);
-      candidate.classList.toggle('bg-slate-800/40', selected);
-      candidate.classList.toggle('text-slate-400', !selected);
-      candidate.classList.toggle('border-transparent', !selected);
-    }
-    syncListLineNumbers(editor instanceof HTMLTextAreaElement ? editor : undefined);
-    const saveButton = $('[data-action="saveActiveListFile"]');
-    if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !summary.writable || busy;
-  } catch (error) {
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ—á–∏—Ç–∞—Ç—å —Å–ø–∏—Å–æ–∫', 'error');
-  }
-}
-
-function setListEditorView(view: 'text' | 'rows') {
-  listEditorView = view === 'rows' ? 'rows' : 'text';
-  try { localStorage.setItem(LIST_EDITOR_VIEW_KEY, view); } catch { /* The view preference is optional. */ }
-  const textView = $('#listTextView');
-  const rowsView = $('#listRowsView');
-  textView?.classList.toggle('hidden', listEditorView !== 'text');
-  rowsView?.classList.toggle('hidden', listEditorView !== 'rows');
-  for (const [id, active] of [['listViewTextButton', listEditorView === 'text'], ['listViewRowsButton', listEditorView === 'rows']] as const) {
-    const button = $(`#${id}`);
-    button?.setAttribute('aria-pressed', String(active));
-    button?.classList.toggle('active', active);
-  }
-  const remove = $('[data-action-click="removeSelectedListLines"]');
-  if (remove) remove.textContent = listEditorView === 'rows' ? `–£–¥–∞–ª–∏—Ç—å –≤—ã–±—Ä–∞–Ω–Ω—ã–µ (${selectedListRows.size})` : '–£–¥–∞–ª–∏—Ç—å —Å—Ç—Ä–æ–∫—É/–≤—ã–¥–µ–ª–µ–Ω–∏–µ';
-  $('#findNextListEntryButton')?.classList.toggle('hidden', listEditorView === 'rows');
-  if (listEditorView === 'rows') renderListRows();
-}
-
-function removeListRows(indices: readonly number[]) {
-  const editor = $('#listEditorTextarea');
-  if (!(editor instanceof HTMLTextAreaElement)) return;
-  const result = removeListLinesByIndices(editor.value, indices);
-  if (!result.removed) return toast('–í—ã–±–µ—Ä–∏—Ç–µ —Å—Ç—Ä–æ–∫–∏ –¥–ª—è —É–¥–∞–ª–µ–Ω–∏—è.', 'error');
-  editor.value = result.content;
-  selectedListRows.clear();
-  syncListLineNumbers(editor);
-  toast(`–£–¥–∞–ª–µ–Ω–æ —Å—Ç—Ä–æ–∫: ${result.removed}. –ò–∑–º–µ–Ω—ë–Ω —Ç–æ–ª—å–∫–æ —á–µ—Ä–Ω–æ–≤–∏–∫.`);
-}
-
-function renderListRows() {
-  const root = $('#listRowsView');
-  const editor = $('#listEditorTextarea');
-  if (!root || !(editor instanceof HTMLTextAreaElement)) return;
-  const search = $('#listSearchInput');
-  const query = search instanceof HTMLInputElement ? search.value : '';
-  const rows = listRowsFromContent(editor.value, query);
-  root.replaceChildren();
-  if (!rows.length) {
-    const empty = document.createElement('p');
-    empty.className = 'px-3 py-6 text-center text-sm text-slate-400';
-    empty.textContent = query.trim() ? '–°–æ–≤–ø–∞–¥–µ–Ω–∏–π –Ω–µ –Ω–∞–π–¥–µ–Ω–æ.' : '–°–ø–∏—Å–æ–∫ –ø—É—Å—Ç.';
-    root.append(empty);
-  }
-  for (const row of rows) {
-    const item = document.createElement('div');
-    item.className = `list-editor-row${row.comment ? ' is-comment' : ''}`;
-    item.setAttribute('role', 'listitem');
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = selectedListRows.has(row.index);
-    checkbox.setAttribute('aria-label', `–í—ã–±—Ä–∞—Ç—å —Å—Ç—Ä–æ–∫—É ${row.index + 1}: ${row.text}`);
-    checkbox.addEventListener('change', () => {
-      checkbox.checked ? selectedListRows.add(row.index) : selectedListRows.delete(row.index);
-      const remove = $('[data-action-click="removeSelectedListLines"]');
-      if (remove) remove.textContent = `–£–¥–∞–ª–∏—Ç—å –≤—ã–±—Ä–∞–Ω–Ω—ã–µ (${selectedListRows.size})`;
-    });
-    const line = document.createElement('span');
-    line.className = 'list-editor-row-number';
-    line.textContent = String(row.index + 1);
-    const text = document.createElement('span');
-    text.className = 'min-w-0 flex-1 break-all font-mono';
-    text.textContent = row.text;
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'list-editor-row-remove';
-    remove.setAttribute('aria-label', `–£–¥–∞–ª–∏—Ç—å —Å—Ç—Ä–æ–∫—É ${row.index + 1}`);
-    remove.textContent = '–£–¥–∞–ª–∏—Ç—å';
-    remove.addEventListener('click', () => removeListRows([row.index]));
-    item.append(checkbox, line, text, remove);
-    root.append(item);
-  }
-}
-
-function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
-  const host = $('#customListTabs');
-  if (!host) return;
-  host.replaceChildren();
-  const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
-  const fileById = new Map(files.map((file) => [file.id, file]));
-  for (const id of listTabIdsFromInventory(files).filter((candidate) => !standardIds.has(candidate))) {
-    const summary = fileById.get(id);
-    if (!summary) continue;
-    const group = document.createElement('div');
-    group.className = 'list-custom-tab-group';
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.id = `listTab-${id}`;
-    button.dataset.actionClick = 'selectListFile';
-    button.dataset.args = JSON.stringify([id]);
-    button.dataset.customListTab = 'true';
-    button.className = 'list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap';
-    button.title = `${listDisplayName(id)} ‚Äî ${summary.path}`;
-    const label = document.createElement('span');
-    label.textContent = id;
-    button.append(label);
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.dataset.actionClick = 'requestDeleteCustomList';
-    remove.dataset.args = JSON.stringify([id]);
-    remove.dataset.customListDelete = 'true';
-    remove.dataset.actionTooltip = `–£–¥–∞–ª–∏—Ç—å –ø–æ–ª—å–∑–æ–≤–∞—Ç–µ–ª—å—Å–∫–∏–π —Å–ø–∏—Å–æ–∫ ${id}`;
-    remove.className = 'list-file-delete';
-    remove.setAttribute('aria-label', `–£–¥–∞–ª–∏—Ç—å –ø–æ–ª—å–∑–æ–≤–∞—Ç–µ–ª—å—Å–∫–∏–π —Å–ø–∏—Å–æ–∫ ${id}`);
-    remove.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"></path></svg>';
-    group.append(button, remove);
-    host.append(group);
-  }
-}
-function requestDeleteCustomList(id: string) {
-  const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
-  if (standardIds.has(id) || !/^[A-Za-z0-9_.-]{1,128}\.list$/.test(id) || id.includes('..')) return;
-  const modal = $('#customListDeleteModal');
-  const name = $('#customListDeleteName');
-  const confirm = $('#confirmCustomListDelete');
-  if (!modal || !name || !(confirm instanceof HTMLButtonElement)) return;
-  name.textContent = id;
-  confirm.dataset.args = JSON.stringify([id]);
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
-}
-function closeCustomListDeleteModal() {
-  const modal = $('#customListDeleteModal');
-  modal?.classList.add('hidden');
-  modal?.classList.remove('flex');
-}
-async function deleteCustomList(id: string) {
-  const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
-  if (standardIds.has(id) || !/^[A-Za-z0-9_.-]{1,128}\.list$/.test(id) || id.includes('..')) return;
-  try {
-    const current = await nfqwsLists.get(id);
-    await nfqwsLists.delete(id, current.revision);
-    closeCustomListDeleteModal();
-    const index = await nfqwsLists.index();
-    renderCustomListTabs(index.files);
-    toast(`–°–ø–∏—Å–æ–∫ ${id} —É–¥–∞–ª—ë–Ω.`);
-    const nextId = index.files.some((file) => file.id === activeListId) ? activeListId : index.files[0]?.id;
-    if (nextId) await loadList(nextId);
-  } catch (error) {
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å —É–¥–∞–ª–∏—Ç—å –ø–æ–ª—å–∑–æ–≤–∞—Ç–µ–ª—å—Å–∫–∏–π —Å–ø–∏—Å–æ–∫', 'error');
-  }
-}
-async function saveActiveList() {
-  if (busy) return;
-  if (!activeList) return toast('–°–Ω–∞—á–∞–ª–∞ –∑–∞–≥—Ä—É–∑–∏—Ç–µ —Å–ø–∏—Å–æ–∫ –∏–∑ backend.', 'error');
-  const editor = $('#listEditorTextarea');
-  if (!(editor instanceof HTMLTextAreaElement)) return;
-  setBusy(true);
-  try {
-    activeList = await nfqwsLists.save(activeList.id, editor.value, activeList.revision);
-    editor.value = activeList.content;
-    selectedListRows.clear();
-    syncListLineNumbers(editor);
-    toast('–°–ø–∏—Å–æ–∫ –∑–∞–ø–∏—Å–∞–Ω, —Ä–µ–∑–µ—Ä–≤–Ω–∞—è –∫–æ–ø–∏—è —Å–æ–∑–¥–∞–Ω–∞, –ø–æ–≤—Ç–æ—Ä–Ω–æ–µ —á—Ç–µ–Ω–∏–µ –ø–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–æ. –°–ª—É–∂–±–∞ –Ω–µ –ø–µ—Ä–µ–∑–∞–ø—É—Å–∫–∞–ª–∞—Å—å.');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å —Å–æ—Ö—Ä–∞–Ω–∏—Ç—å —Å–ø–∏—Å–æ–∫', 'error');
-  } finally { setBusy(false); }
-}
-function syncListLineNumbers(editor = $('#listEditorTextarea')) {
-  if (!(editor instanceof HTMLTextAreaElement)) return;
-  const gutter = $('#listLineNumbers');
-  if (!gutter) return;
-  const lines = Math.max(1, editor.value.split(/\r?\n/).length);
-  gutter.innerHTML = Array.from({ length: lines }, (_, index) => `${index + 1}`).join('<br>');
-  gutter.scrollTop = editor.scrollTop;
-  const entries = editor.value.split(/\r?\n/).filter((line) => line.trim() && !line.trimStart().startsWith('#')).length;
-  setText('#listFooterCount', `–í—Å–µ–≥–æ –∑–∞–ø–∏—Å–µ–π: ${entries}`);
-  if (listEditorView === 'rows') {
-    const remove = $('[data-action-click="removeSelectedListLines"]');
-    if (remove) remove.textContent = `–£–¥–∞–ª–∏—Ç—å –≤—ã–±—Ä–∞–Ω–Ω—ã–µ (${selectedListRows.size})`;
-    renderListRows();
-  }
-}
-function syncListScroll(editor: HTMLTextAreaElement) {
-  const gutter = $('#listLineNumbers');
-  if (gutter) gutter.scrollTop = editor.scrollTop;
-}
-function removeSelectedListLines() {
-  if (!activeList) return toast('–°–Ω–∞—á–∞–ª–∞ –∑–∞–≥—Ä—É–∑–∏—Ç–µ —Å–ø–∏—Å–æ–∫ –∏–∑ backend.', 'error');
-  const editor = $('#listEditorTextarea');
-  if (!(editor instanceof HTMLTextAreaElement)) return;
-  if (listEditorView === 'rows') {
-    if (!selectedListRows.size) return toast('–û—Ç–º–µ—Ç—å—Ç–µ —Å—Ç—Ä–æ–∫–∏, –∫–æ—Ç–æ—Ä—ã–µ –Ω—É–∂–Ω–æ —É–¥–∞–ª–∏—Ç—å.', 'error');
-    return removeListRows([...selectedListRows]);
-  }
-  const result = removeListLines(editor.value, editor.selectionStart, editor.selectionEnd);
-  if (!result.removed) return toast('–°–ø–∏—Å–æ–∫ –ø—É—Å—Ç.');
-  editor.value = result.content;
-  editor.focus();
-  syncListLineNumbers(editor);
-  toast(`–£–¥–∞–ª–µ–Ω–æ —Å—Ç—Ä–æ–∫: ${result.removed}. –ò–∑–º–µ–Ω—ë–Ω —Ç–æ–ª—å–∫–æ —á–µ—Ä–Ω–æ–≤–∏–∫.`);
-}
-function findNextListEntry() {
-  const editor = $('#listEditorTextarea'); const input = $('#listSearchInput');
-  if (!(editor instanceof HTMLTextAreaElement) || !(input instanceof HTMLInputElement)) return;
-  const match = findNextListMatch(editor.value, input.value, editor.selectionEnd);
-  if (!match) return toast(input.value.trim() ? '–°–æ–≤–ø–∞–¥–µ–Ω–∏–π –Ω–µ –Ω–∞–π–¥–µ–Ω–æ.' : '–í–≤–µ–¥–∏—Ç–µ —Ç–µ–∫—Å—Ç –¥–ª—è –ø–æ–∏—Å–∫–∞.', 'error');
-  editor.focus(); editor.setSelectionRange(match.start, match.end);
-}
-async function importListDraft() {
-  if (!activeList) return toast('–°–Ω–∞—á–∞–ª–∞ –∑–∞–≥—Ä—É–∑–∏—Ç–µ —Å–ø–∏—Å–æ–∫ –∏–∑ backend.', 'error');
-  const input = $('#listImportFile'); const editor = $('#listEditorTextarea');
-  if (!(input instanceof HTMLInputElement) || !(editor instanceof HTMLTextAreaElement)) return;
-  const file = input.files?.[0];
-  if (!file) return;
-  try {
-    editor.value = appendListEntries(editor.value, await file.text());
-    syncListLineNumbers(editor);
-    toast(`–°–æ–¥–µ—Ä–∂–∏–º–æ–µ ${file.name} –¥–æ–±–∞–≤–ª–µ–Ω–æ –≤ —á–µ—Ä–Ω–æ–≤–∏–∫; —Å–æ—Ö—Ä–∞–Ω–µ–Ω–∏–µ –∏ —Å–µ—Ä–≤–µ—Ä–Ω–∞—è –ø—Ä–æ–≤–µ—Ä–∫–∞ –≤—ã–ø–æ–ª–Ω—è—é—Ç—Å—è –æ—Ç–¥–µ–ª—å–Ω–æ.`);
-  } catch (error) { toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ—á–∏—Ç–∞—Ç—å —Ñ–∞–π–ª', 'error'); }
-  finally { input.value = ''; }
-}
-function exportListDraft() {
-  if (!activeList) return toast('–°–Ω–∞—á–∞–ª–∞ –∑–∞–≥—Ä—É–∑–∏—Ç–µ —Å–ø–∏—Å–æ–∫ –∏–∑ backend.', 'error');
-  const editor = $('#listEditorTextarea');
-  if (!(editor instanceof HTMLTextAreaElement)) return;
-  const url = URL.createObjectURL(new Blob([editor.value], { type: 'text/plain;charset=utf-8' }));
-  const link = document.createElement('a'); link.href = url; link.download = activeList.id; link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  toast('–¢–µ–∫—É—â–∏–π —á–µ—Ä–Ω–æ–≤–∏–∫ —ç–∫—Å–ø–æ—Ä—Ç–∏—Ä–æ–≤–∞–Ω.');
-}
-function resultBanner(presentation: Presentation): HTMLElement {
-  const banner = document.createElement('p'); banner.className = `diagnosis-verdict diagnosis-${presentation.kind} col-span-full`; banner.setAttribute('role', 'status'); banner.textContent = presentation.text; return banner;
-}
-function diagnosisIcon(kind: Presentation['kind']): HTMLElement {
-  const icon = document.createElement('span'); icon.className = `diagnosis-state-icon diagnosis-icon-${kind}`;
-  icon.textContent = kind === 'success' ? '‚úì' : kind === 'failure' ? '√ó' : '!';
-  icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', kind === 'success' ? '–û—Ç–≤–µ—Ç –ø–æ–ª—É—á–µ–Ω' : kind === 'failure' ? '–û—à–∏–±–∫–∞ –ø—Ä–æ–≤–µ—Ä–∫–∏' : '–†–µ–∑—É–ª—å—Ç–∞—Ç –Ω–µ –æ–ø—Ä–µ–¥–µ–ª—ë–Ω'); return icon;
-}
-function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string; label: string }>, activeIndex: number, results?: ReturnType<typeof diagnosisRows>) {
-  const section = document.createElement('section'); section.className = 'diagnosis-queue ui-card rounded-2xl';
-  section.setAttribute('aria-label', '–≠—Ç–∞–ø—ã –ø—Ä–æ–≤–µ—Ä–∫–∏ —Å–∞–π—Ç–∞');
-  const title = document.createElement('h3'); title.className = 'diagnosis-checks-title';
-  title.textContent = activeIndex < 0 ? '–≠—Ç–∞–ø—ã –ø—Ä–æ–≤–µ—Ä–∫–∏' : activeIndex >= stages.length ? '–ü—Ä–æ–≤–µ—Ä–∫–∏ –∑–∞–≤–µ—Ä—à–µ–Ω—ã ¬∑ —Ä–µ–∑—É–ª—å—Ç–∞—Ç—ã –ø–æ —ç—Ç–∞–ø–∞–º' : '–ü—Ä–æ–≤–µ—Ä–∫–∞ —Å–∞–π—Ç–∞';
-  section.append(title);
-  const list = document.createElement('ol'); list.className = 'diagnosis-queue-list';
-  stages.forEach((stage, index) => {
-    const state = diagnosisQueueState(index, activeIndex);
-    const result = results?.find((item) => item.id === stage.id);
-    const row = document.createElement('li');
-    row.className = `diagnosis-queue-step is-${state}${result ? ` is-result-${result.kind}` : ''}`;
-    row.setAttribute('aria-current', state === 'active' ? 'step' : 'false');
-    const marker = document.createElement('span'); marker.className = 'diagnosis-queue-marker'; marker.setAttribute('aria-hidden', 'true');
-    marker.textContent = state === 'complete' ? (result?.kind === 'failure' ? '√ó' : result?.kind === 'unknown' ? '!' : '‚úì') : state === 'active' ? '‚Ä¶' : String(index + 1);
-    const label = document.createElement('span'); label.textContent = stage.label;
-    const status = document.createElement('small'); status.textContent = state === 'active' ? '–í—ã–ø–æ–ª–Ω—è–µ—Ç—Å—è' : state === 'pending' ? '–û–∂–∏–¥–∞–µ—Ç' : result?.kind === 'failure' ? '–û—à–∏–±–∫–∞' : result?.kind === 'unknown' ? '–ù–µ –æ–ø—Ä–µ–¥–µ–ª–µ–Ω–æ' : '–ì–æ—Ç–æ–≤–æ';
-    row.append(marker, label, status); list.append(row);
-  });
-  section.append(list); container.replaceChildren(section);
-}
-const waitForDiagnosisAnimation = () => new Promise<void>((resolve) => window.setTimeout(resolve, 120));
-function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticReport) {
-  container.replaceChildren();
-  const verdict = comparisonVerdict(report.direct, report.current);
-  const overview = document.createElement('section'); overview.className = `diagnosis-overview diagnosis-${verdict.kind}`; overview.setAttribute('role', 'status');
-  const copy = document.createElement('div'); copy.className = 'diagnosis-overview-copy';
-  const title = document.createElement('h3'); title.className = 'diagnosis-overview-title'; title.textContent = verdict.text;
-  const subtitle = document.createElement('p'); subtitle.className = 'diagnosis-overview-detail'; subtitle.textContent = [report.host, report.addresses.join(', ')].filter(Boolean).join(' ¬∑ '); copy.append(title, subtitle);
-  const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'diagnosis-retry'; retry.textContent = '‚Üª –ï—â—ë —Ä–∞–∑'; retry.setAttribute('aria-label', `–ü–æ–≤—Ç–æ—Ä–∏—Ç—å –ø—Ä–æ–≤–µ—Ä–∫—É ${report.host}`);
-  retry.addEventListener('click', () => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = report.host; void runSiteDiagnosis(); } });
-  overview.append(diagnosisIcon(verdict.kind), copy, retry); container.append(overview);
-  const checks = document.createElement('section'); checks.className = 'diagnosis-checks ui-card rounded-2xl';
-  const header = document.createElement('div'); header.className = 'diagnosis-checks-header';
-  const heading = document.createElement('h3'); heading.className = 'diagnosis-checks-title'; heading.textContent = '–ß—Ç–æ –ø—Ä–æ–≤–µ—Ä–µ–Ω–æ';
-  const host = document.createElement('span'); host.className = 'diagnosis-checks-host'; host.textContent = report.host; header.append(heading, host); checks.append(header);
-  const list = document.createElement('div'); list.setAttribute('role', 'list');
-  for (const item of diagnosisRows(report)) {
-    const row = document.createElement('div'); row.className = `diagnosis-row${item.inactive ? ' diagnosis-row-inactive' : ''}`; row.setAttribute('role', 'listitem');
-    const label = document.createElement('h4'); label.className = 'diagnosis-row-label'; label.textContent = item.label;
-    const body = document.createElement('div'); body.className = 'diagnosis-row-body';
-    if (item.metrics) { const metrics = document.createElement('p'); metrics.className = 'diagnosis-row-metrics'; metrics.textContent = item.metrics; body.append(metrics); }
-    const detail = document.createElement('p'); detail.className = 'diagnosis-row-detail'; detail.textContent = item.detail; body.append(detail);
-    if (item.note) { const note = document.createElement('p'); note.className = 'diagnosis-row-note'; note.textContent = item.note; body.append(note); }
-    const icon = diagnosisIcon(item.kind); if (item.inactive) { icon.textContent = '‚Äî'; icon.setAttribute('aria-label', '–≠—Ç–∞–ø –Ω–µ –≤—ã–ø–æ–ª–Ω—è–ª—Å—è'); }
-    row.append(icon, label, body); list.append(row);
-  }
-  checks.append(list); container.append(checks);
-  const notes = document.createElement('details'); notes.className = 'diagnosis-notes';
-  const disclosure = document.createElement('summary'); disclosure.textContent = '–ö–∞–∫ —á–∏—Ç–∞—Ç—å —Ä–µ–∑—É–ª—å—Ç–∞—Ç—ã'; notes.append(disclosure);
-  for (const text of [report.summary, ...report.limitations]) { const p = document.createElement('p'); p.textContent = text; notes.append(p); } container.append(notes);
-}
-async function runSiteDiagnosis() {
-  if (diagnosisRunning) return;
-  const input = $('#diagDomainInput'); const container = $('#diagResultContainer');
-  const button = $('[data-action-click="runSiteDiagnosis"]');
-  if (!(input instanceof HTMLInputElement) || !container || !(button instanceof HTMLButtonElement)) return;
-  if (!input.value.trim()) return toast('–í–≤–µ–¥–∏—Ç–µ –¥–æ–º–µ–Ω –∏–ª–∏ –ø—É–±–ª–∏—á–Ω—ã–π IPv4 –¥–ª—è –ø—Ä–æ–≤–µ—Ä–∫–∏.', 'error');
-  diagnosisRunning = true; input.disabled = true; button.disabled = true;
-  button.textContent = '–ü—Ä–æ–≤–µ—Ä—è–µ–º‚Ä¶'; container.replaceChildren();
-  renderDiagnosisQueue(container, SITE_DIAGNOSIS_STAGES.map(({ id, label }) => ({ id, label })), -1);
-  const toastHost = $('#toastWrapper');
-  const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
-  const loading = document.createElement('p'); loading.className = 'col-span-full text-sm text-blue-300 animate-pulse';
-  loading.setAttribute('role', 'status'); loading.textContent = '–°—Ä–∞–≤–Ω–∏–≤–∞–µ–º –¥–æ—Å—Ç—É–ø –Ω–∞–ø—Ä—è–º—É—é, —Ç–µ–∫—É—â–∏–π –º–∞—Ä—à—Ä—É—Ç –∏ QUIC —Å —Ä–æ—É—Ç–µ—Ä–∞‚Ä¶'; container.append(loading);
-  try {
-    const report = await nfqwsDiagnostics.site(input.value);
-    const resultRows = diagnosisRows(report);
-    const stages = resultRows.map(({ id, label }) => ({ id, label }));
-    for (let index = 0; index < stages.length; index += 1) {
-      renderDiagnosisQueue(container, stages, index, resultRows);
-      await waitForDiagnosisAnimation();
-      renderDiagnosisQueue(container, stages, index + 1, resultRows);
-    }
-    container.replaceChildren();
-    renderSiteDiagnosis(container, report);
-    closeProgress();
-    toast(`–ü—Ä–æ–≤–µ—Ä–∫–∞ ${report.host} –∑–∞–≤–µ—Ä—à–µ–Ω–∞: ${report.summary}`);
-  } catch (error) {
-    container.replaceChildren(); const message = error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –≤—ã–ø–æ–ª–Ω–∏—Ç—å –ø—Ä–æ–≤–µ—Ä–∫—É —Å–∞–π—Ç–∞';
-    const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); closeProgress(); toast(message, 'error');
-  } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = '–ü—Ä–æ–≤–µ—Ä–∏—Ç—å'; }
-}
-
-function renderTraceReport(container: HTMLElement, report: SiteTraceReport) {
-  container.replaceChildren();
-  const phaseCard = (title: string, phase: SiteTraceReport['withoutNfqws2'], route: 'direct' | 'current') => {
-    const presentation = presentTrace(phase, route);
-    const card = document.createElement('article'); card.className = 'ui-card rounded-2xl p-5 space-y-2';
-    const heading = document.createElement('h3'); heading.className = 'text-sm font-bold text-white'; heading.textContent = title;
-    const state = resultBanner(presentation);
-    if (phase.code !== null && phase.code < 400) state.textContent += ` ¬∑ HTTP ${phase.code}`;
-    const reason = document.createElement('p'); reason.className = 'trace-result-copy text-xs whitespace-pre-wrap break-words'; reason.textContent = phase.reason;
-    const timing = phase.durationMs === null ? null : document.createElement('p');
-    if (timing) { timing.className = 'trace-result-metric text-xs'; timing.textContent = `${phase.durationMs} –º—Å`; }
-    card.append(heading, state, reason); if (timing) card.append(timing);
-    return card;
-  };
-  const header = document.createElement('div'); header.className = 'col-span-full ui-card rounded-2xl p-4';
-  const title = document.createElement('h3'); title.className = 'font-bold text-white'; title.textContent = `${report.host} ¬∑ ${report.summary}`;
-  const address = document.createElement('p'); address.className = 'mt-1 text-xs font-mono text-slate-400'; address.textContent = `–ü—Ä–æ–≤–µ—Ä–µ–Ω–Ω—ã–π –∞–¥—Ä–µ—Å: ${report.address ?? '–Ω–µ –æ–ø—Ä–µ–¥–µ–ª—ë–Ω'}`;
-  header.append(title, address);
-  container.append(header, phaseCard('–ù–∞–ø—Ä—è–º—É—é, –º–∏–º–æ nfqws2', report.withoutNfqws2, 'direct'), phaseCard('–¢–µ–∫—É—â–∞—è —Å—Ç—Ä–∞—Ç–µ–≥–∏—è nfqws2', report.withNfqws2, 'current'));
-  const insights = document.createElement('section'); insights.className = 'col-span-full ui-card rounded-2xl p-5 space-y-3';
-  const insightTitle = document.createElement('h3'); insightTitle.className = 'text-sm font-bold text-white'; insightTitle.textContent = '–ß—Ç–æ –ø—Ä–æ–∏–∑–æ—à–ª–æ';
-  const host = document.createElement('p'); host.className = 'text-xs text-slate-300'; host.textContent = `–ò–º—è —Å–∞–π—Ç–∞ –ø–æ SNI/Host: ${report.traceHostname ?? '–Ω–µ –æ–ø—Ä–µ–¥–µ–ª–µ–Ω–æ'}`;
-  const profile = document.createElement('p'); profile.className = 'text-xs text-slate-300'; profile.textContent = `–ü—Ä–æ—Ñ–∏–ª—å: ${report.traceProfile ?? '–Ω–µ –æ–±–Ω–∞—Ä—É–∂–µ–Ω –≤ –∂—É—Ä–Ω–∞–ª–µ'}`;
-  insights.append(insightTitle, host, profile);
-  for (const [label, entries, color] of [['–î–µ–π—Å—Ç–≤–∏—è', report.traceActions, 'text-emerald-300'], ['–ü—Ä–µ–¥—É–ø—Ä–µ–∂–¥–µ–Ω–∏—è', report.traceWarnings, 'text-amber-300']] as const) {
-    if (!entries.length) continue;
-    const heading = document.createElement('p'); heading.className = `text-xs font-semibold ${color}`; heading.textContent = label; insights.append(heading);
-    const list = document.createElement('ul'); list.className = 'pl-4 list-disc text-xs text-slate-300 space-y-1';
-    for (const item of entries) { const row = document.createElement('li'); row.textContent = item; list.append(row); }
-    insights.append(list);
-  }
-  container.append(insights);
-  const logCard = document.createElement('section'); logCard.className = 'col-span-full ui-card rounded-2xl p-5 space-y-3';
-  const logHeading = document.createElement('h3'); logHeading.className = 'text-sm font-bold text-white'; logHeading.textContent = `–ñ—É—Ä–Ω–∞–ª nfqws2 --debug ¬∑ ${report.traceLines.length} —Å—Ç—Ä–æ–∫${report.traceTruncated ? ' ¬∑ –∂—É—Ä–Ω–∞–ª –æ–±—Ä–µ–∑–∞–Ω –ø–æ –ª–∏–º–∏—Ç—É' : ''}`;
-  const filter = document.createElement('input'); filter.type = 'search'; filter.className = 'w-full bg-[#060a12] border border-slate-700 rounded-xl px-3 py-2 text-xs text-white'; filter.placeholder = '–§–∏–ª—å—Ç—Ä –∂—É—Ä–Ω–∞–ª–∞'; filter.setAttribute('aria-label', '–§–∏–ª—å—Ç—Ä –∂—É—Ä–Ω–∞–ª–∞ —Ç—Ä–∞—Å—Å–∏—Ä–æ–≤–∫–∏');
-  const pre = document.createElement('pre'); pre.className = 'max-h-[60vh] overflow-auto rounded-xl bg-[#060a12] border border-slate-800 p-4 text-[11px] leading-5 font-mono text-slate-300 whitespace-pre-wrap break-all';
-  const draw = () => { const query = filter.value.trim().toLowerCase(); pre.textContent = report.traceLines.filter((line) => !query || line.toLowerCase().includes(query)).join('\n'); };
-  filter.addEventListener('input', draw); draw(); logCard.append(logHeading, filter, pre); container.append(logCard);
-}
-
-async function runSiteTrace() {
-  if (traceRunning) return;
-  const input = $('#traceDomainInput'); const container = $('#traceResultContainer'); const button = $('[data-action-click="runSiteTrace"]');
-  if (!(input instanceof HTMLInputElement) || !container || !(button instanceof HTMLButtonElement)) return;
-  if (!input.value.trim()) return toast('–í–≤–µ–¥–∏—Ç–µ –¥–æ–º–µ–Ω –¥–ª—è —Ç—Ä–∞—Å—Å–∏—Ä–æ–≤–∫–∏.', 'error');
-  const stop = $('#traceStopButton'); const operationStatus = $('#traceOperationStatus');
-  traceRunning = true; activeTraceOperationId = null; input.disabled = true; button.disabled = true; button.textContent = '–¢—Ä–∞—Å—Å–∏—Ä–æ–≤–∫–∞‚Ä¶';
-  if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.classList.remove('hidden'); }
-  if (operationStatus) { operationStatus.textContent = '–ü–æ–¥–≥–æ—Ç–æ–≤–∫–∞ —Ñ–æ–Ω–æ–≤–æ–π –ø—Ä–æ–≤–µ—Ä–∫–∏ –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ‚Ä¶'; operationStatus.classList.remove('hidden'); }
-  container.replaceChildren();
-  const progress = document.createElement('p'); progress.className = 'col-span-full text-sm text-blue-300 animate-pulse'; progress.setAttribute('role', 'status'); progress.textContent = '–û–ø–µ—Ä–∞—Ü–∏—è –≤—ã–ø–æ–ª–Ω—è–µ—Ç—Å—è –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ. –ú–æ–∂–Ω–æ –ø–µ—Ä–µ–π—Ç–∏ –≤ –¥—Ä—É–≥–æ–π —Ä–∞–∑–¥–µ–ª; —Å—Ç–∞—Ç—É—Å —Å–æ—Ö—Ä–∞–Ω–∏—Ç—Å—è.'; container.append(progress);
-  const protocol = $('#traceProtoSelect');
-  const proto = protocol instanceof HTMLSelectElement && protocol.value === 'http' ? 'http' : 'https';
-  try {
-    const started = await nfqwsDiagnostics.traceStart(input.value, proto);
-    activeTraceOperationId = started.id;
-    let current: SiteTraceOperation = started;
-    const terminal = ['complete', 'cancelled', 'failed'];
-    let renderedReport = '';
-    for (let attempt = 0; attempt < 90 && !terminal.includes(current.state); attempt += 1) {
-      if (operationStatus) operationStatus.textContent = current.message || `–≠—Ç–∞–ø: ${current.stage}`;
-      if (current.report) {
-        const signature = JSON.stringify(current.report);
-        if (signature !== renderedReport) {
-          renderTraceReport(container, current.report);
-          renderedReport = signature;
-        }
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 900));
-      try { current = await nfqwsDiagnostics.traceStatus(started.id); }
-      catch (error) {
-        if (operationStatus) operationStatus.textContent = error instanceof Error ? `${current.message} ¬∑ –ø–µ—Ä–µ–ø–æ–¥–∫–ª—é—á–µ–Ω–∏–µ‚Ä¶` : '–°–≤—è–∑—å —Å —Ä–æ—É—Ç–µ—Ä–æ–º –≤–æ—Å—Å—Ç–∞–Ω–æ–≤–∏—Ç—Å—è –∞–≤—Ç–æ–º–∞—Ç–∏—á–µ—Å–∫–∏‚Ä¶';
-      }
-    }
-    if (current.report && JSON.stringify(current.report) !== renderedReport) renderTraceReport(container, current.report);
-    else {
-      container.replaceChildren(); const row = document.createElement('p'); row.className = `col-span-full text-sm ${current.state === 'failed' ? 'text-rose-400' : 'text-amber-300'}`;
-      row.textContent = current.message || '–†–µ–∑—É–ª—å—Ç–∞—Ç —Ç—Ä–∞—Å—Å–∏—Ä–æ–≤–∫–∏ –ø–æ–∫–∞ –Ω–µ –ø–æ–ª—É—á–µ–Ω'; container.append(row);
-    }
-    if (operationStatus) operationStatus.textContent = current.message;
-  } catch (error) {
-    container.replaceChildren(); const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = error instanceof Error ? error.message : '–¢—Ä–∞—Å—Å–∏—Ä–æ–≤–∫–∞ –Ω–µ –≤—ã–ø–æ–ª–Ω–µ–Ω–∞'; container.append(row);
-  } finally {
-    traceRunning = false; activeTraceOperationId = null; input.disabled = false; button.disabled = false; button.textContent = '–ó–∞–ø—É—Å—Ç–∏—Ç—å —Ç—Ä–∞—Å—Å–∏—Ä–æ–≤–∫—É';
-    if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.classList.add('hidden'); }
-  }
-}
-
-async function stopSiteTrace() {
-  if (!traceRunning || !activeTraceOperationId) return;
-  const button = $('#traceStopButton');
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = '–û—Å—Ç–∞–Ω–∞–≤–ª–∏–≤–∞—é‚Ä¶'; }
-  try {
-    const operation = await nfqwsDiagnostics.traceStop(activeTraceOperationId);
-    const status = $('#traceOperationStatus');
-    if (status) status.textContent = operation.message;
-  } catch (error) {
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –æ—Å—Ç–∞–Ω–æ–≤–∏—Ç—å —Ç—Ä–∞—Å—Å–∏—Ä–æ–≤–∫—É', 'error');
-    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '–û—Å—Ç–∞–Ω–æ–≤–∏—Ç—å'; }
-  }
-}
-
-const FOREIGN_CONFIG_CHECK_STORAGE = 'nfqws2-ui-foreign-config-check-id';
-
-function showForeignConfigForm(kind: 'text' | 'url') {
-  $('#foreignConfigTextForm')?.classList.toggle('hidden', kind !== 'text');
-  $('#foreignConfigUrlForm')?.classList.toggle('hidden', kind !== 'url');
-  $(`#foreignConfig${kind === 'text' ? 'TextContent' : 'Url'}`)?.focus();
-}
-
-function closeForeignConfigForms() {
-  $('#foreignConfigTextForm')?.classList.add('hidden');
-  $('#foreignConfigUrlForm')?.classList.add('hidden');
-}
-
-function renderForeignConfigInputs() {
-  const list = $('#foreignConfigList');
-  if (!list) return;
-  list.replaceChildren();
-  if (!foreignConfigInputs.length) {
-    const empty = document.createElement('p'); empty.className = 'text-sm text-slate-500'; empty.textContent = '–î–æ–±–∞–≤—å—Ç–µ –∫–æ–Ω—Ñ–∏–≥ —Ç–µ–∫—Å—Ç–æ–º, —Å—Å—ã–ª–∫–æ–π –∏–ª–∏ —Ñ–∞–π–ª–æ–º .conf.'; list.append(empty); return;
-  }
-  foreignConfigInputs.forEach((item, index) => {
-    const row = document.createElement('div'); row.className = 'flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/35 px-3 py-2';
-    const title = document.createElement('div'); title.className = 'min-w-0';
-    const name = document.createElement('strong'); name.className = 'block truncate text-sm text-slate-200'; name.textContent = item.name;
-    const source = document.createElement('span'); source.className = 'block truncate text-[11px] text-slate-500'; source.textContent = item.source === '–°—Å—ã–ª–∫–∞' ? item.url ?? '' : `${item.source} ¬∑ ${new TextEncoder().encode(item.content ?? '').length} –±–∞–π—Ç`;
-    title.append(name, source);
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'shrink-0 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-rose-400 hover:text-rose-200'; remove.textContent = '–£–±—Ä–∞—Ç—å';
-    remove.addEventListener('click', () => { foreignConfigInputs.splice(index, 1); renderForeignConfigInputs(); });
-    row.append(title, remove); list.append(row);
-  });
-}
-
-function addForeignConfig(input: ForeignConfigInput) {
-  if (foreignConfigInputs.length >= 10) return toast('–ú–æ–∂–Ω–æ —Å—Ä–∞–≤–Ω–∏—Ç—å –Ω–µ –±–æ–ª—å—à–µ –¥–µ—Å—è—Ç–∏ –∫–æ–Ω—Ñ–∏–≥–æ–≤ –∑–∞ –æ–¥–∏–Ω –∑–∞–ø—É—Å–∫.', 'error');
-  foreignConfigInputs.push(input);
-  renderForeignConfigInputs();
-  closeForeignConfigForms();
-  toast(`–î–æ–±–∞–≤–ª–µ–Ω –∫–æ–Ω—Ñ–∏–≥ ¬´${input.name}¬ª.`, 'success');
-}
-
-function addForeignConfigText() {
-  const content = $('#foreignConfigTextContent');
-  const nameInput = $('#foreignConfigTextName');
-  if (!(content instanceof HTMLTextAreaElement)) return;
-  const value = content.value.trim();
-  if (!value) return toast('–í—Å—Ç–∞–≤—å—Ç–µ —Å–æ–¥–µ—Ä–∂–∏–º–æ–µ nfqws2.conf.', 'error');
-  if (new TextEncoder().encode(value).length > 65536) return toast('–†–∞–∑–º–µ—Ä –∫–æ–Ω—Ñ–∏–≥–∞ –Ω–µ –¥–æ–ª–∂–µ–Ω –ø—Ä–µ–≤—ã—à–∞—Ç—å 64 –ö–∏–ë.', 'error');
-  const name = nameInput instanceof HTMLInputElement && nameInput.value.trim() ? nameInput.value.trim() : `–ö–æ–Ω—Ñ–∏–≥ ${foreignConfigInputs.length + 1}`;
-  addForeignConfig({ name, source: '–¢–µ–∫—Å—Ç', content: value });
-  content.value = '';
-  if (nameInput instanceof HTMLInputElement) nameInput.value = '';
-}
-
-function addForeignConfigUrl() {
-  const urlInput = $('#foreignConfigUrl');
-  const nameInput = $('#foreignConfigUrlName');
-  if (!(urlInput instanceof HTMLInputElement) || !urlInput.value.trim()) return toast('–£–∫–∞–∂–∏—Ç–µ HTTPS-—Å—Å—ã–ª–∫—É –Ω–∞ .conf.', 'error');
-  const name = nameInput instanceof HTMLInputElement && nameInput.value.trim() ? nameInput.value.trim() : `–ö–æ–Ω—Ñ–∏–≥ ${foreignConfigInputs.length + 1}`;
-  addForeignConfig({ name, source: '–°—Å—ã–ª–∫–∞', url: urlInput.value.trim() });
-  urlInput.value = '';
-  if (nameInput instanceof HTMLInputElement) nameInput.value = '';
-}
-
-function openForeignConfigFile() {
-  const input = $('#foreignConfigFileInput');
-  if (input instanceof HTMLInputElement) input.click();
-}
-
-async function addForeignConfigFile(file: File) {
-  if (!file.name.toLowerCase().endsWith('.conf')) return toast('–í—ã–±–µ—Ä–∏—Ç–µ —Ñ–∞–π–ª —Å —Ä–∞—Å—à–∏—Ä–µ–Ω–∏–µ–º .conf.', 'error');
-  if (file.size > 65536) return toast('–†–∞–∑–º–µ—Ä —Ñ–∞–π–ª–∞ –Ω–µ –¥–æ–ª–∂–µ–Ω –ø—Ä–µ–≤—ã—à–∞—Ç—å 64 –ö–∏–ë.', 'error');
-  try {
-    const content = await file.text();
-    if (!content.trim()) return toast('–§–∞–π–ª –ø—É—Å—Ç–æ–π.', 'error');
-    addForeignConfig({ name: file.name, source: '–§–∞–π–ª', content });
-  } catch {
-    toast('–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–æ—á–∏—Ç–∞—Ç—å —Ñ–∞–π–ª –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏.', 'error');
-  }
-}
-
-function foreignStatusLabel(value: boolean | null) {
-  return value === true ? '–î–æ—Å—Ç—É–ø–µ–Ω' : value === false ? '–ù–µ –æ—Ç–≤–µ—á–∞–µ—Ç' : '–û–∂–∏–¥–∞–µ—Ç';
-}
-
-function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
-  const status = $('#foreignConfigStatus');
-  const results = $('#foreignConfigResults');
-  const progress = $('#foreignConfigProgress');
-  const bar = $('#foreignConfigProgressBar');
-  const active = ['queued', 'running', 'stopping'].includes(operation.state);
-  if (status) { status.classList.remove('hidden'); status.textContent = operation.current ? `${operation.done}/${operation.total} ¬∑ ${operation.current}` : operation.message; }
-  progress?.classList.toggle('hidden', !active);
-  if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(operation.done * 100 / operation.total) : 0}%`;
-  const cancel = $('#cancelForeignConfigCheck');
-  if (cancel instanceof HTMLButtonElement) {
-    cancel.classList.toggle('hidden', !active);
-    cancel.disabled = operation.state === 'stopping';
-    cancel.textContent = operation.state === 'stopping' ? '–û—Å—Ç–∞–Ω–∞–≤–ª–∏–≤–∞—é‚Ä¶' : '–û—Å—Ç–∞–Ω–æ–≤–∏—Ç—å';
-  }
-  const start = $('#runForeignConfigCheck');
-  if (start instanceof HTMLButtonElement) { start.disabled = active; start.textContent = active ? '–ü—Ä–æ–≤–µ—Ä–∫–∞‚Ä¶' : '‚ñ∑ –ü—Ä–æ–≤–µ—Ä–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥–∏'; }
-  if (!results) return;
-  results.replaceChildren();
-  const renderSites = (sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail') => {
-    const list = document.createElement('div'); list.className = 'mt-2 divide-y divide-slate-800/70';
-    for (const site of sites) {
-      const row = document.createElement('div'); row.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-xs';
-      const host = document.createElement('strong'); host.className = 'min-w-0 truncate font-mono font-semibold text-white'; host.textContent = site.host;
-      const result = site[key];
-      const statusText = document.createElement('span'); statusText.className = `shrink-0 font-semibold ${result === true ? 'text-emerald-300' : result === false ? 'text-rose-300' : 'text-slate-500'}`; statusText.textContent = `–î–æ–º–µ–Ω: ${foreignStatusLabel(result)}`;
-      row.append(host, statusText); list.append(row);
-      if (result !== true && site[detailKey]) {
-        const detail = document.createElement('p'); detail.className = 'pb-2 text-[11px] leading-4 text-slate-400'; detail.textContent = site[detailKey]; list.append(detail);
-      }
-    }
-    return list;
-  };
-  const makeDisclosure = (title: string, sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail', successfulLabel: string) => {
-    const passed = sites.filter((site) => site[key] === true).length;
-    const details = document.createElement('details'); details.className = 'ui-card min-w-0 rounded-xl border border-slate-800 p-3';
-    const summary = document.createElement('summary'); summary.className = 'flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-sm font-semibold text-white';
-    const label = document.createElement('span'); label.textContent = title;
-    const count = document.createElement('span'); count.className = `text-xs ${sites.length > 0 && passed === sites.length ? 'text-emerald-300' : 'text-slate-400'}`; count.textContent = `${passed}/${sites.length} –¥–æ–º–µ–Ω–æ–≤ ¬∑ ${sites.length > 0 && passed === sites.length ? successfulLabel : '–µ—Å—Ç—å –Ω–µ–¥–æ—Å—Ç—É–ø–Ω—ã–µ –∏–ª–∏ –æ–∂–∏–¥–∞—é—Ç'}`;
-    summary.append(label, count); details.append(summary, renderSites(sites, key, detailKey));
-    return details;
-  };
-
-  const baselineSites = operation.comparisons[0]?.sites ?? [];
-  results.append(makeDisclosure('–¢–µ–∫—É—â–∞—è –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è', baselineSites, 'currentOk', 'currentDetail', '–≤—Å–µ –¥–æ—Å—Ç—É–ø–Ω—ã'));
-  for (const [index, comparison] of operation.comparisons.entries()) {
-    const candidateWorks = operation.state === 'complete' && comparison.sites.length > 0 && comparison.sites.every((site) => site.candidateOk === true);
-    const details = makeDisclosure(`–ü—Ä–æ–≤–µ—Ä—è–µ–º–∞—è –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è ¬∑ ${comparison.name}`, comparison.sites, 'candidateOk', 'candidateDetail', candidateWorks ? '–ö–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è —Ä–∞–±–æ—Ç–∞–µ—Ç' : '–≤—Å–µ –¥–æ—Å—Ç—É–ø–Ω—ã');
-    const source = document.createElement('span'); source.className = 'mt-1 block text-[11px] text-slate-500'; source.textContent = comparison.source; details.append(source);
-    if (candidateWorks) {
-      const outcome = document.createElement('div'); outcome.className = 'mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2';
-      const label = document.createElement('strong'); label.className = 'text-sm font-semibold text-emerald-200'; label.textContent = '–ö–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è —Ä–∞–±–æ—Ç–∞–µ—Ç';
-      const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50'; apply.textContent = '–ü—Ä–∏–º–µ–Ω–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é';
-      apply.addEventListener('click', () => void applyForeignConfig(operation.id, index, comparison.name, apply));
-      outcome.append(label, apply); details.append(outcome);
-    }
-    results.append(details);
-  }
-}
-
-async function applyForeignConfig(operationId: string, index: number, name: string, button: HTMLButtonElement) {
-  if (!window.confirm(`–ó–∞–º–µ–Ω–∏—Ç—å —Ç–µ–∫—É—â—É—é –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é –Ω–∞ ¬´${name}¬ª –∏ –ø–µ—Ä–µ–∑–∞–ø—É—Å—Ç–∏—Ç—å nfqws2?`)) return;
-  button.disabled = true;
-  button.textContent = '–ü—Ä–∏–º–µ–Ω–µ–Ω–∏–µ‚Ä¶';
-  try {
-    const result = await nfqwsDiagnostics.foreignConfigApply(operationId, index);
-    config = result.config;
-    await loadConfig();
-    toast('–ö–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è –ø—Ä–∏–º–µ–Ω–µ–Ω–∞ –∏ nfqws2 –ø–µ—Ä–µ–∑–∞–ø—É—â–µ–Ω.', 'success');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–∏–º–µ–Ω–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é.', 'error');
-    button.disabled = false;
-    button.textContent = '–ü—Ä–∏–º–µ–Ω–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—é';
-  }
-}
-
-async function pollForeignConfigCheck(id: string) {
-  activeForeignConfigCheckId = id; foreignConfigCheckRunning = true;
-  localStorage.setItem(FOREIGN_CONFIG_CHECK_STORAGE, id);
-  const terminal = ['complete', 'cancelled', 'failed'];
-  let finished = false;
-  try {
-    let current = await nfqwsDiagnostics.foreignConfigStatus(id);
-    renderForeignConfigCheck(current);
-    for (let attempt = 0; attempt < 300 && !terminal.includes(current.state); attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1000));
-      current = await nfqwsDiagnostics.foreignConfigStatus(id);
-      renderForeignConfigCheck(current);
-    }
-    if (!terminal.includes(current.state)) setText('#foreignConfigStatus', `${current.message} ¬∑ –ø—Ä–æ–≤–µ—Ä–∫–∞ –ø—Ä–æ–¥–æ–ª–∂–∏—Ç—Å—è –Ω–∞ —Ä–æ—É—Ç–µ—Ä–µ; –º–æ–∂–Ω–æ –≤–µ—Ä–Ω—É—Ç—å—Å—è –ø–æ–∑–∂–µ.`);
-    if (terminal.includes(current.state)) {
-      finished = true;
-      localStorage.removeItem(FOREIGN_CONFIG_CHECK_STORAGE);
-      toast(current.message, current.state === 'failed' ? 'error' : 'success');
-    }
-  } catch (error) {
-    setText('#foreignConfigStatus', error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø–æ–ª—É—á–∏—Ç—å —Å–æ—Å—Ç–æ—è–Ω–∏–µ –ø—Ä–æ–≤–µ—Ä–∫–∏ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏.');
-  } finally {
-    // Keep the operation addressable after a polling timeout or a temporary
-    // connection error so the user can still cancel it from this page.
-    foreignConfigCheckRunning = !finished;
-    activeForeignConfigCheckId = finished ? null : id;
-  }
-}
-
-async function runForeignConfigCheck() {
-  if (foreignConfigCheckRunning) return;
-  if (!foreignConfigInputs.length) return toast('–î–æ–±–∞–≤—å—Ç–µ —Ö–æ—Ç—è –±—ã –æ–¥–∏–Ω –∫–æ–Ω—Ñ–∏–≥ –¥–ª—è –ø—Ä–æ–≤–µ—Ä–∫–∏.', 'error');
-  const hostsInput = $('#foreignConfigHosts');
-  const hosts = hostsInput instanceof HTMLInputElement ? hostsInput.value.split(/[\s,;]+/).filter(Boolean) : [];
-  if (!hosts.length || hosts.length > 15) return toast('–£–∫–∞–∂–∏—Ç–µ –æ—Ç –æ–¥–Ω–æ–≥–æ –¥–æ –ø—è—Ç–Ω–∞–¥—Ü–∞—Ç–∏ —Å–∞–π—Ç–æ–≤ –∏–ª–∏ –ø—É–±–ª–∏—á–Ω—ã—Ö IPv4.', 'error');
-  const repeatsInput = $('#foreignConfigRepeats');
-  const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
-  const button = $('#runForeignConfigCheck');
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = '–ó–∞–ø—É—Å–∫‚Ä¶'; }
-  try {
-    const operation = await nfqwsDiagnostics.foreignConfigStart(foreignConfigInputs, hosts, repeats);
-    renderForeignConfigCheck(operation);
-    await pollForeignConfigCheck(operation.id);
-  } catch (error) {
-    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '‚ñ∑ –ü—Ä–æ–≤–µ—Ä–∏—Ç—å –∫–æ–Ω—Ñ–∏–≥–∏'; }
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –∑–∞–ø—É—Å—Ç–∏—Ç—å –ø—Ä–æ–≤–µ—Ä–∫—É –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–π.', 'error');
-  }
-}
-
-async function cancelForeignConfigCheck() {
-  if (!activeForeignConfigCheckId) return;
-  const button = $('#cancelForeignConfigCheck');
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = '–û—Å—Ç–∞–Ω–∞–≤–ª–∏–≤–∞—é‚Ä¶'; }
-  try { renderForeignConfigCheck(await nfqwsDiagnostics.foreignConfigCancel(activeForeignConfigCheckId)); }
-  catch (error) { toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –æ—Å—Ç–∞–Ω–æ–≤–∏—Ç—å –ø—Ä–æ–≤–µ—Ä–∫—É.', 'error'); }
-}
-
-const STRATEGY_PICK_STORAGE = 'nfqws2-ui-strategy-pick-id';
-function renderStrategyPick(operation: StrategyPickOperation) {
-  localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
-  setText('#scanProgressLabel', operation.current ? `${operation.stage === 'refining' ? '–£—Ç–æ—á–Ω–µ–Ω–∏–µ' : '–ü—Ä–æ–≤–µ—Ä–∫–∞'} ¬∑ ${operation.done}/${operation.total} ¬∑ ${operation.current}` : operation.message);
-  const bar = $('#scanProgressBar');
-  if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(100 * operation.done / operation.total) : 0}%`;
-  const container = $('#autotuneStrategiesList');
-  if (!container) return;
-  const expandedResults = new Set(
-    [...container.querySelectorAll<HTMLDetailsElement>('details.strategy-pick-steps[open]')]
-      .map((details) => details.dataset.candidateKey)
-      .filter((key): key is string => Boolean(key)),
-  );
-  container.replaceChildren();
-  const confirmed = operation.results.filter((result) => result.confirmed);
-  const windowsTcpTimestampsCommand = 'netsh interface tcp set global timestamps=enabled';
-  const resultSummary = document.createElement('section');
-  resultSummary.className = `strategy-pick-summary ${confirmed.length ? 'has-confirmed' : operation.state === 'running' ? 'is-running' : 'has-no-confirmed'}`;
-  resultSummary.setAttribute('role', operation.state === 'running' ? 'status' : 'region');
-  const resultTitle = document.createElement('h3'); resultTitle.className = 'strategy-pick-summary-title';
-  resultTitle.textContent = operation.state === 'running'
-    ? '–ü—Ä–æ–≤–µ—Ä–∫–∞ —Å—Ç—Ä–∞—Ç–µ–≥–∏–π –≤—ã–ø–æ–ª–Ω—è–µ—Ç—Å—è'
-    : confirmed.length
-      ? `–ü–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–æ ${confirmed.length} –∏–∑ ${operation.total} —Å—Ç—Ä–∞—Ç–µ–≥–∏–π`
-      : operation.state === 'cancelled'
-        ? '–ü—Ä–æ–≤–µ—Ä–∫–∞ –æ—Å—Ç–∞–Ω–æ–≤–ª–µ–Ω–∞'
-        : operation.state === 'failed'
-          ? '–ü—Ä–æ–≤–µ—Ä–∫–∞ –ø—Ä–µ—Ä–≤–∞–Ω–∞'
-          : '–†–∞–±–æ—á–∞—è —Å—Ç—Ä–∞—Ç–µ–≥–∏—è –Ω–µ –ø–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–∞';
-  const resultMeta = document.createElement('p'); resultMeta.className = 'strategy-pick-summary-meta';
-  resultMeta.textContent = `–ü—Ä–æ–≤–µ—Ä–µ–Ω–æ ${operation.done} –∏–∑ ${operation.total} —Å—Ç—Ä–∞—Ç–µ–≥–∏–π ¬∑ —Ä–µ–∑—É–ª—å—Ç–∞—Ç–æ–≤: ${operation.results.length}`;
-  const resultMessage = document.createElement('p'); resultMessage.className = 'strategy-pick-summary-message'; resultMessage.textContent = operation.message;
-  resultSummary.append(resultTitle, resultMeta, resultMessage);
-  if (!operation.results.length) {
-    if (operation.state === 'site_unblocked') resultTitle.textContent = '–ë–µ–∑ –æ–±—Ö–æ–¥–∞ —Å–∞–π—Ç —É–∂–µ –æ—Ç–≤–µ—á–∞–µ—Ç';
-    resultMeta.textContent = operation.total ? `–ü—Ä–æ–≤–µ—Ä–µ–Ω–æ ${operation.done} –∏–∑ ${operation.total} —Å—Ç—Ä–∞—Ç–µ–≥–∏–π` : '–°—Ç—Ä–∞—Ç–µ–≥–∏–∏ –Ω–µ –∑–∞–ø—É—Å–∫–∞–ª–∏—Å—å';
-    container.append(resultSummary);
-    return;
-  }
-  let fastest: StrategyPickOperation['results'][number] | undefined;
-  if (confirmed.length) {
-    fastest = [...confirmed].sort((a, b) => a.elapsedMs - b.elapsedMs)[0];
-    const winner = document.createElement('section'); winner.className = 'strategy-pick-winner';
-    const title = document.createElement('strong'); title.textContent = `–ë—ã—Å—Ç—Ä–µ–µ –≤—Å–µ—Ö ¬∑ ${fastest.candidate.name}`;
-    const metric = document.createElement('span'); metric.className = 'strategy-pick-winner-time'; metric.textContent = `${fastest.elapsedMs} –º—Å`;
-    const source = document.createElement('p'); source.className = 'strategy-pick-winner-source'; source.textContent = `${fastest.successes}/${fastest.attempts} —É—Å–ø–µ—à–Ω—ã—Ö –ø—Ä–æ–≤–µ—Ä–æ–∫ ¬∑ ${fastest.candidate.source}`;
-    const steps = document.createElement('code'); steps.className = 'strategy-pick-winner-steps'; steps.textContent = fastest.candidate.steps.join('\n');
-    winner.append(title, metric, source, steps);
-    if (appearanceSettings.remindWindowsTcpTimestamps && strategyNeedsWindowsTcpTimestamps(fastest.candidate.steps)) {
-      const hint = document.createElement('p'); hint.className = 'strategy-pick-windows-hint'; hint.textContent = '–ù–∞ Windows —ç—Ç–∞ —Å—Ç—Ä–∞—Ç–µ–≥–∏—è –∑–∞–≤–∏—Å–∏—Ç –æ—Ç TCP timestamps. –ï—Å–ª–∏ –æ–Ω–∞ –Ω–µ —Ä–∞–±–æ—Ç–∞–µ—Ç, –≤–∫–ª—é—á–∏—Ç–µ timestamps –≤ –∫–æ–º–∞–Ω–¥–Ω–æ–π —Å—Ç—Ä–æ–∫–µ –∞–¥–º–∏–Ω–∏—Å—Ç—Ä–∞—Ç–æ—Ä–∞:';
-      const command = document.createElement('code'); command.textContent = windowsTcpTimestampsCommand;
-      const copyCommand = document.createElement('button'); copyCommand.type = 'button'; copyCommand.className = 'strategy-copy-button rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-semibold'; copyCommand.textContent = '–ö–æ–ø–∏—Ä–æ–≤–∞—Ç—å –∫–æ–º–∞–Ω–¥—É'; copyCommand.dataset.actionClick = 'copySnippetToClipboard'; copyCommand.dataset.args = JSON.stringify([windowsTcpTimestampsCommand]);
-      winner.append(hint, command, copyCommand);
-    }
-    container.append(resultSummary, winner);
-  } else container.append(resultSummary);
-  operation.results.forEach((result, index) => {
-    const refined = result.candidate.source === '–£—Ç–æ—á–Ω–µ–Ω–∏–µ blockcheck2';
-    const card = document.createElement('article');
-    card.className = `strategy-pick-result-row strategy-result-enter ${result.confirmed ? 'is-confirmed' : 'is-unconfirmed'}`;
-    const status = document.createElement('span'); status.className = 'strategy-pick-result-status'; status.setAttribute('aria-label', result.confirmed ? '–ü–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–∞' : '–ù–µ –ø–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–∞');
-    const statusIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); statusIcon.classList.add('strategy-pick-result-status-icon'); statusIcon.setAttribute('viewBox', '0 0 16 16'); statusIcon.setAttribute('aria-hidden', 'true');
-    const statusPath = document.createElementNS('http://www.w3.org/2000/svg', 'path'); statusPath.setAttribute('d', result.confirmed ? 'm3.25 8.25 3 3 6.5-6.5' : 'm4.5 4.5 7 7m0-7-7 7'); statusPath.setAttribute('fill', 'none'); statusPath.setAttribute('stroke', 'currentColor'); statusPath.setAttribute('stroke-width', result.confirmed ? '1.8' : '1.6'); statusPath.setAttribute('stroke-linecap', 'round'); statusPath.setAttribute('stroke-linejoin', 'round'); statusIcon.append(statusPath); status.append(statusIcon);
-    const body = document.createElement('div'); body.className = 'strategy-pick-result-main';
-    const heading = document.createElement('h4'); heading.className = 'strategy-pick-result-title';
-    heading.textContent = `${result.candidate.name}${refined ? ' ¬∑ —É—Ç–æ—á–Ω—ë–Ω–Ω—ã–π –≤–∞—Ä–∏–∞–Ω—Ç' : ''}`;
-    const headingLine = document.createElement('div'); headingLine.className = 'strategy-pick-result-heading';
-    const verdict = document.createElement('span'); verdict.className = `strategy-pick-result-badge ${result.confirmed ? 'is-confirmed' : 'is-unconfirmed'}`;
-    verdict.textContent = result.confirmed ? '–ü–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–∞' : '–ù–µ –ø–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–∞';
-    headingLine.append(heading, verdict);
-    if (appearanceSettings.remindWindowsTcpTimestamps && strategyNeedsWindowsTcpTimestamps(result.candidate.steps)) {
-      const timestampBadge = document.createElement('span'); timestampBadge.className = 'strategy-pick-capability-badge'; timestampBadge.textContent = '–Ω—É–∂–Ω—ã TCP timestamps'; timestampBadge.title = '–ù–∞ Windows –≤–∫–ª—é—á–∏—Ç–µ –≤—Ä–µ–º–µ–Ω–Ω—ã–µ –º–µ—Ç–∫–∏ TCP, –µ—Å–ª–∏ —ç—Ç–∞ —Å—Ç—Ä–∞—Ç–µ–≥–∏—è –Ω–µ —Ä–∞–±–æ—Ç–∞–µ—Ç.';
-      headingLine.append(timestampBadge);
-    }
-    const meta = document.createElement('p'); meta.className = 'strategy-pick-result-meta'; meta.textContent = `${result.candidate.source} ¬∑ ${result.successes}/${result.attempts} —É—Å–ø–µ—à–Ω—ã—Ö ¬∑ ${result.elapsedMs} –º—Å`;
-    const detail = document.createElement('p'); detail.className = 'strategy-pick-result-detail'; detail.textContent = result.detail;
-    const details = document.createElement('details'); details.className = 'strategy-pick-steps';
-    const candidateKey = JSON.stringify([result.candidate.name, result.candidate.steps]);
-    details.dataset.candidateKey = candidateKey;
-    details.open = expandedResults.has(candidateKey);
-    const detailsSummary = document.createElement('summary'); detailsSummary.textContent = `–ü–æ–¥—Ä–æ–±–Ω–æ—Å—Ç–∏ –∏ –ø–∞—Ä–∞–º–µ—Ç—Ä—ã ¬∑ ${result.candidate.steps.length} —à–∞–≥.`;
-    const args = document.createElement('code'); args.textContent = result.candidate.steps.join('\n');
-    const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200'; copy.textContent = '–ö–æ–ø–∏—Ä–æ–≤–∞—Ç—å'; copy.dataset.actionClick = 'copyStrategyResult'; copy.dataset.args = JSON.stringify([result.candidate.steps.join('\n'), { source: 'self' }]);
-    details.append(detailsSummary, args, copy); body.append(headingLine, meta, detail, details); card.append(status, body);
-    const canApplyConfirmedResult = ['complete', 'partial', 'cancelled', 'failed'].includes(operation.state);
-    if (canApplyConfirmedResult && result.confirmed) {
-      const preview = document.createElement('button');
-      preview.type = 'button';
-      preview.className = 'rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 transition hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
-      preview.dataset.actionClick = 'previewStrategyPick';
-      preview.dataset.arg = String(index);
-      preview.textContent = '–ü—Ä–µ–¥–ø—Ä–æ—Å–º–æ—Ç—Ä –∏ –ø—Ä–∏–º–µ–Ω–µ–Ω–∏–µ Strategy #1';
-      card.append(preview);
-    }
-    container.append(card);
-  });
-}
-
-function renderStrategyPickPreview(preview: StrategyPickPreview, source: 'strategyPick' | 'freezeScan', candidateIndex: number, target: 'autotune' | 'freeze' = 'autotune') {
-  const panel = $(`#${target === 'freeze' ? 'freezeApplyPreviewPanel' : 'autotunePreviewPanel'}`);
-  const summary = $(`#${target === 'freeze' ? 'freezeApplyPreviewSummary' : 'autotunePreviewSummary'}`);
-  const diff = $(`#${target === 'freeze' ? 'freezeApplyPreviewDiff' : 'autotunePreviewDiff'}`);
-  if (!panel || !summary || !diff) return;
-  panel.classList.remove('hidden');
-  summary.textContent = `${preview.host} ¬∑ ${preview.protocol.toUpperCase()} ¬∑ ${preview.candidate.name}. ${preview.summary} Revision: ${preview.originalRevision.slice(0, 12)}.`;
-  diff.replaceChildren();
-  const before = preview.originalContent.split(/\r?\n/);
-  const after = preview.proposedContent.split(/\r?\n/);
-  const maxLines = Math.max(before.length, after.length);
-  for (let index = 0; index < maxLines; index += 1) {
-    if (before[index] === after[index]) continue;
-    const row = document.createElement('div');
-    row.className = 'grid gap-1 border-b border-slate-800 py-2 last:border-0 sm:grid-cols-2';
-    const oldLine = document.createElement('code');
-    oldLine.className = 'whitespace-pre-wrap break-all text-rose-200';
-    oldLine.textContent = before[index] === undefined ? '‚àí (–Ω–µ—Ç —Å—Ç—Ä–æ–∫–∏)' : `‚àí ${before[index]}`;
-    const newLine = document.createElement('code');
-    newLine.className = 'whitespace-pre-wrap break-all text-emerald-200';
-    newLine.textContent = after[index] === undefined ? '+ (—É–¥–∞–ª–µ–Ω–æ)' : `+ ${after[index]}`;
-    row.append(oldLine, newLine);
-    diff.append(row);
-  }
-  if (!diff.childElementCount) diff.textContent = '–ò–∑–º–µ–Ω–µ–Ω–∏–π –Ω–µ—Ç.';
-  activeStrategyPreview = { source, operationId: preview.operationId, candidateIndex, revision: preview.originalRevision, panel: target };
-  const apply = $(`#${target === 'freeze' ? 'applyFreezeStrategyButton' : 'applyStrategyPickButton'}`);
-  if (apply instanceof HTMLButtonElement) {
-    apply.disabled = false;
-    apply.dataset.args = JSON.stringify([source, preview.operationId, String(candidateIndex), preview.originalRevision]);
-  }
-}
-
-async function previewStrategyPick(candidateIndex: string) {
-  const operationId = activeStrategyPickId ?? localStorage.getItem(STRATEGY_PICK_STORAGE);
-  const index = Number(candidateIndex);
-  if (!operationId || !Number.isInteger(index) || index < 0) return toast('–†–µ–∑—É–ª—å—Ç–∞—Ç –ø–æ–¥–±–æ—Ä–∞ –Ω–µ –≤—ã–±—Ä–∞–Ω.', 'error');
-  const panel = $('#autotunePreviewPanel');
-  panel?.classList.remove('hidden');
-  setText('#autotunePreviewSummary', '–ü—Ä–æ–≤–µ—Ä—è–µ—Ç—Å—è –ø–æ–¥—Ç–≤–µ—Ä–∂–¥—ë–Ω–Ω—ã–π —Ä–µ–∑—É–ª—å—Ç–∞—Ç –∏ —Ç–µ–∫—É—â–∞—è –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è‚Ä¶');
-  const diff = $('#autotunePreviewDiff');
-  if (diff) diff.textContent = '';
-  try {
-    const preview = await nfqwsDiagnostics.strategyPreview(operationId, index);
-    renderStrategyPickPreview(preview, 'strategyPick', index);
-  } catch (error) {
-    panel?.classList.add('hidden');
-    toast(error instanceof Error ? error.message : '–ü—Ä–µ–¥–ø—Ä–æ—Å–º–æ—Ç—Ä —Å—Ç—Ä–∞—Ç–µ–≥–∏–∏ –Ω–µ–¥–æ—Å—Ç—É–ø–µ–Ω.', 'error');
-  }
-}
-
-async function previewFreezeStrategy(operationId: string, resultIndex: string) {
-  const index = Number(resultIndex);
-  if (!Number.isInteger(index) || index < 0) return toast('–ò–Ω–¥–µ–∫—Å –ø—Ä–æ–≤–µ—Ä–µ–Ω–Ω–æ–≥–æ –¥–æ–º–µ–Ω–∞ –Ω–µ–∫–æ—Ä—Ä–µ–∫—Ç–µ–Ω.', 'error');
-  const panel = $('#freezeApplyPreviewPanel');
-  panel?.classList.remove('hidden');
-  setText('#freezeApplyPreviewSummary', '–§–æ—Ä–º–∏—Ä—É–µ—Ç—Å—è Strategy #1 –≤ NFQWS_ARGS‚Ä¶');
-  const diff = $('#freezeApplyPreviewDiff');
-  if (diff) diff.textContent = '';
-  try {
-    const preview = await nfqwsDiagnostics.freezeStrategyPreview(operationId, index);
-    renderStrategyPickPreview(preview, 'freezeScan', index, 'freeze');
-  } catch (error) {
-    panel?.classList.add('hidden');
-    toast(error instanceof Error ? error.message : '–ü—Ä–µ–¥–ø—Ä–æ—Å–º–æ—Ç—Ä —Å—Ç—Ä–∞—Ç–µ–≥–∏–∏ –Ω–µ–¥–æ—Å—Ç—É–ø–µ–Ω.', 'error');
-  }
-}
-
-async function applyFreezeStrategyOneClick(operationId: string, resultIndex: string) {
-  const index = Number(resultIndex);
-  const actionKey = `${operationId}:${resultIndex}`;
-  if (freezeStrategyApplyPending.has(actionKey) || freezeStrategyApplyDone.has(actionKey)) return;
-  const rowButton = [...document.querySelectorAll<HTMLButtonElement>('[data-action-click="applyFreezeStrategyOneClick"]')]
-    .find((button) => button.dataset.args === JSON.stringify([operationId, resultIndex]));
-  if (!Number.isInteger(index) || index < 0) return toast('–ò–Ω–¥–µ–∫—Å –ø—Ä–æ–≤–µ—Ä–µ–Ω–Ω–æ–≥–æ –¥–æ–º–µ–Ω–∞ –Ω–µ–∫–æ—Ä—Ä–µ–∫—Ç–µ–Ω.', 'error');
-  const editor = $('#nfqwsConfTextarea');
-  if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) {
-    return toast('–°–Ω–∞—á–∞–ª–∞ –ø—Ä–∏–º–µ–Ω–∏—Ç–µ –∏–ª–∏ –æ—Ç–º–µ–Ω–∏—Ç–µ —á–µ—Ä–Ω–æ–≤–∏–∫ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏.', 'error');
-  }
-  freezeStrategyApplyPending.add(actionKey);
-  if (rowButton) { rowButton.disabled = true; rowButton.textContent = '–ü—Ä–æ–≤–µ—Ä—è—é –∏ –ø—Ä–∏–º–µ–Ω—è—é‚Ä¶'; }
-  let appliedSuccessfully = false;
-  try {
-    // The explicit row action is the user's approval. The backend still
-    // verifies the persisted 3/3 result, target domain, config revision and
-    // nfqws2 dry-run before writing; its transaction backs up and rolls back.
-    const preview = await nfqwsDiagnostics.freezeStrategyPreview(operationId, index);
-    const applied = await nfqwsDiagnostics.applyStrategy('freezeScan', operationId, index, preview.originalRevision);
-    appliedSuccessfully = true;
-    freezeStrategyApplyDone.add(actionKey);
-    activeStrategyPreview = null;
-    if (rowButton) { rowButton.textContent = '–°—Ç—Ä–∞—Ç–µ–≥–∏—è –ø—Ä–∏–º–µ–Ω–µ–Ω–∞'; rowButton.title = `${preview.host}: –ø—Ä–æ—Ñ–∏–ª—å –¥–æ–±–∞–≤–ª–µ–Ω; —Ä–µ–∑–µ—Ä–≤–Ω–∞—è –∫–æ–ø–∏—è —Å–æ–∑–¥–∞–Ω–∞`; }
-    toast(`${applied.message} –°—Ç—Ä–∞—Ç–µ–≥–∏—è –¥–æ–±–∞–≤–ª–µ–Ω–∞ —Ç–æ–ª—å–∫–æ –¥–ª—è ${preview.host}; —Ä–µ–∑–µ—Ä–≤–Ω–∞—è –∫–æ–ø–∏—è —Å–æ—Ö—Ä–∞–Ω–µ–Ω–∞.`, 'success');
-    try { await loadConfig(); }
-    catch { toast('–°—Ç—Ä–∞—Ç–µ–≥–∏—è –ø—Ä–∏–º–µ–Ω–µ–Ω–∞, –Ω–æ –¥–∞–Ω–Ω—ã–µ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏ –Ω–∞ —Å—Ç—Ä–∞–Ω–∏—Ü–µ –Ω–µ –æ–±–Ω–æ–≤–∏–ª–∏—Å—å. –ü–µ—Ä–µ–∑–∞–≥—Ä—É–∑–∏—Ç–µ –ø–∞–Ω–µ–ª—å.', 'error'); }
-  } catch (error) {
-    if (rowButton) { rowButton.disabled = appliedSuccessfully; rowButton.textContent = appliedSuccessfully ? '–°—Ç—Ä–∞—Ç–µ–≥–∏—è –ø—Ä–∏–º–µ–Ω–µ–Ω–∞' : '–ü—Ä–∏–º–µ–Ω–∏—Ç—å –∫ —Å–∞–π—Ç—É'; }
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–∏–º–µ–Ω–∏—Ç—å –ø–æ–¥—Ç–≤–µ—Ä–∂–¥—ë–Ω–Ω—É—é —Å—Ç—Ä–∞—Ç–µ–≥–∏—é.', 'error');
-  } finally {
-    freezeStrategyApplyPending.delete(actionKey);
-  }
-}
-
-async function applyStrategyPick(source: string, operationId: string, candidateIndex: string, expectedRevision: string) {
-  if ((source !== 'strategyPick' && source !== 'freezeScan') || !activeStrategyPreview
-    || activeStrategyPreview.source !== source || activeStrategyPreview.operationId !== operationId) {
-    return toast('–°–Ω–∞—á–∞–ª–∞ –æ—Ç–∫—Ä–æ–π—Ç–µ –∞–∫—Ç—É–∞–ª—å–Ω—ã–π –ø—Ä–µ–¥–ø—Ä–æ—Å–º–æ—Ç—Ä —Å—Ç—Ä–∞—Ç–µ–≥–∏–∏.', 'error');
-  }
-  const summaryId = activeStrategyPreview.panel === 'freeze' ? '#freezeApplyPreviewSummary' : '#autotunePreviewSummary';
-  const buttonId = activeStrategyPreview.panel === 'freeze' ? '#applyFreezeStrategyButton' : '#applyStrategyPickButton';
-  if (activeStrategyPreview.candidateIndex !== Number(candidateIndex) || activeStrategyPreview.revision !== expectedRevision) return toast('–ü—Ä–µ–¥–ø—Ä–æ—Å–º–æ—Ç—Ä —É—Å—Ç–∞—Ä–µ–ª. –û—Ç–∫—Ä–æ–π—Ç–µ –µ–≥–æ —Å–Ω–æ–≤–∞.', 'error');
-  const editor = $('#nfqwsConfTextarea');
-  if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) return toast('–°–Ω–∞—á–∞–ª–∞ –ø—Ä–∏–º–µ–Ω–∏—Ç–µ –∏–ª–∏ –æ—Ç–º–µ–Ω–∏—Ç–µ —á–µ—Ä–Ω–æ–≤–∏–∫ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏. –°—Ç—Ä–∞—Ç–µ–≥–∏—è –Ω–µ –ø—Ä–∏–º–µ–Ω–µ–Ω–∞.', 'error');
-  const applyScope = source === 'strategyPick'
-    ? '–î–æ–±–∞–≤–∏—Ç—å –ø–æ–¥—Ç–≤–µ—Ä–∂–¥—ë–Ω–Ω—É—é —Å—Ç—Ä–∞—Ç–µ–≥–∏—é –∫–∞–∫ Strategy #1 –≤ NFQWS_ARGS –∏ —Å–¥–≤–∏–Ω—É—Ç—å –ø—Ä–µ–∂–Ω–∏–µ –Ω–æ–º–µ—Ä–∞ –≤–Ω–∏–∑? –≠—Ç–æ –ø–æ–≤–ª–∏—è–µ—Ç –Ω–∞ –≤—Å–µ —Å–∞–π—Ç—ã; NFQWS_BASE_ARGS –Ω–µ –º–µ–Ω—è–µ—Ç—Å—è.'
-    : `–î–æ–±–∞–≤–∏—Ç—å –ø—Ä–æ—Ñ–∏–ª—å —Ç–æ–ª—å–∫–æ –¥–ª—è ${$(summaryId)?.textContent?.split(' ¬∑ ')[0] ?? '–ø—Ä–æ–≤–µ—Ä–µ–Ω–Ω–æ–≥–æ –¥–æ–º–µ–Ω–∞'}?`;
-  if (!window.confirm(`${applyScope}\n\nnfqws2 –ø–µ—Ä–µ–∑–∞–ø—É—Å—Ç–∏—Ç—Å—è. –ë—É–¥–µ—Ç —Å–æ–∑–¥–∞–Ω–∞ —Ä–µ–∑–µ—Ä–≤–Ω–∞—è –∫–æ–ø–∏—è; –ø—Ä–∏ –æ—à–∏–±–∫–µ –ø—Ä–æ–≤–µ—Ä–∫–∏ –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏—è –æ—Ç–∫–∞—Ç–∏—Ç—Å—è.`)) return;
-  const button = $(buttonId);
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = '–ü—Ä–∏–º–µ–Ω–µ–Ω–∏–µ‚Ä¶'; }
-  let wasApplied = false;
-  try {
-    const applied = await nfqwsDiagnostics.applyStrategy(source, operationId, Number(candidateIndex), expectedRevision);
-    wasApplied = true;
-    activeStrategyPreview = null;
-    try { await loadConfig(); }
-    catch { toast('–°—Ç—Ä–∞—Ç–µ–≥–∏—è –ø—Ä–∏–º–µ–Ω–µ–Ω–∞, –Ω–æ —Å—Ç—Ä–∞–Ω–∏—Ü—É –∫–æ–Ω—Ñ–∏–≥—É—Ä–∞—Ü–∏–∏ –Ω–µ —É–¥–∞–ª–æ—Å—å –æ–±–Ω–æ–≤–∏—Ç—å. –ü–µ—Ä–µ–∑–∞–≥—Ä—É–∑–∏—Ç–µ –ø–∞–Ω–µ–ª—å.', 'error'); return; }
-    toast(source === 'strategyPick'
-      ? `${applied.message} –°—Ç—Ä–∞—Ç–µ–≥–∏—è –¥–æ–±–∞–≤–ª–µ–Ω–∞ –∫–∞–∫ Strategy #1; –ø—Ä–µ–∂–Ω–∏–µ –Ω–æ–º–µ—Ä–∞ —Å–¥–≤–∏–Ω—É—Ç—ã. –†–µ–∑–µ—Ä–≤–Ω–∞—è –∫–æ–ø–∏—è —Å–æ—Ö—Ä–∞–Ω–µ–Ω–∞.`
-      : `${applied.message} –î–æ–º–µ–Ω–Ω—ã–π –ø—Ä–æ—Ñ–∏–ª—å –¥–æ–±–∞–≤–ª–µ–Ω; —Ä–µ–∑–µ—Ä–≤–Ω–∞—è –∫–æ–ø–∏—è —Å–æ—Ö—Ä–∞–Ω–µ–Ω–∞.`, 'success');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å –ø—Ä–∏–º–µ–Ω–∏—Ç—å –ø—Ä–æ—Ñ–∏–ª—å.', 'error');
-  } finally {
-    if (button instanceof HTMLButtonElement) {
-      button.disabled = wasApplied;
-      button.textContent = wasApplied ? '–°—Ç—Ä–∞—Ç–µ–≥–∏—è –ø—Ä–∏–º–µ–Ω–µ–Ω–∞' : activeStrategyPreview?.panel === 'freeze' ? '–ü—Ä–∏–º–µ–Ω–∏—Ç—å –∏ –ø–µ—Ä–µ–∑–∞–ø—É—Å—Ç–∏—Ç—å' : '–ü—Ä–∏–º–µ–Ω–∏—Ç—å —Å—Ç—Ä–∞—Ç–µ–≥–∏—é –∏ –ø–µ—Ä–µ–∑–∞–ø—É—Å—Ç–∏—Ç—å';
-    }
-  }
-}
-
-async function loadStrategyPickHistory() {
-  const container = $('#autotuneConsoleBox');
-  if (!container) return;
-  try {
-    const history = await nfqwsDiagnostics.strategyHistory();
-    container.replaceChildren();
-    if (!history.length) {
-      const empty = document.createElement('p'); empty.className = 'text-slate-400'; empty.textContent = '–ó–∞–≤–µ—Ä—à—ë–Ω–Ω—ã—Ö –ø–æ–¥–±–æ—Ä–æ–≤ –ø–æ–∫–∞ –Ω–µ—Ç.'; container.append(empty);
-      return;
-    }
-    for (const operation of history) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.className = 'w-full rounded-lg border border-slate-800 bg-[#060a12] p-3 text-left hover:border-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400';
-      button.setAttribute('aria-label', `–û—Ç–∫—Ä—ã—Ç—å —Ä–µ–∑—É–ª—å—Ç–∞—Ç—ã –ø–æ–¥–±–æ—Ä–∞ –¥–ª—è ${operation.host}`);
-      const title = document.createElement('span'); title.className = 'block truncate font-semibold text-slate-200'; title.textContent = operation.host;
-      const result = operation.results.filter((item) => item.confirmed).length;
-      const state = document.createElement('span'); state.className = `mt-1 block text-[11px] ${result ? 'text-emerald-300' : 'text-slate-400'}`;
-      state.textContent = `${result} –ø–æ–¥—Ç–≤–µ—Ä–∂–¥–µ–Ω–æ ¬∑ ${operation.done}/${operation.total} ¬∑ ${new Date(operation.updatedAt * 1000).toLocaleString()}`;
-      button.append(title, state);
-      button.addEventListener('click', () => {
-        if (strategyPickRunning) return;
-        const input = $('#scanCustomHost');
-        if (input instanceof HTMLInputElement) input.value = operation.host;
-        localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
-        showRoute('autotune');
-        renderStrategyPick(operation);
-        setText('#scanProgressLabel', operation.message);
-      });
-      container.append(button);
-    }
-  } catch (error) {
-    container.replaceChildren();
-    const message = document.createElement('p'); message.className = 'text-xs text-amber-300';
-    message.textContent = error instanceof Error ? `–ò—Å—Ç–æ—Ä–∏—è –Ω–µ–¥–æ—Å—Ç—É–ø–Ω–∞: ${error.message}` : '–ò—Å—Ç–æ—Ä–∏—è –ø–æ–¥–±–æ—Ä–æ–≤ –Ω–µ–¥–æ—Å—Ç—É–ø–Ω–∞';
-    container.append(message);
-  }
-}
-
-async function pollStrategyPick(id: string, notifyOnCompletion = true) {
-  activeStrategyPickId = id; strategyPickRunning = true;
-  const input = $('#scanCustomHost'); const start = $('#startScanBtn'); const stop = $('#strategyPickCancel');
-  if (input instanceof HTMLInputElement) input.disabled = true;
-  if (start instanceof HTMLButtonElement) { start.disabled = true; start.textContent = '–ü–æ–¥–±–æ—Ä‚Ä¶'; }
-  stop?.classList.remove('hidden');
-  try {
-    let current = await nfqwsDiagnostics.strategyStatus(id);
-    let consecutiveFailures = 0;
-    renderStrategyPick(current);
-    while (['queued', 'running', 'stopping'].includes(current.state)) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1000));
-      try {
-        current = await nfqwsDiagnostics.strategyStatus(id);
-        consecutiveFailures = 0;
-        renderStrategyPick(current);
-      } catch (error) {
-        consecutiveFailures += 1;
-        setText('#scanProgressLabel', `${current.message} ¬∑ –ø–µ—Ä–µ–ø–æ–¥–∫–ª—é—á–µ–Ω–∏–µ‚Ä¶`);
-        if (consecutiveFailures >= 10) throw error;
-      }
-    }
-    renderStrategyPick(current);
-    setText('#scanProgressLabel', current.message);
-    if (['complete', 'partial', 'no_match', 'site_unblocked', 'cancelled', 'failed'].includes(current.state)) {
-      void loadStrategyPickHistory();
-      if (notifyOnCompletion) {
-        if (current.state === 'failed') toast(current.message, 'error');
-        else toast(current.message, ['complete', 'partial'].includes(current.state) ? 'success' : 'error');
-      }
-    }
-  } catch (error) {
-    setText('#scanProgressLabel', error instanceof Error ? error.message : '–°—Ç–∞—Ç—É—Å –∞–≤—Ç–æ–ø–æ–¥–±–æ—Ä–∞ –ø–æ–∫–∞ –Ω–µ–¥–æ—Å—Ç—É–ø–µ–Ω');
-  } finally {
-    strategyPickRunning = false; activeStrategyPickId = null;
-    if (input instanceof HTMLInputElement) input.disabled = false;
-    if (start instanceof HTMLButtonElement) { start.disabled = false; start.textContent = '–ü–æ–¥–æ–±—Ä–∞—Ç—å —Å—Ç—Ä–∞—Ç–µ–≥–∏—é'; }
-    stop?.classList.add('hidden');
-  }
-}
-
-async function startStrategyPick() {
-  if (strategyPickRunning) return;
-  const input = $('#scanCustomHost'); const proto = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect'); const repeatsInput = $('#strategyRepeatsSelect'); const customInput = $('#strategyCustomSteps');
-  if (!(input instanceof HTMLInputElement) || !input.value.trim()) return toast('–í–≤–µ–¥–∏—Ç–µ –¥–æ–º–µ–Ω –∏–ª–∏ –ø—É–±–ª–∏—á–Ω—ã–π IPv4 –¥–ª—è –ø–æ–¥–±–æ—Ä–∞.', 'error');
+Y™Áäx-ÆÈ‹j◊ù¢Îi∫⁄+äßj[hëÈ‹¢ÈÌÎé9·:-jZ.∂õ≠ñ)ﬁ≥Vñ◊˜'B≤FñvÊ˜6ó5&˜w2“g&ˆ“r‚ˆFñvÊ˜6ó2÷∆ñ˜WBs∞¶ñ◊˜'B≤'6T7W7Fˆ’7G&FVvñW2“g&ˆ“r‚ˆ7W7Fˆ“◊7G&FVwí÷ñÁWBs∞¶ñ◊˜'B≤6ˆ◊&ó6ˆÂfW&Fñ7B¬&W6VÁEG&6R¬GóR&W6VÁFFñˆ‚“g&ˆ“r‚ˆFñvÊ˜6ó2◊&W6VÁFW"s∞¶ñ◊˜'B≤7V÷÷&ó¶Tg&VW¶U66‚“g&ˆ“r‚ˆg&VW¶R◊7V÷÷'ís∞¶ñ◊˜'B≤g&VW¶T6‰«ïFÙÜ˜7B¬g&VW¶U&˜u&W6VÁFFñˆ‚“g&ˆ“r‚ˆg&VW¶R◊&W6VÁFFñˆ‚s∞¶ñ◊˜'B≤g&VW¶U&ˆw&W75&W6VÁFFñˆ‚“g&ˆ“r‚ˆg&VW¶R◊&ˆw&W72s∞¶ñ◊˜'B≤VïWFFTÊ˜Fñ6U&W6VÁFFñˆ‚“g&ˆ“r‚˜Ví◊WFFR÷Ê˜Fñ6Rs∞¶ñ◊˜'B≤6GW&Tf˜&Vñv‰6ˆÊfñtFó66∆˜7W&U7FFR¬f˜&÷Df˜&Vñv‰6ˆÊfñu&ˆ&U7V÷÷'í“g&ˆ“r‚ˆFó66∆˜7W&R◊7FFRs∞¶ñ◊˜'B≤g&VW¶U&˜tFWFñ«2¬g&VW¶U&˜tñFVÁFóGí“g&ˆ“r‚ˆg&VW¶R◊&˜r◊FWáBs∞¶ñ◊˜'B≤6ˆÊfñt76ñvÊ÷VÁEf«VR¬6ˆÊfñtVFóF˜$∆ñ˜WB¬6ˆÊfñtVFóF˜%fñWw˜'DÜVñváB¬6ˆÊfñt˜WF∆ñÊTVÁG&ñW2“g&ˆ“r‚ˆ6ˆÊfñr◊f«VW2s∞¶ñ◊˜'BtfˆÁG6˜W&6R◊f&ñ&∆RˆñÁFW"s∞¶ñ◊˜'BtfˆÁG6˜W&6R◊f&ñ&∆Rˆ¶WF'&ñÁ2÷÷ˆÊÚs∞¶ñ◊˜'Br‚˜ÊV¬Ê772s∞¶ñ◊˜'B≤í¬Êgw4«í¬Êgw56Ê6Ü˜G2¬Êgw4V&Ê6R¬Êgw46ˆÊfñr¬Êgw4FñvÊ˜7Fñ72¬Êgw4ñÁ7F∆∆Fñˆ‚¬Êgw4∆ó7G2¬Êgw567&óG2¬Êgw5WFFW2¬Êgw4÷ˆÊóF˜&ñÊr¬GóR6ˆÊfñu&W7ˆÁ6R¬GóR6ˆÊfñuf∆ñFFñˆÂ&W7ˆÁ6R¬GóRf˜&Vñv‰6ˆÊfñt6ÜV6¥˜W&Fñˆ‚¬GóRg&VW¶U66‰˜W&Fñˆ‚¬GóRÊgw4∆ó7DñB¬GóRÊgw4∆ó7E&W7ˆÁ6R¬GóRÊgw4∆ó7E7V÷÷'í¬GóRÊgw4«V67&óDñÊfÚ¬GóRÊV≈&V∆V6R¬GóR6óFTFñvÊ˜7Fñ5&W˜'B¬GóR6óFUG&6T˜W&Fñˆ‚¬GóR6óFUG&6U&W˜'B¬GóR6Ê6Ü˜D˜fW'fñWr¬GóR7FGW5&W7ˆÁ6R¬GóR7G&FVwïñ6¥˜W&Fñˆ‚¬GóR7G&FVwïñ6µ&WfñWr¬GóRVïWFFU7FGW2“g&ˆ“r‚ˆís∞¶ñ◊˜'B≤VÊD∆ó7DVÁG&ñW2¬FVGW∆ñ6FT∆ó7D6ˆÁFVÁB¬fñÊDÊWáD∆ó7D÷F6Ç¬ó4∆ó7EF%6V∆V7FVB¬∆ó7DñDg&ˆ’F$V∆V÷VÁDñB¬∆ó7E&˜w4g&ˆ‘6ˆÁFVÁB¬∆ó7EF$ñG4g&ˆ‘ñÁfVÁF˜'í¬&V÷˜fT∆ó7D∆ñÊW2¬&V÷˜fT∆ó7D∆ñÊW4'îñÊFñ6W2¬Fˆvv∆T∆ó7D6ˆ÷÷VÁG2“g&ˆ“r‚ˆ∆ó7B÷VFóF˜"s∞¶ñ◊˜'B≤fñ∆&∆TÊgw4÷ˆFW2“g&ˆ“r‚ˆ6ˆÊfñr÷f7G2s∞¶ñ◊˜'B≤&W6˜W&6UW6vUW&6VÁB¬W6vUFˆÊR“g&ˆ“r‚ˆ÷WG&ñ72s∞¶ñ◊˜'B≤ñÁ7F∆≈7Gñ∆VE6V∆V7G2“g&ˆ“r‚˜7Gñ∆VB◊6V∆V7Bs∞¶ñ◊˜'B≤ñÁ7F∆ƒ7FñˆÂFˆˆ«Fó2“g&ˆ“r‚ˆ7Fñˆ‚◊Fˆˆ«Fó2s∞¶ñ◊˜'B≤7G&FVwîÊVVG5vñÊF˜w5F7Fñ÷W7F◊2“g&ˆ“r‚˜7G&FVwí÷6&ñ∆óGís∞¶ñ◊˜'B≤6W'fñ6T6ˆÁG&ˆ≈&W6VÁFFñˆ‚“g&ˆ“r‚˜6W'fñ6R÷6ˆÁG&ˆ¬s∞¶ñ◊˜'B≤&VÊFW%&V∆V6T÷&∂F˜v‚“g&ˆ“r‚˜&V∆V6R÷÷&∂F˜v‚s∞¶ñ◊˜'B≤FñvÊ˜6ó5VWVU7FFR¬4ïDUÙDît‰ı4ï5ı5DtU2“g&ˆ“r‚ˆFñvÊ˜6ó2◊7FvW2s∞¶ñ◊˜'B≤6Â6Ü˜uFˆ7B¬∆ñfV7ñ6∆T÷W76vR¬Fˆ7E&W6VÁFFñˆ‚“g&ˆ“r‚ˆÊ˜Fñfñ6FñˆÁ2s∞¶ñ◊˜'B≤∆ˆD÷ˆÊóF˜&ñÊu7FFR¬Ê˜&÷∆ó¶T÷ˆÊóF˜&ñÊtÜ˜7B¬Ê˜&÷∆ó¶T÷ˆÊóF˜&ñÊtñÁFW'f¬¬6fT÷ˆÊóF˜&ñÊu7FFR¬GóR÷ˆÊóF˜&ñÊu7FFR“g&ˆ“r‚ˆ÷ˆÊóF˜&ñÊrs∞¶ñ◊˜'B≤«îV&Ê6R¬∆ˆDV&Ê6R¬6fTV&Ê6R¬GóRV&Ê6U6WGFñÊw2¬GóRVî∆ñ˜WB¬GóRVïFÜV÷R“g&ˆ“r‚ˆV&Ê6Rs∞†ßGóR&˜WFR“v6ˆÊbr¬v∆ó7G2r¬v6ÜV6≤r¬wG&6Rr¬vWF˜GVÊRr¬vFñvÊ˜7Fñ3f≤r¬v6ˆÊfñt6ÜV6≤r¬v÷ˆÊóF˜"r¬v6ˆ÷◊VÊóGír¬w6Ê6Ü˜G2r¬w7W˜'E&W˜'Br¬vV&Ê6Rr¬v&˜WBs∞¶Wá˜'B6ˆÁ7BT‰dîƒ$ƒUı‰T≈ı$ıUDU2“≤v6ˆ÷◊VÊóGíu“26ˆÁ7C∞¶∆WB7FGW3¢7FGW5&W7ˆÁ6R¬ÁV∆¬“ÁV∆√∞¶∆WB6ˆÊfñs¢6ˆÊfñu&W7ˆÁ6R¬ÁV∆¬“ÁV∆√∞¶∆WB«V67&óG3¢Êgw4«V67&óDñÊfıµ““µ”∞¶∆WB7FófT«V67&óC¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶∆WBFó66˜fW&VDÊWGv˜&¥ñÁFW&f6W3¢7G&ñÊuµ““µ”∞¶∆WB7FófT∆ó7C¢Êgw4∆ó7E&W7ˆÁ6R¬ÁV∆¬“ÁV∆√∞¶∆WB7FófT∆ó7DñC¢Êgw4∆ó7DñB“wW6W"Ê∆ó7Bs∞¶6ˆÁ7Bƒï5EÙTDïDı%ıdîUuÙ¥Uí“vÊgw3"◊Ví÷∆ó7B÷VFóF˜"◊fñWrs∞¶∆WB∆ó7DVFóF˜%fñWs¢wFWáBr¬w&˜w2r“ÇÇí”‚∞¢G'í≤&WGW&‚∆ˆ6≈7F˜&vRÊvWDóFV“Ñƒï5EÙTDïDı%ıdîUuÙ¥Uíí””“w&˜w2rÚw&˜w2r¢wFWáBs≤–¢6F6Ç≤&WGW&‚wFWáBs≤–ß“íÇì∞¶6ˆÁ7B6V∆V7FVD∆ó7E&˜w2“ÊWr6WC∆ÁV÷&W#‚Çì∞¶∆WB'W7í“f«6S∞¶∆WB7FGW5ˆ∆∆ñÊr“f«6S∞¶∆WBFñvÊ˜6ó5'VÊÊñÊr“f«6S∞¶∆WB÷ˆÊóF˜&ñÊu'VÊÊñÊr“f«6S∞¶∆WB÷ˆÊóF˜&ñÊu7FFS¢÷ˆÊóF˜&ñÊu7FFR¬ÁV∆¬“ÁV∆√∞¶∆WB÷ˆÊóF˜&ñÊtñÁFW'fƒ÷ñÁWFW2“3∞¶∆WBV&Ê6U6WGFñÊw3¢V&Ê6U6WGFñÊw2“≤FÜV÷S¢vF&≤r¬∆ñ˜WC¢w7FÊF&Br¬66VÁC¢v&«VRr¬7FGW4&#¢w7FÊF&Br¬&V÷ñÊEvñÊF˜w5F7Fñ÷W7F◊3¢G'VR”∞¶∆WBG&6U'VÊÊñÊr“f«6S∞¶∆WB7FófUG&6T˜W&Fñˆ‰ñC¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶∆WB7G&FVwïñ6µ'VÊÊñÊr“f«6S∞¶∆WB7FófU7G&FVwïñ6¥ñC¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞ßGóRf˜&Vñv‰6ˆÊfñtñÁWB“≤Ê÷S¢7G&ñÊs≤6˜W&6S¢}
+-]≠"r¬}
+Mù≤r¬}
+ΩΩ≠s≤6ˆÁFVÁCÛ¢7G&ñÊs≤W&√Û¢7G&ñÊr”∞¶∆WBf˜&Vñv‰6ˆÊfñtñÁWG3¢f˜&Vñv‰6ˆÊfñtñÁWEµ““µ”∞¶∆WB7FófTf˜&Vñv‰6ˆÊfñt6ÜV6¥ñC¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶∆WBf˜&Vñv‰6ˆÊfñt6ÜV6µ'VÊÊñÊr“f«6S∞¶∆WBg&VW¶U66Â'VÊÊñÊr“f«6S∞¶∆WB7FófTg&VW¶U66‰ñC¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶6ˆÁ7Bg&VW¶U7G&FVwî«ïVÊFñÊr“ÊWr6WC«7G&ñÊs‚Çì∞¶6ˆÁ7Bg&VW¶U7G&FVwî«îFˆÊR“ÊWr6WC«7G&ñÊs‚Çì∞¶∆WB7FófU7G&FVwï&WfñWs¢≤6˜W&6S¢w7G&FVwïñ6≤r¬vg&VW¶U66‚s≤˜W&Fñˆ‰ñC¢7G&ñÊs≤6ÊFñFFTñÊFWÉ¢ÁV÷&W#≤&Wfó6ñˆ„¢7G&ñÊs≤ÊV√¢vWF˜GVÊRr¬vg&VW¶Rr“¬ÁV∆¬“ÁV∆√∞¶∆WB&W7F'DñÂ&ˆw&W72“f«6S∞¶∆WBfñ∆&∆U&V∆V6W3¢ÊV≈&V∆V6Uµ““µ”∞¶∆WB6V∆V7FVE&V∆V6UFs¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶∆WBWáÊFVE&V∆V6UFs¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶∆WBWFFUˆ∆∆ñÊr“f«6S∞¶∆WBWFFUF&vWC¢wVír¬v6˜&Rr“wVís∞¶∆WBñÁ7F∆∆VD6˜&UFs¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶∆WBVïWFFU7FGW5ˆ∆∆ñÊr“f«6S∞¶∆WBVïWFFTÊ˜Fñ6T˜VÊVEFs¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¶6ˆÁ7BUDDUÙ‰ıDî4UÙ¥Uí“vÊgw3"◊Ví◊WFFR÷Ê˜Fñ6Rs∞¶6ˆÁ7BTïıUDDUÙDï4‘ï54TEıDuÙ¥Uí“vÊgw3"◊Ví◊WFFR÷Fó6÷ó76VB◊Frs∞¶6ˆÁ7Bƒï5EÙDï5ƒïÙ‰‘U3¢'Fñ√≈&V6˜&CƒÊgw4∆ó7DñB¬7G&ñÊs„‚“∞¢wW6W"Ê∆ó7Bs¢}	˝ÌΩÕ}Ì--]ΩÕ≠çRMÌÕ]›≤r¿¢vWFÚÊ∆ó7Bs¢}	MÌÕ]›≤MΩÚ--ÌÌ=}]›çÚr¿¢vWÜ6«VFRÊ∆ó7Bs¢}	ç≠ΩÌ}››ΩRMÌÕ]›≤r¿¢vó6WBÊ∆ó7Bs¢tï›M]r¿¢vó6WEˆWÜ6«VFRÊ∆ó7Bs¢}	ç≠ΩÌ}››ΩRï›M]r¿ß”∞¶Wá˜'B6ˆÁ7B∆ó7DFó7∆îÊ÷R“ÜñC¢Êgw4∆ó7DñBí”‚ƒï5EÙDï5ƒïÙ‰‘U5∂ñE“ÛÚñC∞¶6ˆÁ7BB“≈BWáFVÊG2ÖD‘ƒV∆V÷VÁC‚á6V∆V7F˜#¢7G&ñÊrí”‚Fˆ7V÷VÁBÁVW'ï6V∆V7F˜#≈C‚á6V∆V7F˜"ì∞¶6ˆÁ7B∆¬“≈BWáFVÊG2ÖD‘ƒV∆V÷VÁC‚á6V∆V7F˜#¢7G&ñÊrí”‚≤‚‚ÊFˆ7V÷VÁBÁVW'ï6V∆V7F˜$∆√≈C‚á6V∆V7F˜"ï”∞¶6ˆÁ7B6WEFWáB“á6V∆V7F˜#¢7G&ñÊr¬f«VS¢7G&ñÊrí”‚≤6ˆÁ7BÊˆFR“Bá6V∆V7F˜"ì≤ñbÜÊˆFRíÊˆFRÁFWáD6ˆÁFVÁB“f«VS≤”∞¶6ˆÁ7B6WEvñGFÇ“á6V∆V7F˜#¢7G&ñÊr¬f«VS¢ÁV÷&W"¬ÁV∆¬í”‚≤6ˆÁ7BÊˆFR“Bá6V∆V7F˜"ì≤ñbÜÊˆFRíÊˆFRÁ7Gñ∆RÁvñGFÇ“G¥÷FÇÊ÷ñ‚É¬÷FÇÊ÷ÇÉ¬f«VRÛÚíó“V≤”∞¶6ˆÁ7B&V6VÁEFˆ7EFñ÷W2“ÊWr÷«7G&ñÊr¬ÁV÷&W#‚Çì∞¶gVÊ7Fñˆ‚Fˆ7BÜ÷W76vS¢7G&ñÊr¬GóS¢w7V66W72r¬vW'&˜"r“w7V66W72rí∞¢6ˆÁ7BÜ˜7B“BÇr7Fˆ7Ew&W"rì≤ñbÇÜ˜7Bí&WGW&„∞¢ñbÇ÷W76vRÁG&ñ“Çí«¬6Â6Ü˜uFˆ7BÜ÷W76vR¬GóR¬FFRÊÊ˜rÇí¬&V6VÁEFˆ7EFñ÷W2íí&WGW&„∞¢6ˆÁ7B&W6VÁFFñˆ‚“Fˆ7E&W6VÁFFñˆ‚áGóRì∞¢6ˆÁ7BóFV““Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì∞¢óFV“Ê6∆74Ê÷R“Fˆ7B÷6&BFˆ7B÷6&B“G∑GóW“ˆñÁFW"÷WfVÁG2÷WFˆ∞¢óFV“Á6WDGG&ñ'WFRÇw&ˆ∆Rr¬&W6VÁFFñˆ‚Á&ˆ∆Rì∞¢óFV“Á6WDGG&ñ'WFRÇv&ñ÷∆ófRr¬GóR””“vW'&˜"rÚv76W'FófRr¢wˆ∆óFRrì∞¢6ˆÁ7Bñ6ˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì∞¢ñ6ˆ‚Ê6∆74Ê÷R“Fˆ7B÷6&B÷ñ6ˆ‚Fˆ7B÷6&B÷ñ6ˆ‚“G∑GóW÷∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇv&ñ÷ÜñFFV‚r¬wG'VRrì∞¢6ˆÁ7Bñ6ˆÂ7fr“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁDÂ2ÇváGG¢Ú˜wwrÁs2Ê˜&rÛ#˜7frr¬w7frrì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇwfñWt&˜Çr¬s#B#Brì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇvfñ∆¬r¬vÊˆÊRrì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇw7G&ˆ∂Rr¬v7W'&VÁD6ˆ∆˜"rì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇw7G&ˆ∂R◊vñGFÇr¬s"rì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇw7G&ˆ∂R÷∆ñÊV6r¬w&˜VÊBrì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇw7G&ˆ∂R÷∆ñÊV¶ˆñ‚r¬w&˜VÊBrì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇwvñGFÇr¬s#rì∞¢ñ6ˆÂ7frÁ6WDGG&ñ'WFRÇvÜVñváBr¬s#rì∞¢ñbáGóR””“w7V66W72rí∞¢ÚÚ÷F6ÇÑ∂VV‚Tíw2F&∆W"ñ6ˆ‰6ó&6∆T6ÜV6≤ñÁ7FVBˆbfˆÁBv«óÇñÁ6ñFRÜÊB÷G&v‚6ó&6∆R‡¢6ˆÁ7B6ó&6∆R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁDÂ2ÇváGG¢Ú˜wwrÁs2Ê˜&rÛ#˜7frr¬wFÇrì∞¢6ó&6∆RÁ6WDGG&ñ'WFRÇvBr¬t”2&ííÇíí”Çrì∞¢6ˆÁ7B6ÜV6≤“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁDÂ2ÇváGG¢Ú˜wwrÁs2Ê˜&rÛ#˜7frr¬wFÇrì∞¢6ÜV6≤Á6WDGG&ñ'WFRÇvBr¬t”í&√"&√B”Brì∞¢ñ6ˆÂ7frÊVÊBÜ6ó&6∆R¬6ÜV6≤ì∞¢“V«6R∞¢ÚÚÑ∂VV‚TíW6W2F&∆W"ñ6ˆ‰∆W'D6ó&6∆Rf˜"W'&˜"Ê˜Fñfñ6FñˆÁ2‡¢6ˆÁ7B6ó&6∆R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁDÂ2ÇváGG¢Ú˜wwrÁs2Ê˜&rÛ#˜7frr¬wFÇrì∞¢6ó&6∆RÁ6WDGG&ñ'WFRÇvBr¬t”"6ííÜíí”Çrì∞¢6ˆÁ7B÷&≤“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁDÂ2ÇváGG¢Ú˜wwrÁs2Ê˜&rÛ#˜7frr¬wFÇrì∞¢÷&≤Á6WDGG&ñ'WFRÇvBr¬t”"ácBrì∞¢6ˆÁ7BF˜B“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁDÂ2ÇváGG¢Ú˜wwrÁs2Ê˜&rÛ#˜7frr¬wFÇrì∞¢F˜BÁ6WDGG&ñ'WFRÇvBr¬t”"fÇ„rì∞¢ñ6ˆÂ7frÊVÊBÜ6ó&6∆R¬÷&≤¬F˜Bì∞¢–¢ñ6ˆ‚ÊVÊBÜñ6ˆÂ7frì∞¢6ˆÁ7B6˜í“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì≤6˜íÊ6∆74Ê÷R“wFˆ7B÷6&B÷6˜ís∞¢6ˆÁ7BFóF∆R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7G&ˆÊrrì≤FóF∆RÁFWáD6ˆÁFVÁB“&W6VÁFFñˆ‚ÁFóF∆S∞¢6ˆÁ7BFWFñ¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì≤FWFñ¬ÁFWáD6ˆÁFVÁB“÷W76vS∞¢6˜íÊVÊBáFóF∆R¬FWFñ¬ì≤óFV“ÊVÊBÜñ6ˆ‚¬6˜íì≤Ü˜7BÊVÊBÜóFV“ì∞¢vñÊF˜rÁ6WEFñ÷V˜WBÇÇí”‚óFV“Á&V÷˜fRÇí¬S#ì∞ß–¶gVÊ7Fñˆ‚66ÜVGV∆UÊV≈&Vg&W6ÑgFW%WFFRÜ÷W76vS¢7G&ñÊrí∞¢G'í≤vñÊF˜rÁ6W76ñˆÂ7F˜&vRÁ6WDóFV“ÖUDDUÙ‰ıDî4UÙ¥Uí¬÷W76vRì≤–¢6F6Ç≤Fˆ7BÜG∂÷W76vW“
+-›çmÌ›Ì-ç-Ú--ÌÕ-ç}]≠ÇÊì≤–¢vñÊF˜rÁ6WEFñ÷V˜WBÇÇí”‚vñÊF˜rÊ∆ˆ6Fñˆ‚Á&V∆ˆBÇí¬#ì∞ß–¶gVÊ7Fñˆ‚6Ü˜uVÊFñÊuWFFTÊ˜Fñ6RÇí∞¢G'í∞¢6ˆÁ7B÷W76vR“vñÊF˜rÁ6W76ñˆÂ7F˜&vRÊvWDóFV“ÖUDDUÙ‰ıDî4UÙ¥Uíì∞¢ñbÇ÷W76vRí&WGW&„∞¢vñÊF˜rÁ6W76ñˆÂ7F˜&vRÁ&V÷˜fTóFV“ÖUDDUÙ‰ıDî4UÙ¥Uíì∞¢vñÊF˜rÁ6WEFñ÷V˜WBÇÇí”‚Fˆ7BÜ÷W76vRí¬ì∞¢“6F6Ç≤Ú¢7F˜&vR6‚&RVÊfñ∆&∆Rñ‚&W7G&ñ7FVB'&˜w6W"6ˆÁFWáG2‚¢Ú–ß–¶gVÊ7Fñˆ‚ÜñFUVïWFFTÊ˜Fñ6RÇí≤BÇr7VïWFFTÊ˜Fñ6RrìÚÁ&V÷˜fRÇì≤–¶gVÊ7Fñˆ‚Fó6÷ó75VïWFFTÊ˜Fñ6RáFs¢7G&ñÊrí∞¢G'í≤vñÊF˜rÊ∆ˆ6≈7F˜&vRÁ6WDóFV“ÖTïıUDDUÙDï4‘ï54TEıDuÙ¥Uí¬Frì≤“6F6Ç≤Ú¢7Fñ∆¬∆∆˜rFÜRÊ˜Fñ6RFÚ&R6∆˜6VBñb7F˜&vRó2&∆ˆ6∂VB‚¢Ú–¢ÜñFUVïWFFTÊ˜Fñ6RÇì∞ß–¶gVÊ7Fñˆ‚&VÊFW%VïWFFTÊ˜Fñ6Rá7FGW3¢VïWFFU7FGW2¬÷ÁVƒ6ÜV6≤“f«6Rí∞¢∆WBFó6÷ó76VEFs¢7G&ñÊr¬ÁV∆¬“ÁV∆√∞¢G'í≤Fó6÷ó76VEFr“vñÊF˜rÊ∆ˆ6≈7F˜&vRÊvWDóFV“ÖTïıUDDUÙDï4‘ï54TEıDuÙ¥Uíì≤“6F6Ç≤Ú¢G&VB7F˜&vRfñ«W&R2Ê˜BFó6÷ó76VB‚¢Ú–¢6ˆÁ7B7W&W76VEFr“7FGW2Ê∆FW7EfW'6ñˆ‚bbÇÜFó6÷ó76VEFr””“7FGW2Ê∆FW7EfW'6ñˆ‚bb÷ÁVƒ6ÜV6≤í«¬VïWFFTÊ˜Fñ6T˜VÊVEFr””“7FGW2Ê∆FW7EfW'6ñˆ‚ê¢Ú7FGW2Ê∆FW7EfW'6ñˆ‡¢¢ÁV∆√∞¢6ˆÁ7B&W6VÁFFñˆ‚“VïWFFTÊ˜Fñ6U&W6VÁFFñˆ‚á7FGW2¬7W&W76VEFrì∞¢6ˆÁ7BWFFT'WGFˆ‚“BÇr7WFFUVî'WGFˆ‚rì∞¢WFFT'WGFˆ„ÚÊ6∆74∆ó7BÁFˆvv∆RÇwWFFR÷fñ∆&∆Rr¬&W6VÁFFñˆ‚ÊÜñvÜ∆ñváBì∞¢WFFT'WGFˆ„ÚÁ6WDGG&ñ'WFRÇv&ñ÷∆&V¬r¬&W6VÁFFñˆ‚ÊÜñvÜ∆ñvá@¢Ú	MÌ-=˝›‚Ì›Ì-Ω]›çR˝›]ΩÉ¢G∑&W6VÁFFñˆ‚ÁfW'6ñˆÁ÷ ¢¢	-]çÚ˝›]ΩÇG∑7FGW2Ê7W'&VÁEfW'6ñˆÁ÷ì∞¢ñbÇ&W6VÁFFñˆ‚ÊÊ˜Fñgí«¬&W6VÁFFñˆ‚ÁfW'6ñˆ‚«¬7FGW2Á&V∆V6UW&¬í∞¢ÜñFUVïWFFTÊ˜Fñ6RÇì∞¢&WGW&„∞¢–¢6ˆÁ7BÜ˜7B“BÇr7VïWFFTÊ˜Fñ6Uw&W"rì∞¢ñbÇÜ˜7B«¬BÇr7VïWFFTÊ˜Fñ6RrìÚÊvWDGG&ñ'WFRÇvFF◊fW'6ñˆ‚rí””“&W6VÁFFñˆ‚ÁfW'6ñˆ‚í&WGW&„∞¢ÜñFUVïWFFTÊ˜Fñ6RÇì∞¢6ˆÁ7BóFV““Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw6V7Fñˆ‚rì∞¢óFV“ÊñB“wVïWFFTÊ˜Fñ6Rs∞¢óFV“ÊFF6WBÁfW'6ñˆ‚“&W6VÁFFñˆ‚ÁfW'6ñˆ„∞¢óFV“Ê6∆74Ê÷R“wVí◊WFFR÷Ê˜Fñ6RˆñÁFW"÷WfVÁG2÷WFÚ&V∆FófRr’≥#"„W&V’“÷Ç◊r’∂6∆2Égr”"„W&V“ï“&˜VÊFVB◊Ü¬&˜&FW"Ç”Bí”2FWáB◊6∆FR”6ÜF˜r”'Ü¬s∞¢óFV“Á6WDGG&ñ'WFRÇw&ˆ∆Rr¬w7FGW2rì∞¢óFV“Á6WDGG&ñ'WFRÇv&ñ÷∆ófRr¬wˆ∆óFRrì∞¢6ˆÁ7BÜVFñÊr“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì∞¢ÜVFñÊrÊ6∆74Ê÷R“vf∆WÇ÷ñ‚◊r”óFV◊2÷6VÁFW"v”"FWáB◊6“fˆÁB÷&ˆ∆BFWáB÷&«VR”s∞¢6ˆÁ7Bñ6ˆ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁDÂ2ÇváGG¢Ú˜wwrÁs2Ê˜&rÛ#˜7frr¬w7frrì∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇwfñWt&˜Çr¬s#B#Brì∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇvfñ∆¬r¬vÊˆÊRrì∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇw7G&ˆ∂Rr¬v7W'&VÁD6ˆ∆˜"rì∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇw7G&ˆ∂R◊vñGFÇr¬s"rì∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇw7G&ˆ∂R÷∆ñÊV6r¬w&˜VÊBrì∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇw7G&ˆ∂R÷∆ñÊV¶ˆñ‚r¬w&˜VÊBrì∞¢ñ6ˆ‚Á6WDGG&ñ'WFRÇv&ñ÷ÜñFFV‚r¬wG'VRrì∞¢ñ6ˆ‚Ê6∆74∆ó7BÊFBÇvÇ’≥áÖ“r¬wr’≥áÖ“r¬w6á&ñÊ≤”r¬wFWáB◊6∆FR”rì∞¢ñ6ˆ‚ÊñÊÊW$ÖD‘¬“s«FÇC“$”2&ííÇíí”Ç"Û„«FÇC“$”í&√"&√B”B"Û‚s∞¢6ˆÁ7BFóF∆R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì∞¢FóF∆RÁFWáD6ˆÁFVÁB“}	MÌ-=˝›‚Ì›Ì-Ω]›çRs∞¢6ˆÁ7B&V∆V6T∆ñÊ≤“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvrì∞¢&V∆V6T∆ñÊ≤Êá&Vb“7FGW2Á&V∆V6UW&√∞¢&V∆V6T∆ñÊ≤ÁF&vWB“uˆ&∆Ê≤s∞¢&V∆V6T∆ñÊ≤Á&V¬“vÊˆ˜VÊW"Ê˜&VfW'&W"s∞¢&V∆V6T∆ñÊ≤Á6WDGG&ñ'WFRÇv&ñ÷∆&V¬r¬}	Ì-≠Ω-¬]Ωçr›vóDáV"rì∞¢&V∆V6T∆ñÊ≤Ê6∆74Ê÷R“vñÊ∆ñÊR÷f∆WÇÇ”rr”r6á&ñÊ≤”óFV◊2÷6VÁFW"ßW7Fñgí÷6VÁFW"&˜VÊFVB÷÷BFWáB◊6∆FR”3G&Á6óFñˆ‚÷6ˆ∆˜'2Ü˜fW#¶&r◊6∆FR”sÜ˜fW#ßFWáB◊vÜóFRs∞¢&V∆V6T∆ñÊ≤ÊñÊÊW$ÖD‘¬“s«7fr&ñ÷ÜñFFV„“'G'VR"fñWt&˜É“#bb"fñ∆√“&7W'&VÁD6ˆ∆˜""6∆73“&Ç”Br”B#„«FÇC“$”Ç32„SÇ2„SÇÜÇÇR„Crr„Sñ2„B„r„SR“„r„SR“„3áb”„362”"„#2„Cí”"„r“„ìR”"„r“„ìR“„3b“„ì2“„Éí”„Ç“„Éí”„Ç“„s2“„R„b“„Cí„b“„Cí„Ç„b„#"„É"„#"„É"„s"„#"„í„Ér"„3b„cb„r“„S"„#Ç“„Ér„S”„r”„sÇ“„"”2„cR“„Éí”2„cR”2„ìb“„ÉÇ„3”„Sí„É"”"„R“„Ç“„"“„3b”„"„Ç”"„"„cr“„#"„"„É$r„rr„rÇB„ìñ2„cÇ„3b„í"„#r„S2”„2"„"“„É""„"“„É"„CB„„b„ì"„Ç"„"„S„Sb„É"„#r„É""„R2„Ç”„Ér2„sR”2„cb2„ìR„#í„#R„SB„s2„SB„Các"„&3„#„R„Cb„SR„3ÑÇÇbÜ3”B„C"”2„SÇ”Ç”Ç”Ö¢"Û„¬˜7fs‚s∞¢6ˆÁ7B7FñˆÁ2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì∞¢7FñˆÁ2Ê6∆74Ê÷R“v÷¬÷WFÚf∆WÇ6á&ñÊ≤”óFV◊2÷6VÁFW"v”s∞¢7FñˆÁ2ÊVÊBá&V∆V6T∆ñÊ≤ì∞¢6ˆÁ7B&ˆGí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'WGFˆ‚rì∞¢&ˆGíÁGóR“v'WGFˆ‚s∞¢&ˆGíÊFF6WBÊ7Fñˆ‰6∆ñ6≤“v˜V‰∆FW7EVïWFFRs∞¢&ˆGíÊFF6WBÊ&w2“•4Ù‚Á7G&ñÊvñgíÖ∑&W6VÁFFñˆ‚ÁfW'6ñˆÂ“ì∞¢&ˆGíÊ6∆74Ê÷R“v◊B”&∆ˆ6≤r÷gV∆¬FWáB÷∆VgBFWáB◊6“∆VFñÊr◊&V∆ÜVBFWáB◊6∆FR”3Ü˜fW#ßFWáB◊vÜóFRs∞¢&ˆGíÁFWáD6ˆÁFVÁB“	MÌ-=˝››Ì-Ú-]çÚÊgw3"’TíG∑&W6VÁFFñˆ‚ÁfW'6ñˆÁ÷∞¢6ˆÁ7B6∆˜6R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'WGFˆ‚rì∞¢6∆˜6RÁGóR“v'WGFˆ‚s∞¢6∆˜6RÊFF6WBÊ7Fñˆ‰6∆ñ6≤“vFó6÷ó75VïWFFTÊ˜Fñ6Rs∞¢6∆˜6RÊFF6WBÊ&w2“•4Ù‚Á7G&ñÊvñgíÖ∑&W6VÁFFñˆ‚ÁfW'6ñˆÂ“ì∞¢6∆˜6RÊ6∆74Ê÷R“vñÊ∆ñÊR÷f∆WÇÇ”rr”róFV◊2÷6VÁFW"ßW7Fñgí÷6VÁFW"&˜VÊFVB÷÷BFWáB’≥áÖ“∆VFñÊr÷ÊˆÊRFWáB◊6∆FR”CG&Á6óFñˆ‚÷6ˆ∆˜'2Ü˜fW#¶&r◊6∆FR”sÛsÜ˜fW#ßFWáB◊vÜóFRs∞¢6∆˜6RÁ6WDGG&ñ'WFRÇv&ñ÷∆&V¬r¬}
+≠Ω-¬=-]MÌÕΩ]›çRÌÌ›Ì-Ω]›çÇrì∞¢6∆˜6RÁFWáD6ˆÁFVÁB“|9rs∞¢7FñˆÁ2ÊVÊBÜ6∆˜6Rì∞¢ÜVFñÊrÊVÊBÜñ6ˆ‚¬FóF∆R¬7FñˆÁ2ì∞¢óFV“ÊVÊBÜÜVFñÊr¬&ˆGíì∞¢Ü˜7BÊVÊBÜóFV“ì∞ß–¶7ñÊ2gVÊ7Fñˆ‚&Vg&W6ÖVïWFFU7FGW2Çí∞¢ñbáVïWFFU7FGW5ˆ∆∆ñÊrí&WGW&„∞¢VïWFFU7FGW5ˆ∆∆ñÊr“G'VS∞¢G'í≤&VÊFW%VïWFFTÊ˜Fñ6RÜvóBÊgw5WFFW2ÁVï7FGW2Çíì≤–¢6F6Ç≤Ú¢&6∂w&˜VÊBWFFR6ÜV6∑2◊W7BÊ˜BñÁFW''WBÊV¬W6R‚¢Ú–¢fñÊ∆«í≤VïWFFU7FGW5ˆ∆∆ñÊr“f«6S≤–ß–¶gVÊ7Fñˆ‚6Ü˜tFñvÊ˜6ó5&ˆw&W72ÜÜ˜7C¢ÖD‘ƒV∆V÷VÁB¬Fˆ÷ñ„¢7G&ñÊrí∞¢6ˆÁ7BóFV““Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì∞¢óFV“Ê6∆74Ê÷R“wˆñÁFW"÷WfVÁG2÷WFÚ÷Ç◊r◊6“&˜VÊFVB◊Ü¬&˜&FW"&˜&FW"÷&«VR”SÛC&r◊6∆FR”ìÇ”Bí”2FWáB◊6“FWáB◊6∆FR”6ÜF˜r”'Ü¬s∞¢óFV“Á6WDGG&ñ'WFRÇw&ˆ∆Rr¬w7FGW2rì∞¢óFV“Á6WDGG&ñ'WFRÇv&ñ÷∆ófRr¬wˆ∆óFRrì∞¢6ˆÁ7BÜVFñÊr“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì∞¢ÜVFñÊrÊ6∆74Ê÷R“vf∆WÇóFV◊2÷6VÁFW"v”"fˆÁB◊6V÷ñ&ˆ∆BFWáB÷&«VR”#s∞¢6ˆÁ7B7ñÊÊW"“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì∞¢7ñÊÊW"Ê6∆74Ê÷R“vFñvÊ˜6ó2◊7ñÊÊW"ñÊ∆ñÊR÷&∆ˆ6≤Ç”2„Rr”2„R6á&ñÊ≤”&˜VÊFVB÷gV∆¬&˜&FW"”"&˜&FW"÷&«VR”3Û3&˜&FW"◊B÷&«VR”3s∞¢7ñÊÊW"Á6WDGG&ñ'WFRÇv&ñ÷ÜñFFV‚r¬wG'VRrì∞¢6ˆÁ7BFóF∆R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì∞¢FóF∆RÁFWáD6ˆÁFVÁB“	˝Ì-]≠MÌÕ]›G∂Fˆ÷ñÁ÷∞¢ÜVFñÊrÊVÊBá7ñÊÊW"¬FóF∆Rì∞¢6ˆÁ7BFWFñ«2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì∞¢FWFñ«2Ê6∆74Ê÷R“v◊B”FWáB◊á2∆VFñÊr”RFWáB◊6∆FR”Cs∞¢FWFñ«2ÁFWáD6ˆÁFVÁB“}	›Ì=-]R˝Ì-]˝Ì-ÚDÂ2Ç-]≠FÙÇ¬D5ÙÖEE2¬ÖEE¬Õç="¬≠Ì›-ÌΩÕ›ÌR4‰íÇ˝ÌMM]m≠Tî2‚s∞¢óFV“ÊVÊBÜÜVFñÊr¬FWFñ«2ì∞¢Ü˜7BÊVÊBÜóFV“ì∞¢&WGW&‚Çí”‚óFV“Á&V÷˜fRÇì∞ß–¶gVÊ7Fñˆ‚6WD'W7íáf«VS¢&ˆˆ∆V‚í∞¢'W7í“f«VS∞¢∆√ƒÖD‘ƒ'WGFˆ‰V∆V÷VÁC‚Çv'WGFˆÂ∂FF÷7Fñˆ‚÷6∆ñ6µ“ríÊf˜$V6ÇÇÜ'WGFˆ‚í”‚∞¢ñbáf«VRbb'WGFˆ‚ÊFó6&∆VBí≤'WGFˆ‚ÊFó6&∆VB“G'VS≤'WGFˆ‚ÊFF6WBÊ'W7îFó6&∆VB“wG'VRs≤–¢V«6RñbÇf«VRbb'WGFˆ‚ÊFF6WBÊ'W7îFó6&∆VB””“wG'VRrí≤'WGFˆ‚ÊFó6&∆VB“f«6S≤FV∆WFR'WGFˆ‚ÊFF6WBÊ'W7îFó6&∆VC≤–¢“ì∞¢∆√ƒÖD‘≈6V∆V7DV∆V÷VÁC‚Çw6V∆V7E∂FF÷7Fñˆ‚÷6ÜÊvU“ríÊf˜$V6ÇÇá6V∆V7Bí”‚∞¢ñbáf«VRbb6V∆V7BÊFó6&∆VBí≤6V∆V7BÊFó6&∆VB“G'VS≤6V∆V7BÊFF6WBÊ'W7îFó6&∆VB“wG'VRs≤–¢V«6RñbÇf«VRbb6V∆V7BÊFF6WBÊ'W7îFó6&∆VB””“wG'VRrí≤6V∆V7BÊFó6&∆VB“f«6S≤FV∆WFR6V∆V7BÊFF6WBÊ'W7îFó6&∆VC≤–¢“ì∞¢∆√ƒÖD‘≈FWáD&VV∆V÷VÁC‚ÇwFWáF&V∂FF÷6ˆÊfñr÷&wV÷VÁE“ríÊf˜$V6ÇÇÜfñV∆Bí”‚∞¢ñbáf«VRbbfñV∆BÊFó6&∆VBí≤fñV∆BÊFó6&∆VB“G'VS≤fñV∆BÊFF6WBÊ'W7îFó6&∆VB“wG'VRs≤–¢V«6RñbÇf«VRbbfñV∆BÊFF6WBÊ'W7îFó6&∆VB””“wG'VRrí≤fñV∆BÊFó6&∆VB“f«6S≤FV∆WFRfñV∆BÊFF6WBÊ'W7îFó6&∆VC≤–¢“ì∞ß–¶gVÊ7Fñˆ‚6WE&W7F'DñÂ&ˆw&W72áf«VS¢&ˆˆ∆V‚í∞¢&W7F'DñÂ&ˆw&W72“f«VS∞¢6ˆÁ7BñÊFñ6F˜"“BÇr77FGW4ñÊFñ6F˜"rì∞¢ñÊFñ6F˜#ÚÊ6∆74∆ó7BÁFˆvv∆RÇw7FGW2◊&W7F'FñÊrr¬f«VRì∞¢ñÊFñ6F˜#ÚÁ6WDGG&ñ'WFRÇv&ñ÷'W7ír¬7G&ñÊráf«VRíì∞¢BÇr6ÜVFW%7FGW4&"rìÚÊ6∆74∆ó7BÁFˆvv∆RÇw7FGW2◊&W7F'FñÊrr¬f«VRì∞¢6ˆÁ7B∆&V¬“BÇr77FGW5FWáD∆&V¬rì∞¢ñbáf«VRbb∆&V¬í∞¢∆&V¬ÁFWáD6ˆÁFVÁB“}	˝]]}˝=¢Êgw3.(
+bs∞¢∆&V¬Ê6∆74Ê÷R“wFWáB◊á26”ßFWáB◊6“fˆÁB◊6V÷ñ&ˆ∆BFWáB÷&«VR”3G&6∂ñÊr◊FñváBs∞¢–ß–¶gVÊ7Fñˆ‚6Ü˜u&˜WFRá&˜WFS¢&˜WFRí∞¢ñbÇÖT‰dîƒ$ƒUı‰T≈ı$ıUDU22&VFˆÊ«í7G&ñÊuµ“íÊñÊ6«VFW2á&˜WFRíí&WGW&„∞¢Fˆ7V÷VÁBÁVW'ï6V∆V7F˜$∆√ƒÖD‘ƒV∆V÷VÁC‚Çu∂ñE„“'F$6ˆÁFVÁB“%“ríÊf˜$V6ÇÇá6V7Fñˆ‚í”‚6V7Fñˆ‚Ê6∆74∆ó7BÁFˆvv∆RÇvÜñFFV‚r¬6V7Fñˆ‚ÊñB”“F$6ˆÁFVÁB“G∑&˜WFW÷íì∞¢∆√ƒÖD‘ƒ'WGFˆ‰V∆V÷VÁC‚ÇrÁ6ñFR÷Êb÷'F‚ríÊf˜$V6ÇÇÜ'WGFˆ‚í”‚∞¢6ˆÁ7B7FófR“'WGFˆ‚ÊñB””“Êd'F‚“G∑&˜WFW÷∞¢'WGFˆ‚Ê6∆74∆ó7BÁFˆvv∆RÇv7FófRr¬7FófRì∞¢'WGFˆ‚Ê6∆74∆ó7BÁFˆvv∆RÇwFWáB◊6∆FR”Cr¬7FófRì∞¢“ì∞¢ñbá&˜WFR””“v∆ó7G2rífˆñB∆ˆD∆ó7BÜ7FófT∆ó7DñBì∞¢ñbá&˜WFR””“w6Ê6Ü˜G2rífˆñB∆ˆD&6∑W2Çì∞¢ñbá&˜WFR””“v&˜WBrífˆñB∆ˆD&˜WE7FGW2Çì∞ß–¶∆WB6Ê6Ü˜D˜fW'fñWs¢6Ê6Ü˜D˜fW'fñWr¬ÁV∆¬“ÁV∆√∞¶gVÊ7Fñˆ‚&VÊFW$&6∑W2ÜFF¢6Ê6Ü˜D˜fW'fñWrí∞¢6ˆÁ7BÜ˜7B“BÇr6&6∑W∆ó7Brì≤ñbÇÜ˜7Bí&WGW&„∞¢6Ê6Ü˜D˜fW'fñWr“FF∞¢6WEFWáBÇr76Ê6Ü˜D6˜VÁBr¬G∂FFÊ∆ˆ6ƒ6˜VÁG“G∑«W&∆ó¶RÜFFÊ∆ˆ6ƒ6˜VÁB¬}›çÕÌ¢r¬}›çÕ≠r¬}›çÕ≠Ì"ró“+rG∂f˜&÷D'óFW2ÜFFÁF˜Fƒ'óFW2ó÷ì∞¢6WEFWáBÇr76Ê6Ü˜DFó&V7F˜'ír¬FFÊFó&V7F˜'íì∞¢6WEFWáBÇr76Ê6Ü˜E&V÷˜FU7FGW2r¬FFÁ&V÷˜FRÁFˆˆ¬Ú}	›Ì=-]R›]"54Ç›≠Ωç]›-r¢FFÁ&V÷˜FRÊW'&˜"Ú	Ìçç≠Ì-˝-≠É¢G∂FFÁ&V÷˜FRÊW'&˜'÷¢FFÁ&V÷˜FRÊˆ‚Ú	-≠ΩÌ}]›‚+r›‰2G∂FFÁ&V÷˜FRÁ7F˜&VG“+rmM="Ì-˝-≠ÇG∂FFÁ&V÷˜FRÁVÊFñÊw÷¢}	Ì-˝-≠-Ω≠ΩÌ}]›(	B›çÕ≠Ç]›˝-Ú›Ì=-]Rrì∞¢6WEf«VRÇr76Ê6Ü˜DFó2r¬7G&ñÊrÜFFÁ6WGFñÊw2Ê÷ÑFó2íì≤6WEf«VRÇr76Ê6Ü˜D÷Ñ6˜VÁBr¬7G&ñÊrÜFFÁ6WGFñÊw2Ê÷Ñ6˜VÁBíì∞¢6WEf«VRÇr76Ê6Ü˜E&V÷˜FTVÊ&∆VBr¬7G&ñÊrÜFFÁ6WGFñÊw2Á&V÷˜FRÊVÊ&∆VBí¬G'VRì≤6WEf«VRÇr76Ê6Ü˜E&V÷˜FTÜ˜7Br¬FFÁ6WGFñÊw2Á&V÷˜FRÊÜ˜7Bì≤6WEf«VRÇr76Ê6Ü˜E&V÷˜FU˜'Br¬7G&ñÊrÜFFÁ6WGFñÊw2Á&V÷˜FRÁ˜'Bíì≤6WEf«VRÇr76Ê6Ü˜E&V÷˜FUW6W"r¬FFÁ6WGFñÊw2Á&V÷˜FRÁW6W"ì≤6WEf«VRÇr76Ê6Ü˜E&V÷˜FTFó"r¬FFÁ6WGFñÊw2Á&V÷˜FRÊFó"ì≤6WEf«VRÇr76Ê6Ü˜E&V÷˜FT∂VWr¬7G&ñÊrÜFFÁ6WGFñÊw2Á&V÷˜FRÊ∂VW∆ˆ6¬íì∞¢6WEFWáBÇr76Ê6Ü˜EV&∆ñ4∂Wír¬FFÁ&V÷˜FRÁV&∆ñ4∂Wíì∞¢6ˆÁ7B6ˆ÷÷ÊB“BÇr76Ê6Ü˜E6WGW6ˆ÷÷ÊBrì≤ñbÜ6ˆ÷÷ÊBñÁ7FÊ6VˆbÖD‘≈FWáD&VV∆V÷VÁBí6ˆ÷÷ÊBÁf«VR“FFÁ&V÷˜FRÁ6WGW6ˆ÷÷ÊC∞¢BÇr76Ê6Ü˜E6WGWFWFñ«2rìÚÊ6∆74∆ó7BÁFˆvv∆RÇvÜñFFV‚r¬FFÁ&V÷˜FRÁ6WGW6ˆ÷÷ÊBì∞¢6ˆÁ7B∂Wî'WGFˆ‚“BÇr76Ê6Ü˜D7&VFT∂Wírì≤ñbÜ∂Wî'WGFˆ‚ñÁ7FÊ6VˆbÖD‘ƒ'WGFˆ‰V∆V÷VÁBí≤∂Wî'WGFˆ‚ÁFWáD6ˆÁFVÁB“FFÁ&V÷˜FRÁV&∆ñ4∂WíÚ}	≠ΩÌrÌ=-]=Ì-Ì"r¢~˚»≤
+Ì}M-¬≠ΩÌrÌ=-]s≤∂Wî'WGFˆ‚ÊFó6&∆VB“&ˆˆ∆V‚ÜFFÁ&V÷˜FRÁV&∆ñ4∂Wíí«¬FFÁ&V÷˜FRÁFˆˆ√≤–¢6ˆÁ7BW6Ñ'WGFˆ‚“BÇr76Ê6Ü˜E&V÷˜FUW6Çrì≤ñbáW6Ñ'WGFˆ‚ñÁ7FÊ6VˆbÖD‘ƒ'WGFˆ‰V∆V÷VÁBíW6Ñ'WGFˆ‚ÊFó6&∆VB“FFÁ&V÷˜FRÊˆ‚«¬FFÁ&V÷˜FRÁVÊFñÊr””“∞¢6ˆÁ7BFW7D'WGFˆ‚“BÇr76Ê6Ü˜E&V÷˜FUFW7Brì≤ñbáFW7D'WGFˆ‚ñÁ7FÊ6VˆbÖD‘ƒ'WGFˆ‰V∆V÷VÁBíFW7D'WGFˆ‚ÊFó6&∆VB“FFÁ&V÷˜FRÁFˆˆ¬«¬FFÁ&V÷˜FRÁV&∆ñ4∂Wì∞¢Ü˜7BÁ&W∆6T6Üñ∆G&V‚Çì∞¢ñbÇFFÊóFV◊2Ê∆VÊwFÇí≤6ˆÁ7BV◊Gí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤V◊GíÊ6∆74Ê÷R“w&˜VÊFVB◊Ü¬&˜&FW"&˜&FW"◊6∆FR”É&r’≤3c%“”BFWáB◊6“FWáB◊6∆FR”Cs≤V◊GíÁFWáD6ˆÁFVÁB“}
+›çÕ≠Ì"˝Ì≠›]"‚
+Ì}Mù-R˝]-Ωí›çÕÌ¢-=}›=‚‚s≤Ü˜7BÊVÊBÜV◊Gíì≤&WGW&„≤–¢f˜"Ü6ˆÁ7BóFV“ˆbFFÊóFV◊2í∞¢6ˆÁ7B&˜r“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'Fñ6∆Rrì≤&˜rÊ6∆74Ê÷R“v&6∑W◊&˜rs∞¢6ˆÁ7BFWFñ«2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì≤FWFñ«2Ê6∆74Ê÷R“v÷ñ‚◊r”s∞¢6ˆÁ7BFóF∆R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7G&ˆÊrrì≤FóF∆RÊ6∆74Ê÷R“v&∆ˆ6≤FWáB◊6“FWáB◊vÜóFRs≤FóF∆RÁFWáD6ˆÁFVÁB“G∑6Ê6Ü˜E&V6ˆ‚ÜóFV“Á&V6ˆ‚ó“G∂óFV“ÁñÊÊVBÚr+r}≠]˝Ω“r¢rw÷∞¢6ˆÁ7BFFR“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì≤FFRÊ6∆74Ê÷R“v◊B”&∆ˆ6≤FWáB◊á2FWáB◊6∆FR”Cs≤FFRÁFWáD6ˆÁFVÁB“ÊWrFFRÜóFV“ÁG2¢íÁFÙ∆ˆ6∆U7G&ñÊrÇì∞¢6ˆÁ7BÊ˜FR“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì≤Ê˜FRÊ6∆74Ê÷R“v◊B”&∆ˆ6≤'&V≤◊v˜&G2FWáB◊á2FWáB◊6∆FR”Ss≤Ê˜FRÁFWáD6ˆÁFVÁB“óFV“ÊÊ˜FR«¬G∂óFV“Ê∆ˆ6¬bbóFV“Á&V÷˜FRÚ}
+Ì=-]Ç‰2r¢óFV“Ê∆ˆ6¬Ú}	›Ì=-]Rr¢}	›‰2w“+rG∂f˜&÷D'óFW2ÜóFV“Á6ó¶Ró÷∞¢FWFñ«2ÊVÊBáFóF∆R¬FFR¬Ê˜FRì∞¢6ˆÁ7B7FñˆÁ2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì≤7FñˆÁ2Ê6∆74Ê÷R“vf∆WÇf∆WÇ◊w&v”"s∞¢6ˆÁ7BF˜vÊ∆ˆB“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvrì≤F˜vÊ∆ˆBÊ6∆74Ê÷R“v&6∑W÷7Fñˆ‚s≤F˜vÊ∆ˆBÊá&Vb“ˆí˜6Ê6Ü˜G2ÚG∂VÊ6ˆFUU$î6ˆ◊ˆÊVÁBÜóFV“ÊñBó“ˆ&6ÜófV≤F˜vÊ∆ˆBÁFWáD6ˆÁFVÁB“}
+≠}-¬s∞¢6ˆÁ7B&W7F˜&R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'WGFˆ‚rì≤&W7F˜&RÁGóR“v'WGFˆ‚s≤&W7F˜&RÊ6∆74Ê÷R“v&6∑W÷7Fñˆ‚s≤&W7F˜&RÊFF6WBÊ7Fñˆ‰6∆ñ6≤“w&W7F˜&U6Ê6Ü˜Bs≤&W7F˜&RÊFF6WBÊ&w2“•4Ù‚Á7G&ñÊvñgíÖ∂óFV“ÊñE“ì≤&W7F˜&RÁFWáD6ˆÁFVÁB“}	-Ì-›Ì-ç-¬s∞¢6ˆÁ7Bñ‚“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'WGFˆ‚rì≤ñ‚ÁGóR“v'WGFˆ‚s≤ñ‚Ê6∆74Ê÷R“v&6∑W÷7Fñˆ‚s≤ñ‚ÊFF6WBÊ7Fñˆ‰6∆ñ6≤“wñÂ6Ê6Ü˜Bs≤ñ‚ÊFF6WBÊ&w2“•4Ù‚Á7G&ñÊvñgíÖ∂óFV“ÊñB¬óFV“ÁñÊÊVE“ì≤ñ‚ÁFWáD6ˆÁFVÁB“óFV“ÁñÊÊVBÚ}	Ì-≠]˝ç-¬r¢}	}≠]˝ç-¬s∞¢ñ‚ÊFó6&∆VB“óFV“Ê∆ˆ6√∞¢7FñˆÁ2ÊVÊBÜF˜vÊ∆ˆB¬&W7F˜&R¬ñ‚ì≤&˜rÊVÊBÜFWFñ«2¬7FñˆÁ2ì≤Ü˜7BÊVÊBá&˜rì∞¢–ß–¶7ñÊ2gVÊ7Fñˆ‚∆ˆD&6∑W2Çí∞¢6ˆÁ7B∆&V¬“BÇr6&6∑W7FGW2rì≤ñbÜ∆&V¬í∆&V¬ÁFWáD6ˆÁFVÁB“}	}==m]¬˝çÌ¢›çÕ≠Ì"Ì=-](
+bs∞¢G'í≤&VÊFW$&6∑W2ÜvóBÊgw56Ê6Ü˜G2ÊvWBÇíì≤ñbÜ∆&V¬í∆&V¬ÁFWáD6ˆÁFVÁB“}	--Ì›çÕ≠ÇÌ}MÌ-Ú˝]]Bç}Õ]›]›ç˝ÕÇ}]]r˝›]Ω¬Ç]m]M›]-›‚"C£R‚s≤–¢6F6ÇÜW'&˜"í≤ñbÜ∆&V¬í∆&V¬ÁFWáD6ˆÁFVÁB“W'&˜"ñÁ7FÊ6VˆbW'&˜"Ú	›R=MΩÌ¬}==}ç-¬›çÕ≠É¢G∂W'&˜"Ê÷W76vW÷¢}	›R=MΩÌ¬}==}ç-¬]}]-›ΩR≠Ì˝çÇ‚s≤–ß–¶gVÊ7Fñˆ‚6WEf«VRá6V∆V7F˜#¢7G&ñÊr¬f«VS¢7G&ñÊr¬6ÜV6∂VB“f«6Rí≤6ˆÁ7BV∆V÷VÁB“Bá6V∆V7F˜"ì≤ñbÜV∆V÷VÁBñÁ7FÊ6VˆbÖD‘ƒñÁWDV∆V÷VÁBí≤ñbÜ6ÜV6∂VBíV∆V÷VÁBÊ6ÜV6∂VB“f«VR””“wG'VRs≤V«6RV∆V÷VÁBÁf«VR“f«VS≤“–¶gVÊ7Fñˆ‚f˜&÷D'óFW2áf«VS¢ÁV÷&W"ì¢7G&ñÊr≤ñbáf«VR¬#Bí&WGW&‚G∑f«VW“	≤ñbáf«VR¬#B¢#Bí&WGW&‚G≤áf«VRÚ#BíÁFÙfóÜVBÉó“	≠	≤&WGW&‚G≤áf«VRÚÉ#B¢#BííÁFÙfóÜVBÉó“	Õ	≤–¶gVÊ7Fñˆ‚«W&∆ó¶Ráf«VS¢ÁV÷&W"¬ˆÊS¢7G&ñÊr¬fWs¢7G&ñÊr¬÷Áì¢7G&ñÊrì¢7G&ñÊr≤6ˆÁ7B‚“÷FÇÊ'2áf«VRíR≤6ˆÁ7B∆7B“‚R≤&WGW&‚‚‚bb‚¬#Ú÷Áí¢∆7B‚bb∆7B¬RÚfWr¢∆7B””“ÚˆÊR¢÷Áì≤–¶gVÊ7Fñˆ‚6Ê6Ü˜E&V6ˆ‚á&V6ˆ„¢7G&ñÊrì¢7G&ñÊr≤&WGW&‚á≤}-=}›=‚s¢}	-=}›=‚r¬}˝]]Bç}Õ]›]›ç]¬s¢}	˝]]Bç}Õ]›]›ç]¬r¬}]m]M›]-›Ωís¢}	]m]M›]-›Ωír¬}˝]]B-Ì-›Ì-Ω]›ç]¬s¢}	˝]]B-Ì-›Ì-Ω]›ç]¬r¬}çrMùΩs¢}	çrMùΩr“2&V6˜&C«7G&ñÊr¬7G&ñÊs‚ï∑&V6ˆÂ“ÛÚ&V6ˆ„≤–¶7ñÊ2gVÊ7Fñˆ‚7&VFU6Ê6Ü˜BÇí∞¢6ˆÁ7BÊ˜FR“vñÊF˜rÁ&ˆ◊BÇ}	˝ÌM˝ç¬¢›çÕ≠2ç›]Ì˝}-]ΩÕ›‚ì¢r¬rrì≤ñbÜÊ˜FR””“ÁV∆¬í&WGW&„∞¢G'í≤6ˆÁ7BóFV““vóBÊgw56Ê6Ü˜G2Ê7&VFRÜÊ˜FRì≤Fˆ7BÜ
+›çÕÌ¢Ì}M“+rG∂ÊWrFFRÜóFV“ÁG2¢íÁFÙ∆ˆ6∆U7G&ñÊrÇó÷ì≤vóB∆ˆD&6∑W2Çì≤–¢6F6ÇÜW'&˜"í≤Fˆ7BÜW'&˜"ñÁ7FÊ6VˆbW'&˜"ÚW'&˜"Ê÷W76vR¢}	›R=MΩÌ¬Ì}M-¬›çÕÌ¢‚r¬vW'&˜"rì≤–ß–¶7ñÊ2gVÊ7Fñˆ‚&W7F˜&U6Ê6Ü˜BÜñC¢7G&ñÊrí∞¢ñbÇvñÊF˜rÊ6ˆÊfó&“Ç}	-Ì-›Ì-ç-¬≠Ì›Mç==mç‚¬˝ç≠ÇÇ›-Ìù≠Ççr›-Ì=‚›çÕ≠Ú	˝]]B}˝çÕ‚Ì]›ç-Ú-]≠=ù]RÌ-Ì˝›çR‚ríí&WGW&„∞¢G'í≤6ˆÁ7B&W7V«B“vóBÊgw56Ê6Ü˜G2Á&W7F˜&RÜñBì≤Fˆ7Bá&W7V«BÊ÷W76vRì≤vóB&ˆ÷ó6RÊ∆¬Ö∂∆ˆD&6∑W2Çí¬∆ˆD6ˆÊfñrÇí¬fWF6Ö7FGW2Çí¬7ñÊ4V&Ê6Tg&ˆ’&˜WFW"Çï“ì≤–¢6F6ÇÜW'&˜"í≤Fˆ7BÜW'&˜"ñÁ7FÊ6VˆbW'&˜"ÚW'&˜"Ê÷W76vR¢}	›R=MΩÌ¬-Ì-›Ì-ç-¬›çÕÌ¢‚r¬vW'&˜"rì≤–ß–¶7ñÊ2gVÊ7Fñˆ‚&W7F˜&U6Ê6Ü˜Dfñ∆RÜñÁWC¢ÖD‘ƒñÁWDV∆V÷VÁBí∞¢6ˆÁ7Bfñ∆R“ñÁWBÊfñ∆W3ÚÂ≥”≤ñbÇfñ∆Rí&WGW&„∞¢ñbÇvñÊF˜rÊ6ˆÊfó&“Ü	-Ì-›Ì-ç-¬Ì-Ì˝›çRçr*≤G∂fñ∆RÊÊ÷W‹+≥Ú	˝]]B}˝çÕ‚Ì}M-Ú›çÕÌ¢-]≠=ù]=‚Ì-Ì˝›çÚÊíí≤ñÁWBÁf«VR“rs≤&WGW&„≤–¢G'í≤6ˆÁ7B&W7V«B“vóBÊgw56Ê6Ü˜G2Á&W7F˜&Tfñ∆RÜfñ∆Rì≤Fˆ7Bá&W7V«BÊ÷W76vRÛÚ	-Ì-›Ì-Ω]›‚MùΩÌ#¢G∑&W7V«BÊ6ÜÊvVCÚÊ∆VÊwFÇÛÚ÷ì≤vóB&ˆ÷ó6RÊ∆¬Ö∂∆ˆD&6∑W2Çí¬∆ˆD6ˆÊfñrÇí¬fWF6Ö7FGW2Çí¬7ñÊ4V&Ê6Tg&ˆ’&˜WFW"Çï“ì≤–¢6F6ÇÜW'&˜"í≤Fˆ7BÜW'&˜"ñÁ7FÊ6VˆbW'&˜"ÚW'&˜"Ê÷W76vR¢}	›R=MΩÌ¬-Ì-›Ì-ç-¬]ç"‚r¬vW'&˜"rì≤–¢fñÊ∆«í≤ñÁWBÁf«VR“rs≤–ß–¶gVÊ7Fñˆ‚&VE6Ê6Ü˜E6WGFñÊw2Çí∞¢6ˆÁ7B7W'&VÁB“6Ê6Ü˜D˜fW'fñWsÚÁ6WGFñÊw3≤ñbÇ7W'&VÁBíFá&˜rÊWrW'&˜"Ç}
+›}Ω}==}ç-R›-Ìù≠Ç›çÕ≠Ì"‚rì∞¢6ˆÁ7BÁV÷&W"“á6V∆V7F˜#¢7G&ñÊr¬f∆∆&6≥¢ÁV÷&W"í”‚ÁV÷&W"Á'6TñÁBÇÇCƒÖD‘ƒñÁWDV∆V÷VÁC‚á6V∆V7F˜"ìÚÁf«VRÛÚrrí¬í«¬f∆∆&6≥∞¢&WGW&‚≤‚‚Ê7W'&VÁB¬÷ÑFó3¢ÁV÷&W"Çr76Ê6Ü˜DFó2r¬7W'&VÁBÊ÷ÑFó2í¬÷Ñ6˜VÁC¢ÁV÷&W"Çr76Ê6Ü˜D÷Ñ6˜VÁBr¬7W'&VÁBÊ÷Ñ6˜VÁBí¬&V÷˜FS¢≤‚‚Ê7W'&VÁBÁ&V÷˜FR¬VÊ&∆VC¢ÇCƒÖD‘ƒñÁWDV∆V÷VÁC‚Çr76Ê6Ü˜E&V÷˜FTVÊ&∆VBrìÚÊ6ÜV6∂VBÛÚf«6Rí¬Ü˜7C¢CƒÖD‘ƒñÁWDV∆V÷VÁC‚Çr76Ê6Ü˜E&V÷˜FTÜ˜7BrìÚÁf«VRÁG&ñ“ÇíÛÚrr¬˜'C¢ÁV÷&W"Çr76Ê6Ü˜E&V÷˜FU˜'Br¬7W'&VÁBÁ&V÷˜FRÁ˜'Bí¬W6W#¢CƒÖD‘ƒñÁWDV∆V÷VÁC‚Çr76Ê6Ü˜E&V÷˜FUW6W"rìÚÁf«VRÁG&ñ“ÇíÛÚrr¬Fó#¢CƒÖD‘ƒñÁWDV∆V÷VÁC‚Çr76Ê6Ü˜E&V÷˜FTFó"rìÚÁf«VRÁG&ñ“ÇíÛÚrr¬∂VW∆ˆ6√¢ÁV÷&W"Çr76Ê6Ü˜E&V÷˜FT∂VWr¬7W'&VÁBÁ&V÷˜FRÊ∂VW∆ˆ6¬í“”∞ß–¶7ñÊ2gVÊ7Fñˆ‚6fU6Ê6Ü˜E6WGFñÊw2á&V÷˜FTˆÊ«í“f«6Rí∞¢6ˆÁ7B6WGFñÊw2“&VE6Ê6Ü˜E6WGFñÊw2Çì∞¢ñbá&V÷˜FTˆÊ«íbb6Ê6Ü˜D˜fW'fñWrí≤6WGFñÊw2Ê÷ÑFó2“6Ê6Ü˜D˜fW'fñWrÁ6WGFñÊw2Ê÷ÑFó3≤6WGFñÊw2Ê÷Ñ6˜VÁB“6Ê6Ü˜D˜fW'fñWrÁ6WGFñÊw2Ê÷Ñ6˜VÁC≤–¢vóBÊgw56Ê6Ü˜G2Á6fU6WGFñÊw2á6WGFñÊw2ì≤Fˆ7BÇ}	›-Ìù≠Ç]}]-›ΩR≠Ì˝çíÌ]›]›≤‚rì≤vóB∆ˆD&6∑W2Çì∞ß–¶7ñÊ2gVÊ7Fñˆ‚'VÂ6Ê6Ü˜E&V÷˜FRÜ7Fñˆ„¢wFW7Br¬wW6Çr¬v∂Wírí∞¢G'í∞¢ñbÜ7Fñˆ‚”“v∂WírívóB6fU6Ê6Ü˜E6WGFñÊw2áG'VRì∞¢ñbÜ7Fñˆ‚””“wFW7Brí≤6ˆÁ7B&W7V«B“vóBÊgw56Ê6Ü˜G2ÁFW7E&V÷˜FRÇì≤Fˆ7BÜ
+-˝}¬‰2]-¬+r›ùM]›‚MùΩÌ#¢G∑&W7V«BÊ6˜VÁG÷ì≤–¢V«6RñbÜ7Fñˆ‚””“wW6Çrí≤6ˆÁ7B&W7V«B“vóBÊgw56Ê6Ü˜G2ÁW6Ö&V÷˜FRÇì≤Fˆ7BÜ	Ì-˝-Ω]›‚›çÕ≠Ì#¢G∑&W7V«BÁ6VÁG÷ì≤–¢V«6R≤vóBÊgw56Ê6Ü˜G2Ê7&VFT∂WíÇì≤Fˆ7BÇ}	≠ΩÌrÌ}M“‚	-Ω˝ÌΩ›ç-R≠ÌÕ›M2MΩÚ‰2¬}-]¬˝Ì-]Õ-R-˝}¬‚rì≤–¢vóB∆ˆD&6∑W2Çì∞¢“6F6ÇÜW'&˜"í≤Fˆ7BÜW'&˜"ñÁ7FÊ6VˆbW'&˜"ÚW'&˜"Ê÷W76vR¢}	Ì˝]mçÚ‰2›R-Ω˝ÌΩ›]›‚r¬vW'&˜"rì≤–ß–¶gVÊ7Fñˆ‚7ñÊ4V&Ê6T6ˆÁG&ˆ«2Çí∞¢∆√ƒÖD‘ƒñÁWDV∆V÷VÁC‚ÇvñÁWE∂Ê÷S“&V&Ê6UFÜV÷R%“ríÊf˜$V6ÇÇÜñÁWBí”‚≤ñÁWBÊ6ÜV6∂VB“ñÁWBÁf«VR””“V&Ê6U6WGFñÊw2ÁFÜV÷S≤“ì∞¢∆√ƒÖD‘ƒñÁWDV∆V÷VÁC‚ÇvñÁWE∂Ê÷S“&V&Ê6T∆ñ˜WB%“ríÊf˜$V6ÇÇÜñÁWBí”‚≤ñÁWBÊ6ÜV6∂VB“ñÁWBÁf«VR””“V&Ê6U6WGFñÊw2Ê∆ñ˜WC≤“ì∞¢∆√ƒÖD‘ƒñÁWDV∆V÷VÁC‚ÇvñÁWE∂Ê÷S“&V&Ê6T66VÁB%“ríÊf˜$V6ÇÇÜñÁWBí”‚≤ñÁWBÊ6ÜV6∂VB“ñÁWBÁf«VR””“V&Ê6U6WGFñÊw2Ê66VÁC≤“ì∞¢∆√ƒÖD‘ƒñÁWDV∆V÷VÁC‚ÇvñÁWE∂Ê÷S“&V&Ê6U7FGW4&"%“ríÊf˜$V6ÇÇÜñÁWBí”‚≤ñÁWBÊ6ÜV6∂VB“ñÁWBÁf«VR””“V&Ê6U6WGFñÊw2Á7FGW4&#≤“ì∞¢∆√ƒÖD‘ƒñÁWDV∆V÷VÁC‚Çu∂FF÷V&Ê6R◊&V÷ñÊB◊Fñ÷W7F◊5“ríÊf˜$V6ÇÇÜñÁWBí”‚≤ñÁWBÊ6ÜV6∂VB“V&Ê6U6WGFñÊw2Á&V÷ñÊEvñÊF˜w5F7Fñ÷W7F◊3≤“ì∞ß–¶gVÊ7Fñˆ‚WFFTV&Ê6RÜ6ÜÊvS¢'Fñ√ƒV&Ê6U6WGFñÊw3‚í∞¢∆WB7F˜&vS¢7F˜&vR¬ÁV∆¬“ÁV∆√≤G'í≤7F˜&vR“vñÊF˜rÊ∆ˆ6≈7F˜&vS≤“6F6Ç≤Ú¢«íf˜"FÜó26W76ñˆ‚vóFÜ˜WBW'6ó7FVÁB7F˜&vR‚¢Ú–¢V&Ê6U6WGFñÊw2“6fTV&Ê6Rá7F˜&vR¬≤‚‚ÊV&Ê6U6WGFñÊw2¬‚‚Ê6ÜÊvR“ì∞¢«îV&Ê6RÜV&Ê6U6WGFñÊw2ì∞¢7ñÊ4V&Ê6T6ˆÁG&ˆ«2Çì∞¢fˆñBÊgw4V&Ê6RÁ6fRÜV&Ê6U6WGFñÊw2íÊ6F6ÇÇÜW'&˜"í”‚Fˆ7BÜW'&˜"ñÁ7FÊ6VˆbW'&˜"Ú	ÌMÌÕΩ]›çRÌ]›]›‚-ÌΩÕ≠‚"›-Ì¬=}]S¢G∂W'&˜"Ê÷W76vW÷¢}	ÌMÌÕΩ]›çRÌ]›]›‚-ÌΩÕ≠‚"›-Ì¬=}]R‚r¬vW'&˜"ríì∞ß–¶7ñÊ2gVÊ7Fñˆ‚7ñÊ4V&Ê6Tg&ˆ’&˜WFW"Çí∞¢6ˆÁ7B6fVB“vóBÊgw4V&Ê6RÊvWBÇì≤ñbÇ6fVBí&WGW&„∞¢∆WB7F˜&vS¢7F˜&vR¬ÁV∆¬“ÁV∆√≤G'í≤7F˜&vR“vñÊF˜rÊ∆ˆ6≈7F˜&vS≤“6F6Ç≤Ú¢W6RFÜR&W7F˜&VB6WGFñÊw2f˜"FÜó26W76ñˆ‚‚¢Ú–¢V&Ê6U6WGFñÊw2“6fTV&Ê6Rá7F˜&vR¬6fVBì≤«îV&Ê6RÜV&Ê6U6WGFñÊw2ì≤7ñÊ4V&Ê6T6ˆÁG&ˆ«2Çì∞ß–¶gVÊ7Fñˆ‚ñÊóFñ∆ó¶TV&Ê6U6WGFñÊw2Çí∞¢∆WB7F˜&vS¢7F˜&vR¬ÁV∆¬“ÁV∆√∞¢G'í≤7F˜&vR“vñÊF˜rÊ∆ˆ6≈7F˜&vS≤“6F6Ç≤Ú¢W6R6fRFVfV«G2ñb'&˜w6W"7F˜&vRó2&∆ˆ6∂VB‚¢Ú–¢V&Ê6U6WGFñÊw2“∆ˆDV&Ê6Rá7F˜&vRì∞¢«îV&Ê6RÜV&Ê6U6WGFñÊw2ì∞¢7ñÊ4V&Ê6T6ˆÁG&ˆ«2Çì∞¢fˆñBÊgw4V&Ê6RÊvWBÇíÁFÜV‚Çá6fVBí”‚∞¢ñbÇ6fVBí≤fˆñBÊgw4V&Ê6RÁ6fRÜV&Ê6U6WGFñÊw2íÊ6F6ÇÇÇí”‚VÊFVfñÊVBì≤&WGW&„≤–¢V&Ê6U6WGFñÊw2“6fTV&Ê6Rá7F˜&vR¬6fVBì≤«îV&Ê6RÜV&Ê6U6WGFñÊw2ì≤7ñÊ4V&Ê6T6ˆÁG&ˆ«2Çì∞¢“íÊ6F6ÇÇÇí”‚VÊFVfñÊVBì∞ß–¶7ñÊ2gVÊ7Fñˆ‚∆ˆD&˜WE7FGW2á7FGW4˜fW'&ñFSÛ¢VïWFFU7FGW2í∞¢G'í∞¢6ˆÁ7B&W7V«B“7FGW4˜fW'&ñFRÛÚvóBÊgw5WFFW2ÁVï7FGW2Çì∞¢6WEFWáBÇr6&˜WD7W'&VÁEfW'6ñˆ‚r¬&W7V«BÊ7W'&VÁEfW'6ñˆ‚ì∞¢6WEFWáBÇr6&˜WD∆FW7EfW'6ñˆ‚r¬&W7V«BÊ∆FW7EfW'6ñˆ‚ÛÚ}›R=MΩÌ¬Ì˝]M]Ωç-¬rì∞¢6WEFWáBÇr6&˜WEWFFU7FGW2r¬&W7V«BÁWFFTfñ∆&∆RÚ	MÌ-=˝›-]çÚG∑&W7V«BÊ∆FW7EfW'6ñˆÁ“‚	Ì›Ì-ç-R˝›]Ω¬}]]r≠›Ì˝≠2Ì›Ì-Ω]›çÚ"-]]›]í˝›]ΩÇÊ¢&W7V«BÊ∆FW7EfW'6ñˆ‚Ú
+=-›Ì-Ω]›≠-=ΩÕ›Ú-]çÚG∑&W7V«BÊ7W'&VÁEfW'6ñˆÁ“Ê¢}	˝ÌΩ]M›Ì‚-]ç‚˝Ì≠›R=MΩÌ¬Ì˝]M]Ωç-¬‚	˝Ì-]Õ-RÌ]Mç›]›çRvóDáV"‚rì∞¢“6F6ÇÜW'&˜"í≤6WEFWáBÇr6&˜WEWFFU7FGW2r¬W'&˜"ñÁ7FÊ6VˆbW'&˜"ÚW'&˜"Ê÷W76vR¢}	›R=MΩÌ¬}==}ç-¬-]M]›çÚÌÌ›Ì-Ω]›çÇ‚rì≤–ß–¶7ñÊ2gVÊ7Fñˆ‚6ÜV6µVïWFFRÇí∞¢6ˆÁ7B'WGFˆ‚“BÇu∂FF÷7Fñˆ‚÷6∆ñ6≥“&6ÜV6µVïWFFR%“rì≤ñbÜ'WGFˆ‚ñÁ7FÊ6VˆbÖD‘ƒ'WGFˆ‰V∆V÷VÁBí≤'WGFˆ‚ÊFó6&∆VB“G'VS≤'WGFˆ‚ÁFWáD6ˆÁFVÁB“}	˝Ì-]˝]Œ(
+bs≤–¢6WEFWáBÇr6&˜WEWFFU7FGW2r¬}	}˝çç-]¬˝çÌ¢]Ωç}Ì"vóDáV.(
+brì∞¢G'í≤6ˆÁ7B&W7ˆÁ6R“vóBÊgw5WFFW2Á&V∆V6W2Çì≤vóB∆ˆD&˜WE7FGW2á&W7ˆÁ6RÁWFFU7FGW2ì≤&VÊFW%VïWFFTÊ˜Fñ6Rá&W7ˆÁ6RÁWFFU7FGW2¬G'VRì≤–¢6F6ÇÜW'&˜"í≤6WEFWáBÇr6&˜WEWFFU7FGW2r¬W'&˜"ñÁ7FÊ6VˆbW'&˜"Ú	˝Ì-]≠›R=MΩ√¢G∂W'&˜"Ê÷W76vW÷¢}	›R=MΩÌ¬˝Ì-]ç-¬Ì›Ì-Ω]›çÚ‚rì≤–¢fñÊ∆«í≤ñbÜ'WGFˆ‚ñÁ7FÊ6VˆbÖD‘ƒ'WGFˆ‰V∆V÷VÁBí≤'WGFˆ‚ÊFó6&∆VB“f«6S≤'WGFˆ‚ÁFWáD6ˆÁFVÁB“~(k≤	˝Ì-]ç-¬Ì›Ì-Ω]›çRs≤“–ß–¶gVÊ7Fñˆ‚&VÊFW$÷ˆÊóF˜&ñÊu6óFW2Çí∞¢6ˆÁ7BÜ˜7B“BÇr6÷ˆÊóF˜%6óFW2rì≤ñbÇÜ˜7B«¬÷ˆÊóF˜&ñÊu7FFRí&WGW&„∞¢Ü˜7BÁ&W∆6T6Üñ∆G&V‚Çì∞¢ñbÇ÷ˆÊóF˜&ñÊu7FFRÁ6óFW2Ê∆VÊwFÇí∞¢6ˆÁ7BV◊Gí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤V◊GíÊ6∆74Ê÷R“w&˜VÊFVB◊Ü¬&˜&FW"&˜&FW"◊6∆FR”É&r’≤3c%“”BFWáB◊6“FWáB◊6∆FR”Cs≤V◊GíÁFWáD6ˆÁFVÁB“}	MÌ-Õ-RMÌÕ]›≤¬≠Ì-ÌΩR]Ì-ç-R˝Ì-]˝-¬-=}›=‚‚s≤Ü˜7BÊVÊBÜV◊Gíì≤&WGW&„∞¢–¢f˜"Ü6ˆÁ7B6óFRˆb÷ˆÊóF˜&ñÊu7FFRÁ6óFW2í∞¢6ˆÁ7B6&B“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'Fñ6∆Rrì≤6&BÊ6∆74Ê÷R“v÷ˆÊóF˜"◊6óFR÷6&Bs∞¢6ˆÁ7BÜVFñÊr“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì≤ÜVFñÊrÊ6∆74Ê÷R“v÷ˆÊóF˜"◊6óFR÷ÜVFñÊrs∞¢6ˆÁ7BÊ÷R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7G&ˆÊrrì≤Ê÷RÊ6∆74Ê÷R“vfˆÁB÷÷ˆÊÚFWáB◊6“FWáB◊vÜóFRs≤Ê÷RÁFWáD6ˆÁFVÁB“6óFRÊÜ˜7C∞¢6ˆÁ7B∆FW7B“6óFRÁ&W7V«G5≥”∞¢6ˆÁ7B7V÷÷'í“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì≤7V÷÷'íÊ6∆74Ê÷R“÷ˆÊóF˜"◊6óFR◊7FGW2÷ˆÊóF˜"◊7FGW2“G∂∆FW7CÚÁ7FGW2ÛÚwVÊfñ∆&∆Rw÷∞¢7V÷÷'íÁFWáD6ˆÁFVÁB“∆FW7BÚG∂∆FW7BÁ7FGW2””“vˆ≤rÚ}	MÌ-=˝]“r¢∆FW7BÁ7FGW2””“vW'&˜"rÚ}	Ìçç≠r¢∆FW7BÁ7FGW2””“wv&ÊñÊrrÚ}	]-¬˝]M=˝]mM]›çRr¢}	›]"]}=ΩÕ--w“G∂∆FW7BÊ∆FVÊ7î◊2””“ÁV∆¬Úrr¢+rG∂∆FW7BÊ∆FVÊ7î◊7“Õ÷¢}	]ù›R˝Ì-]˝ΩÚs∞¢ÜVFñÊrÊVÊBÜÊ÷R¬7V÷÷'íì∞¢6ˆÁ7B6ÜV6≤“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'WGFˆ‚rì≤6ÜV6≤ÁGóR“v'WGFˆ‚s≤6ÜV6≤Ê6∆74Ê÷R“v÷ˆÊóF˜"◊&˜r÷7Fñˆ‚s≤6ÜV6≤ÊFF6WBÊ7Fñˆ‰6∆ñ6≤“v6ÜV6¥÷ˆÊóF˜&ñÊu6óFRs≤6ÜV6≤ÊFF6WBÊ&w2“•4Ù‚Á7G&ñÊvñgíÖ∑6óFRÊÜ˜7E“ì≤6ÜV6≤ÁFWáD6ˆÁFVÁB“~)˚2	˝Ì-]ç-¬s≤6ÜV6≤ÁFóF∆R“	˝Ì-]ç-¬G∑6óFRÊÜ˜7G÷∞¢6ˆÁ7B&V÷˜fR“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'WGFˆ‚rì≤&V÷˜fRÁGóR“v'WGFˆ‚s≤&V÷˜fRÊ6∆74Ê÷R“v÷ˆÊóF˜"◊&V÷˜fRs≤&V÷˜fRÊFF6WBÊ7Fñˆ‰6∆ñ6≤“w&V÷˜fT÷ˆÊóF˜&ñÊu6óFRs≤&V÷˜fRÊFF6WBÊ&w2“•4Ù‚Á7G&ñÊvñgíÖ∑6óFRÊÜ˜7E“ì≤&V÷˜fRÁFWáD6ˆÁFVÁB“|9rs≤&V÷˜fRÁFóF∆R“
+=-¬G∑6óFRÊÜ˜7G“çrÕÌ›ç-Ìç›=∞¢ÜVFñÊrÊVÊBÜ6ÜV6≤¬&V÷˜fRì≤6&BÊVÊBÜÜVFñÊrì∞¢ñbÜ∆FW7Bí∞¢6ˆÁ7B&'2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì≤&'2Ê6∆74Ê÷R“v÷ˆÊóF˜"÷Üó7F˜'í÷&'2s≤&'2Á6WDGG&ñ'WFRÇv&ñ÷∆&V¬r¬	ç-ÌçÛ¢G∑6óFRÁ&W7V«G2Ê∆VÊwFá“mç≠ΩÌ"˝Ì-]≠Üì∞¢f˜"Ü6ˆÁ7B&W7V«Bˆb≤‚‚Á6óFRÁ&W7V«G5“Á6∆ñ6RÉ¬CÇíÁ&WfW'6RÇíí≤6ˆÁ7B&"“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì≤&"ÊFF6WBÁ7FGW2“&W7V«BÁ7FGW3≤&"ÁFóF∆R“G∂ÊWrFFRá&W7V«BÊ6ÜV6∂VDBíÁFÙ∆ˆ6∆U7G&ñÊrÇó”¢G∑&W7V«BÁ7V÷÷'ó÷≤&'2ÊVÊBÜ&"ì≤–¢6&BÊVÊBÜ&'2ì∞¢6ˆÁ7BFWFñ¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤FWFñ¬Ê6∆74Ê÷R“v◊B”"FWáB◊á2FWáB◊6∆FR”Cs≤FWFñ¬ÁFWáD6ˆÁFVÁB“G∂ÊWrFFRÜ∆FW7BÊ6ÜV6∂VDBíÁFÙ∆ˆ6∆U7G&ñÊrÇó“+rG∂∆FW7BÁ7V÷÷'ó÷≤6&BÊVÊBÜFWFñ¬ì∞¢ñbÜ∆FW7BÁ7FW2Ê∆VÊwFÇí∞¢6ˆÁ7B∆&V«3¢&V6˜&C«7G&ñÊr¬7G&ñÊs‚“≤FÁ3¢tDÂ2r¬F7¢uD56ˆÊÊV7Br¬F«3¢uD≈2r¬áGG¢tÖEEr¬G&Á6fW#¢}	˝]]M}r”∞¢6ˆÁ7B7FvTFWFñ«2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFWFñ«2rì≤7FvTFWFñ«2Ê6∆74Ê÷R“v÷ˆÊóF˜"◊7FvR÷∆ó7B◊B”"s∞¢6ˆÁ7B7FvU7V÷÷'í“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7V÷÷'írì≤7FvU7V÷÷'íÁFWáD6ˆÁFVÁB“
+›-˝≤˝ÌΩ]M›]=‚mç≠Ω+rG∂∆FW7BÁ7FW2Êfñ«FW"Çá7FWí”‚7FWÁ7FGW2””“vˆ≤ríÊ∆VÊwFá“ÚG∂∆FW7BÁ7FW2Ê∆VÊwFá“=˝]ç›Ê∞¢6ˆÁ7B7FvT∆ó7B“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì≤7FvT∆ó7BÊ6∆74Ê÷R“v◊B”"76R◊í”„Rs∞¢f˜"Ü6ˆÁ7B7FWˆb∆FW7BÁ7FW2í∞¢6ˆÁ7B&˜r“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvFóbrì≤&˜rÊ6∆74Ê÷R“v÷ˆÊóF˜"◊7FvR◊&˜rs∞¢6ˆÁ7B7FvTÊ÷R“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7G&ˆÊrrì≤7FvTÊ÷RÁFWáD6ˆÁFVÁB“∆&V«5∑7FWÊñE“ÛÚ7FWÊñC∞¢6ˆÁ7B7FvTñÊfÚ“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7‚rì≤7FvTñÊfÚÁFWáD6ˆÁFVÁB“G∑7FWÊFWFñ«“G∑7FWÊGW&Fñˆ‰◊2””“ÁV∆¬Úrr¢+rG∑7FWÊGW&Fñˆ‰◊7“Õ÷∞¢&˜rÊFF6WBÁ7FGW2“7FWÁ7FGW3∞¢&˜rÊVÊBá7FvTÊ÷R¬7FvTñÊfÚì≤7FvT∆ó7BÊVÊBá&˜rì∞¢–¢7FvTFWFñ«2ÊVÊBá7FvU7V÷÷'í¬7FvT∆ó7Bì≤6&BÊVÊBá7FvTFWFñ«2ì∞¢–¢–¢ñbá6óFRÁ&W7V«G2Ê∆VÊwFÇí≤6ˆÁ7BÜó7F˜'í“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤Üó7F˜'íÊ6∆74Ê÷R“v◊B”FWáB’≥Ö“FWáB◊6∆FR”Ss≤Üó7F˜'íÁFWáD6ˆÁFVÁB“	˝Ì-]Ì¢"ç-ÌçÉ¢G∑6óFRÁ&W7V«G2Ê∆VÊwFá“+rMÌ-=˝›Ì-√¢G¥÷FÇÁ&˜VÊBá6óFRÁ&W7V«G2Êfñ«FW"Çá"í”‚"Á7FGW2””“vˆ≤ríÊ∆VÊwFÇ¢Ú6óFRÁ&W7V«G2Ê∆VÊwFÇó“V≤6&BÊVÊBÜÜó7F˜'íì≤–¢Ü˜7BÊVÊBÜ6&Bì∞¢–ß–¶gVÊ7Fñˆ‚vWD÷ˆÊóF˜&ñÊu7F˜&vRÇì¢7F˜&vR¬ÁV∆¬≤G'í≤&WGW&‚vñÊF˜rÊ∆ˆ6≈7F˜&vS≤“6F6Ç≤&WGW&‚ÁV∆√≤“–¶gVÊ7Fñˆ‚7W'&VÁD÷ˆÊóF˜&ñÊtñÁFW'f¬Çí∞¢6ˆÁ7B6Üˆñ6R“ÇBÇr6÷ˆÊóF˜&ñÊtñÁFW'f¬rí2ÖD‘≈6V∆V7DV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚ7G&ñÊrÜ÷ˆÊóF˜&ñÊtñÁFW'fƒ÷ñÁWFW2ì∞¢ñbÜ6Üˆñ6R”“v7W7Fˆ“rí&WGW&‚ÁV÷&W"Ü6Üˆñ6Rí«¬3∞¢6ˆÁ7BÜ˜W'2“ÁV÷&W"ÇÇBÇr6÷ˆÊóF˜&ñÊtÜ˜W'2rí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚì∞¢6ˆÁ7B÷ñÁWFW2“ÁV÷&W"ÇÇBÇr6÷ˆÊóF˜&ñÊt÷ñÁWFW2rí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚ3ì∞¢&WGW&‚Ê˜&÷∆ó¶T÷ˆÊóF˜&ñÊtñÁFW'f¬ÜÜ˜W'2¬÷ñÁWFW2ì∞ß–¶gVÊ7Fñˆ‚W'6ó7D÷ˆÊóF˜&ñÊrÇí∞¢ñbÇ÷ˆÊóF˜&ñÊu7FFRí&WGW&„∞¢6fT÷ˆÊóF˜&ñÊu7FFRÜvWD÷ˆÊóF˜&ñÊu7F˜&vRÇí¬÷ˆÊóF˜&ñÊu7FFRì≤&VÊFW$÷ˆÊóF˜&ñÊu6óFW2Çì∞¢6ˆÁ7BVÊ&∆VB“ÇBÇr6÷ˆÊóF˜&ñÊtVÊ&∆VBrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÊ6ÜV6∂VBÛÚG'VS∞¢fˆñBÊgw4÷ˆÊóF˜&ñÊrÁ6fRá≤VÊ&∆VB¬ñÁFW'fƒ÷ñÁWFW3¢÷ˆÊóF˜&ñÊtñÁFW'fƒ÷ñÁWFW2¬6óFW3¢÷ˆÊóF˜&ñÊu7FFRÁ6óFW2Ê÷Çá6óFRí”‚á≤Ü˜7C¢6óFRÊÜ˜7B¬&W7V«G3¢6óFRÁ&W7V«G2“íí“íÊ6F6ÇÇÜRí”‚Fˆ7BÜRñÁ7FÊ6VˆbW'&˜"ÚRÊ÷W76vR¢}	›R=MΩÌ¬Ì]›ç-¬ÕÌ›ç-Ìç›2›Ì=-]R‚r¬vW'&˜"ríì∞ß–¶7ñÊ2gVÊ7Fñˆ‚∆ˆD&6∂VÊD÷ˆÊóF˜&ñÊrÇí∞¢6ˆÁ7B6fVB“vóBÊgw4÷ˆÊóF˜&ñÊrÊvWBÇì∞¢÷ˆÊóF˜&ñÊtñÁFW'fƒ÷ñÁWFW2“6fVBÊñÁFW'fƒ÷ñÁWFW3∞¢6ˆÁ7B6V∆V7B“BÇr6÷ˆÊóF˜&ñÊtñÁFW'f¬rí2ÖD‘≈6V∆V7DV∆V÷VÁB¬ÁV∆√≤6ˆÁ7B7W7Fˆ““BÇr6÷ˆÊóF˜&ñÊt7W7Fˆ“rì∞¢6ˆÁ7BVñ6≤“≥3¬c¬#“ÊñÊ6«VFW2á6fVBÊñÁFW'fƒ÷ñÁWFW2ì∞¢ñbá6V∆V7Bí6V∆V7BÁf«VR“Vñ6≤Ú7G&ñÊrá6fVBÊñÁFW'fƒ÷ñÁWFW2í¢v7W7Fˆ“s∞¢ñbÜ7W7Fˆ“í7W7Fˆ“Ê6∆74∆ó7BÁFˆvv∆RÇvÜñFFV‚r¬Vñ6≤ì∞¢ñbÇVñ6≤í≤6ˆÁ7BÜ˜W'2“BÇr6÷ˆÊóF˜&ñÊtÜ˜W'2rí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤6ˆÁ7B÷ñÁWFW2“BÇr6÷ˆÊóF˜&ñÊt÷ñÁWFW2rí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤ñbÜÜ˜W'2íÜ˜W'2Áf«VR“7G&ñÊrÑ÷FÇÊf∆ˆ˜"á6fVBÊñÁFW'fƒ÷ñÁWFW2Úcíì≤ñbÜ÷ñÁWFW2í÷ñÁWFW2Áf«VR“7G&ñÊrá6fVBÊñÁFW'fƒ÷ñÁWFW2Rcì≤–¢6ˆÁ7BVÊ&∆VB“BÇr6÷ˆÊóF˜&ñÊtVÊ&∆VBrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤ñbÜVÊ&∆VBíVÊ&∆VBÊ6ÜV6∂VB“6fVBÊVÊ&∆VC∞¢6ˆÁ7B∆Vv7í“÷ˆÊóF˜&ñÊu7FFSÚÁ6óFW2ÛÚµ”∞¢÷ˆÊóF˜&ñÊu7FFR“≤fW'6ñˆ„¢¬6óFW3¢á6fVBÁ6óFW2Ê∆VÊwFÇÚ6fVBÁ6óFW2¢∆Vv7ííÊ÷Çá6óFRí”‚á≤Ü˜7C¢6óFRÊÜ˜7B¬&W7V«G3¢6óFRÁ&W7V«G2Á6∆ñ6RÉ¬ìbí“íí”∞¢ñbÇ6fVBÁ6óFW2Ê∆VÊwFÇbb∆Vv7íÊ∆VÊwFÇívóBÊgw4÷ˆÊóF˜&ñÊrÁ6fRá≤VÊ&∆VC¢6fVBÊVÊ&∆VB¬ñÁFW'fƒ÷ñÁWFW3¢6fVBÊñÁFW'fƒ÷ñÁWFW2¬6óFW3¢÷ˆÊóF˜&ñÊu7FFRÁ6óFW2“ì∞¢&VÊFW$÷ˆÊóF˜&ñÊu6óFW2Çì∞¢6ˆÁ7B∆7B“6fVBÊ∆7DWFÙ6ÜV6≤ÚÊWrFFRá6fVBÊ∆7DWFÙ6ÜV6≤¢íÁFÙ∆ˆ6∆U7G&ñÊrÇí¢}]ù›R}˝=≠Ω¬s∞¢6WEFWáBÇr6÷ˆÊóF˜&ñÊu7FGW2r¬	˝ÌΩ]M›˝Ú--ÌÕ-ç}]≠Ú˝Ì-]≠¢G∂∆7G“‚	ç›-]-≥¢G∑6fVBÊñÁFW'fƒ÷ñÁWFW7“Õç“Êì∞ß–¶gVÊ7Fñˆ‚6Ü˜t÷ˆÊóF˜%6V7Fñˆ‚á6V7Fñˆ„¢w6óFW2r¬wFV∆Vw&“rí∞¢BÇr6÷ˆÊóF˜%6V7Fñˆ‚◊6óFW2rìÚÊ6∆74∆ó7BÁFˆvv∆RÇvÜñFFV‚r¬6V7Fñˆ‚”“w6óFW2rì∞¢BÇr6÷ˆÊóF˜%6V7Fñˆ‚◊FV∆Vw&“rìÚÊ6∆74∆ó7BÁFˆvv∆RÇvÜñFFV‚r¬6V7Fñˆ‚”“wFV∆Vw&“rì∞¢∆√ƒÖD‘ƒ'WGFˆ‰V∆V÷VÁC‚ÇrÊ÷ˆÊóF˜"◊7V'F"ríÊf˜$V6ÇÇÜ'WGFˆ‚í”‚'WGFˆ‚Ê6∆74∆ó7BÁFˆvv∆RÇv7FófRr¬'WGFˆ‚ÁFWáD6ˆÁFVÁCÚÊñÊ6«VFW2á6V7Fñˆ‚””“w6óFW2rÚ}	ÕÌ›ç-Ìç›2r¢uFV∆Vw&“ríÛÚf«6Ríì∞¢ñbá6V7Fñˆ‚””“wFV∆Vw&“rífˆñB∆ˆEFV∆Vw&‘Ê˜Fñfñ6FñˆÁ2ÇíÊ6F6ÇÇÇí”‚∑“ì∞ß–¶7ñÊ2gVÊ7Fñˆ‚6fT÷ˆÊóF˜&ñÊu6WGFñÊw2Çí∞¢ñbÇ÷ˆÊóF˜&ñÊu7FFRí&WGW&„∞¢÷ˆÊóF˜&ñÊtñÁFW'fƒ÷ñÁWFW2“7W'&VÁD÷ˆÊóF˜&ñÊtñÁFW'f¬Çì∞¢vóBÊgw4÷ˆÊóF˜&ñÊrÁ6fRá≤VÊ&∆VC¢ÇBÇr6÷ˆÊóF˜&ñÊtVÊ&∆VBrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÊ6ÜV6∂VBÛÚf«6R¬ñÁFW'fƒ÷ñÁWFW3¢÷ˆÊóF˜&ñÊtñÁFW'fƒ÷ñÁWFW2¬6óFW3¢÷ˆÊóF˜&ñÊu7FFRÁ6óFW2Ê÷Çá6óFRí”‚á≤Ü˜7C¢6óFRÊÜ˜7B¬&W7V«G3¢6óFRÁ&W7V«G2“íí“ì∞¢Fˆ7BÇ}	›-Ìù≠ÇÕÌ›ç-Ìç›=Ì]›]›≤›Ì=-]R‚rì∞ß–¶7ñÊ2gVÊ7Fñˆ‚∆ˆEFV∆Vw&’6WGFñÊw2Çí∞¢6ˆÁ7B6fr“vóBÊgw4÷ˆÊóF˜&ñÊrÁFV∆Vw&“Çì∞¢6ˆÁ7Bfñ“BÇr7FV∆Vw&’fñrí2ÖD‘≈6V∆V7DV∆V÷VÁB¬ÁV∆√≤ñbáfñífñÁf«VR“6frÁ6VÊEfñ∞¢Fˆvv∆UFV∆Vw&’G&Á7˜'DfñV∆G2Ü6frÁ6VÊEfñì∞¢6ˆÁ7Bñf6R“BÇr7FV∆Vw&‘ñÁFW&f6Rrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤ñbÜñf6Ríñf6RÁf«VR“6frÊñÁFW&f6S∞¢6ˆÁ7B&˜áí“BÇr7FV∆Vw&’&˜áírí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤ñbá&˜áíí&˜áíÁf«VR“6frÁ&˜áì∞¢6ˆÁ7B6ÜB“BÇr7FV∆Vw&‘6ÜDñBrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤ñbÜ6ÜBí6ÜBÁf«VR“6frÊ6ÜDñC∞¢6WEFWáBÇr7FV∆Vw&’7FGW2r¬6frÁFˆ∂VÂ6WBÚ}
+-Ì≠]“Ì-Ì]›“›Ì=-]R‚r¢}
+-Ì≠]“]ù›R}M“‚rì∞¢&VÊFW%FV∆Vw&‘Ê˜Fñfñ6FñˆÁ2Ü6frÊÊ˜Fñfñ6FñˆÁ2ì∞ß–¶gVÊ7Fñˆ‚Fˆvv∆UFV∆Vw&’G&Á7˜'DfñV∆G2áfñ¢7G&ñÊrí∞¢BÇr7FV∆Vw&‘ñÁFW&f6TfñV∆BrìÚÊ6∆74∆ó7BÁFˆvv∆RÇvÜñFFV‚r¬fñ”“vñÁFW&f6Rrì∞¢BÇr7FV∆Vw&’&˜áîfñV∆BrìÚÊ6∆74∆ó7BÁFˆvv∆RÇvÜñFFV‚r¬fñ”“w&˜áírì∞ß–¶7ñÊ2gVÊ7Fñˆ‚∆ˆEFV∆Vw&‘Ê˜Fñfñ6FñˆÁ2Çí∞¢&VÊFW%FV∆Vw&‘Ê˜Fñfñ6FñˆÁ2ÜvóBÊgw4÷ˆÊóF˜&ñÊrÁFV∆Vw&‘Ê˜Fñfñ6FñˆÁ2Çíì∞ß–¶gVÊ7Fñˆ‚&VÊFW%FV∆Vw&‘Ê˜Fñfñ6FñˆÁ2ÜÊ˜Fñfñ6FñˆÁ3¢≤VWVS¢'&ì«≤Fñ÷W7F◊¢ÁV÷&W#≤FWáC¢7G&ñÊs≤G&ñW3¢ÁV÷&W#≤W'&˜#Û¢7G&ñÊr¬ÁV∆¬”„≤∆ˆs¢'&ì«≤Fñ÷W7F◊¢ÁV÷&W#≤WfVÁEFñ÷W7F◊¢ÁV÷&W#≤FWáC¢7G&ñÊs≤ˆ≥¢&ˆˆ∆V„≤W'&˜#Û¢7G&ñÊr¬ÁV∆¬”‚“í∞¢6ˆÁ7BÜ˜7B“BÇr7FV∆Vw&‘Ê˜Fñfñ6FñˆÁ2rì≤ñbÇÜ˜7Bí&WGW&„∞¢Ü˜7BÁ&W∆6T6Üñ∆G&V‚Çì∞¢ñbÇÊ˜Fñfñ6FñˆÁ2ÁVWVRÊ∆VÊwFÇbbÊ˜Fñfñ6FñˆÁ2Ê∆ˆrÊ∆VÊwFÇí&WGW&„∞¢6ˆÁ7BÜVFñÊr“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇvÉ2rì≤ÜVFñÊrÊ6∆74Ê÷R“wFWáB◊6“fˆÁB◊6V÷ñ&ˆ∆BFWáB◊vÜóFRs≤ÜVFñÊrÁFWáD6ˆÁFVÁB“}	˝ÌΩ]M›çRÌÌù]›çÚs≤Ü˜7BÊVÊBÜÜVFñÊrì∞¢6ˆÁ7BFFR“á6V6ˆÊG3¢ÁV÷&W"í”‚ÊWrFFRá6V6ˆÊG2¢íÁFÙ∆ˆ6∆U7G&ñÊrÇì∞¢f˜"Ü6ˆÁ7B÷W76vRˆbÊ˜Fñfñ6FñˆÁ2ÁVWVRí∞¢6ˆÁ7B&˜r“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'Fñ6∆Rrì≤&˜rÊ6∆74Ê÷R“w&˜VÊFVB÷∆r&˜&FW"&˜&FW"÷÷&W"”SÛ3&r÷÷&W"”SÛR”2s∞¢6ˆÁ7B7FGW2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7G&ˆÊrrì≤7FGW2Ê6∆74Ê÷R“wFWáB◊6“FWáB÷÷&W"”3s≤7FGW2ÁFWáD6ˆÁFVÁB“	mM"Ì-˝-≠Ç+rG∂FFRÜ÷W76vRÁFñ÷W7F◊ó÷∞¢6ˆÁ7B&ˆGí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤&ˆGíÊ6∆74Ê÷R“v◊B”vÜóFW76R◊&R◊w&'&V≤◊v˜&G2FWáB◊6“FWáB◊6∆FR”#s≤&ˆGíÁFWáD6ˆÁFVÁB“÷W76vRÁFWáC∞¢6ˆÁ7BFWFñ¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤FWFñ¬Ê6∆74Ê÷R“v◊B”FWáB◊á2FWáB◊6∆FR”Cs≤FWFñ¬ÁFWáD6ˆÁFVÁB“	˝Ì˝Ω-Ì£¢G∂÷W76vRÁG&ñW7“‚G∂÷W76vRÊW'&˜"«¬}	˝Ì--Ì›ÚÌ-˝-≠=M]"-Ω˝ÌΩ›]›--ÌÕ-ç}]≠Ç¬Ì¢]›]›çÚ(	B#B}‚w÷∞¢&˜rÊVÊBá7FGW2¬&ˆGí¬FWFñ¬ì≤Ü˜7BÊVÊBá&˜rì∞¢–¢f˜"Ü6ˆÁ7B÷W76vRˆbÊ˜Fñfñ6FñˆÁ2Ê∆ˆrÁ6∆ñ6RÉ¬#íí∞¢6ˆÁ7B&˜r“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇv'Fñ6∆Rrì≤&˜rÊ6∆74Ê÷R“&˜VÊFVB÷∆r&˜&FW"”2G∂÷W76vRÊˆ≤Úv&˜&FW"÷V÷W&∆B”SÛ#R&r÷V÷W&∆B”SÛRr¢v&˜&FW"◊&˜6R”SÛ#R&r◊&˜6R”SÛRw÷∞¢6ˆÁ7B7FGW2“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇw7G&ˆÊrrì≤7FGW2Ê6∆74Ê÷R“FWáB◊6“G∂÷W76vRÊˆ≤ÚwFWáB÷V÷W&∆B”3r¢wFWáB◊&˜6R”3w÷≤7FGW2ÁFWáD6ˆÁFVÁB“G∂÷W76vRÊˆ≤Ú}	Ì-˝-Ω]›‚r¢}	›RÌ-˝-Ω]›‚w“+rG∂FFRÜ÷W76vRÊWfVÁEFñ÷W7F◊ó÷∞¢6ˆÁ7B&ˆGí“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤&ˆGíÊ6∆74Ê÷R“v◊B”vÜóFW76R◊&R◊w&'&V≤◊v˜&G2FWáB◊6“FWáB◊6∆FR”#s≤&ˆGíÁFWáD6ˆÁFVÁB“÷W76vRÁFWáC∞¢&˜rÊVÊBá7FGW2¬&ˆGíì∞¢ñbÜ÷W76vRÊW'&˜"í≤6ˆÁ7BFWFñ¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤FWFñ¬Ê6∆74Ê÷R“v◊B”FWáB◊á2FWáB◊&˜6R”3s≤FWFñ¬ÁFWáD6ˆÁFVÁB“÷W76vRÊW'&˜#≤&˜rÊVÊBÜFWFñ¬ì≤–¢ñbÜ÷W76vRÊˆ≤bb÷W76vRÁFñ÷W7F◊“÷W76vRÊWfVÁEFñ÷W7F◊‚#í≤6ˆÁ7BFWFñ¬“Fˆ7V÷VÁBÊ7&VFTV∆V÷VÁBÇwrì≤FWFñ¬Ê6∆74Ê÷R“v◊B”FWáB◊á2FWáB◊6∆FR”Cs≤FWFñ¬ÁFWáD6ˆÁFVÁB“	MÌ--Ω]›‚}M]m≠Ìí+rG∂FFRÜ÷W76vRÁFñ÷W7F◊ó÷≤&˜rÊVÊBÜFWFñ¬ì≤–¢Ü˜7BÊVÊBá&˜rì∞¢–ß–¶7ñÊ2gVÊ7Fñˆ‚6fUFV∆Vw&’6WGFñÊw2Çí∞¢6ˆÁ7BFˆ∂V‚“ÇBÇr7FV∆Vw&’Fˆ∂V‚rí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚrs∞¢6ˆÁ7B&W7V«B“vóBÊgw4÷ˆÊóF˜&ñÊrÁ6fUFV∆Vw&“á≤‚‚‚áFˆ∂V‚Ú≤Fˆ∂V‚“¢∑“í¬6ÜDñC¢ÇBÇr7FV∆Vw&‘6ÜDñBrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚrr¬6VÊEfñ¢ÇBÇr7FV∆Vw&’fñrí2ÖD‘≈6V∆V7DV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚvFó&V7Br¬ñÁFW&f6S¢ÇBÇr7FV∆Vw&‘ñÁFW&f6Rrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚrr¬&˜áì¢ÇBÇr7FV∆Vw&’&˜áírí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆¬ìÚÁf«VRÛÚrr“ì∞¢6ˆÁ7BfñV∆B“BÇr7FV∆Vw&’Fˆ∂V‚rí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤ñbÜfñV∆BífñV∆BÁf«VR“rs∞¢6WEFWáBÇr7FV∆Vw&’7FGW2r¬&W7V«BÁFˆ∂VÂ6WBÚ}	›-Ìù≠ÇÇ-Ì≠]“Ì]›]›≤›Ì=-]R‚r¢}	›-Ìù≠ÇÌ]›]›≤‚
+=≠mç-R-Ì≠]“Ì-‚rì≤Fˆ7BÇ}	›-Ìù≠ÇFV∆Vw&“Ì]›]›≤‚rì∞ß–¶7ñÊ2gVÊ7Fñˆ‚fñÊEFV∆Vw&‘6ÜDñBÇí∞¢vóB6fUFV∆Vw&’6WGFñÊw2Çì∞¢6ˆÁ7B&W7V«B“vóBÊgw4÷ˆÊóF˜&ñÊrÊfñÊEFV∆Vw&‘6ÜG2Çì∞¢ñbÇ&W7V«BÊ6ÜG2Ê∆VÊwFÇí&WGW&‚Fˆ7BÇ}
+}-≤›R›ùM]›≤‚	›˝ççç-RÌ-2ΩÌÌRÌÌù]›çRÇ›mÕç-R*Ω	›ù-å+≤]ùr‚r¬vW'&˜"rì∞¢6ˆÁ7B6ÜB“&W7V«BÊ6ÜG5≥”≤6ˆÁ7BfñV∆B“BÇr7FV∆Vw&‘6ÜDñBrí2ÖD‘ƒñÁWDV∆V÷VÁB¬ÁV∆√≤ñbÜfñV∆BífñV∆BÁf«VR“6ÜBÊñC∞¢6WEFWáBÇr7FV∆Vw&’7FGW2r¬	›ùM]“}#¢GΩ¯„û-¢Gß≤⁄Óù∆≠yŸ) return toast('–í–≤–µ–¥–∏—Ç–µ –¥–æ–º–µ–Ω –∏–ª–∏ –ø—É–±–ª–∏—á–Ω—ã–π IPv4 –¥–ª—è –ø–æ–¥–±–æ—Ä–∞.', 'error');
   const protocol = proto instanceof HTMLSelectElement && ['http', 'https'].includes(proto.value) ? proto.value as 'http' | 'https' : 'https';
   const selectedMode = mode instanceof HTMLSelectElement && ['extended', 'full', 'custom'].includes(mode.value) ? mode.value as 'extended' | 'full' | 'custom' : 'quick';
   const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
@@ -2412,6 +384,41 @@ function copyStrategyText(text: string, button: HTMLButtonElement) {
   }).catch(() => toast('–ë—É—Ñ–µ—Ä –æ–±–º–µ–Ω–∞ –Ω–µ–¥–æ—Å—Ç—É–ø–µ–Ω', 'error'));
 }
 
+async function buildSupportReport() {
+  const anonymize = $('#supportReportAnonymize');
+  const textarea = $('#supportReportText');
+  const build = $('[data-action-click="buildSupportReport"]');
+  if (!(textarea instanceof HTMLTextAreaElement)) return;
+  if (build instanceof HTMLButtonElement) { build.disabled = true; build.textContent = '–°–æ–±–∏—Ä–∞—é‚Ä¶'; }
+  try {
+    const result = await nfqwsDiagnostics.supportReport(anonymize instanceof HTMLInputElement && anonymize.checked);
+    textarea.value = result.text;
+    textarea.classList.remove('hidden');
+    $('#copySupportReport')?.classList.remove('hidden');
+    $('#downloadSupportReport')?.classList.remove('hidden');
+    toast('–û—Ç—á—ë—Ç —Å–æ–±—Ä–∞–Ω. –û—Ç—á—ë—Ç –Ω–∏–∫—É–¥–∞ –Ω–µ –æ—Ç–ø—Ä–∞–≤–ª—è–µ—Ç—Å—è –∞–≤—Ç–æ–º–∞—Ç–∏—á–µ—Å–∫–∏ ‚Äî –ø—Ä–æ–≤–µ—Ä—å—Ç–µ –µ–≥–æ –ø–µ—Ä–µ–¥ –æ—Ç–ø—Ä–∞–≤–∫–æ–π.');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : '–ù–µ —É–¥–∞–ª–æ—Å—å —Å–æ–±—Ä–∞—Ç—å –æ—Ç—á—ë—Ç.', 'error');
+  } finally {
+    if (build instanceof HTMLButtonElement) { build.disabled = false; build.textContent = '–°–æ–±—Ä–∞—Ç—å –æ—Ç—á—ë—Ç'; }
+  }
+}
+
+async function copySupportReport() {
+  const textarea = $('#supportReportText');
+  if (!(textarea instanceof HTMLTextAreaElement) || !textarea.value) return toast('–°–Ω–∞—á–∞–ª–∞ —Å–æ–±–µ—Ä–∏—Ç–µ –æ—Ç—á—ë—Ç.', 'error');
+  try { await writeTextToClipboard(textarea.value); toast('–û—Ç—á—ë—Ç —Å–∫–æ–ø–∏—Ä–æ–≤–∞–Ω.'); }
+  catch { toast('–ù–µ —É–¥–∞–ª–æ—Å—å —Å–∫–æ–ø–∏—Ä–æ–≤–∞—Ç—å –æ—Ç—á—ë—Ç.', 'error'); }
+}
+
+function downloadSupportReport() {
+  const textarea = $('#supportReportText');
+  if (!(textarea instanceof HTMLTextAreaElement) || !textarea.value) return toast('–°–Ω–∞—á–∞–ª–∞ —Å–æ–±–µ—Ä–∏—Ç–µ –æ—Ç—á—ë—Ç.', 'error');
+  const url = URL.createObjectURL(new Blob([textarea.value], { type: 'text/plain;charset=utf-8' }));
+  const link = document.createElement('a'); link.href = url; link.download = 'nfqws2-ui-report.txt'; document.body.append(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 async function writeTextToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text);
@@ -2490,6 +497,9 @@ function bindPrototypeActions() {
     openForeignConfigText: () => showForeignConfigForm('text'),
     openForeignConfigUrl: () => showForeignConfigForm('url'),
     openForeignConfigFile: () => openForeignConfigFile(),
+    buildSupportReport: () => void buildSupportReport(),
+    copySupportReport: () => void copySupportReport(),
+    downloadSupportReport: () => downloadSupportReport(),
     closeForeignConfigForms: () => closeForeignConfigForms(),
     addForeignConfigText: () => addForeignConfigText(),
     addForeignConfigUrl: () => addForeignConfigUrl(),

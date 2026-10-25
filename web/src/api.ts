@@ -19,7 +19,7 @@ export type FreezeStrategyMatch = { sni: string; step: string; attempts: number;
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
 export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
 export type FreezeScanOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: FreezeNetworkResult[]; message: string; updatedAt: number };
-export type ForeignConfigCheckOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; hosts: string[]; comparisons: { name: string; source: string; sites: { host: string; currentOk: boolean | null; currentDetail: string; candidateOk: boolean | null; candidateDetail: string }[] }[]; message: string; updatedAt: number };
+export type ForeignConfigCheckOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; hosts: string[]; comparisons: { name: string; source: string; sites: { host: string; currentOk: boolean | null; currentDetail: string; currentAttempts: number; currentSuccesses: number; currentAverageMs: number | null; candidateOk: boolean | null; candidateDetail: string; candidateAttempts: number; candidateSuccesses: number; candidateAverageMs: number | null }[] }[]; message: string; updatedAt: number };
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
 export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = string;
@@ -180,6 +180,7 @@ export const nfqwsConfig = {
 };
 
 export const nfqwsDiagnostics = {
+  supportReport: (hideSiteNames: boolean) => api<{ text: string }>('/api/nfqws2/diagnostics/support-report', { method: 'POST', body: JSON.stringify({ hideSiteNames }) }),
   site: (host: string) => api<SiteDiagnosticReport>('/api/nfqws2/diagnostics/site', {
     method: 'POST', body: JSON.stringify({ host }),
   }),

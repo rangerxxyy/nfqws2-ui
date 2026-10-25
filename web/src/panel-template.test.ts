@@ -209,6 +209,10 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('Текущая конфигурация');
     expect(panelSource).toContain('Проверяемая конфигурация');
     expect(panelSource).toContain("document.createElement('details')");
+    expect(panelSource).toContain("chevron.className = 'details-chevron'");
+    expect(panelStyles).toContain('details[open] > summary .details-chevron');
+    expect(panelSource).toContain("attemptLabel.className = 'shrink-0 rounded bg-slate-800/70 px-1.5 py-0.5 font-mono text-[10px] text-slate-300'");
+    expect(panelSource).toContain("details.className = 'ui-card min-w-0 self-start h-fit rounded-xl border border-slate-800 p-3'");
     expect(panelSource).toContain('`Домен: ${foreignStatusLabel(result)}`');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigApply');
     expect(backendSource).toContain('MAX_FOREIGN_CONFIGS');
@@ -216,6 +220,30 @@ describe('TSX panel without authentication', () => {
     expect(backendSource).toContain('parse_public_https_config_url');
     expect(backendSource).toContain('external_config_test_args');
     expect(backendSource).toContain('NFQWS_BASE_ARGS');
+  });
+
+  it('preserves each comparison disclosure while polling and exposes repeat timing per site', () => {
+    expect(panelSource).toContain('captureForeignConfigDisclosureState(results.querySelectorAll');
+    expect(panelSource).toContain('data-disclosure-key');
+    expect(panelSource).toContain('candidateAttempts');
+    expect(panelSource).toContain('candidateSuccesses');
+    expect(panelSource).toContain('candidateAverageMs');
+    expect(panelSource).toContain('currentAverageMs');
+    expect(backendSource).toContain('candidate_attempts: usize');
+    expect(backendSource).toContain('candidate_successes: usize');
+    expect(backendSource).toContain('candidate_average_ms: Option<u64>');
+  });
+
+  it('adds a privacy-conscious help report page with manual copy and download', () => {
+    expect(template).toContain('id="navBtn-supportReport"');
+    expect(template).toContain('id="tabContent-supportReport"');
+    expect(template).toContain('data-action-click="buildSupportReport"');
+    expect(template).toContain('id="supportReportAnonymize"');
+    expect(template).toContain('id="supportReportText"');
+    expect(panelSource).toContain('nfqwsDiagnostics.supportReport');
+    expect(panelSource).toContain('Отчёт никуда не отправляется автоматически');
+    expect(panelSource).toContain('URL.createObjectURL');
+    expect(backendSource).toContain('/api/nfqws2/diagnostics/support-report');
   });
 
   it('styles the trace protocol picker and diagnosis helper text for clear reading', () => {

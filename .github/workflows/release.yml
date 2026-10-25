@@ -125,10 +125,7 @@ jobs:
           name: nfqws2-ui v${{ steps.release-meta.outputs.version }}
           generate_release_notes: false
           make_latest: true
-          body: |
-            ## Изменения
-            - Убрана глобальная синяя подложка выделенного текста, которая применялась независимо от выбранной палитры.
-            - Выделение текста во всех темах теперь остаётся прозрачным; копирование и редактирование продолжают работать.
+          body_path: RELEASE_v${{ steps.release-meta.outputs.version }}.md
           files: |
             ${{ runner.temp }}/install.sh
             ${{ runner.temp }}/nfqws2-ui-v*-aarch64-unknown-linux-musl.tar.gz
