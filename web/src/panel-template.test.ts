@@ -490,6 +490,13 @@ describe('TSX panel without authentication', () => {
     expect(entrySource).not.toContain('selection:bg-blue-500/30');
   });
 
+  it('does not let accent background rules match hover utility classes outside hover', () => {
+    expect(panelStyles).toContain('[data-accent] [class~="bg-blue-600"], [data-accent] [class~="bg-blue-500"]');
+    expect(panelStyles).toContain('[data-accent] [class~="hover:bg-blue-500"]:hover');
+    expect(panelStyles).toContain('[data-accent] [class~="hover:bg-blue-600"]:hover');
+    expect(panelStyles).not.toContain('[data-accent] [class*="bg-blue-600"], [data-accent] [class*="bg-blue-500"]');
+  });
+
   it('keeps custom strategy input inside its mode tile and exposes copy feedback', () => {
     const modeTile = appSource.slice(appSource.indexOf('id={"strategyModeSelect"}'), appSource.indexOf('id={"scanProgressLabel"}'));
     expect(modeTile).toContain('id={"strategyCustomInputPanel"}');
