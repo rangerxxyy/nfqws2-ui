@@ -316,11 +316,15 @@
     [data-theme="dark"] [class*="bg-purple-600"] { background-color:#2563eb !important; }
     [data-theme="dark"] [class*="hover:bg-purple-500"]:hover { background-color:#3b82f6 !important; }
     [data-theme="dark"] [class*="border-purple-500/30"] { border-color:rgb(59 130 246 / .3) !important; }
+    [data-theme="dark"] .conf-token-flag { color:#60a5fa !important; }
+    [data-theme="dark"] .conf-token-number { color:#f0abfc !important; }
     [data-theme="light"] [class*="text-purple-"], [data-theme="light"] [class*="text-violet-"] { color:#1d4ed8 !important; }
     [data-theme="light"] [class*="bg-purple-500/15"] { background-color:#dbeafe !important; }
     [data-theme="light"] [class*="bg-purple-600"] { background-color:#2563eb !important; }
     [data-theme="light"] [class*="hover:bg-purple-500"]:hover { background-color:#1d4ed8 !important; }
     [data-theme="light"] [class*="border-purple-500/30"] { border-color:#93c5fd !important; }
+    [data-theme="light"] .conf-token-flag { color:#1d4ed8 !important; }
+    [data-theme="light"] .conf-token-number { color:#a21caf !important; }
     [data-theme="light"] ::-webkit-scrollbar-track { background:#e2e8f0; }
     [data-theme="light"] ::-webkit-scrollbar-thumb { background:#94a3b8; }
 
@@ -1061,3 +1065,4 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 @media (prefers-reduced-motion: reduce) {
   .styled-select-menu { animation: none; }
 }
+
