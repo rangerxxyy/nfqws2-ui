@@ -50,3 +50,4 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - Opening a select with the pointer leaves the selected row neutral, as in the timezone reference; keyboard navigation sets an active row and receives the blue focus treatment.
 - Long select menus can use up to 34rem of available viewport height; the TypeScript positioner no longer clamps every menu to 256px.
 - The release picker now offers an in-place retry for both an empty eligible-version list and a failed release request, matching the recovery affordance in the reference updater.
+- About-panel command rows now reserve an intrinsic copy-button column and wrap long command text in the remaining space, following the upstream narrow-screen overlap fix.

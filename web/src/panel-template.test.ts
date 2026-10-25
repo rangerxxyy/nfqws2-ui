@@ -885,6 +885,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.release-retry-button');
   });
 
+  it('keeps About commands and copy actions from colliding at narrow widths', () => {
+    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) auto;');
+    expect(panelStyles).toContain('.about-command-row > button { white-space:nowrap; }');
+    expect(panelStyles).toContain('.about-command-row code { display:block; min-width:0;');
+    expect(panelStyles).toContain('overflow-wrap:anywhere; }');
+  });
+
   it('does not register a beforeunload warning that blocks browser reload or close', () => {
     expect(panelSource).not.toMatch(/beforeunload|returnValue/);
     expect(entrySource).not.toMatch(/beforeunload|returnValue/);
