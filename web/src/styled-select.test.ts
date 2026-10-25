@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findEnabledOptionByPrefix, nextEnabledOption, type StyledOption } from './styled-select';
+import { findEnabledOptionByPrefix, nextEnabledOption, styledSelectMenuSide, type StyledOption } from './styled-select';
 
 const options: StyledOption[] = [
   { value: '', label: 'Выберите', disabled: true },
@@ -19,5 +19,11 @@ describe('styled select navigation helpers', () => {
   it('supports case-insensitive type-to-select without selecting a disabled option', () => {
     expect(findEnabledOptionByPrefix(options, 'ht', 1)).toBe(2);
     expect(findEnabledOptionByPrefix(options, 'нед', 1)).toBe(-1);
+  });
+
+  it('opens above a select near the viewport bottom when there is more room there', () => {
+    expect(styledSelectMenuSide(720, 760, 220, 800)).toBe('top');
+    expect(styledSelectMenuSide(120, 160, 220, 800)).toBe('bottom');
+    expect(styledSelectMenuSide(350, 390, 120, 800)).toBe('bottom');
   });
 });

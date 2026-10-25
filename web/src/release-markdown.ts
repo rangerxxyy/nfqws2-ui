@@ -12,6 +12,7 @@ export type ReleaseBlock =
   | { type: 'quote'; children: ReleaseInline[] }
   | { type: 'heading'; level: number; children: ReleaseInline[] }
   | { type: 'list'; ordered: boolean; items: ReleaseInline[][] }
+  | { type: 'table'; headers: ReleaseInline[][]; alignments: Array<'left' | 'center' | 'right' | null>; rows: ReleaseInline[][][] }
   | { type: 'code-block'; text: string }
   | { type: 'rule' };
 
@@ -19,6 +20,33 @@ const MAX_RELEASE_MARKDOWN_LENGTH = 16_000;
 const INLINE_MARKDOWN = /(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+(?:\s+"[^"]*")?\)|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\*[^*\n]+\*|_[^_\n]+_)/g;
 const LIST_LINE = /^\s*(?:([-+*])\s+|(\d+)[.)]\s+)(.*)$/;
 const FENCE_LINE = /^\s*(```+|~~~+)(.*)$/;
+
+function splitTableRow(line: string): string[] {
+  const source = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells: string[] = [];
+  let cell = '';
+  let escaped = false;
+  for (const char of source) {
+    if (escaped) { cell += char; escaped = false; }
+    else if (char === '\\') { cell += char; escaped = true; }
+    else if (char === '|') { cells.push(cell.trim().replace(/\\\|/g, '|')); cell = ''; }
+    else cell += char;
+  }
+  cells.push(cell.trim().replace(/\\\|/g, '|'));
+  return cells;
+}
+
+function tableAlignments(line: string): Array<'left' | 'center' | 'right' | null> | null {
+  const cells = splitTableRow(line);
+  if (!cells.length || cells.some((cell) => !/^:?-+:?$/.test(cell))) return null;
+  return cells.map((cell) => cell.startsWith(':') && cell.endsWith(':') ? 'center' : cell.endsWith(':') ? 'right' : cell.startsWith(':') ? 'left' : null);
+}
+
+function isTableStart(lines: string[], index: number): boolean {
+  const current = lines[index] ?? '';
+  const next = lines[index + 1] ?? '';
+  return current.includes('|') && tableAlignments(next) !== null && splitTableRow(current).length === splitTableRow(next).length;
+}
 
 function safeHref(href: string): string | null {
   const value = href.trim().replace(/&amp;/g, '&');
@@ -86,6 +114,19 @@ export function parseReleaseMarkdown(markdown: string): ReleaseBlock[] {
       blocks.push({ type: 'code-block', text: code.join('\n') });
       continue;
     }
+    if (isTableStart(lines, i)) {
+      const headers = splitTableRow(lines[i] ?? '').map(parseInline);
+      const alignments = tableAlignments(lines[i + 1] ?? '') ?? [];
+      i += 2;
+      const rows: ReleaseInline[][][] = [];
+      while (i < lines.length && (lines[i] ?? '').includes('|') && (lines[i] ?? '').trim()) {
+        const cells = splitTableRow(lines[i] ?? '');
+        rows.push(headers.map((_, index) => parseInline(cells[index] ?? '')));
+        i += 1;
+      }
+      blocks.push({ type: 'table', headers, alignments, rows });
+      continue;
+    }
     const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
     if (heading) { blocks.push({ type: 'heading', level: heading[1]?.length ?? 2, children: parseInline(heading[2] ?? '') }); i += 1; continue; }
     if (/^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line)) { blocks.push({ type: 'rule' }); i += 1; continue; }
@@ -109,7 +150,7 @@ export function parseReleaseMarkdown(markdown: string): ReleaseBlock[] {
       continue;
     }
     const paragraph: string[] = [];
-    while (i < lines.length && (lines[i] ?? '').trim() && (paragraph.length === 0 || !beginsBlock(lines[i] ?? ''))) paragraph.push(lines[i++] ?? '');
+    while (i < lines.length && (lines[i] ?? '').trim() && (paragraph.length === 0 || (!beginsBlock(lines[i] ?? '') && !isTableStart(lines, i)))) paragraph.push(lines[i++] ?? '');
     const joined: ReleaseInline[] = [];
     paragraph.forEach((part, index) => {
       const hardBreak = /(?: {2,}|\\)$/.test(part);
@@ -153,6 +194,30 @@ export function renderReleaseMarkdown(markdown: string): HTMLDivElement {
       node = document.createElement('pre');
       const code = document.createElement('code'); code.textContent = block.text; node.append(code);
       container.append(node); continue;
+    } else if (block.type === 'table') {
+      const wrapper = document.createElement('div'); wrapper.className = 'release-table-scroll';
+      const table = document.createElement('table'); table.className = 'release-table';
+      const head = document.createElement('thead'); const headerRow = document.createElement('tr');
+      block.headers.forEach((tokens, index) => {
+        const cell = document.createElement('th');
+        cell.scope = 'col';
+        const align = block.alignments[index]; if (align) cell.style.textAlign = align;
+        for (const token of tokens) cell.append(renderInlineToken(token));
+        headerRow.append(cell);
+      });
+      head.append(headerRow); table.append(head);
+      const body = document.createElement('tbody');
+      for (const row of block.rows) {
+        const tr = document.createElement('tr');
+        row.forEach((tokens, index) => {
+          const cell = document.createElement('td');
+          const align = block.alignments[index]; if (align) cell.style.textAlign = align;
+          for (const token of tokens) cell.append(renderInlineToken(token));
+          tr.append(cell);
+        });
+        body.append(tr);
+      }
+      table.append(body); wrapper.append(table); container.append(wrapper); continue;
     } else {
       node = document.createElement(block.ordered ? 'ol' : 'ul');
       for (const item of block.items) {

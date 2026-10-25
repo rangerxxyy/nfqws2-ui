@@ -113,6 +113,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('html[data-theme="light"] { color-scheme: light; }');
     expect(panelStyles).toContain('backdrop-filter: blur(14px);');
     expect(panelStyles).toContain('animation: select-menu-in 150ms var(--ease-out) both;');
+    expect(panelStyles).toContain('.styled-select-menu[data-side=\'top\']');
+    expect(styledSelectSource).toContain('styledSelectMenuSide');
     expect(panelStyles).toContain('#toastWrapper > .toast-card.is-removing { animation: toast-out');
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
     expect(panelStyles).toContain('[data-theme="dark"] [class*="text-purple-"]');
@@ -654,6 +656,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer;');
     expect(panelStyles).toContain('.appearance-choice:has(input:focus-visible)');
     expect(panelStyles).toContain('.appearance-choice:has(input:checked)');
+    expect(panelStyles).toContain('.appearance-choice, .appearance-layout-choice, .appearance-accent-choice { transition: none; }');
+    expect(panelStyles).toContain('.appearance-choice:hover, .appearance-layout-choice:hover, .appearance-accent-choice:hover { transform: none; }');
     expect(panelStyles).toContain('[data-layout="right"] .app-main-layout');
     expect(panelStyles).toContain('[data-layout="top"] .app-main-layout');
     expect(panelStyles).toContain('[data-layout="tiles"] .app-main-layout');

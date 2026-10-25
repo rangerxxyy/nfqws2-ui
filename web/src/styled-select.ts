@@ -19,6 +19,13 @@ export function findEnabledOptionByPrefix(options: readonly StyledOption[], pref
   return -1;
 }
 
+export function styledSelectMenuSide(triggerTop: number, triggerBottom: number, menuHeight: number, viewportHeight: number, edge = 8): 'top' | 'bottom' {
+  const roomAbove = Math.max(0, triggerTop - edge);
+  const roomBelow = Math.max(0, viewportHeight - triggerBottom - edge);
+  if (roomBelow >= menuHeight || roomAbove <= roomBelow) return 'bottom';
+  return 'top';
+}
+
 type StyledSelectState = {
   select: HTMLSelectElement;
   wrapper: HTMLDivElement;
@@ -36,6 +43,19 @@ const states = new WeakMap<HTMLSelectElement, StyledSelectState>();
 const activeStates = new Set<StyledSelectState>();
 let outsideHandlerInstalled = false;
 let selectSequence = 0;
+
+function positionMenu(state: StyledSelectState) {
+  const rect = state.trigger.getBoundingClientRect();
+  state.menu.style.maxHeight = '';
+  const side = styledSelectMenuSide(rect.top, rect.bottom, state.menu.offsetHeight, window.innerHeight);
+  state.menu.dataset.side = side;
+  const available = side === 'top' ? rect.top - 14 : window.innerHeight - rect.bottom - 14;
+  state.menu.style.maxHeight = `${Math.max(0, Math.min(256, available))}px`;
+}
+
+function repositionOpenMenus() {
+  for (const state of activeStates) if (state.open) positionMenu(state);
+}
 
 function optionModels(select: HTMLSelectElement): StyledOption[] {
   return [...select.options].map((option) => ({
@@ -120,6 +140,7 @@ function refreshState(state: StyledSelectState) {
     } else {
       setActiveOption(state, state.activeIndex);
     }
+    positionMenu(state);
   }
 }
 
@@ -269,6 +290,8 @@ function installOne(select: HTMLSelectElement) {
         if (current.open && target instanceof Node && !current.wrapper.contains(target)) closeMenu(current);
       }
     });
+    document.addEventListener('scroll', repositionOpenMenus, true);
+    window.addEventListener('resize', repositionOpenMenus);
     outsideHandlerInstalled = true;
   }
   refreshState(state);

@@ -27,4 +27,24 @@ describe('release Markdown', () => {
     expect(blocks[0].children.some((token) => token.type === 'link')).toBe(false);
     expect(blocks[0].children.map((token) => token.type === 'text' || token.type === 'code' ? token.text : '').join('')).toContain('<script>');
   });
+
+  it('preserves GitHub table headers, alignment, and formatted cell content', () => {
+    const blocks = parseReleaseMarkdown([
+      '| Компонент | Результат |',
+      '|:--|--:|',
+      '| UI \\| stable | **Готово** |',
+      '| nfqws2 | [релиз](https://github.com/example/project/releases) |',
+      '| только один столбец |',
+    ].join('\n'));
+    expect(blocks).toEqual([{
+      type: 'table',
+      headers: [[{ type: 'text', text: 'Компонент' }], [{ type: 'text', text: 'Результат' }]],
+      alignments: ['left', 'right'],
+      rows: [
+        [[{ type: 'text', text: 'UI | stable' }], [{ type: 'strong', children: [{ type: 'text', text: 'Готово' }] }]],
+        [[{ type: 'text', text: 'nfqws2' }], [{ type: 'link', href: 'https://github.com/example/project/releases', children: [{ type: 'text', text: 'релиз' }] }]],
+        [[{ type: 'text', text: 'только один столбец' }], []],
+      ],
+    }]);
+  });
 });
