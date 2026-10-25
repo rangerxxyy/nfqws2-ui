@@ -48,16 +48,17 @@ export default function App() {
           </button>
           {"\n\n        "}
           {"\n        "}
-          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} data-action-tooltip={"Остановить nfqws2"} title={"Остановить nfqws2"} aria-label={"Остановить nfqws2"} className={"h-9 w-9 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 hover:-translate-y-0.5 text-rose-400 border border-rose-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"}>
+          <button id={"togglePowerBtn"} data-action-click={"toggleDaemonPower"} data-action-tooltip={"Запустить nfqws2"} aria-label={"Запустить nfqws2"} className={"h-9 w-9 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 hover:-translate-y-0.5 text-emerald-400 border border-emerald-500/30 flex items-center justify-center transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"}>
             {"\n          "}
             <svg aria-hidden={"true"} className={"w-[18px] h-[18px]"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
               {"\n            "}
-              <rect x={"8"} y={"8"} width={"8"} height={"8"} rx={"1"} fill={"currentColor"}></rect>
+              <path data-power-icon={"play"} d={"M8 5.5v13L18 12 8 5.5Z"} fill={"currentColor"}></path>
+              <rect data-power-icon={"stop"} className={"hidden"} x={"7"} y={"7"} width={"10"} height={"10"} rx={"1"} fill={"currentColor"}></rect>
               {"\n          "}
             </svg>
             {"\n          "}
             <span id={"togglePowerText"} className={"sr-only"}>
-              {"Остановить"}
+              {"Запустить nfqws2"}
             </span>
             {"\n        "}
           </button>
@@ -160,7 +161,7 @@ export default function App() {
         </div>
         {"\n\n      "}
         {"\n      "}
-        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:pr-2 lg:col-start-3 lg:row-start-2 2xl:col-start-auto 2xl:row-start-auto 2xl:-translate-x-2"}>
+        <div id={"headerUpdates"} className={"flex flex-nowrap items-center justify-center gap-3 lg:justify-end lg:pr-2 lg:col-start-3 lg:row-start-2 lg:-translate-x-1 2xl:col-start-auto 2xl:row-start-auto 2xl:-translate-x-1"}>
           {"\n        \n        "}
           {"\n        "}
           <button id={"updateNfqws2Button"} data-action-click={"openUpdateModal"} data-args={JSON.stringify(["core"])} title={"Обновить бинарное ядро nfqws2"} className={"version-pill px-3.5 py-2 rounded-xl flex items-center gap-2 text-xs sm:text-sm cursor-pointer"}>
@@ -274,12 +275,13 @@ export default function App() {
                 {"\n            "}
               </button>
               {"\n\n          "}
+
             </nav>
             {"\n        "}
           </div>
           {"\n\n        "}
           {"\n        "}
-          <div>
+          <div id={"diagnosticNavGroup"}>
             {"\n          "}
             <div className={"px-3 mb-2 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>
               {"\n            Диагностика и автоматика\n          "}
@@ -384,6 +386,23 @@ export default function App() {
           {"\n        "}
 
           {"\n\n      "}
+          <div>
+            {"\n          "}
+            <div className={"px-3 pt-3 pb-1 text-[11px] font-mono font-bold tracking-wider text-slate-500"}>Система</div>
+            <nav className={"space-y-1"}>
+
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-emerald-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M4 7h16M6 4h12v16H6zM9 11h6m-6 4h6"}></path></svg><span>Резервные копии</span>
+              </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["appearance"])} id={"navBtn-appearance"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-violet-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M12 3v2m0 14v2M3 12h2m14 0h2M5.64 5.64l1.42 1.42m9.88 9.88 1.42 1.42m0-12.72-1.42 1.42m-9.88 9.88-1.42 1.42M12 8a4 4 0 100 8 4 4 0 000-8z"}></path></svg><span>Оформление UI</span>
+              </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>О nfqws2-UI</span>
+              </button>
+            </nav>
+          </div>
+          {"\n\n        "}
         </div>
         {"\n\n      "}
         {"\n      "}
@@ -406,12 +425,8 @@ export default function App() {
               <span id={"currentConfigPath"} className={"font-mono text-sm font-bold tracking-tight text-white sm:text-base"}>{"Конфигурация"}</span>
               <span id={"confLinesBadge"} className={"rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-300"}>{"— строк"}</span>
             </div>
-            <div className={"flex flex-wrap items-center gap-2"}>
-              <button data-action-click={"copyConfigText"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"Копировать"}</button>
-              <button data-action-click={"applyConfigAndRestart"} className={"rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all hover:bg-blue-500 active:scale-95"}>{"Применить конфигурацию"}</button>
-            </div>
           </div>
-          <nav aria-label={"Раздел конфигурации"} className={"config-subtabs mb-4 flex flex-wrap gap-2 rounded-xl border border-slate-800 bg-[#090e1a] p-1.5"}>
+          <nav aria-label={"Раздел конфигурации"} className={"config-subtabs mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-[#090e1a] p-1.5"}>
             <button id={"configTabEditor"} type={"button"} aria-pressed={"true"} aria-controls={"configEditorPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["editor"])} className={"config-subtab config-subtab-active rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
               {"Конфигурация"}
             </button>
@@ -421,6 +436,10 @@ export default function App() {
             <button id={"configTabScripts"} type={"button"} aria-pressed={"false"} aria-controls={"configScriptsPanel"} data-action-click={"switchConfigSection"} data-args={JSON.stringify(["scripts"])} className={"config-subtab rounded-lg px-4 py-2 text-sm font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
               {"Скрипты"}
             </button>
+            <div className={"ml-auto flex flex-wrap items-center gap-2"}>
+              <button data-action-click={"copyConfigText"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"Копировать"}</button>
+              <button data-action-click={"applyConfigAndRestart"} className={"rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all hover:bg-blue-500 active:scale-95"}>{"Применить конфигурацию"}</button>
+            </div>
           </nav>
           <div className={"grid grid-cols-1 xl:grid-cols-12 gap-5 items-start"}>
             {"\n          \n          "}
@@ -442,24 +461,27 @@ export default function App() {
                   </span>
                   {"\n              "}
                 </label>
-                <button id={"configStructureToggle"} type={"button"} aria-expanded={"false"} aria-controls={"configOutline"} data-action-click={"toggleConfigOutline"} title={"Показать структуру переменных конфигурации справа"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:border-blue-500/70 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+                <button id={"configStructureToggle"} type={"button"} aria-pressed={"true"} aria-expanded={"true"} aria-controls={"configOutline"} data-action-click={"toggleConfigOutline"} title={"Скрыть структуру переменных конфигурации справа"} className={"config-structure-toggle-active rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:border-blue-500/70 hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
                   {"Структура"}
                 </button>
                 {"\n            "}
               </div>
               {"\n\n            "}
               {"\n            "}
-              <div id={"configEditorWorkspace"} className={"config-editor-workspace grid grid-cols-1 gap-3"}>
+              <div id={"configEditorWorkspace"} className={"config-editor-workspace config-editor-workspace-open grid grid-cols-1 gap-3"}>
                 <div className={"mobile-code-editor flex h-[740px] min-w-0 bg-[#060a12] font-mono text-[14px] leading-[1.68] overflow-hidden"}>
                   {"\n              "}
                   <div id={"confLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3 w-13 overflow-hidden select-none text-xs leading-[1.68]"}>
                     {"\n                1\n              "}
                   </div>
                   {"\n              "}
-                  <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"min-w-0 flex-1 bg-transparent text-slate-100 py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto selection:bg-blue-500/30 focus:ring-0 border-none"}></textarea>
+                  <div className={"conf-editor-surface relative min-w-0 flex-1 overflow-hidden"}>
+                    <pre id={"confSyntaxHighlight"} aria-hidden={"true"} className={"conf-syntax-highlight absolute inset-0 m-0 overflow-hidden py-4 px-5 font-mono leading-[1.68]"}></pre>
+                    <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto selection:bg-blue-500/30 focus:ring-0 border-none"}></textarea>
+                  </div>
                   {"\n            "}
                 </div>
-                <aside id={"configOutline"} aria-label={"Структура конфигурации"} className={"config-outline hidden max-h-[740px] overflow-y-auto rounded-xl border border-slate-800 bg-[#070b14] p-2.5"}>
+                <aside id={"configOutline"} aria-label={"Структура конфигурации"} className={"config-outline max-h-[740px] overflow-y-auto rounded-xl border border-slate-800 bg-[#070b14] p-2.5"}>
                   <div className={"mb-2 px-2 text-[11px] font-bold uppercase tracking-wider text-slate-400"}>{"Структура"}</div>
                   <div id={"configOutlineEntries"} className={"space-y-0.5"}>
                     <div className={"px-2 py-2 text-xs text-slate-500"}>{"Загрузка структуры…"}</div>
@@ -891,7 +913,7 @@ export default function App() {
               <span className={"text-[10px] tracking-wider font-mono text-blue-300 bg-blue-500/10 border border-blue-500/20 rounded-lg px-2.5 py-1"}>DNS · HTTPS · QUIC</span>
             </div>
             <div className={"flex flex-col sm:flex-row gap-2.5"}>
-              <input id={"diagDomainInput"} type={"text"} aria-label={"Домен для проверки"} autoCapitalize={"none"} spellCheck={false} placeholder={"example.com"} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-colors"} />
+              <input id={"diagDomainInput"} type={"text"} aria-label={"Домен или публичный IPv4 для проверки"} autoCapitalize={"none"} spellCheck={false} placeholder={"example.com или 8.8.8.8"} className={"min-w-0 flex-1 bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-colors"} />
               <button data-action-click={"runSiteDiagnosis"} className={"min-w-[140px] px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-colors shadow-lg shadow-blue-600/15"}>Проверить</button>
             </div>
             <div className={"flex flex-wrap items-center gap-2 mt-3 text-[11px] font-mono"}>
@@ -899,7 +921,7 @@ export default function App() {
               <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["youtube.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>youtube.com</button>
               <button data-action-click={"setDiagPreset"} data-args={JSON.stringify(["openai.com"])} className={"px-2.5 py-1 rounded-full bg-slate-800/50 hover:bg-slate-800 text-slate-400 hover:text-blue-300 transition-colors"}>openai.com</button>
             </div>
-            <p className={"diagnosis-help mt-4 text-xs leading-relaxed"}>Роутер сравнит прямой доступ и текущий маршрут, включая QUIC. nfqws2 продолжит работать.</p>
+            <p className={"diagnosis-help mt-4 text-xs leading-relaxed"}>Для домена сравниваются DNS, прямой доступ, текущий маршрут и QUIC. Для IP DNS и QUIC пропускаются. nfqws2 продолжит работать.</p>
           </div>
           <div id={"diagResultContainer"} className={"diagnosis-results"}></div>
         </section>
@@ -975,9 +997,9 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"grid grid-cols-1 md:grid-cols-5 gap-4 mt-5"}>
+            <div className={"grid grid-cols-1 md:grid-cols-5 gap-3 mt-4 strategy-settings-grid"}>
               {"\n            "}
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
+              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
                   {"Транспорт"}
@@ -990,7 +1012,7 @@ export default function App() {
                 {"\n            "}
               </div>
 
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
+              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5"}>
                 <label htmlFor={"strategyRepeatsSelect"} className={"block text-xs font-mono text-slate-400"}>Повторов</label>
                 <select id={"strategyRepeatsSelect"} defaultValue={"3"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
                   <option value={"2"}>2 повтора</option><option value={"3"}>3 повтора</option><option value={"4"}>4 повтора</option><option value={"5"}>5 повторов</option>
@@ -1016,17 +1038,17 @@ export default function App() {
                 <p className={"mt-1 ml-5 text-[11px] leading-4 text-slate-400"}>Совместимые варианты будут загружены из каталога и проверены отдельными реальными запросами.</p>
               </div>
               {"\n\n            "}
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
+              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
-                  {"Домен для проверки"}
+                  {"Домен или публичный IPv4"}
                 </label>
                 {"\n              "}
-              <input id={"scanCustomHost"} type={"text"} placeholder={"example.com"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
+              <input id={"scanCustomHost"} type={"text"} placeholder={"example.com или 8.8.8.8"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-blue-300 focus:outline-none focus:border-blue-500"} />
                 {"\n            "}
               </div>
               {"\n\n            "}
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5"}>
+              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5 strategy-mode-tile"}>
                 {"\n              "}
                 <label className={"block text-xs font-mono text-slate-400"}>
                   {"Режим тестирования"}
@@ -1036,16 +1058,16 @@ export default function App() {
                   <option value={"quick"}>Быстрый · текущие + базовые</option><option value={"extended"}>Расширенный · каталог blockcheck2</option><option value={"full"}>Полный · каталог blockcheck2 (~3 000)</option><option value={"custom"}>Своя стратегия</option>
                 </select>
                 <p id={"strategyModeHelp"} aria-live={"polite"} className={"strategy-mode-help mt-2 text-[11px] font-medium leading-4 text-slate-300"}>Проверяются текущие стратегии и небольшой базовый набор.</p>
+                <div id={"strategyCustomInputPanel"} className={"hidden mt-2 border-t border-slate-800 pt-2"}>
+                  <label htmlFor={"strategyCustomSteps"} className={"block text-xs font-mono text-slate-400"}>Свои параметры · для режима «Своя стратегия»</label>
+                  <textarea id={"strategyCustomSteps"} rows={3} spellCheck={false} placeholder={"одна стратегия на строку, например:\n--lua-desync=multisplit:pos=1,midsld\n--lua-desync=fakedsplit:pos=1"} className={"mt-1.5 w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
+                  <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>Каждая строка — отдельный вариант. Несколько --lua-desync в одной строке — шаги одного варианта; \ в конце строки продолжает его на следующей.</p>
+                  <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>Разрешены только параметры --lua-desync.</p>
+                  <button type={"button"} data-action-click={"copyStrategyParams"} data-value-source={"self"} className={"strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200"}>Копировать</button>
+                </div>
                 {"\n            "}
               </div>
-              {"\n\n            "}
-              <div id={"strategyCustomInputPanel"} className={"hidden bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5 md:col-span-2"}>
-                <label htmlFor={"strategyCustomSteps"} className={"block text-xs font-mono text-slate-400"}>Свои параметры · для режима «Своя стратегия»</label>
-                <textarea id={"strategyCustomSteps"} rows={3} spellCheck={false} placeholder={"одна стратегия на строку, например:\n--lua-desync=multisplit:pos=1,midsld\n--lua-desync=fakedsplit:pos=1"} className={"mt-1.5 w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
-                <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>{"Каждая строка — отдельный вариант. Несколько --lua-desync в одной строке — шаги одного варианта; \\ в конце строки продолжает его на следующей."}</p>
-                <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>Разрешены только параметры Lua desync, которые поддерживает установленный nfqws2. Backend проверит их до изолированного теста.</p>
-              </div>
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-3.5 flex flex-col justify-between"}>
+              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5 flex flex-col justify-between"}>
                 {"\n              "}
                 <div className={"flex items-center justify-between text-xs font-mono"}>
                   {"\n                "}
@@ -1169,12 +1191,73 @@ export default function App() {
           <section id={"monitorSection-telegram"} className={"hidden ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
             <div><h2 className={"text-lg font-bold text-white"}>Уведомления в Telegram</h2><p className={"mt-1 text-sm leading-relaxed text-slate-400"}>Сообщение приходит, когда сайт из мониторинга перестаёт или снова начинает открываться. Создайте бота через @BotFather, отправьте ему сообщение, затем найдите ID чата.</p></div>
             <label className={"grid gap-2 text-sm text-slate-300 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}>Токен бота<input id={"telegramToken"} type={"password"} autoComplete={"new-password"} placeholder={"123456:ABC…"} className={"rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 text-white"} /></label>
-            <label className={"grid gap-2 text-sm text-slate-300 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}>Отправлять<select id={"telegramVia"} className={"rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 text-white"}><option value={"direct"}>как обычно</option><option value={"interface"}>через сетевой интерфейс</option><option value={"proxy"}>через прокси</option></select></label>
-            <div className={"grid gap-2 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}><label htmlFor={"telegramInterface"} className={"text-sm text-slate-300"}>Сетевой интерфейс</label><input id={"telegramInterface"} placeholder={"например eth3"} className={"rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 text-white"} /></div>
-            <div className={"grid gap-2 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}><label htmlFor={"telegramProxy"} className={"text-sm text-slate-300"}>HTTP / SOCKS5 proxy</label><input id={"telegramProxy"} placeholder={"socks5h://127.0.0.1:1080"} className={"rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 text-white"} /></div>
+            <label className={"grid gap-2 text-sm text-slate-300 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}>Отправлять<select id={"telegramVia"} data-action-change={"toggleTelegramTransportFields"} data-value-source={"value"} className={"rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 text-white"}><option value={"direct"}>как обычно</option><option value={"interface"}>через сетевой интерфейс</option><option value={"proxy"}>через прокси</option></select></label>
+            <div id={"telegramInterfaceField"} className={"hidden grid gap-2 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}><label htmlFor={"telegramInterface"} className={"text-sm text-slate-300"}>Сетевой интерфейс</label><input id={"telegramInterface"} placeholder={"например eth3"} className={"rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 text-white"} /></div>
+            <div id={"telegramProxyField"} className={"hidden grid gap-2 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}><label htmlFor={"telegramProxy"} className={"text-sm text-slate-300"}>HTTP / SOCKS5 proxy</label><input id={"telegramProxy"} placeholder={"socks5h://127.0.0.1:1080"} className={"rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 text-white"} /></div>
             <div className={"grid gap-2 md:grid-cols-[11rem_minmax(0,35rem)] md:items-center"}><label htmlFor={"telegramChatId"} className={"text-sm text-slate-300"}>ID чата</label><div className={"flex gap-2"}><input id={"telegramChatId"} placeholder={"123456789"} className={"min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2.5 font-mono text-white"} /><button data-action-click={"findTelegramChatId"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-white hover:bg-slate-800"}>⌕ Найти</button></div></div>
             <p id={"telegramStatus"} className={"text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p><div className={"flex gap-2"}><button data-action-click={"saveTelegramSettings"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button><button data-action-click={"sendTestTelegram"} className={"rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"}>Отправить проверочное</button></div>
             <div id={"telegramNotifications"} className={"space-y-3"} aria-live={"polite"}></div>
+          </section>
+        </section>
+        <section id={"tabContent-snapshots"} className={"hidden view-animate space-y-4"}>
+          <div className={"flex flex-wrap items-center justify-between gap-3"}><h1 className={"text-xl font-bold text-white"}>Резервные копии</h1><button data-action-click={"createSnapshot"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"}>＋ Создать снимок сейчас</button></div>
+          <div className={"grid gap-3 xl:grid-cols-2"}>
+            <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
+              <div className={"flex items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>На роутере</h2><span id={"snapshotCount"} className={"backup-chip"}>Загрузка…</span></div>
+              <p className={"text-sm leading-6 text-slate-400"}>Снимок включает конфигурацию, списки, блобы, мониторинг, Telegram и оформление UI. Создаётся перед изменениями через панель (не чаще раза в 15 минут), ежедневно в 04:05 и вручную.</p>
+              <div className={"grid gap-2 sm:grid-cols-[auto_5.5rem_auto_5.5rem_auto] sm:items-center text-sm"}><label htmlFor={"snapshotDays"} className={"text-slate-300"}>Хранить</label><input id={"snapshotDays"} type={"number"} min={1} max={3650} className={"backup-input"} /><span>дней, не больше</span><input id={"snapshotMaxCount"} type={"number"} min={5} max={500} className={"backup-input"} /><span>снимков</span></div>
+              <button data-action-click={"saveSnapshotRetention"} className={"rounded-lg border border-slate-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-slate-800"}>Применить</button>
+              <div className={"flex gap-3 text-sm"}><span className={"w-14 shrink-0 text-slate-400"}>Где</span><code id={"snapshotDirectory"} className={"break-all text-slate-200"}>—</code></div>
+              <p className={"text-xs text-slate-500"}>Пять последних снимков и закреплённые не удаляются автоматически.</p>
+            </section>
+            <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
+              <h2 className={"font-bold text-white"}>Вне роутера</h2>
+              <div className={"flex flex-wrap gap-2"}><a href={"/api/snapshots/current/archive"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↓ Скачать архив</a><label htmlFor={"snapshotRestoreFile"} className={"cursor-pointer rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↑ Восстановить из файла</label><input id={"snapshotRestoreFile"} type={"file"} accept={".tar.gz,.tgz,application/gzip"} className={"hidden"} data-action-change={"restoreSnapshotFile"} data-args={JSON.stringify([{source:"self"}])} /></div>
+              <p className={"text-sm leading-6 text-slate-400"}>Архив `.tar.gz` сохраняется на устройство, с которого открыт интерфейс. В нём могут быть секреты Telegram. Перед восстановлением панель создаёт снимок текущего состояния.</p>
+              <p id={"backupStatus"} className={"text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Загрузка сведений…</p>
+            </section>
+          </div>
+          <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}>
+            <div className={"flex flex-wrap items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>Копии на NAS</h2><span id={"snapshotRemoteStatus"} className={"text-sm text-slate-400"}>Отправка выключена</span></div>
+            <p className={"text-sm leading-6 text-slate-400"}>Роутер отправляет новые снимки по SSH. NAS хранит архивы, а ключ роутера ограничен одной папкой: он может добавлять новые снимки и читать их, но не удалять и не перезаписывать.</p>
+            <div className={"grid gap-3 lg:grid-cols-2"}>
+              <label className={"backup-field"}><span>Отправлять</span><span className={"flex items-center gap-2"}><input id={"snapshotRemoteEnabled"} type={"checkbox"} /> каждый новый снимок на NAS</span></label>
+              <label className={"backup-field"}><span>Адрес</span><input id={"snapshotRemoteHost"} className={"backup-input"} placeholder={"192.168.1.207"} /></label>
+              <label className={"backup-field"}><span>Порт SSH</span><input id={"snapshotRemotePort"} className={"backup-input max-w-28"} type={"number"} min={1} max={65535} /></label>
+              <label className={"backup-field"}><span>Пользователь</span><input id={"snapshotRemoteUser"} className={"backup-input"} placeholder={"имя пользователя на NAS"} /></label>
+              <label className={"backup-field lg:col-span-2"}><span>Папка на NAS</span><input id={"snapshotRemoteDir"} className={"backup-input"} placeholder={"/volume1/homes/user/Backups/nfqws2-ui"} /><small>Полный путь. Команда установки ключа разрешает доступ только к этой папке.</small></label>
+              <label className={"backup-field"}><span>Оставлять на роутере</span><input id={"snapshotRemoteKeep"} className={"backup-input max-w-28"} type={"number"} min={1} max={50} /><small>последних снимков, плюс закреплённые</small></label>
+            </div>
+            <div className={"flex flex-wrap gap-2"}><button data-action-click={"saveSnapshotRemote"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Сохранить</button><button id={"snapshotRemoteTest"} data-action-click={"testSnapshotRemote"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>Проверить связь</button><button id={"snapshotRemotePush"} data-action-click={"pushSnapshotRemote"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>Отправить сейчас</button></div>
+            <div className={"grid gap-2 border-t border-slate-800 pt-3 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-start"}><span className={"text-sm text-slate-400"}>Ключ роутера</span><div className={"space-y-2"}><button id={"snapshotCreateKey"} data-action-click={"createSnapshotKey"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>＋ Создать ключ роутера</button><code id={"snapshotPublicKey"} className={"block break-all text-xs text-slate-300"}></code><details id={"snapshotSetupDetails"} className={"hidden"}><summary className={"cursor-pointer text-sm text-blue-300"}>Команда для NAS — выполнить один раз</summary><textarea id={"snapshotSetupCommand"} readOnly rows={6} className={"backup-input mt-2 font-mono text-xs"}></textarea><button data-action-click={"copySnapshotSetup"} className={"mt-2 rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-100"}>Копировать команду</button></details></div></div>
+          </section>
+          <section className={"ui-card backup-panel rounded-xl p-4 space-y-3"}><div className={"flex items-center justify-between gap-3"}><h2 className={"font-bold text-white"}>Снимки</h2><button data-action-click={"refreshBackups"} className={"rounded-lg border border-slate-700 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-800"}>↻ Обновить</button></div><div id={"backupList"} className={"space-y-2"} aria-live={"polite"}></div></section>
+        </section>
+        <section id={"tabContent-appearance"} className={"hidden view-animate space-y-5"}>
+          <div><h1 className={"text-xl font-bold text-white"}>Оформление UI</h1><p className={"mt-1 text-sm text-slate-400"}>Настройки сохраняются в этом браузере.</p></div>
+          <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
+            <div><h2 className={"font-bold text-white"}>Цветовая тема</h2><p className={"mt-1 text-xs text-slate-400"}>Выберите подходящее оформление панели.</p></div>
+            <div className={"grid gap-3 sm:grid-cols-3"}>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"dark"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-dark"}></span><span><strong>Стандартная</strong><small>Текущая тёмная тема</small></span></label>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"light"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-light"}></span><span><strong>Светлая</strong><small>Светлый фон и контрастный текст</small></span></label>
+              <label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"} value={"neon"} data-action-change={"setAppearanceTheme"} data-value-source={"value"} /><span className={"appearance-preview appearance-preview-neon"}></span><span><strong>Фиолетово-неоновая</strong><small>Тёмная тема с фиолетовым акцентом</small></span></label>
+            </div>
+            <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Расположение меню</h2><p className={"mt-1 text-xs text-slate-400"}>Выберите плотность и ширину панели. В компактном виде целиком скрыта группа «Диагностика и автоматика».</p><div className={"mt-3 grid gap-3 sm:grid-cols-2"}>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"standard"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Стандартный</strong><small>Все доступные разделы</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"compact"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Компактный</strong><small>Скрывает всю группу диагностики и автоматики</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"dense"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Плотный</strong><small>Все разделы с уменьшенными отступами</small></span></label>
+              <label className={"appearance-layout-choice"}><input type={"radio"} name={"appearanceLayout"} value={"wide"} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span><strong>Широкий</strong><small>Увеличенная ширина боковой панели</small></span></label>
+            </div></div>
+          </section>
+        </section>
+        <section id={"tabContent-about"} className={"hidden view-animate space-y-5"}>
+          <div><h1 className={"text-xl font-bold text-white"}>О nfqws2-UI</h1><p className={"mt-1 text-sm text-slate-400"}>Версия панели, обновления и команды управления на роутере.</p></div>
+          <section className={"ui-card max-w-4xl rounded-2xl p-5 sm:p-6 space-y-5"}>
+            <div className={"flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4"}><div><h2 className={"font-bold text-white"}>nfqws2-UI</h2><a href={"https://github.com/rangerxxyy/nfqws2-ui"} target={"_blank"} rel={"noreferrer"} className={"mt-1 inline-block text-sm text-blue-400 hover:text-blue-300"}>github.com/rangerxxyy/nfqws2-ui ↗</a></div><div className={"flex items-center gap-3"}><p className={"text-sm text-slate-300"}>Установлена: <strong id={"aboutCurrentVersion"} className={"font-mono text-white"}>—</strong><br />Последняя: <strong id={"aboutLatestVersion"} className={"font-mono text-white"}>—</strong></p><button data-action-click={"checkUiUpdate"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-slate-800"}>↻ Проверить обновление</button></div></div>
+            <p id={"aboutUpdateStatus"} className={"text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Загрузка сведений о версии…</p>
+            <div><h2 className={"font-bold text-white"}>Команды в терминале роутера</h2><div className={"mt-3 grid gap-2"}>
+              {[["nfqws2-ui-ctl update", "Обновить до последнего релиза"], ["nfqws2-ui-ctl update --check", "Только проверить доступную версию"], ["nfqws2-ui-ctl update v1.0.0 --force", "Установить версию или выполнить откат"], ["nfqws2-ui-ctl status", "Показать состояние панели и nfqws2"], ["nfqws2-ui-ctl help", "Показать полный список команд"]].map(([command, description]) => <div key={command} className={"about-command-row"}><div className={"min-w-0"}><code>{command}</code><small>{description}</small></div><button data-action-click={"copySnippetToClipboard"} data-args={JSON.stringify([command])} className={"rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"}>Копировать</button></div>)}
+            </div><p className={"mt-3 text-xs text-slate-500"}><code>nfqws2-ui-ctl</code> — отдельная команда панели rangerxxyy; штатное управление nfqws2 не меняется.</p></div>
           </section>
         </section>
         {"\n\n      "}

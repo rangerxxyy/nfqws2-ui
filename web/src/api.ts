@@ -62,6 +62,11 @@ export type NfqwsInstallation = {
 export type NfqwsLuaScriptInfo = { name: string; path: string | null; exists: boolean; readable: boolean };
 export type NfqwsLuaScriptContent = { name: string; path: string; compressed: boolean; content: string; truncated: boolean };
 export type BackupItem = { id: string; createdAt: number; file: string };
+export type SnapshotItem = { id: string; ts: number; reason: string; note: string; size: number; local: boolean; remote: boolean; pinned: boolean; files: Record<string, string> };
+export type SnapshotRemoteSettings = { enabled: boolean; host: string; port: number; user: string; dir: string; keepLocal: number };
+export type SnapshotSettings = { maxCount: number; maxDays: number; remote: SnapshotRemoteSettings };
+export type SnapshotOverview = { items: SnapshotItem[]; settings: SnapshotSettings; directory: string; totalBytes: number; localCount: number; remote: { tool: string | null; publicKey: string; on: boolean; pending: number; stored: number; lastOk: number | null; error: string | null; setupCommand: string } };
+export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
 export type UiUpdateStatus = { currentVersion: string; latestVersion: string | null; updateAvailable: boolean; releaseUrl: string | null; checkedAt: number | null };
 export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null };
@@ -114,6 +119,28 @@ export const nfqwsBackups = {
   list: () => api<{ backups: BackupItem[] }>('/api/backups'),
   create: () => api<BackupItem>('/api/backups', { method: 'POST' }),
   restore: (id: string) => api<{ message: string }>(`/api/backups/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
+};
+
+export const nfqwsSnapshots = {
+  get: () => api<SnapshotOverview>('/api/snapshots'),
+  create: (note = '') => api<SnapshotItem>('/api/snapshots', { method: 'POST', body: JSON.stringify({ note }) }),
+  saveSettings: (settings: SnapshotSettings) => api<{ saved: boolean }>('/api/snapshots/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  pin: (id: string, pinned: boolean) => api<{ saved: boolean }>(`/api/snapshots/${encodeURIComponent(id)}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) }),
+  restore: (id: string) => api<{ changed: string[]; message: string }>(`/api/snapshots/${encodeURIComponent(id)}/restore`, { method: 'POST' }),
+  restoreFile: async (file: File) => {
+    const response = await fetch('/api/snapshots/restore-file', { method: 'POST', body: file, headers: { 'Content-Type': 'application/gzip' }, credentials: 'same-origin' });
+    const payload = await response.json().catch(() => ({})) as { error?: string; message?: string; changed?: string[] };
+    if (!response.ok) throw new ApiError(response.status, payload.error || `HTTP ${response.status}`);
+    return payload;
+  },
+  createKey: () => api<{ publicKey: string }>('/api/snapshots/remote/key', { method: 'POST' }),
+  testRemote: () => api<{ ok: boolean; count: number }>('/api/snapshots/remote/test', { method: 'POST' }),
+  pushRemote: () => api<{ sent: number }>('/api/snapshots/remote/push', { method: 'POST' }),
+};
+
+export const nfqwsAppearance = {
+  get: () => api<UiAppearanceSettings | null>('/api/ui/appearance'),
+  save: (settings: UiAppearanceSettings) => api<{ saved: boolean }>('/api/ui/appearance', { method: 'PUT', body: JSON.stringify(settings) }),
 };
 
 export const nfqwsApply = {

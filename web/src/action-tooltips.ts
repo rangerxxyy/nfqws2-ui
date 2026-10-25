@@ -63,7 +63,7 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
     if (!element.dataset.actionTooltip) element.dataset.actionTooltip = fallbackTooltipText(element);
   };
   const findButton = (target: EventTarget | null) => target instanceof Element
-    ? target.closest<HTMLButtonElement>('button[data-action-click], button[data-action-tooltip], .side-nav-btn')
+    ? target.closest<HTMLButtonElement>('button, .side-nav-btn')
     : null;
   const clear = () => {
     cancelDelay?.(); cancelDelay = null;
@@ -94,14 +94,14 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
       cancelDelay = null;
     }, delayMs);
   };
-  root.querySelectorAll('button[data-action-click], button[data-action-tooltip], .side-nav-btn').forEach(prepare);
+  root.querySelectorAll('button, .side-nav-btn').forEach(prepare);
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       if (record.type === 'attributes' && record.target instanceof Element) prepare(record.target);
       if (record.type === 'childList') record.addedNodes.forEach((node) => {
         if (node instanceof Element) {
           prepare(node);
-          node.querySelectorAll('button[data-action-click], button[data-action-tooltip], .side-nav-btn').forEach(prepare);
+          node.querySelectorAll('button, .side-nav-btn').forEach(prepare);
         }
       });
     }
