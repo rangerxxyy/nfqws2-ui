@@ -1205,12 +1205,13 @@ export default function App() {
           <div className={"ui-card rounded-2xl p-4 sm:p-5 space-y-4"}>
             <div>
               <h2 className={"text-lg font-bold text-white"}>Проверка сторонней конфигурации</h2>
-              <p className={"mt-1 max-w-4xl text-sm leading-relaxed text-slate-400"}>Сравните установленный конфиг и до 10 вариантов на одних сайтах. Перед запуском nfqws2 --dry-run проверяет все группы профилей из .conf: TCP, UDP, QUIC, IPSET, дополнительные и пользовательские. Сетевое сравнение выполняется по HTTPS/TCP: каждый вариант запускается отдельным проверочным nfqws2 и подтверждается выбранным числом запросов подряд; после первой неудачи повторы прекращаются. Проверка идёт последовательно и при больших наборах может занять время. Активный конфиг и обычный трафик не меняются. Пути к Lua, блобам и спискам сопоставляются с установленными файлами; автосписок изолирован, debug-запись отключена.</p>
+              <p className={"mt-1 max-w-none text-xs leading-5 text-slate-400"}>Сравните текущий конфиг и до 10 вариантов на одних сайтах. Перед тестом nfqws2 --dry-run проверяет TCP, UDP, QUIC, IPSET и пользовательские профили. Каждый вариант отдельно проверяется по HTTPS/TCP выбранное число раз подряд; после первой ошибки повторы прекращаются. Текущий конфиг и обычный трафик не меняются. Пути Lua, блобов и списков берутся из установки, автосписок изолирован, debug-запись отключена. Проверка идёт последовательно и может занять время.</p>
             </div>
             <div className={"flex flex-wrap items-center gap-2"}>
-              <button data-action-click={"openForeignConfigText"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ Текстом</button>
-              <button data-action-click={"openForeignConfigUrl"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ По ссылке</button>
-              <label className={"cursor-pointer rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ Файл .conf<input id={"foreignConfigFileInput"} type={"file"} accept={".conf,text/plain"} className={"hidden"} /></label>
+              <button data-action-click={"openForeignConfigText"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>Текстом</button>
+              <button data-action-click={"openForeignConfigUrl"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>По ссылке</button>
+              <button data-action-click={"openForeignConfigFile"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>Файл .conf</button>
+              <input id={"foreignConfigFileInput"} type={"file"} accept={".conf,text/plain"} className={"hidden"} />
             </div>
             <div id={"foreignConfigTextForm"} className={"hidden space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3"}>
               <input id={"foreignConfigTextName"} type={"text"} placeholder={"Название конфига (необязательно)"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 text-sm text-white placeholder:text-slate-500"} />

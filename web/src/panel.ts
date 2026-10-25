@@ -1577,6 +1577,11 @@ function addForeignConfigUrl() {
   if (nameInput instanceof HTMLInputElement) nameInput.value = '';
 }
 
+function openForeignConfigFile() {
+  const input = $('#foreignConfigFileInput');
+  if (input instanceof HTMLInputElement) input.click();
+}
+
 async function addForeignConfigFile(file: File) {
   if (!file.name.toLowerCase().endsWith('.conf')) return toast('Выберите файл с расширением .conf.', 'error');
   if (file.size > 65536) return toast('Размер файла не должен превышать 64 КиБ.', 'error');
@@ -1612,21 +1617,60 @@ function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
   if (start instanceof HTMLButtonElement) { start.disabled = active; start.textContent = active ? 'Проверка…' : '▷ Проверить конфиги'; }
   if (!results) return;
   results.replaceChildren();
-  for (const comparison of operation.comparisons) {
-    const card = document.createElement('section'); card.className = 'ui-card min-w-0 rounded-xl border border-slate-800 p-3';
-    const heading = document.createElement('div'); heading.className = 'mb-2 flex items-center justify-between gap-2';
-    const title = document.createElement('h3'); title.className = 'truncate text-sm font-bold text-slate-100'; title.textContent = comparison.name;
-    const source = document.createElement('span'); source.className = 'shrink-0 text-[10px] text-slate-500'; source.textContent = comparison.source;
-    heading.append(title, source); card.append(heading);
-    for (const site of comparison.sites) {
-      const row = document.createElement('div'); row.className = 'grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-0.5 border-t border-slate-800/70 py-2 text-xs';
-      const host = document.createElement('strong'); host.className = 'truncate font-mono text-slate-300'; host.textContent = site.host;
-      const current = document.createElement('span'); current.className = `whitespace-nowrap ${site.currentOk === true ? 'text-emerald-300' : site.currentOk === false ? 'text-rose-300' : 'text-slate-500'}`; current.textContent = `Текущий: ${foreignStatusLabel(site.currentOk)}`;
-      const candidate = document.createElement('span'); candidate.className = `whitespace-nowrap ${site.candidateOk === true ? 'text-emerald-300' : site.candidateOk === false ? 'text-rose-300' : 'text-slate-500'}`; candidate.textContent = `Этот: ${foreignStatusLabel(site.candidateOk)}`;
-      const detail = document.createElement('p'); detail.className = 'col-span-3 break-words text-[10px] leading-4 text-slate-500'; detail.textContent = site.candidateOk === null ? site.currentDetail : site.candidateDetail;
-      row.append(host, current, candidate, detail); card.append(row);
+  const renderSites = (sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail') => {
+    const list = document.createElement('div'); list.className = 'mt-2 divide-y divide-slate-800/70';
+    for (const site of sites) {
+      const row = document.createElement('div'); row.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2 text-xs';
+      const host = document.createElement('strong'); host.className = 'min-w-0 truncate font-mono font-semibold text-white'; host.textContent = site.host;
+      const result = site[key];
+      const statusText = document.createElement('span'); statusText.className = `shrink-0 font-semibold ${result === true ? 'text-emerald-300' : result === false ? 'text-rose-300' : 'text-slate-500'}`; statusText.textContent = `Домен: ${foreignStatusLabel(result)}`;
+      row.append(host, statusText); list.append(row);
+      if (result !== true && site[detailKey]) {
+        const detail = document.createElement('p'); detail.className = 'pb-2 text-[11px] leading-4 text-slate-400'; detail.textContent = site[detailKey]; list.append(detail);
+      }
     }
-    results.append(card);
+    return list;
+  };
+  const makeDisclosure = (title: string, sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail', successfulLabel: string) => {
+    const passed = sites.filter((site) => site[key] === true).length;
+    const details = document.createElement('details'); details.className = 'ui-card min-w-0 rounded-xl border border-slate-800 p-3';
+    const summary = document.createElement('summary'); summary.className = 'flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-sm font-semibold text-white';
+    const label = document.createElement('span'); label.textContent = title;
+    const count = document.createElement('span'); count.className = `text-xs ${sites.length > 0 && passed === sites.length ? 'text-emerald-300' : 'text-slate-400'}`; count.textContent = `${passed}/${sites.length} доменов · ${sites.length > 0 && passed === sites.length ? successfulLabel : 'есть недоступные или ожидают'}`;
+    summary.append(label, count); details.append(summary, renderSites(sites, key, detailKey));
+    return details;
+  };
+
+  const baselineSites = operation.comparisons[0]?.sites ?? [];
+  results.append(makeDisclosure('Текущая конфигурация', baselineSites, 'currentOk', 'currentDetail', 'все доступны'));
+  for (const [index, comparison] of operation.comparisons.entries()) {
+    const candidateWorks = operation.state === 'complete' && comparison.sites.length > 0 && comparison.sites.every((site) => site.candidateOk === true);
+    const details = makeDisclosure(`Проверяемая конфигурация · ${comparison.name}`, comparison.sites, 'candidateOk', 'candidateDetail', candidateWorks ? 'Конфигурация работает' : 'все доступны');
+    const source = document.createElement('span'); source.className = 'mt-1 block text-[11px] text-slate-500'; source.textContent = comparison.source; details.append(source);
+    if (candidateWorks) {
+      const outcome = document.createElement('div'); outcome.className = 'mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2';
+      const label = document.createElement('strong'); label.className = 'text-sm font-semibold text-emerald-200'; label.textContent = 'Конфигурация работает';
+      const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50'; apply.textContent = 'Применить конфигурацию';
+      apply.addEventListener('click', () => void applyForeignConfig(operation.id, index, comparison.name, apply));
+      outcome.append(label, apply); details.append(outcome);
+    }
+    results.append(details);
+  }
+}
+
+async function applyForeignConfig(operationId: string, index: number, name: string, button: HTMLButtonElement) {
+  if (!window.confirm(`Заменить текущую конфигурацию на «${name}» и перезапустить nfqws2?`)) return;
+  button.disabled = true;
+  button.textContent = 'Применение…';
+  try {
+    const result = await nfqwsDiagnostics.foreignConfigApply(operationId, index);
+    config = result.config;
+    await loadConfig();
+    toast('Конфигурация применена и nfqws2 перезапущен.', 'success');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось применить конфигурацию.', 'error');
+    button.disabled = false;
+    button.textContent = 'Применить конфигурацию';
   }
 }
 
@@ -2445,6 +2489,7 @@ function bindPrototypeActions() {
     stopSiteTrace: () => void stopSiteTrace(),
     openForeignConfigText: () => showForeignConfigForm('text'),
     openForeignConfigUrl: () => showForeignConfigForm('url'),
+    openForeignConfigFile: () => openForeignConfigFile(),
     closeForeignConfigForms: () => closeForeignConfigForms(),
     addForeignConfigText: () => addForeignConfigText(),
     addForeignConfigUrl: () => addForeignConfigUrl(),

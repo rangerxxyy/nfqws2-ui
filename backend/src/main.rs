@@ -500,6 +500,18 @@ fn validate_foreign_config_counts(configs: usize, hosts: usize) -> Result<(), &'
     Ok(())
 }
 
+fn foreign_config_candidate_is_applicable(
+    state: &str,
+    comparison: &ForeignConfigComparison,
+) -> bool {
+    state == "complete"
+        && !comparison.sites.is_empty()
+        && comparison
+            .sites
+            .iter()
+            .all(|site| site.candidate_ok == Some(true))
+}
+
 fn foreign_config_should_retry(
     outcome: Option<bool>,
     completed_attempt: usize,
@@ -4850,6 +4862,10 @@ fn foreign_config_operation_path(directory: &Path, id: &str) -> PathBuf {
     directory.join(format!("{id}.json"))
 }
 
+fn foreign_config_candidate_path(directory: &Path, id: &str, index: usize) -> PathBuf {
+    directory.join(format!("{id}.candidate-{index}"))
+}
+
 fn write_foreign_config_operation_sync(
     directory: &Path,
     operation: &ForeignConfigCheckOperation,
@@ -4937,6 +4953,12 @@ async fn prune_foreign_config_operations(directory: &Path) {
     }
     finished.sort_by_key(|item| std::cmp::Reverse(item.0));
     for (_, path) in finished.into_iter().skip(MAX_FOREIGN_CONFIG_OPERATIONS) {
+        if let Some(id) = path.file_stem().and_then(|value| value.to_str()) {
+            for index in 0..MAX_FOREIGN_CONFIGS {
+                let _ = tokio::fs::remove_file(foreign_config_candidate_path(directory, id, index))
+                    .await;
+            }
+        }
         let _ = tokio::fs::remove_file(path).await;
     }
 }
@@ -5856,7 +5878,7 @@ async fn start_foreign_config_check(
             "Текст"
         }
         .to_owned();
-        prepared.push((name, source, args, dry_run));
+        prepared.push((name, source, args, dry_run, adapted_content));
     }
     let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
         return error(
@@ -5878,7 +5900,7 @@ async fn start_foreign_config_check(
     let control = Arc::new(AtomicBool::new(false));
     let comparisons = prepared
         .iter()
-        .map(|(name, source, _, _)| ForeignConfigComparison {
+        .map(|(name, source, _, _, _)| ForeignConfigComparison {
             name: name.clone(),
             source: source.clone(),
             sites: hosts
@@ -5908,6 +5930,24 @@ async fn start_foreign_config_check(
     if let Err(message) = write_foreign_config_operation_sync(&directory, &operation) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, message);
     }
+    for (index, (_, _, _, _, content)) in prepared.iter().enumerate() {
+        let candidate_path = foreign_config_candidate_path(&directory, &id, index);
+        if let Err(write_error) = std::fs::write(&candidate_path, content.as_bytes()) {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось сохранить проверенный конфиг: {write_error}"),
+            );
+        }
+        #[cfg(unix)]
+        if let Err(permission_error) =
+            std::fs::set_permissions(&candidate_path, std::fs::Permissions::from_mode(0o600))
+        {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось защитить проверенный конфиг: {permission_error}"),
+            );
+        }
+    }
     state
         .foreign_config_controls
         .lock()
@@ -5929,7 +5969,7 @@ async fn start_foreign_config_check(
             operation.updated_at = now_unix_seconds();
             let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
         }
-        for (name, _, _, dry_run) in &prepared {
+        for (name, _, _, dry_run, _) in &prepared {
             if let Err(message) = validate_strategy_dry_run(dry_run).await {
                 if let Ok(mut operation) = progress.lock() {
                     operation.state = "failed".into();
@@ -6014,7 +6054,7 @@ async fn start_foreign_config_check(
                 operation.updated_at = now_unix_seconds();
                 let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
             }
-            for (config_index, (_, _, args, _)) in prepared.iter().enumerate() {
+            for (config_index, (_, _, args, _, _)) in prepared.iter().enumerate() {
                 if control.load(Ordering::Acquire) {
                     stopped = true;
                     break;
@@ -6148,6 +6188,80 @@ async fn get_foreign_config_check(
         }
         Ok(None) => error(StatusCode::NOT_FOUND, "Проверка конфигурации не найдена"),
         Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn apply_foreign_config_candidate(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((id, index)): axum::extract::Path<(String, usize)>,
+) -> Response {
+    if !valid_site_trace_id(&id) || index >= MAX_FOREIGN_CONFIGS {
+        return error(StatusCode::NOT_FOUND, "Проверенный конфиг не найден");
+    }
+    let directory = state.data_dir.join("foreign-config-check-operations");
+    let operation = match read_foreign_config_operation(&directory, &id).await {
+        Ok(Some(operation)) => operation,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "Проверка конфигурации не найдена"),
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let Some(comparison) = operation.comparisons.get(index) else {
+        return error(StatusCode::NOT_FOUND, "Проверенный конфиг не найден");
+    };
+    if !foreign_config_candidate_is_applicable(&operation.state, comparison) {
+        return error(
+            StatusCode::CONFLICT,
+            "Применить можно только конфигурацию, успешно прошедшую все проверки",
+        );
+    }
+    let candidate_path = foreign_config_candidate_path(&directory, &id, index);
+    let content = match tokio::fs::read_to_string(&candidate_path).await {
+        Ok(content) if content.len() <= MAX_CONFIG_BYTES => content,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Проверенная конфигурация превышает лимит",
+            );
+        }
+        Err(read_error) if read_error.kind() == std::io::ErrorKind::NotFound => {
+            return error(StatusCode::GONE, "Файл проверенной конфигурации уже удалён");
+        }
+        Err(read_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось прочитать проверенную конфигурацию: {read_error}"),
+            );
+        }
+    };
+    let Some(path) = config_path_for_state(&state) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    };
+    let original = match tokio::fs::read(&path).await {
+        Ok(original) => original,
+        Err(read_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось прочитать текущую конфигурацию: {read_error}"),
+            );
+        }
+    };
+    let write = ConfigWrite {
+        content,
+        revision: revision(&original),
+    };
+    match apply_config_transaction(&state, write, || async {
+        service_action(ServiceAction::Restart).await
+    })
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(message) if message == WRITE_REVISION_CONFLICT => error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась во время применения; повторите попытку",
+        ),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
 }
 
@@ -9372,6 +9486,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             "/api/nfqws2/diagnostics/config-check/operations/{id}/cancel",
             post(cancel_foreign_config_check),
         )
+        .route(
+            "/api/nfqws2/diagnostics/config-check/operations/{id}/configs/{index}/apply",
+            post(apply_foreign_config_candidate),
+        )
         .route("/api/nfqws2/diagnostics/monitor", post(monitor_sites))
         .route(
             "/api/nfqws2/monitoring",
@@ -9602,6 +9720,49 @@ mod tests {
         assert!(validate_foreign_config_counts(1, 16).is_err());
         assert!(validate_foreign_config_counts(0, 1).is_err());
         assert!(validate_foreign_config_counts(1, 0).is_err());
+    }
+
+    #[test]
+    fn foreign_config_apply_requires_complete_success_for_every_site() {
+        let successful = ForeignConfigComparison {
+            name: "Проверенный конфиг".into(),
+            source: "Файл".into(),
+            sites: vec![
+                ForeignConfigSiteResult {
+                    host: "one.example".into(),
+                    current_ok: Some(false),
+                    current_detail: String::new(),
+                    candidate_ok: Some(true),
+                    candidate_detail: String::new(),
+                },
+                ForeignConfigSiteResult {
+                    host: "two.example".into(),
+                    current_ok: Some(true),
+                    current_detail: String::new(),
+                    candidate_ok: Some(true),
+                    candidate_detail: String::new(),
+                },
+            ],
+        };
+        assert!(foreign_config_candidate_is_applicable(
+            "complete",
+            &successful
+        ));
+        assert!(!foreign_config_candidate_is_applicable(
+            "cancelled",
+            &successful
+        ));
+
+        let mut incomplete = successful.clone();
+        incomplete.sites[1].candidate_ok = None;
+        assert!(!foreign_config_candidate_is_applicable(
+            "complete",
+            &incomplete
+        ));
+
+        let mut failed = successful.clone();
+        failed.sites[1].candidate_ok = Some(false);
+        assert!(!foreign_config_candidate_is_applicable("complete", &failed));
     }
 
     #[test]

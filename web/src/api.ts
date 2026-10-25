@@ -204,6 +204,7 @@ export const nfqwsDiagnostics = {
   foreignConfigStart: (configs: { name: string; source: string; content?: string; url?: string }[], hosts: string[], repeats = 3) => api<ForeignConfigCheckOperation>('/api/nfqws2/diagnostics/config-check', { method: 'POST', body: JSON.stringify({ configs, hosts, repeats }) }),
   foreignConfigStatus: (id: string) => api<ForeignConfigCheckOperation>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}`),
   foreignConfigCancel: (id: string) => api<ForeignConfigCheckOperation>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
+  foreignConfigApply: (id: string, index: number) => api<{ config: ConfigResponse; message: string }>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}/configs/${index}/apply`, { method: 'POST' }),
 };
 
 export const nfqwsMonitoring = {

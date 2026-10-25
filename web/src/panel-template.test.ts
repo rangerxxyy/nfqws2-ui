@@ -190,6 +190,10 @@ describe('TSX panel without authentication', () => {
     expect(section).toContain('id="foreignConfigTextContent"');
     expect(section).toContain('id="foreignConfigUrl"');
     expect(section).toContain('id="foreignConfigFileInput"');
+    expect(section).toContain('data-action-click="openForeignConfigFile"');
+    expect(section).not.toContain('＋ Текстом');
+    expect(section).not.toContain('＋ По ссылке');
+    expect(section).not.toContain('＋ Файл .conf');
     expect(section).toContain('id="foreignConfigHosts"');
     expect(section).toContain('id="foreignConfigRepeats"');
     expect(section).toContain('id="foreignConfigResults"');
@@ -201,6 +205,12 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStart');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStatus');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigCancel');
+    expect(panelSource).toContain('Конфигурация работает');
+    expect(panelSource).toContain('Текущая конфигурация');
+    expect(panelSource).toContain('Проверяемая конфигурация');
+    expect(panelSource).toContain("document.createElement('details')");
+    expect(panelSource).toContain('`Домен: ${foreignStatusLabel(result)}`');
+    expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigApply');
     expect(backendSource).toContain('MAX_FOREIGN_CONFIGS');
     expect(backendSource).toContain('MAX_FOREIGN_CONFIG_HOSTS');
     expect(backendSource).toContain('parse_public_https_config_url');

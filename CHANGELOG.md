@@ -586,3 +586,10 @@
 - Added RAM/CPU status, config editing with SHA revision checks and backups, backup restore, bounded logs, and responsive RU/EN/ZH/TR UI with light/dark themes.
 - Added an ARM64 Entware installer with archive checksum/path validation, explicit `sha256sum` prerequisite (no implicit Entware package changes), automatic port selection from 1002, health check, update rollback, plus a panel-only uninstaller.
 - Real Keenetic service actions are not yet claimed as tested because SSH authentication to the available router failed.
+# [0.9.2] — Результат и применение сторонней конфигурации
+
+- Исправлено добавление файла `.conf`; кнопки импорта выровнены, убраны «+».
+- Домены в результатах отображаются чётким белым текстом; успешные статусы сокращены, повторяющиеся HTTP-подробности скрыты.
+- Результаты разделены на раскрываемые списки текущей и проверяемых конфигураций с состоянием каждого домена.
+- Добавлены итог «Конфигурация работает» и применение полностью проверенного конфига через безопасную транзакцию с резервной копией и откатом.
+- Пояснение проверки конфигурации сделано компактнее.
