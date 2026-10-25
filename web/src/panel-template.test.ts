@@ -200,7 +200,10 @@ describe('TSX panel without authentication', () => {
     const picker = template.slice(template.indexOf('id="tabContent-autotune"'), template.indexOf('id="tabContent-monitor"'));
     const diagnostic16k = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-monitor"'));
     expect(picker).toContain('flex flex-col lg:flex-row');
-    expect(picker).toContain('grid grid-cols-1 md:grid-cols-5');
+    expect(picker).toContain('strategy-settings-grid');
+    expect(panelStyles).toContain('.strategy-settings-grid { max-width: 980px; }');
+    expect(panelStyles).toContain('.strategy-settings-grid > div { min-width:0; display:grid;');
+    expect(picker).not.toContain('md:grid-cols-5');
     expect(picker).toContain('id="strategyRepeatsSelect"');
     expect(picker).toContain('id="strategyStopAfterFirst"');
     expect(picker).toContain('id="strategyIncludeCommunity"');
@@ -669,6 +672,8 @@ describe('TSX panel without authentication', () => {
     expect(panelSource).toContain("dataset.actionClick = 'dismissUiUpdateNotice'");
     expect(panelStyles).toContain('.version-pill.update-available');
     expect(panelStyles).toContain('.ui-update-notice');
+    expect(panelSource).toContain("document.createElementNS('http://www.w3.org/2000/svg', 'svg')");
+    expect(panelStyles).toContain('.ui-update-notice > button { margin-left: 26px;');
   });
 
   it('shows the confirmed update result after a cache-fresh page reload', () => {

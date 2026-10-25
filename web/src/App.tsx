@@ -998,7 +998,7 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
-            <div className={"grid grid-cols-1 md:grid-cols-5 gap-3 mt-4 strategy-settings-grid"}>
+            <div className={"grid grid-cols-1 gap-2.5 mt-4 strategy-settings-grid"}>
               {"\n            "}
               <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5"}>
                 {"\n              "}
@@ -1068,7 +1068,7 @@ export default function App() {
                 </div>
                 {"\n            "}
               </div>
-              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5 flex flex-col justify-between"}>
+              <div className={"bg-[#060a12] border border-slate-800/90 rounded-xl p-2.5 flex flex-col justify-between strategy-progress-card"}>
                 {"\n              "}
                 <div className={"flex items-center justify-between text-xs font-mono"}>
                   {"\n                "}

@@ -162,7 +162,7 @@ function renderUiUpdateNotice(status: UiUpdateStatus, manualCheck = false) {
   item.setAttribute('aria-live', 'polite');
   const heading = document.createElement('div');
   heading.className = 'flex min-w-0 items-center gap-2 text-sm font-bold text-blue-100';
-  const icon = document.createElement('svg');
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   icon.setAttribute('viewBox', '0 0 24 24');
   icon.setAttribute('fill', 'none');
   icon.setAttribute('stroke', 'currentColor');
