@@ -113,6 +113,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('html[data-theme="light"] { color-scheme: light; }');
     expect(panelStyles).toContain('backdrop-filter: blur(14px);');
     expect(panelStyles).toContain('animation: select-menu-in 150ms var(--ease-out) both;');
+    expect(panelStyles).toContain(".styled-select-option[aria-selected='true'] { background:transparent; color:#fff; font-weight:500; }");
+    expect(panelStyles).toContain(".styled-select-option[data-active='true'] { outline:none; background:rgba(59,130,246,.15); color:#60a5fa; }");
     expect(panelStyles).toContain('.styled-select-menu[data-side=\'top\']');
     expect(styledSelectSource).toContain('styledSelectMenuSide');
     expect(panelStyles).toContain('#toastWrapper > .toast-card.is-removing { animation: toast-out');
@@ -545,6 +547,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(tooltipSource).toContain('DEFAULT_ACTION_TOOLTIP_DELAY_MS = 2000');
     expect(tooltipSource).toContain("root.querySelectorAll('button, .side-nav-btn').forEach(prepare)");
     expect(tooltipSource).toContain("target.closest<HTMLButtonElement>('button, .side-nav-btn')");
+    expect(tooltipSource).toContain("root.addEventListener('click', clearActiveTooltip, true)");
     expect(panelStyles).toContain('.action-tooltip');
   });
 

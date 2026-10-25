@@ -71,6 +71,9 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
     active = null;
     tooltip?.remove(); tooltip = null;
   };
+  const clearActiveTooltip = (event: Event) => {
+    if (findButton(event.target) === active) clear();
+  };
   const schedule = (button: HTMLButtonElement | null) => {
     clear();
     if (!button || button.disabled) return;
@@ -98,12 +101,17 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
   const observer = new MutationObserver((records) => {
     for (const record of records) {
       if (record.type === 'attributes' && record.target instanceof Element) prepare(record.target);
-      if (record.type === 'childList') record.addedNodes.forEach((node) => {
-        if (node instanceof Element) {
-          prepare(node);
-          node.querySelectorAll('button, .side-nav-btn').forEach(prepare);
-        }
-      });
+      if (record.type === 'childList') {
+        record.removedNodes.forEach((node) => {
+          if (active && node instanceof Node && node.contains(active)) clear();
+        });
+        record.addedNodes.forEach((node) => {
+          if (node instanceof Element) {
+            prepare(node);
+            node.querySelectorAll('button, .side-nav-btn').forEach(prepare);
+          }
+        });
+      }
     }
   });
   root.addEventListener('pointerover', (event) => {
@@ -120,6 +128,7 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
     const button = findButton(event.target);
     if (button && button === active) clear();
   });
+  root.addEventListener('click', clearActiveTooltip, true);
   root.addEventListener('scroll', clear, true);
   root.defaultView?.addEventListener('resize', clear);
   observer.observe(root.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ['title', 'aria-label'] });
