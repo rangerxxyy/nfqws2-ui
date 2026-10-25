@@ -482,6 +482,14 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('[data-layout="tiles"] .app-main-layout');
   });
 
+  it('removes the selection overlay across appearance palettes', () => {
+    expect(panelStyles).toContain('*::selection, *::-moz-selection { background:transparent !important; color:inherit !important;');
+    expect(panelStyles).toContain('.conf-editor-input::selection, .conf-editor-input::-moz-selection { color:transparent !important;');
+    expect(panelStyles).not.toContain('selection:bg-blue-500/30');
+    expect(appSource).not.toContain('selection:bg-blue-500/30');
+    expect(entrySource).not.toContain('selection:bg-blue-500/30');
+  });
+
   it('keeps custom strategy input inside its mode tile and exposes copy feedback', () => {
     const modeTile = appSource.slice(appSource.indexOf('id={"strategyModeSelect"}'), appSource.indexOf('id={"scanProgressLabel"}'));
     expect(modeTile).toContain('id={"strategyCustomInputPanel"}');

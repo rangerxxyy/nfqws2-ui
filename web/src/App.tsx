@@ -478,7 +478,7 @@ export default function App() {
                   {"\n              "}
                   <div className={"conf-editor-surface relative min-w-0 flex-1 overflow-hidden"}>
                     <pre id={"confSyntaxHighlight"} aria-hidden={"true"} className={"conf-syntax-highlight absolute inset-0 m-0 overflow-hidden py-4 px-5 font-mono leading-[1.68]"}></pre>
-                    <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto selection:bg-blue-500/30 focus:ring-0 border-none"}></textarea>
+                    <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto focus:ring-0 border-none"}></textarea>
                   </div>
                   {"\n            "}
                 </div>
@@ -884,7 +884,7 @@ export default function App() {
                 {"\n              1\n            "}
               </div>
               {"\n            "}
-              <textarea id={"listEditorTextarea"} data-action-input={"syncListLineNumbers"} data-action-scroll={"syncListScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"flex-1 bg-transparent text-slate-100 py-4 px-6 outline-none resize-none leading-7 font-mono overflow-y-auto selection:bg-blue-500/30 border-none"}></textarea>
+              <textarea id={"listEditorTextarea"} data-action-input={"syncListLineNumbers"} data-action-scroll={"syncListScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"flex-1 bg-transparent text-slate-100 py-4 px-6 outline-none resize-none leading-7 font-mono overflow-y-auto border-none"}></textarea>
               {"\n          "}
             </div>
             {"\n\n          "}
