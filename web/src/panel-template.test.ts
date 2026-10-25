@@ -379,7 +379,10 @@ describe('TSX panel without authentication', () => {
   it('shows persisted strategy history and can reopen a saved result', () => {
     expect(template).toContain('История последних подборов');
     expect(template).toContain('id="autotuneConsoleBox"');
+    expect(template).toContain('data-action-click="requestClearStrategyPickHistory"');
     expect(panelSource).toContain('nfqwsDiagnostics.strategyHistory()');
+    expect(panelSource).toContain('nfqwsDiagnostics.clearStrategyHistory()');
+    expect(panelSource).toContain('confirmClearStrategyPickHistory: () => void clearStrategyPickHistory()');
     expect(panelSource).toContain('Открыть результаты подбора для');
     expect(panelSource).toContain('if (strategyPickRunning) return;');
     expect(backendSource).toContain('/api/nfqws2/strategies/pick/history');

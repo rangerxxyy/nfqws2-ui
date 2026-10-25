@@ -2090,8 +2090,10 @@ async function applyStrategyPick(source: string, operationId: string, candidateI
 async function loadStrategyPickHistory() {
   const container = $('#autotuneConsoleBox');
   if (!container) return;
+  const clearButton = $('#clearStrategyPickHistoryButton');
   try {
     const history = await nfqwsDiagnostics.strategyHistory();
+    if (clearButton instanceof HTMLButtonElement) clearButton.disabled = history.length === 0;
     container.replaceChildren();
     if (!history.length) {
       const empty = document.createElement('p'); empty.className = 'text-slate-400'; empty.textContent = 'Завершённых подборов пока нет.'; container.append(empty);
@@ -2118,10 +2120,34 @@ async function loadStrategyPickHistory() {
       container.append(button);
     }
   } catch (error) {
+    if (clearButton instanceof HTMLButtonElement) clearButton.disabled = true;
     container.replaceChildren();
     const message = document.createElement('p'); message.className = 'text-xs text-amber-300';
     message.textContent = error instanceof Error ? `История недоступна: ${error.message}` : 'История подборов недоступна';
     container.append(message);
+  }
+}
+
+function setStrategyPickHistoryClearModal(open: boolean) {
+  const modal = $('#strategyHistoryClearModal');
+  if (!modal) return;
+  modal.classList.toggle('hidden', !open);
+  modal.classList.toggle('flex', open);
+  if (open) modal.querySelector<HTMLButtonElement>('[data-action-click="cancelClearStrategyPickHistory"]')?.focus();
+}
+
+async function clearStrategyPickHistory() {
+  const confirmButton = $('[data-action-click="confirmClearStrategyPickHistory"]');
+  if (confirmButton instanceof HTMLButtonElement) confirmButton.disabled = true;
+  try {
+    const result = await nfqwsDiagnostics.clearStrategyHistory();
+    setStrategyPickHistoryClearModal(false);
+    await loadStrategyPickHistory();
+    toast(result.removed ? `История очищена: удалено записей ${result.removed}.` : 'Завершённых подборов для удаления нет.');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось очистить историю подборов.', 'error');
+  } finally {
+    if (confirmButton instanceof HTMLButtonElement) confirmButton.disabled = false;
   }
 }
 
@@ -2676,6 +2702,9 @@ function bindPrototypeActions() {
     requestClearConfig: () => setConfigClearModal(true),
     cancelClearConfig: () => setConfigClearModal(false),
     confirmClearConfig: () => confirmClearConfig(),
+    requestClearStrategyPickHistory: () => setStrategyPickHistoryClearModal(true),
+    cancelClearStrategyPickHistory: () => setStrategyPickHistoryClearModal(false),
+    confirmClearStrategyPickHistory: () => void clearStrategyPickHistory(),
     toggleConfigEditorFullscreen: () => toggleConfigEditorFullscreen(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),

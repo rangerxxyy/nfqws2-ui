@@ -206,6 +206,7 @@ export const nfqwsDiagnostics = {
   strategyStatus: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}`),
   strategyCancel: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   strategyHistory: () => api<StrategyPickOperation[]>('/api/nfqws2/strategies/pick/history'),
+  clearStrategyHistory: () => api<{ removed: number }>('/api/nfqws2/strategies/pick/history', { method: 'DELETE' }),
   strategyPreview: (id: string, candidateIndex: number) => api<StrategyPickPreview>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/preview`, { method: 'POST', body: JSON.stringify({ candidateIndex }) }),
   freezeStrategyPreview: (id: string, resultIndex: number) => api<StrategyPickPreview>('/api/nfqws2/strategies/preview', { method: 'POST', body: JSON.stringify({ source: 'freezeScan', operationId: id, candidateIndex: resultIndex }) }),
   applyStrategy: (source: 'strategyPick' | 'freezeScan', operationId: string, candidateIndex: number, expectedRevision: string) => api<{ config: ConfigResponse; message: string }>('/api/nfqws2/strategies/apply', { method: 'POST', body: JSON.stringify({ source, operationId, candidateIndex, expectedRevision }) }),

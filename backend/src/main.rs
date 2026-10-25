@@ -7084,6 +7084,47 @@ async fn get_strategy_pick_history(State(state): State<Arc<AppState>>) -> Respon
     Json(operations).into_response()
 }
 
+async fn clear_strategy_pick_history(State(state): State<Arc<AppState>>) -> Response {
+    let directory = state.data_dir.join("strategy-pick-operations");
+    let mut entries = match tokio::fs::read_dir(&directory).await {
+        Ok(entries) => entries,
+        Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
+            return Json(serde_json::json!({ "removed": 0 })).into_response();
+        }
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    let mut removed = 0usize;
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+        };
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        let operation = match read_strategy_pick_operation(&directory, id).await {
+            Ok(Some(operation)) => operation,
+            Ok(None) => continue,
+            Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        };
+        if matches!(
+            operation.state.as_str(),
+            "complete" | "no_match" | "site_unblocked" | "cancelled" | "failed"
+        ) {
+            if let Err(io_error) = tokio::fs::remove_file(path).await {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+            }
+            removed += 1;
+        }
+    }
+    Json(serde_json::json!({ "removed": removed })).into_response()
+}
+
 async fn stop_strategy_pick_operation(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -9742,7 +9783,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/strategies/pick", post(start_strategy_pick))
         .route(
             "/api/nfqws2/strategies/pick/history",
-            get(get_strategy_pick_history),
+            get(get_strategy_pick_history).delete(clear_strategy_pick_history),
         )
         .route(
             "/api/nfqws2/strategies/pick/operations/{id}",
@@ -12771,6 +12812,62 @@ mod tests {
         assert_eq!(history.as_array().unwrap().len(), 2);
         assert_eq!(history[0]["host"], "newer.example");
         assert_eq!(history[1]["host"], "older.example");
+    }
+
+    #[tokio::test]
+    async fn clearing_strategy_pick_history_removes_finished_jobs_and_keeps_running_jobs() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let operation_dir = data.join("strategy-pick-operations");
+        for (index, state, host) in [
+            (1, "complete", "done.example"),
+            (2, "running", "active.example"),
+        ] {
+            write_strategy_pick_operation_sync(
+                &operation_dir,
+                &StrategyPickOperation {
+                    id: format!("{index:032x}"),
+                    host: host.into(),
+                    protocol: "https".into(),
+                    state: state.into(),
+                    stage: state.into(),
+                    current: None,
+                    done: 0,
+                    total: 1,
+                    results: Vec::new(),
+                    message: state.into(),
+                    updated_at: index as u64,
+                },
+            )
+            .unwrap();
+        }
+        let app = api_router(test_state(data), dir.path().join("web"));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/nfqws2/strategies/pick/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["removed"], 1);
+
+        let history = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/strategies/pick/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(body_json(history).await.as_array().unwrap().is_empty());
+        assert!(operation_dir.join(format!("{:032x}.json", 2)).exists());
     }
 
     #[tokio::test]

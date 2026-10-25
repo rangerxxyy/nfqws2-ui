@@ -118,6 +118,14 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/history');
   });
 
+  it('clears completed strategy-pick history through the Rust API', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"removed":3}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsDiagnostics.clearStrategyHistory()).resolves.toEqual({ removed: 3 });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/history');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('DELETE');
+  });
+
   it('requests a backend-generated strategy preview by persisted operation and candidate index', async () => {
     const preview = { operationId: '0123456789abcdef0123456789abcdef', candidateIndex: 0, host: 'example.com', protocol: 'https', candidate: { name: 'multisplit', source: 'current', steps: ['--lua-desync=multisplit:pos=1'] }, originalRevision: 'abc', originalContent: 'NFQWS_ARGS_CUSTOM=""\n', proposedContent: 'NFQWS_ARGS_CUSTOM="--new --filter-tcp=443"\n', summary: 'Preview only' };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(preview), { status: 200 }));
