@@ -2654,8 +2654,6 @@ struct UiAppearanceSettings {
     status_bar: String,
     #[serde(default = "default_true")]
     remind_windows_tcp_timestamps: bool,
-    #[serde(default)]
-    simplified_navigation: bool,
 }
 
 fn default_accent() -> String {
@@ -11566,26 +11564,26 @@ mod tests {
         assert_eq!(serialized["remindWindowsTcpTimestamps"], true);
         assert_eq!(serialized["accent"], "blue");
         assert_eq!(serialized["statusBar"], "standard");
-        assert_eq!(serialized["simplifiedNavigation"], false);
+        assert!(serialized.get("simplifiedNavigation").is_none());
     }
 
     #[test]
     fn appearance_settings_keep_new_router_layout_and_palette_choices() {
         let settings: UiAppearanceSettings = serde_json::from_value(serde_json::json!({
             "theme": "light",
-            "layout": "tiles",
+            "layout": "simplified",
             "accent": "cyan",
             "statusBar": "stacked",
             "remindWindowsTcpTimestamps": false,
             "simplifiedNavigation": true
         }))
         .unwrap();
-        assert_eq!(settings.layout, "tiles");
+        assert_eq!(settings.layout, "simplified");
         assert_eq!(settings.accent, "cyan");
         assert_eq!(settings.status_bar, "stacked");
         assert!(!settings.remind_windows_tcp_timestamps);
         let serialized = serde_json::to_value(settings).unwrap();
-        assert_eq!(serialized["simplifiedNavigation"], true);
+        assert!(serialized.get("simplifiedNavigation").is_none());
     }
 
     #[test]

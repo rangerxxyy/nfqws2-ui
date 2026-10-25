@@ -22,6 +22,7 @@ import { mergeAsnPrefixes, normalizeAsnQuery } from './asn-prefixes';
 import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
+import { decodeForeignConfigText } from './foreign-config-text';
 import { diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
@@ -49,7 +50,7 @@ let diagnosisRunning = false;
 let monitoringRunning = false;
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
-let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, simplifiedNavigation: false };
+let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -281,7 +282,7 @@ function showRoute(route: Route) {
     button.classList.toggle('active', active);
     button.classList.toggle('text-slate-400', !active);
   });
-  syncSimplifiedNavigation(route);
+  syncNavigationLayout(route);
   if (route === 'lists') void loadList(activeListId);
   if (route === 'about') void loadAboutStatus();
 }
@@ -368,14 +369,13 @@ function syncAppearanceControls() {
   all<HTMLInputElement>('input[name="appearanceAccent"]').forEach((input) => { input.checked = input.value === appearanceSettings.accent; });
   all<HTMLInputElement>('input[name="appearanceStatusBar"]').forEach((input) => { input.checked = input.value === appearanceSettings.statusBar; });
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
-  all<HTMLInputElement>('[data-appearance-simplified-navigation]').forEach((input) => { input.checked = appearanceSettings.simplifiedNavigation; });
 }
-function syncSimplifiedNavigation(route?: Route) {
+function syncNavigationLayout(route?: Route) {
   const routeToGroup: Record<string, string> = { conf: 'configuration', check: 'site-check', trace: 'site-check', diagnostic16k: 'site-check', configCheck: 'site-check', autotune: 'tuning', community: 'tuning', monitor: 'monitoring', lists: 'lists', appearance: 'system', about: 'system' };
   const activeRoute = route ?? (Object.keys(routeToGroup).find((key) => !document.getElementById(`tabContent-${key}`)?.classList.contains('hidden')) as Route | undefined);
   const group = activeRoute ? routeToGroup[activeRoute] : undefined;
   const navigation = $('#simplifiedNavigation');
-  navigation?.classList.toggle('hidden', !appearanceSettings.simplifiedNavigation);
+  navigation?.classList.toggle('hidden', appearanceSettings.layout !== 'simplified');
   all<HTMLButtonElement>('[data-simplified-group]').forEach((button) => {
     const active = button.dataset.simplifiedGroup === group;
     button.setAttribute('aria-pressed', String(active));
@@ -393,13 +393,13 @@ function updateAppearance(change: Partial<AppearanceSettings>) {
   appearanceSettings = saveAppearance(storage, { ...appearanceSettings, ...change });
   applyAppearance(appearanceSettings);
   syncAppearanceControls();
-  syncSimplifiedNavigation();
+  syncNavigationLayout();
   void nfqwsAppearance.save(appearanceSettings).catch((error) => toast(error instanceof Error ? `Оформление сохранено только в этом браузере: ${error.message}` : 'Оформление сохранено только в этом браузере.', 'error'));
 }
 async function syncAppearanceFromRouter() {
   const saved = await nfqwsAppearance.get(); if (!saved) return;
   let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Use the restored settings for this session. */ }
-  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncSimplifiedNavigation();
+  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
 }
 function initializeAppearanceSettings() {
   let storage: Storage | null = null;
@@ -407,9 +407,10 @@ function initializeAppearanceSettings() {
   appearanceSettings = loadAppearance(storage);
   applyAppearance(appearanceSettings);
   syncAppearanceControls();
+  syncNavigationLayout();
   void nfqwsAppearance.get().then((saved) => {
     if (!saved) { void nfqwsAppearance.save(appearanceSettings).catch(() => undefined); return; }
-    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncSimplifiedNavigation();
+    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
   }).catch(() => undefined);
 }
 async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
@@ -417,6 +418,16 @@ async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
     const result = statusOverride ?? await nfqwsUpdates.uiStatus();
     setText('#aboutCurrentVersion', result.currentVersion);
     setText('#aboutLatestVersion', result.latestVersion ?? 'не удалось определить');
+    const versionCommand = $('[data-about-version-command]');
+    const version = result.latestVersion ?? result.currentVersion;
+    if (versionCommand) {
+      const tag = version.startsWith('v') ? version : `v${version}`;
+      if (/^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(tag)) {
+        versionCommand.textContent = `nfqws2-ui-ctl update ${tag} --force`;
+        const description = $('[data-about-version-command-description]');
+        if (description) description.textContent = 'Установить указанную версию или откатиться к ней.';
+      }
+    }
     setText('#aboutUpdateStatus', result.updateAvailable ? `Доступна версия ${result.latestVersion}. Обновите панель через кнопку обновления в верхней панели.` : result.latestVersion ? `Установлена актуальная версия ${result.currentVersion}.` : 'Последнюю версию пока не удалось определить. Проверьте соединение с GitHub.');
   } catch (error) { setText('#aboutUpdateStatus', error instanceof Error ? error.message : 'Не удалось загрузить сведения об обновлении.'); }
 }
@@ -1715,11 +1726,11 @@ async function addForeignConfigFile(file: File) {
   if (!isSupportedForeignConfigFileName(file.name)) return toast('Выберите файл с расширением .conf или .txt.', 'error');
   if (file.size > 65536) return toast('Размер файла не должен превышать 64 КиБ.', 'error');
   try {
-    const content = await file.text();
+    const content = decodeForeignConfigText(await file.arrayBuffer());
     if (!content.trim()) return toast('Файл пустой.', 'error');
     addForeignConfig({ name: file.name, source: 'Файл', content });
-  } catch {
-    toast('Не удалось прочитать файл конфигурации.', 'error');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось прочитать файл конфигурации.', 'error');
   }
 }
 
@@ -2886,7 +2897,6 @@ function bindPrototypeActions() {
     setAppearanceAccent: (accent: AppearanceSettings['accent']) => updateAppearance({ accent }),
     setAppearanceStatusBar: (statusBar: AppearanceSettings['statusBar']) => updateAppearance({ statusBar }),
     setAppearanceTimestampReminder: (remindWindowsTcpTimestamps: boolean) => updateAppearance({ remindWindowsTcpTimestamps }),
-    setAppearanceSimplifiedNavigation: (simplifiedNavigation: boolean) => updateAppearance({ simplifiedNavigation }),
     switchSimplifiedNavGroup: (group: string) => { const routes: Record<string, Route> = { configuration: 'conf', 'site-check': 'check', tuning: 'autotune', monitoring: 'monitor', lists: 'lists', system: 'appearance' }; const route = routes[group]; if (route) showRoute(route); },
     checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),

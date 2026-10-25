@@ -1,11 +1,11 @@
 export type UiTheme = 'dark' | 'light' | 'neon';
-export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles';
+export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified';
 export type UiAccent = 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet';
 export type UiStatusBar = 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse';
-export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean; simplifiedNavigation: boolean };
+export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean };
 
 const STORAGE_KEY = 'nfqws2-ui-appearance-v1';
-const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, simplifiedNavigation: false };
+const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
 
 function readStorage(storage: Storage | null): unknown {
   try {
@@ -22,22 +22,20 @@ export function loadAppearance(storage: Storage | null): AppearanceSettings {
   const value = saved as Partial<AppearanceSettings>;
   return {
     theme: value.theme === 'light' || value.theme === 'neon' ? value.theme : 'dark',
-    layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles'].includes(value.layout ?? '') ? value.layout as UiLayout : 'standard',
+    layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles', 'simplified'].includes(value.layout ?? '') ? value.layout as UiLayout : 'standard',
     accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(value.accent ?? '') ? value.accent as UiAccent : 'blue',
     statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(value.statusBar ?? '') ? value.statusBar as UiStatusBar : 'standard',
     remindWindowsTcpTimestamps: value.remindWindowsTcpTimestamps !== false,
-    simplifiedNavigation: value.simplifiedNavigation === true,
   };
 }
 
 export function saveAppearance(storage: Storage | null, settings: AppearanceSettings): AppearanceSettings {
   const normalized: AppearanceSettings = {
     theme: settings.theme === 'light' || settings.theme === 'neon' ? settings.theme : 'dark',
-    layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles'].includes(settings.layout) ? settings.layout : 'standard',
+    layout: ['compact', 'dense', 'wide', 'right', 'top', 'tiles', 'simplified'].includes(settings.layout) ? settings.layout : 'standard',
     accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(settings.accent) ? settings.accent : 'blue',
     statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(settings.statusBar) ? settings.statusBar : 'standard',
     remindWindowsTcpTimestamps: settings.remindWindowsTcpTimestamps !== false,
-    simplifiedNavigation: settings.simplifiedNavigation === true,
   };
   try { storage?.setItem(STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Appearance still applies for this session. */ }
   return normalized;
@@ -48,7 +46,6 @@ export function applyAppearance(settings: AppearanceSettings, root: HTMLElement 
   root.dataset.layout = settings.layout;
   root.dataset.accent = settings.accent;
   root.dataset.statusBar = settings.statusBar;
-  root.dataset.simplifiedNavigation = String(settings.simplifiedNavigation);
 }
 
 export function initializeAppearance(): AppearanceSettings {

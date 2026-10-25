@@ -581,7 +581,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('id="settingsAppearancePanel"');
     expect(template).toContain('id="settingsSecurityPanel"');
     expect(template).toContain('id="simplifiedNavigation"');
-    expect(template).toContain('data-appearance-simplified-navigation="true"');
+    expect(template).toContain('value="simplified"');
+    expect(template).not.toContain('data-appearance-simplified-navigation');
     expect(template).toContain('data-simplified-group="site-check"');
     expect(template).toContain('data-simplified-route="community"');
     expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport']");
@@ -728,7 +729,9 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('documents the panel-specific terminal command instead of zemidala aliases', () => {
     expect(appSource).toContain('nfqws2-ui-ctl update --check');
-    expect(appSource).toContain('nfqws2-ui-ctl update v1.0.1 --force');
+    expect(appSource).toContain('data-about-version-command={index === 1 ? "true" : undefined}');
+    expect(panelSource).toContain('nfqws2-ui-ctl update ${tag} --force');
+    expect(panelSource).toContain('^v(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$');
     expect(appSource).toContain('nfqws2-ui-ctl status');
     expect(appSource).not.toContain('nfqws-ui-setup');
     expect(appSource).not.toContain('nfqws-ui update');

@@ -9,8 +9,8 @@
 .simplified-nav-button:hover { color: #fff; border-color: #475569; }
 .simplified-nav-button:focus-visible { outline: 2px solid #93c5fd; outline-offset: 2px; }
 .simplified-nav-button.simplified-nav-active { color: #eff6ff; border-color: rgb(96 165 250 / 55%); background: rgb(37 99 235 / 24%); }
-[data-simplified-navigation="true"] .app-main-layout > aside { display: none; }
-[data-simplified-navigation="true"] .app-main-layout > main { width: 100%; }
+[data-layout="simplified"] .app-main-layout > aside { display: none; }
+[data-layout="simplified"] .app-main-layout > main { width: 100%; }
 @media (max-width: 640px) { .simplified-nav { padding: .6rem; } .simplified-nav-button { padding: .4rem .55rem; font-size: .72rem; } }
 
 @layer base {
