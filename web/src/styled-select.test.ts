@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findEnabledOptionByPrefix, nextEnabledOption, styledSelectMenuSide, type StyledOption } from './styled-select';
+import { findEnabledOptionByPrefix, nextEnabledOption, styledSelectMenuMaxHeight, styledSelectMenuSide, type StyledOption } from './styled-select';
 
 const options: StyledOption[] = [
   { value: '', label: 'Выберите', disabled: true },
@@ -25,5 +25,12 @@ describe('styled select navigation helpers', () => {
     expect(styledSelectMenuSide(720, 760, 220, 800)).toBe('top');
     expect(styledSelectMenuSide(120, 160, 220, 800)).toBe('bottom');
     expect(styledSelectMenuSide(350, 390, 120, 800)).toBe('bottom');
+  });
+
+  it('uses the available height for long menus up to the compact-list maximum', () => {
+    expect(styledSelectMenuMaxHeight(520)).toBe(520);
+    expect(styledSelectMenuMaxHeight(800)).toBe(544);
+    expect(styledSelectMenuMaxHeight(72)).toBe(72);
+    expect(styledSelectMenuMaxHeight(-12)).toBe(0);
   });
 });

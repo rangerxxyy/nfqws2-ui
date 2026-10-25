@@ -26,6 +26,10 @@ export function styledSelectMenuSide(triggerTop: number, triggerBottom: number, 
   return 'top';
 }
 
+export function styledSelectMenuMaxHeight(availableHeight: number, maximum = 34 * 16): number {
+  return Math.max(0, Math.min(maximum, availableHeight));
+}
+
 type StyledSelectState = {
   select: HTMLSelectElement;
   wrapper: HTMLDivElement;
@@ -50,7 +54,7 @@ function positionMenu(state: StyledSelectState) {
   const side = styledSelectMenuSide(rect.top, rect.bottom, state.menu.offsetHeight, window.innerHeight);
   state.menu.dataset.side = side;
   const available = side === 'top' ? rect.top - 14 : window.innerHeight - rect.bottom - 14;
-  state.menu.style.maxHeight = `${Math.max(0, Math.min(256, available))}px`;
+  state.menu.style.maxHeight = `${styledSelectMenuMaxHeight(available)}px`;
 }
 
 function repositionOpenMenus() {

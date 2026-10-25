@@ -48,3 +48,4 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - Action tooltips now dismiss on activation and when their focused or hovered button is removed during a view change, preventing a stale label from floating over a different panel.
 - Select options now use the screenshot-matched hierarchy: the selected row stays dark with a white checkmark, while pointer hover and keyboard focus use XKeen's restrained 15% blue highlight and blue text. Row height, type size and maximum menu height follow the compact timezone-list reference.
 - Opening a select with the pointer leaves the selected row neutral, as in the timezone reference; keyboard navigation sets an active row and receives the blue focus treatment.
+- Long select menus can use up to 34rem of available viewport height; the TypeScript positioner no longer clamps every menu to 256px.
