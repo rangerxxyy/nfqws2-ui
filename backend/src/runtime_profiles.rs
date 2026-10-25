@@ -39,7 +39,7 @@ pub struct RuntimeProfilesResponse {
 fn tokens(value: &str) -> Result<Vec<String>, String> {
     if value.len() > 512 * 1024
         || value.chars().any(|character| {
-            character.is_control()
+            (character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
                 || matches!(character, '\'' | '"' | '`' | '$' | '\\' | ';' | '&' | '|')
         })
     {
@@ -269,6 +269,22 @@ mod tests {
         assert_eq!(
             profiles[1],
             ["--name=video", "--filter-tcp=80", "--lua-desync=split"]
+        );
+    }
+
+    #[test]
+    fn accepts_multiline_nfqs2_argument_groups() {
+        let profiles = split_custom_profile_args(
+            "--filter-tcp=443\n--filter-l7=tls\n--lua-desync=fake:repeats=2",
+        )
+        .unwrap();
+        assert_eq!(
+            profiles,
+            vec![vec![
+                "--filter-tcp=443".to_owned(),
+                "--filter-l7=tls".to_owned(),
+                "--lua-desync=fake:repeats=2".to_owned(),
+            ]]
         );
     }
 
