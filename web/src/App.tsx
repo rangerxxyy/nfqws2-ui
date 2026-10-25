@@ -1205,7 +1205,7 @@ export default function App() {
           <div className={"ui-card rounded-2xl p-4 sm:p-5 space-y-4"}>
             <div>
               <h2 className={"text-lg font-bold text-white"}>Проверка сторонней конфигурации</h2>
-              <p className={"mt-1 max-w-4xl text-sm leading-relaxed text-slate-400"}>Сравните установленный конфиг и до трёх вариантов на одних сайтах. Каждый вариант запускается отдельным проверочным nfqws2 и подтверждается тремя запросами подряд; после первой неудачи повторы прекращаются. Активный конфиг и обычный трафик не меняются. Пути к Lua, блобам и спискам сопоставляются с установленными файлами; автосписок изолирован, debug-запись отключена.</p>
+              <p className={"mt-1 max-w-4xl text-sm leading-relaxed text-slate-400"}>Сравните установленный конфиг и до трёх вариантов на одних сайтах. Перед запуском nfqws2 --dry-run проверяет все группы профилей из .conf: TCP, UDP, QUIC, IPSET, дополнительные и пользовательские. Сетевое сравнение выполняется по HTTPS/TCP: каждый вариант запускается отдельным проверочным nfqws2 и подтверждается тремя запросами подряд; после первой неудачи повторы прекращаются. Активный конфиг и обычный трафик не меняются. Пути к Lua, блобам и спискам сопоставляются с установленными файлами; автосписок изолирован, debug-запись отключена.</p>
             </div>
             <div className={"flex flex-wrap items-center gap-2"}>
               <button data-action-click={"openForeignConfigText"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ Текстом</button>

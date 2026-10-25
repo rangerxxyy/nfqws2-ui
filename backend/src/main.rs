@@ -4796,21 +4796,9 @@ fn external_config_test_args(
                 .map(|(name, _)| (name.to_owned(), argument.as_str()))
         })
         .collect::<HashMap<_, _>>();
-    let mut arguments = Vec::new();
     let mut auto_list_index = 0usize;
-    for name in [
-        "NFQWS_BASE_ARGS",
-        "NFQWS_ARGS",
-        "NFQWS_EXTRA_ARGS",
-        "NFQWS_ARGS_IPSET",
-        "NFQWS_ARGS_CUSTOM",
-    ] {
-        if !document.contains_assignment(name) {
-            continue;
-        }
-        let value = document
-            .literal_or_mode_value(name)
-            .map_err(|message| format!("{name}: {message}"))?;
+    let mut map_arguments = |name: &str, value: &str| -> Result<Vec<String>, String> {
+        let mut mapped = Vec::new();
         for argument in value.split_whitespace() {
             if argument.starts_with("--hostlist-auto-debug=") {
                 // Debug output is not needed for a connectivity comparison and
@@ -4850,11 +4838,11 @@ fn external_config_test_args(
                 let source = resolve_foreign_list_path(path, lists_directory).ok();
                 auto_list_sources.push((destination.clone(), source));
                 auto_list_index += 1;
-                arguments.push(format!("--hostlist-auto={}", destination.display()));
+                mapped.push(format!("--hostlist-auto={}", destination.display()));
             } else if let Some(argument) = rewrite_foreign_list_argument(argument, lists_directory)
                 .map_err(|message| format!("{name}: {message}"))?
             {
-                arguments.push(argument);
+                mapped.push(argument);
             } else if let Some(path) = argument.strip_prefix("--lua-init=") {
                 let filename = path
                     .trim_start_matches('@')
@@ -4866,36 +4854,121 @@ fn external_config_test_args(
                         "{name}: проверка отклонена: Lua-файл «{filename}» не подключён в текущем nfqws2"
                     ));
                 };
-                arguments.push((*active_path).to_owned());
+                mapped.push((*active_path).to_owned());
             } else if let Some(blob) = argument.strip_prefix("--blob=") {
                 let blob_name = blob
                     .split_once(':')
                     .map(|(name, _)| name)
                     .unwrap_or_default();
                 if let Some(active_blob) = active_blobs.get(blob_name) {
-                    arguments.push((*active_blob).to_owned());
+                    mapped.push((*active_blob).to_owned());
                 } else {
-                    arguments.push(argument.to_owned());
+                    mapped.push(argument.to_owned());
                 }
             } else {
-                arguments.push(argument.to_owned());
+                mapped.push(argument.to_owned());
             }
         }
+        Ok(mapped)
+    };
+    let read_group = |name: &str| -> Result<Vec<String>, String> {
+        if !document.contains_assignment(name) {
+            return Ok(Vec::new());
+        }
+        let value = document
+            .literal_or_mode_value(name)
+            .map_err(|message| format!("{name}: {message}"))?;
+        Ok(value.split_whitespace().map(str::to_owned).collect())
+    };
+
+    // Match Zemidala's expectedProfiles()/cfgPrepare() order. BASE is global;
+    // all other argument variables become explicit nfqws2 profiles separated by --new.
+    let mut base_args =
+        map_arguments("NFQWS_BASE_ARGS", &read_group("NFQWS_BASE_ARGS")?.join(" "))?;
+    base_args.retain(|argument| {
+        ![
+            "--qnum",
+            "--daemon",
+            "--pidfile",
+            "--user",
+            "--uid",
+            "--debug",
+        ]
+        .iter()
+        .any(|name| argument == name || argument.starts_with(&format!("{name}=")))
+    });
+    let mut profiles: Vec<Vec<String>> = Vec::new();
+    let custom = map_arguments(
+        "NFQWS_ARGS_CUSTOM",
+        &read_group("NFQWS_ARGS_CUSTOM")?.join(" "),
+    )?;
+    let mut custom_profile = Vec::new();
+    for argument in custom {
+        if argument == "--new" || argument.starts_with("--new=") {
+            if !custom_profile.is_empty() {
+                profiles.push(std::mem::take(&mut custom_profile));
+            }
+            if let Some(name) = argument.strip_prefix("--new=") {
+                custom_profile.push(format!("--name={name}"));
+            }
+        } else {
+            custom_profile.push(argument);
+        }
     }
+    if !custom_profile.is_empty() {
+        profiles.push(custom_profile);
+    }
+
+    let udp = map_arguments("NFQWS_ARGS_UDP", &read_group("NFQWS_ARGS_UDP")?.join(" "))?;
+    if !udp.is_empty() {
+        profiles.push(udp);
+    }
+    let quic = map_arguments("NFQWS_ARGS_QUIC", &read_group("NFQWS_ARGS_QUIC")?.join(" "))?;
+    let ipset = map_arguments(
+        "NFQWS_ARGS_IPSET",
+        &read_group("NFQWS_ARGS_IPSET")?.join(" "),
+    )?;
+    let extra = map_arguments(
+        "NFQWS_EXTRA_ARGS",
+        &read_group("NFQWS_EXTRA_ARGS")?.join(" "),
+    )?;
+    if !quic.is_empty() {
+        if !ipset.is_empty() {
+            let mut profile = quic.clone();
+            profile.extend(ipset.iter().cloned());
+            profile.push("--ipset-ip=0.0.0.0".into());
+            profiles.push(profile);
+        }
+        let mut profile = quic;
+        profile.extend(extra.iter().cloned());
+        profiles.push(profile);
+    }
+    let tcp = map_arguments("NFQWS_ARGS", &read_group("NFQWS_ARGS")?.join(" "))?;
     if !document.contains_assignment("NFQWS_ARGS") {
         return Err("В конфигурации отсутствует NFQWS_ARGS".into());
     }
-    if !arguments
+    if !tcp
         .iter()
         .any(|argument| argument.starts_with("--filter-tcp="))
     {
         return Err("В NFQWS_ARGS не найден --filter-tcp для проверки HTTPS/HTTP".into());
     }
-    if arguments
-        .iter()
-        .any(|argument| argument.starts_with("--new") && !argument.eq("--new"))
-    {
-        return Err("Некорректный разделитель профилей --new".into());
+    if !ipset.is_empty() {
+        let mut profile = tcp.clone();
+        profile.extend(ipset);
+        profile.push("--ipset-ip=0.0.0.0".into());
+        profiles.push(profile);
+    }
+    let mut profile = tcp;
+    profile.extend(extra);
+    profiles.push(profile);
+
+    let mut arguments = base_args;
+    for (index, profile) in profiles.into_iter().enumerate() {
+        if index > 0 {
+            arguments.push("--new".into());
+        }
+        arguments.extend(profile);
     }
     Ok(arguments)
 }
@@ -9219,6 +9292,56 @@ mod tests {
                 "--hostlist={}",
                 lists.join("user.list").canonicalize().unwrap().display()
             )));
+    }
+
+    #[test]
+    fn foreign_config_parser_builds_zemidala_runtime_profiles_for_all_argument_groups() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        std::fs::create_dir(&lists).unwrap();
+        let source = concat!(
+            "NFQWS_BASE_ARGS=\"--qnum=17 --daemon --debug=/tmp/foreign.log --lua-init=@/safe.lua\"\n",
+            "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --lua-desync=custom --new=video --filter-tcp=80 --lua-desync=custom2\"\n",
+            "NFQWS_ARGS_UDP=\"--filter-udp=443 --payload=quic_initial\"\n",
+            "NFQWS_ARGS_QUIC=\"--filter-udp=443 --payload=quic_initial --lua-desync=quic\"\n",
+            "NFQWS_ARGS_IPSET=\"--ipset=lists/ips.txt\"\n",
+            "NFQWS_EXTRA_ARGS=\"--lua-desync=extra\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --lua-desync=tcp\"\n",
+        );
+        std::fs::write(lists.join("ips.txt"), "192.0.2.1\n").unwrap();
+        let active = vec!["--lua-init=@/opt/etc/nfqws2/lua/safe.lua".to_string()];
+        let mut auto_lists = Vec::new();
+        let args = external_config_test_args(
+            source,
+            &active,
+            Path::new("/tmp/config-check/auto.list"),
+            &lists,
+            &mut auto_lists,
+        )
+        .unwrap();
+
+        let profiles = args
+            .split(|argument| argument == "--new")
+            .map(|profile| profile.join(" "))
+            .collect::<Vec<_>>();
+        assert_eq!(profiles.len(), 7, "{profiles:#?}");
+        assert!(profiles[0].contains("--filter-tcp=443 --lua-desync=custom"));
+        assert!(profiles[1].contains("--name=video"));
+        assert!(profiles[1].contains("--filter-tcp=80"));
+        assert!(profiles[2].contains("--filter-udp=443 --payload=quic_initial"));
+        assert!(profiles[3].contains("--lua-desync=quic"));
+        assert!(profiles[3].contains("--ipset-ip=0.0.0.0"));
+        assert!(profiles[4].contains("--lua-desync=quic --lua-desync=extra"));
+        assert!(profiles[5].contains("--lua-desync=tcp"));
+        assert!(profiles[5].contains("--ipset-ip=0.0.0.0"));
+        assert!(profiles[6].contains("--lua-desync=tcp --lua-desync=extra"));
+        assert!(
+            profiles
+                .iter()
+                .all(|profile| !profile.contains("--qnum=17"))
+        );
+        assert!(profiles.iter().all(|profile| !profile.contains("--daemon")));
+        assert!(profiles.iter().all(|profile| !profile.contains("--debug=")));
     }
 
     #[test]
