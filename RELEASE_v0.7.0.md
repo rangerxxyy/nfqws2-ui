@@ -1,13 +1,13 @@
-# Release v0.7.0
+# nfqws2-ui v0.7.0
 
-## Changes
+## Изменения
 
-- Restyled the update notice with a darker navy background, the locally bundled Inter font, a Tabler Circle Check icon, and separate GitHub and dismiss actions.
-- Strategy picking now marks candidates that rely on TCP timestamps and shows the Windows enable command with a copy button. The reminder can be disabled in UI appearance settings.
-- The list editor supports `Ctrl+/` to comment selected lines or remove comment markers from already-commented lines.
+- Уведомление об обновлении получило более тёмный синий фон, шрифт Inter и контурную иконку Tabler Circle Check. Ссылку GitHub и кнопку закрытия разнёс, чтобы они не сливались.
+- В результатах подбора отмечаются стратегии, которым могут требоваться TCP timestamps. Команду включения в Windows можно скопировать; напоминание отключается в настройках оформления.
+- В редакторе `.list` сочетание `Ctrl+/` комментирует выделенные строки и снимает комментарии с уже отмеченных.
 
-## Verification
+## Проверки
 
-- Web: 180 unit tests passed; production build passed.
-- Backend: locked test suite, `cargo fmt --check`, and Clippy with warnings denied passed.
-- No live router probes were run for this UI and editor update.
+- Web: 180 тестов, production build.
+- Backend: полный locked test suite, `cargo fmt --check` и Clippy с запретом предупреждений.
+- Сетевые пробы на роутере для этих изменений не запускались.
