@@ -201,7 +201,7 @@ export const nfqwsDiagnostics = {
   strategyPreview: (id: string, candidateIndex: number) => api<StrategyPickPreview>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/preview`, { method: 'POST', body: JSON.stringify({ candidateIndex }) }),
   freezeStrategyPreview: (id: string, resultIndex: number) => api<StrategyPickPreview>('/api/nfqws2/strategies/preview', { method: 'POST', body: JSON.stringify({ source: 'freezeScan', operationId: id, candidateIndex: resultIndex }) }),
   applyStrategy: (source: 'strategyPick' | 'freezeScan', operationId: string, candidateIndex: number, expectedRevision: string) => api<{ config: ConfigResponse; message: string }>('/api/nfqws2/strategies/apply', { method: 'POST', body: JSON.stringify({ source, operationId, candidateIndex, expectedRevision }) }),
-  foreignConfigStart: (configs: { name: string; source: string; content?: string; url?: string }[], hosts: string[]) => api<ForeignConfigCheckOperation>('/api/nfqws2/diagnostics/config-check', { method: 'POST', body: JSON.stringify({ configs, hosts }) }),
+  foreignConfigStart: (configs: { name: string; source: string; content?: string; url?: string }[], hosts: string[], repeats = 3) => api<ForeignConfigCheckOperation>('/api/nfqws2/diagnostics/config-check', { method: 'POST', body: JSON.stringify({ configs, hosts, repeats }) }),
   foreignConfigStatus: (id: string) => api<ForeignConfigCheckOperation>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}`),
   foreignConfigCancel: (id: string) => api<ForeignConfigCheckOperation>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 };

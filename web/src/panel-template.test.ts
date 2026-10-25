@@ -83,7 +83,7 @@ describe('TSX panel without authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(13);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(14);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -191,6 +191,7 @@ describe('TSX panel without authentication', () => {
     expect(section).toContain('id="foreignConfigUrl"');
     expect(section).toContain('id="foreignConfigFileInput"');
     expect(section).toContain('id="foreignConfigHosts"');
+    expect(section).toContain('id="foreignConfigRepeats"');
     expect(section).toContain('id="foreignConfigResults"');
     expect(section).toContain('data-action-click="runForeignConfigCheck"');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStart');

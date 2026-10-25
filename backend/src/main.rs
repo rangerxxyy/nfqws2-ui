@@ -298,6 +298,7 @@ struct ForeignConfigSiteResult {
 struct ForeignConfigCheckRequest {
     configs: Vec<ForeignConfigInput>,
     hosts: Vec<String>,
+    repeats: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,12 +475,27 @@ const MAX_FREEZE_SCAN_PROGRESS: usize = freeze_diagnostic::MAX_TARGETS * 2;
 const MAX_FOREIGN_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_FOREIGN_CONFIGS: usize = 3;
 const MAX_FOREIGN_CONFIG_HOSTS: usize = 3;
-const FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 3;
+const DEFAULT_FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 3;
+const MIN_FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 1;
+const MAX_FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 5;
 const MIN_FOREIGN_CONFIG_AVAILABLE_MB: u64 = 20;
 const MAX_FOREIGN_AUTO_LIST_BYTES: u64 = 4 * 1024 * 1024;
 
-fn foreign_config_should_retry(outcome: Option<bool>, completed_attempt: usize) -> bool {
-    outcome == Some(true) && completed_attempt + 1 < FOREIGN_CONFIG_CONFIRMATION_REPEATS
+fn normalize_foreign_config_repeats(requested: Option<usize>) -> usize {
+    requested
+        .unwrap_or(DEFAULT_FOREIGN_CONFIG_CONFIRMATION_REPEATS)
+        .clamp(
+            MIN_FOREIGN_CONFIG_CONFIRMATION_REPEATS,
+            MAX_FOREIGN_CONFIG_CONFIRMATION_REPEATS,
+        )
+}
+
+fn foreign_config_should_retry(
+    outcome: Option<bool>,
+    completed_attempt: usize,
+    repeats: usize,
+) -> bool {
+    outcome == Some(true) && completed_attempt + 1 < repeats
 }
 
 fn foreign_config_memory_warning(meminfo: &str) -> Option<String> {
@@ -5566,6 +5582,7 @@ async fn start_foreign_config_check(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ForeignConfigCheckRequest>,
 ) -> Response {
+    let repeats = normalize_foreign_config_repeats(request.repeats);
     if request.configs.is_empty() || request.configs.len() > MAX_FOREIGN_CONFIGS {
         return error(
             StatusCode::BAD_REQUEST,
@@ -5842,8 +5859,8 @@ async fn start_foreign_config_check(
                     operation.updated_at = now_unix_seconds();
                     let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
                 }
-                let mut reports = Vec::with_capacity(FOREIGN_CONFIG_CONFIRMATION_REPEATS);
-                for attempt in 0..FOREIGN_CONFIG_CONFIRMATION_REPEATS {
+                let mut reports = Vec::with_capacity(repeats);
+                for attempt in 0..repeats {
                     if control.load(Ordering::Acquire) {
                         stopped = true;
                         break;
@@ -5853,7 +5870,7 @@ async fn start_foreign_config_check(
                             "{} · {host} · проверка {}/{}",
                             operation.comparisons[config_index].name,
                             attempt + 1,
-                            FOREIGN_CONFIG_CONFIRMATION_REPEATS
+                            repeats
                         ));
                         operation.updated_at = now_unix_seconds();
                         let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
@@ -5873,7 +5890,7 @@ async fn start_foreign_config_check(
                     reports.push(report);
                     // Match Zemidala's fail-fast confirmation: one failed
                     // attempt rules out this config for the site.
-                    if !foreign_config_should_retry(outcome, attempt) {
+                    if !foreign_config_should_retry(outcome, attempt, repeats) {
                         break;
                     }
                 }
@@ -5884,11 +5901,11 @@ async fn start_foreign_config_check(
                     .iter()
                     .filter(|report| report.with_nfqws2.ok == Some(true))
                     .count();
-                let confirmed = successes == FOREIGN_CONFIG_CONFIRMATION_REPEATS;
+                let confirmed = successes == repeats;
                 let last_report = reports.last();
                 let candidate_detail = format!(
                     "{successes}/{} успешных · {}",
-                    FOREIGN_CONFIG_CONFIRMATION_REPEATS,
+                    repeats,
                     last_report
                         .map(|report| report.with_nfqws2.reason.as_str())
                         .unwrap_or("проверка отменена")
@@ -9406,11 +9423,17 @@ mod tests {
 
     #[test]
     fn foreign_config_repeats_stop_after_three_successes_or_the_first_failure() {
-        assert!(foreign_config_should_retry(Some(true), 0));
-        assert!(foreign_config_should_retry(Some(true), 1));
-        assert!(!foreign_config_should_retry(Some(true), 2));
-        assert!(!foreign_config_should_retry(Some(false), 0));
-        assert!(!foreign_config_should_retry(None, 0));
+        assert!(foreign_config_should_retry(Some(true), 0, 3));
+        assert!(foreign_config_should_retry(Some(true), 1, 3));
+        assert!(!foreign_config_should_retry(Some(true), 2, 3));
+        assert!(!foreign_config_should_retry(Some(true), 0, 1));
+        assert!(!foreign_config_should_retry(Some(false), 0, 3));
+        assert!(!foreign_config_should_retry(None, 0, 3));
+        assert_eq!(normalize_foreign_config_repeats(None), 3);
+        assert_eq!(normalize_foreign_config_repeats(Some(1)), 1);
+        assert_eq!(normalize_foreign_config_repeats(Some(5)), 5);
+        assert_eq!(normalize_foreign_config_repeats(Some(0)), 1);
+        assert_eq!(normalize_foreign_config_repeats(Some(99)), 5);
     }
 
     #[test]

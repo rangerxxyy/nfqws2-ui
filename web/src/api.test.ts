@@ -85,11 +85,11 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'stopping' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
     const configs = [{ name: 'из чата', source: 'Текст', content: 'NFQWS_ARGS="--filter-tcp=443"' }, { name: 'по ссылке', source: 'Ссылка', url: 'https://raw.githubusercontent.com/user/repo/main/nfqws2.conf' }];
-    const started = await nfqwsDiagnostics.foreignConfigStart(configs, ['example.com']);
+    const started = await nfqwsDiagnostics.foreignConfigStart(configs, ['example.com'], 4);
     expect(await nfqwsDiagnostics.foreignConfigStatus(started.id)).toMatchObject({ state: 'running', current: 'Конфиг · example.com' });
     expect(await nfqwsDiagnostics.foreignConfigCancel(started.id)).toMatchObject({ state: 'stopping' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/config-check');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ configs, hosts: ['example.com'] });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ configs, hosts: ['example.com'], repeats: 4 });
     expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/nfqws2/diagnostics/config-check/operations/${started.id}`);
     expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/nfqws2/diagnostics/config-check/operations/${started.id}/cancel`);
   });

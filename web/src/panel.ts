@@ -1665,10 +1665,12 @@ async function runForeignConfigCheck() {
   const hostsInput = $('#foreignConfigHosts');
   const hosts = hostsInput instanceof HTMLInputElement ? hostsInput.value.split(/[\s,;]+/).filter(Boolean) : [];
   if (!hosts.length || hosts.length > 3) return toast('Укажите от одного до трёх сайтов или публичных IPv4.', 'error');
+  const repeatsInput = $('#foreignConfigRepeats');
+  const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
   const button = $('#runForeignConfigCheck');
   if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Запуск…'; }
   try {
-    const operation = await nfqwsDiagnostics.foreignConfigStart(foreignConfigInputs, hosts);
+    const operation = await nfqwsDiagnostics.foreignConfigStart(foreignConfigInputs, hosts, repeats);
     renderForeignConfigCheck(operation);
     await pollForeignConfigCheck(operation.id);
   } catch (error) {

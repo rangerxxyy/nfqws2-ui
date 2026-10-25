@@ -1205,7 +1205,7 @@ export default function App() {
           <div className={"ui-card rounded-2xl p-4 sm:p-5 space-y-4"}>
             <div>
               <h2 className={"text-lg font-bold text-white"}>Проверка сторонней конфигурации</h2>
-              <p className={"mt-1 max-w-4xl text-sm leading-relaxed text-slate-400"}>Сравните установленный конфиг и до трёх вариантов на одних сайтах. Перед запуском nfqws2 --dry-run проверяет все группы профилей из .conf: TCP, UDP, QUIC, IPSET, дополнительные и пользовательские. Сетевое сравнение выполняется по HTTPS/TCP: каждый вариант запускается отдельным проверочным nfqws2 и подтверждается тремя запросами подряд; после первой неудачи повторы прекращаются. Активный конфиг и обычный трафик не меняются. Пути к Lua, блобам и спискам сопоставляются с установленными файлами; автосписок изолирован, debug-запись отключена.</p>
+              <p className={"mt-1 max-w-4xl text-sm leading-relaxed text-slate-400"}>Сравните установленный конфиг и до трёх вариантов на одних сайтах. Перед запуском nfqws2 --dry-run проверяет все группы профилей из .conf: TCP, UDP, QUIC, IPSET, дополнительные и пользовательские. Сетевое сравнение выполняется по HTTPS/TCP: каждый вариант запускается отдельным проверочным nfqws2 и подтверждается выбранным числом запросов подряд; после первой неудачи повторы прекращаются. Активный конфиг и обычный трафик не меняются. Пути к Lua, блобам и спискам сопоставляются с установленными файлами; автосписок изолирован, debug-запись отключена.</p>
             </div>
             <div className={"flex flex-wrap items-center gap-2"}>
               <button data-action-click={"openForeignConfigText"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ Текстом</button>
@@ -1228,6 +1228,7 @@ export default function App() {
               <input id={"foreignConfigHosts"} type={"text"} defaultValue={"youtube.com, discord.com, googleusercontent.com"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs text-white"} />
             </label>
             <div className={"flex flex-wrap items-center gap-3"}>
+              <label htmlFor={"foreignConfigRepeats"} className={"flex items-center gap-2 text-sm text-slate-300"}>Повторов<select id={"foreignConfigRepeats"} defaultValue={"3"} className={"rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"}><option value={"1"}>1</option><option value={"2"}>2</option><option value={"3"}>3</option><option value={"4"}>4</option><option value={"5"}>5</option></select></label>
               <button id={"runForeignConfigCheck"} data-action-click={"runForeignConfigCheck"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"}>▷ Проверить конфиги</button>
               <button id={"cancelForeignConfigCheck"} data-action-click={"cancelForeignConfigCheck"} className={"hidden rounded-lg border border-rose-500/30 px-4 py-2.5 text-sm font-semibold text-rose-200"}>Остановить</button>
               <p id={"foreignConfigStatus"} className={"hidden text-sm text-blue-200"} role={"status"} aria-live={"polite"}></p>
