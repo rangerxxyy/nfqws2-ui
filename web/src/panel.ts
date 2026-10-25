@@ -11,14 +11,13 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategyCatalog, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
 import { strategyNeedsWindowsTcpTimestamps } from './strategy-capability';
-import { mergeAsnPrefixes, normalizeAsnQuery } from './asn-prefixes';
 import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
@@ -28,7 +27,7 @@ import { canShowToast, lifecycleMessage, toastPresentation } from './notificatio
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'community' | 'snapshots' | 'supportReport' | 'appearance' | 'about';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'snapshots' | 'supportReport' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
@@ -58,7 +57,6 @@ let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
 let strategyTargetMode: 'single' | 'multi' = 'single';
 let configScrollFramePending = false;
-let communityStrategyCatalog: CommunityStrategyCatalog | null = null;
 type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
 let foreignConfigInputs: ForeignConfigInput[] = [];
 let activeForeignConfigCheckId: string | null = null;
@@ -380,7 +378,7 @@ function syncAppearanceControls() {
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
 }
 function syncNavigationLayout(route?: Route) {
-  const routeToGroup: Record<string, string> = { conf: 'configuration', check: 'site-check', trace: 'site-check', diagnostic16k: 'site-check', configCheck: 'site-check', autotune: 'tuning', community: 'tuning', monitor: 'monitoring', lists: 'lists', appearance: 'system', about: 'system' };
+  const routeToGroup: Record<string, string> = { conf: 'configuration', check: 'site-check', trace: 'site-check', diagnostic16k: 'site-check', configCheck: 'site-check', autotune: 'tuning', monitor: 'monitoring', lists: 'lists', appearance: 'system', about: 'system' };
   const activeRoute = route ?? (Object.keys(routeToGroup).find((key) => !document.getElementById(`tabContent-${key}`)?.classList.contains('hidden')) as Route | undefined);
   const group = activeRoute ? routeToGroup[activeRoute] : undefined;
   const navigation = $('#simplifiedNavigation');
@@ -1246,53 +1244,6 @@ async function loadList(id: NfqwsListId) {
     if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !summary.writable || busy;
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось прочитать список', 'error');
-  }
-}
-
-async function fetchAsnPrefixes() {
-  const input = $('#asnNumber');
-  const button = $('#fetchAsnPrefixesButton');
-  const result = $('#asnResultBox');
-  if (!(input instanceof HTMLInputElement) || !result) return;
-  const status = result.querySelector('[role="status"]') ?? result;
-  const showResult = (message: string, isError = false) => {
-    status.textContent = message;
-    result.classList.toggle('text-rose-300', isError);
-    result.classList.toggle('text-slate-400', !isError);
-  };
-  const query = normalizeAsnQuery(input.value);
-  if (query === null) {
-    showResult('Введите ASN, публичный IPv4 или домен, например AS15169 или example.com.', true);
-    return;
-  }
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Загружаю префиксы…'; }
-  showResult(`Запрашиваю RIPEstat для ${query}…`);
-  try {
-    const response = await nfqwsNetwork.prefixes(query);
-    const inventory = await nfqwsLists.index();
-    const summary = inventory.files.find((file) => file.id === 'ipset.list');
-    if (!summary?.writable) throw new Error('Список ipset.list отсутствует или недоступен для записи.');
-    const editor = activeListId === 'ipset.list' ? $('#listEditorTextarea') : null;
-    if (activeList?.id === 'ipset.list' && editor instanceof HTMLTextAreaElement && editor.value !== activeList.content) {
-      throw new Error('Сначала сохраните или отмените несохранённые изменения ipset.list.');
-    }
-    const current = await nfqwsLists.get('ipset.list');
-    const merged = mergeAsnPrefixes(current.content, response.prefixes);
-    if (merged.added === 0) {
-      showResult(`AS${response.asn}: получено ${response.prefixes.length} префиксов; все уже есть в ipset.list.`);
-      return;
-    }
-    const saved = await nfqwsLists.save('ipset.list', merged.content, current.revision);
-    if (activeListId === 'ipset.list' && activeList) {
-      activeList = saved;
-      if (editor instanceof HTMLTextAreaElement) editor.value = saved.content;
-      syncListLineNumbers(editor instanceof HTMLTextAreaElement ? editor : undefined);
-    }
-    showResult(`${response.resolvedFrom ? `${response.resolvedFrom} → ` : ''}AS${response.asn}: получено ${response.prefixes.length}, добавлено ${merged.added}; уже было ${merged.alreadyPresent}. ipset.list сохранён.`);
-  } catch (error) {
-    showResult(error instanceof Error ? error.message : 'Не удалось загрузить префиксы ASN.', true);
-  } finally {
-    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Загрузить IPv4-подсети и добавить в ipset.list'; }
   }
 }
 
@@ -2346,9 +2297,8 @@ async function startStrategyPick() {
     $('#autotunePreviewPanel')?.classList.add('hidden'); activeStrategyPreview = null;
     const applyButton = $('#applyStrategyPickButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
     try {
-      const includeCommunity = ($('#strategyIncludeCommunity') as HTMLInputElement | null)?.checked ?? false;
       const includeHistory = ($('#strategyIncludeOtherHistory') as HTMLInputElement | null)?.checked ?? true;
-      const operation = await nfqwsDiagnostics.strategyMultiStart(hosts, protocol, repeats, includeCommunity, includeHistory);
+      const operation = await nfqwsDiagnostics.strategyMultiStart(hosts, protocol, repeats, includeHistory);
       activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
       await pollStrategyPick(operation.id);
     } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить многосайтовый подбор.', 'error'); }
@@ -2359,7 +2309,6 @@ async function startStrategyPick() {
   const selectedMode = mode instanceof HTMLSelectElement && ['extended', 'full', 'custom'].includes(mode.value) ? mode.value as 'extended' | 'full' | 'custom' : 'quick';
   const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
   const stopAfterFirst = ($('#strategyStopAfterFirst') as HTMLInputElement | null)?.checked ?? false;
-  const includeCommunity = ($('#strategyIncludeCommunity') as HTMLInputElement | null)?.checked ?? false;
   const includeOtherHistory = ($('#strategyIncludeOtherHistory') as HTMLInputElement | null)?.checked ?? false;
   const refineLighter = ($('#strategyRefineLighter') as HTMLInputElement | null)?.checked ?? false;
   if (!Number.isInteger(repeats) || repeats < 2 || repeats > 5) return toast('Число повторов должно быть от 2 до 5.', 'error');
@@ -2372,7 +2321,7 @@ async function startStrategyPick() {
   activeStrategyPreview = null;
   const applyButton = $('#applyStrategyPickButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   try {
-    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeCommunity, includeOtherHistory, refineLighter);
+    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeOtherHistory, refineLighter);
     activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
     await pollStrategyPick(operation.id);
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить автоподбор', 'error'); }
@@ -2434,53 +2383,6 @@ async function loadStrategyDomainLists() {
     }
     if (!lists.some((list) => list.id === 'user.list') && lists[0]) select.value = lists[0].id;
   } catch { /* manual multi-site input stays available */ }
-}
-
-async function loadCommunityStrategies() {
-  const host = $('#communityHostInput');
-  const protocol = $('#communityProtocolSelect');
-  const status = $('#communityCatalogStatus');
-  const results = $('#communityPresetsEmptyState');
-  if (!(host instanceof HTMLInputElement) || !host.value.trim()) return toast('Введите домен, для которого нужны варианты сообщества.', 'error');
-  if (!(results instanceof HTMLElement)) return;
-  const button = $('[data-action-click="loadCommunityStrategies"]');
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Загружаю…'; }
-  results.replaceChildren();
-  if (status) status.textContent = 'Backend определяет провайдера и загружает совместимые варианты…';
-  try {
-    const selectedProtocol = protocol instanceof HTMLSelectElement && protocol.value === 'http' ? 'http' : 'https';
-    communityStrategyCatalog = await nfqwsDiagnostics.communityStrategies(host.value.trim(), selectedProtocol);
-    const badge = $('#communityProviderBadge');
-    if (badge) badge.textContent = `AS${communityStrategyCatalog.providerAsn}`;
-    if (status) status.textContent = `${communityStrategyCatalog.candidates.length} вариантов · провайдер AS${communityStrategyCatalog.providerAsn}${communityStrategyCatalog.targetAsn ? ` · сайт AS${communityStrategyCatalog.targetAsn}` : ''}. Все варианты нужно проверить на этом роутере.`;
-    if (!communityStrategyCatalog.candidates.length) { results.textContent = 'Для этого провайдера и домена совместимых вариантов пока нет.'; return; }
-    for (const candidate of communityStrategyCatalog.candidates) {
-      const card = document.createElement('article'); card.className = 'community-candidate-card';
-      const title = document.createElement('strong'); title.textContent = candidate.name;
-      const source = document.createElement('span'); source.textContent = candidate.source;
-      const steps = document.createElement('code'); steps.textContent = candidate.steps.join('\n');
-      card.append(title, source, steps); results.append(card);
-    }
-    const probe = document.createElement('button'); probe.type = 'button'; probe.className = 'mt-3 rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 hover:bg-blue-500/25'; probe.dataset.actionClick = 'probeCommunityStrategies'; probe.textContent = 'Проверить стратегии на этом домене'; results.append(probe);
-  } catch (error) {
-    if (status) status.textContent = error instanceof Error ? error.message : 'Каталог стратегий недоступен.';
-    toast(error instanceof Error ? error.message : 'Не удалось загрузить каталог стратегий сообщества.', 'error');
-  } finally {
-    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Загрузить варианты'; }
-  }
-}
-
-function probeCommunityStrategies() {
-  if (!communityStrategyCatalog) return toast('Сначала загрузите варианты сообщества.', 'error');
-  const host = $('#scanCustomHost');
-  const protocol = $('#strategyProtocolSelect');
-  const includeCommunity = $('#strategyIncludeCommunity');
-  if (host instanceof HTMLInputElement) host.value = communityStrategyCatalog.host;
-  if (protocol instanceof HTMLSelectElement) protocol.value = communityStrategyCatalog.protocol;
-  if (includeCommunity instanceof HTMLInputElement) includeCommunity.checked = true;
-  setStrategyTargetMode('single');
-  showRoute('autotune');
-  void startStrategyPick();
 }
 
 async function cancelStrategyPick() {
@@ -2674,7 +2576,7 @@ async function cancelFreezeScan() {
   finally { if (stop instanceof HTMLButtonElement) { stop.disabled = false; stop.textContent = 'Остановить'; } }
 }
 
-export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','applyCommunityPreset','pushBackupToNas','exportFullBackup','excludeBrokenDomain'] as const;
+export const DISABLED_PANEL_ACTIONS = ['startStrategyAutoScan','applyStrategyToConf','pushBackupToNas','exportFullBackup','excludeBrokenDomain'] as const;
 
 function appendReleaseRetry(list: HTMLElement) {
   const row = document.createElement('div');
@@ -2985,8 +2887,6 @@ function bindPrototypeActions() {
     switchSimplifiedNavGroup: (group: string) => { const routes: Record<string, Route> = { configuration: 'conf', 'site-check': 'check', tuning: 'autotune', monitoring: 'monitor', lists: 'lists', system: 'appearance' }; const route = routes[group]; if (route) showRoute(route); },
     checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
-    fetchAsnPrefixes: () => void fetchAsnPrefixes(),
-    setAsnQuery: (query: string) => { const input = $('#asnNumber'); if (input instanceof HTMLInputElement) { input.value = query; input.focus(); } },
     checkMonitoringSite: (host: string) => void runMonitoring(host),
     saveMonitoringSettings: () => void saveMonitoringSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить расписание.', 'error')),
     toggleMonitoringCustom: (select: HTMLSelectElement) => { $('#monitoringCustom')?.classList.toggle('hidden', select.value !== 'custom'); $('#monitoringCustom')?.classList.toggle('inline-flex', select.value === 'custom'); },
@@ -3020,8 +2920,6 @@ function bindPrototypeActions() {
     startStrategyPick: () => void startStrategyPick(),
     setStrategyTargetMode: (mode: string) => setStrategyTargetMode(mode),
     pickRandomMultiSites: () => void pickRandomMultiSites(),
-    loadCommunityStrategies: () => void loadCommunityStrategies(),
-    probeCommunityStrategies: () => probeCommunityStrategies(),
     cancelStrategyPick: () => void cancelStrategyPick(),
     toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
     copyStrategyParams: (button: HTMLButtonElement) => {

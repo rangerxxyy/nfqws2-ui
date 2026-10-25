@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
   it('notifies the app when an authenticated API request returns 401', async () => {
@@ -40,14 +40,6 @@ describe('API client used by the source-based panel', () => {
     await expect(nfqwsAuth.save(true, 'long enough password', '', 90)).resolves.toEqual({ saved: true });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/auth/settings');
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ enabled: true, password: 'long enough password', currentPassword: '', rememberDays: 90 });
-  });
-
-  it('requests a bounded ASN prefix lookup from the Rust API', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{"asn":15169,"resolvedFrom":"example.com → 8.8.8.8","prefixes":["8.8.8.0/24"]}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-    await expect(nfqwsNetwork.prefixes('example.com')).resolves.toEqual({ asn: 15169, resolvedFrom: 'example.com → 8.8.8.8', prefixes: ['8.8.8.0/24'] });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/asn-prefixes');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ query: 'example.com' });
   });
 
   it('reports the beginning of a non-JSON success response instead of silently returning an empty object', async () => {
@@ -118,29 +110,20 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'running', stage: 'testing', current: 'multisplit' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...queued, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
-    const started = await nfqwsDiagnostics.strategyStart('example.com', 'https', 'custom', 4, [['--lua-desync=multisplit:pos=1']], true, true, true, true);
+    const started = await nfqwsDiagnostics.strategyStart('example.com', 'https', 'custom', 4, [['--lua-desync=multisplit:pos=1']], true, true, true);
     expect(await nfqwsDiagnostics.strategyStatus(started.id)).toMatchObject({ state: 'running', current: 'multisplit' });
     expect(await nfqwsDiagnostics.strategyCancel(started.id)).toMatchObject({ state: 'stopping' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeCommunity: true, includeOtherHistory: true, refineLighter: true, customSteps: [['--lua-desync=multisplit:pos=1']] });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeOtherHistory: true, refineLighter: true, customSteps: [['--lua-desync=multisplit:pos=1']] });
   });
 
   it('starts a shared strategy pick for a bounded list of sites', async () => {
     const queued = { id: '0123456789abcdef0123456789abcdef', host: 'one.example, two.example', hosts: ['one.example', 'two.example'], protocol: 'https', state: 'queued', stage: 'queued', current: null, done: 0, total: 12, results: [], multiSiteBaseline: [], multiSiteResults: [], message: 'queued', updatedAt: 100 };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(queued), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(nfqwsDiagnostics.strategyMultiStart(['one.example', 'two.example'], 'https', 4, true, true)).resolves.toMatchObject({ hosts: ['one.example', 'two.example'] });
+    await expect(nfqwsDiagnostics.strategyMultiStart(['one.example', 'two.example'], 'https', 4, true)).resolves.toMatchObject({ hosts: ['one.example', 'two.example'] });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/multi');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ hosts: ['one.example', 'two.example'], protocol: 'https', repeats: 4, includeCommunity: true, includeOtherHistory: true });
-  });
-
-  it('loads provider community strategies through the Rust service', async () => {
-    const result = { host: 'example.com', protocol: 'https', providerAsn: 12345, targetAsn: 64496, candidates: [{ name: 'Example strategy', source: 'community', steps: ['--lua-desync=multisplit:pos=1'] }] };
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(result), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-    await expect(nfqwsDiagnostics.communityStrategies('example.com', 'https')).resolves.toEqual(result);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/community');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https' });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ hosts: ['one.example', 'two.example'], protocol: 'https', repeats: 4, includeOtherHistory: true });
   });
 
   it('starts, polls, and cancels a foreign configuration comparison', async () => {

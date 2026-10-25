@@ -18,7 +18,6 @@ export type MultiSiteDomainResult = { host: string; eligible: boolean; baselineR
 export type MultiSiteCandidateResult = { candidate: StrategyPickResult['candidate']; openedDomains: number; domains: MultiSiteDomainResult[] };
 export type StrategyPickOperation = { id: string; host: string; hosts?: string[]; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; multiSiteBaseline?: MultiSiteBaselineResult[]; multiSiteResults?: MultiSiteCandidateResult[]; message: string; updatedAt: number };
 export type StrategyPickPreview = { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickResult['candidate']; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
-export type CommunityStrategyCatalog = { host: string; protocol: 'http' | 'https'; providerAsn: number; targetAsn: number | null; candidates: StrategyPickResult['candidate'][] };
 export type FreezeStrategyMatch = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; reusedFrom: string | null };
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
 export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
@@ -29,7 +28,6 @@ export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc
 export type NfqwsListId = string;
 export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
-export type AsnPrefixResponse = { asn: number; resolvedFrom: string | null; prefixes: string[] };
 export type MonitoringProbeStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type MonitoringProbeReport = { host: string; summary: string; current: { status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null }; steps: MonitoringProbeStep[] };
 export type MonitoringSettings = { enabled: boolean; intervalMinutes: number; lastAutoCheck: number | null; sites: Array<{ host: string; results: Array<{ checkedAt: number; status: 'ok' | 'warning' | 'error' | 'unavailable'; summary: string; latencyMs: number | null; steps: MonitoringProbeStep[] }> }> };
@@ -129,12 +127,6 @@ export const nfqwsLists = {
   ),
 };
 
-export const nfqwsNetwork = {
-  prefixes: (query: string) => api<AsnPrefixResponse>('/api/nfqws2/asn-prefixes', {
-    method: 'POST', body: JSON.stringify({ query }),
-  }),
-};
-
 export const nfqwsInstallation = {
   get: () => api<NfqwsInstallation>('/api/nfqws2/installation'),
 };
@@ -217,9 +209,8 @@ export const nfqwsDiagnostics = {
   freezeScanStart: (extraHosts: string[]) => api<FreezeScanOperation>('/api/nfqws2/diagnostics/freeze-scan', { method: 'POST', body: JSON.stringify({ extraHosts }) }),
   freezeScanStatus: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}`),
   freezeScanCancel: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
-  strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended' | 'full' | 'custom', repeats = 3, customSteps?: string[][], stopAfterFirstConfirmed = false, includeCommunity = false, includeOtherHistory = false, refineLighter = false) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode, repeats, stopAfterFirstConfirmed, includeCommunity, includeOtherHistory, refineLighter, ...(customSteps ? { customSteps } : {}) }) }),
-  strategyMultiStart: (hosts: string[], protocol: 'http' | 'https', repeats = 3, includeCommunity = false, includeOtherHistory = true) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick/multi', { method: 'POST', body: JSON.stringify({ hosts, protocol, repeats, includeCommunity, includeOtherHistory }) }),
-  communityStrategies: (host: string, protocol: 'http' | 'https') => api<CommunityStrategyCatalog>('/api/nfqws2/strategies/community', { method: 'POST', body: JSON.stringify({ host, protocol }) }),
+  strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended' | 'full' | 'custom', repeats = 3, customSteps?: string[][], stopAfterFirstConfirmed = false, includeOtherHistory = false, refineLighter = false) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode, repeats, stopAfterFirstConfirmed, includeOtherHistory, refineLighter, ...(customSteps ? { customSteps } : {}) }) }),
+  strategyMultiStart: (hosts: string[], protocol: 'http' | 'https', repeats = 3, includeOtherHistory = true) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick/multi', { method: 'POST', body: JSON.stringify({ hosts, protocol, repeats, includeOtherHistory }) }),
   strategyStatus: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}`),
   strategyCancel: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   strategyHistory: () => api<StrategyPickOperation[]>('/api/nfqws2/strategies/pick/history'),

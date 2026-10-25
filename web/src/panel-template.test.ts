@@ -98,7 +98,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(16);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(15);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -274,18 +274,6 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('candidate_average_ms: Option<u64>');
   });
 
-  it('connects the ASN prefix generator to RIPEstat and the ipset list editor', () => {
-    expect(template).toContain('id="asnNumber"');
-    expect(template).toContain('data-action-click="fetchAsnPrefixes"');
-    expect(template).toContain('data-action-click="setAsnQuery"');
-    expect([...template.matchAll(/data-action-click="setAsnQuery"/g)]).toHaveLength(6);
-    expect(panelSource).toContain('nfqwsNetwork.prefixes(query)');
-    expect(panelSource).toContain("nfqwsLists.save('ipset.list'");
-    expect(backendSource).toContain('/api/nfqws2/asn-prefixes');
-    expect(backendSource).toContain('resolve_asn_query(&request.query)');
-    expect(panelSource).not.toContain("'fetchAsnPrefixes',");
-  });
-
   it('keeps the support report section out of the interface for now', () => {
     expect(template).not.toContain('id="navBtn-supportReport"');
     expect(template).not.toContain('id="tabContent-supportReport"');
@@ -334,7 +322,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(picker).not.toContain('md:grid-cols-5');
     expect(picker).toContain('id="strategyRepeatsSelect"');
     expect(picker).toContain('id="strategyStopAfterFirst"');
-    expect(picker).toContain('id="strategyIncludeCommunity"');
+    expect(picker).not.toContain('id="strategyIncludeCommunity"');
     expect(picker).toContain('id="strategyIncludeOtherHistory"');
     expect(picker).toContain('id="strategyRefineLighter"');
     expect(picker).toContain('Искать более лёгкий вариант');
@@ -539,10 +527,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('renderTelegramNotifications(cfg.notifications)');
     expect(monitoringSource).toContain('MAX_MONITORING_SITES = 20');
     expect(panelSource).toContain('Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ');
-    expect(template).toMatch(/id="navBtn-community" class="(?![^"]*hidden)[^"]*side-nav-btn/);
-    expect(template).toMatch(/id="tabContent-community" class="hidden/);
-    expect(template).toContain('data-action-click="loadCommunityStrategies"');
-    expect(panelSource).toContain('nfqwsDiagnostics.communityStrategies');
+    expect(template).not.toContain('navBtn-community');
+    expect(template).not.toContain('tabContent-community');
+    expect(template).not.toContain('asnNumber');
+    expect(backendSource).not.toContain('/api/nfqws2/strategies/community');
+    expect(backendSource).not.toContain('/api/nfqws2/asn-prefixes');
+    expect(panelSource).not.toContain('includeCommunity');
     expect(template).toMatch(/id="navBtn-autotune" class="(?![^"]*hidden)[^"]*side-nav-btn/);
     expect(template).toContain('data-action-click="startStrategyPick"');
     expect(template).toContain('id="tabContent-diagnostic16k"');
@@ -604,7 +594,6 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('value="simplified"');
     expect(template).not.toContain('data-appearance-simplified-navigation');
     expect(template).toContain('data-simplified-group="site-check"');
-    expect(template).toContain('data-simplified-route="community"');
     expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['snapshots', 'supportReport']");
     expect(template).toContain('id="panelAuthEnabled"');
     expect(template).toContain('data-action-click="savePanelAuthSettings"');
@@ -981,8 +970,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);
     expect(template).toContain('Уведомления Telegram');
     expect(template).toContain('каждые 30 мин');
-    expect(template).toContain('ASN не определён');
-    expect(template).toContain('Варианты пока не загружены.');
+    expect(template).not.toContain('ASN не определён');
+    expect(template).not.toContain('Варианты пока не загружены.');
     expect(template).toContain('0%');
     expect(template).not.toContain('Ростелеком (AS12389)');
     expect(template).not.toContain('Рейтинг успешности: 96%');

@@ -7,7 +7,6 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use nfqws2_ui::asn_prefixes::{fetch_ipv4_prefixes, resolve_asn_query};
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::config_format::format_nfqws_config;
 use nfqws2_ui::freeze_diagnostic;
@@ -469,8 +468,6 @@ struct StrategyPickRequest {
     #[serde(default)]
     stop_after_first_confirmed: bool,
     #[serde(default)]
-    include_community: bool,
-    #[serde(default)]
     include_other_history: bool,
     #[serde(default)]
     refine_lighter: bool,
@@ -484,16 +481,7 @@ struct MultiStrategyPickRequest {
     protocol: Option<String>,
     repeats: Option<usize>,
     #[serde(default)]
-    include_community: bool,
-    #[serde(default)]
     include_other_history: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CommunityStrategyRequest {
-    host: String,
-    protocol: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2708,11 +2696,6 @@ struct ListResponse {
 struct ListWrite {
     content: String,
     revision: String,
-}
-
-#[derive(Deserialize)]
-struct AsnPrefixRequest {
-    query: String,
 }
 
 #[derive(Deserialize)]
@@ -6830,58 +6813,6 @@ fn picker_mode_uses_catalog_candidates(custom_mode: bool) -> bool {
     !custom_mode
 }
 
-async fn get_community_strategies(
-    State(state): State<Arc<AppState>>,
-    Json(request): Json<CommunityStrategyRequest>,
-) -> Response {
-    let host = match site_diagnostics::normalize_site_target(&request.host) {
-        Ok(host) if host.parse::<std::net::IpAddr>().is_err() => host,
-        Ok(_) => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "Введите доменное имя, а не IP-адрес",
-            );
-        }
-        Err(message) => return error(StatusCode::BAD_REQUEST, message),
-    };
-    let protocol = match request.protocol.as_deref().unwrap_or("https") {
-        "http" => StrategyProtocol::Http,
-        "https" => StrategyProtocol::Https,
-        _ => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                "Протокол должен быть http или https",
-            );
-        }
-    };
-    let Some((_, args)) = active_process_snapshot() else {
-        return error(
-            StatusCode::CONFLICT,
-            "Не найден однозначно работающий nfqws2",
-        );
-    };
-    let Some(paths) = discover_system_paths() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Пути установленного nfqws2 не обнаружены однозначно",
-        );
-    };
-    let functions = active_lua_functions(&args, &paths.lua_dir);
-    let blobs = active_blob_names(&args);
-    match nfqws2_ui::community_strategies::discover_candidates(
-        &host, protocol, &functions, &blobs, &state.data_dir.join("community-strategy-cache"),
-    ).await {
-        Ok(discovery) => Json(serde_json::json!({
-            "host": host,
-            "protocol": match protocol { StrategyProtocol::Http => "http", StrategyProtocol::Https => "https", StrategyProtocol::Quic => "quic" },
-            "providerAsn": discovery.provider_asn,
-            "targetAsn": discovery.target_asn,
-            "candidates": discovery.candidates,
-        })).into_response(),
-        Err(message) => error(StatusCode::BAD_GATEWAY, message),
-    }
-}
-
 fn normalize_multi_strategy_hosts(hosts: &[String]) -> Result<Vec<String>, String> {
     if !(2..=15).contains(&hosts.len()) {
         return Err("Укажите от 2 до 15 доменов".into());
@@ -7031,8 +6962,6 @@ async fn start_multi_strategy_pick(
     let task_blobs = blobs.clone();
     let task_hosts = hosts.clone();
     let task_protocol = protocol;
-    let include_community = request.include_community;
-    let community_cache = state.data_dir.join("community-strategy-cache");
     tokio::spawn(async move {
         let _guard = guard;
         run_multi_strategy_pick(
@@ -7050,8 +6979,6 @@ async fn start_multi_strategy_pick(
             task_functions,
             task_blobs,
             control,
-            include_community,
-            community_cache,
         )
         .await;
     });
@@ -7074,8 +7001,6 @@ async fn run_multi_strategy_pick(
     functions: HashSet<String>,
     blobs: Vec<String>,
     control: Arc<AtomicBool>,
-    include_community: bool,
-    community_cache: PathBuf,
 ) {
     let directory = state.data_dir.join("strategy-pick-operations");
     operation.state = "running".into();
@@ -7145,33 +7070,10 @@ async fn run_multi_strategy_pick(
         state.strategy_pick_controls.lock().await.remove(&id);
         return;
     }
-    let mut candidate_plan = strategy_picker::StrategyPlan {
+    let candidate_plan = strategy_picker::StrategyPlan {
         protocol,
         candidates,
     };
-    if include_community {
-        for host in &eligible_hosts {
-            if control.load(Ordering::Acquire) {
-                break;
-            }
-            if let Ok(discovery) = nfqws2_ui::community_strategies::discover_candidates(
-                host,
-                protocol,
-                &functions,
-                &blobs,
-                &community_cache,
-            )
-            .await
-            {
-                strategy_picker::insert_reusable_candidates(
-                    &mut candidate_plan,
-                    discovery.candidates,
-                    &functions,
-                    &blobs,
-                );
-            }
-        }
-    }
     let mut candidates = candidate_plan.candidates;
     candidates.truncate(128);
     let total = candidates.len();
@@ -7477,7 +7379,7 @@ async fn start_strategy_pick(
     } else {
         Vec::new()
     };
-    if plan.candidates.is_empty() && freeze_candidates.is_empty() && !request.include_community {
+    if plan.candidates.is_empty() && freeze_candidates.is_empty() {
         return error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Нет совместимых стратегий для выбранного протокола в активном конфиге и подключённых Lua-файлах",
@@ -7542,8 +7444,6 @@ async fn start_strategy_pick(
     let task_repeats = repeats;
     let stop_after_first_confirmed = request.stop_after_first_confirmed;
     let refine_lighter = request.refine_lighter;
-    let include_community = request.include_community && include_catalog_sources;
-    let community_cache_dir = state.data_dir.join("community-strategy-cache");
     let binary = paths.binary.to_string_lossy().into_owned();
     let active_args_for_task = active_args.clone();
     let functions_for_task = functions.clone();
@@ -7607,44 +7507,6 @@ async fn start_strategy_pick(
             current.updated_at = now_unix_seconds();
             let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
         }
-        let mut community_notice = String::new();
-        if include_community && !control.load(Ordering::SeqCst) {
-            match nfqws2_ui::community_strategies::discover_candidates(
-                &task_host,
-                protocol,
-                &functions,
-                &blobs,
-                &community_cache_dir,
-            )
-            .await
-            {
-                Ok(discovery) => {
-                    let count = discovery.candidates.len();
-                    strategy_picker::insert_reusable_candidates(
-                        &mut plan,
-                        discovery.candidates,
-                        &functions,
-                        &blobs,
-                    );
-                    community_notice = if count == 0 {
-                        format!(
-                            "Каталог сообщества для провайдера AS{} не содержит совместимых вариантов",
-                            discovery.provider_asn
-                        )
-                    } else {
-                        format!(
-                            "Добавлено вариантов сообщества: {count} · провайдер AS{}",
-                            discovery.provider_asn
-                        )
-                    };
-                }
-                Err(message) => {
-                    community_notice = format!(
-                        "Каталог сообщества недоступен ({message}); продолжается обычный подбор"
-                    )
-                }
-            }
-        }
         if include_catalog_sources {
             strategy_picker::insert_reusable_candidates(
                 &mut plan,
@@ -7657,18 +7519,9 @@ async fn start_strategy_pick(
             current.total = plan.candidates.len();
             current.stage = "testing".into();
             current.message = if matches!(mode, Some(StrategyMode::Full)) {
-                format!(
-                    "Приоритетные варианты проверяются по очереди, полный каталог — безопасными пакетами с последовательным подтверждением; отмена доступна в любой момент{}",
-                    if community_notice.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" · {community_notice}")
-                    }
-                )
-            } else if community_notice.is_empty() {
-                "Проверяются реальные запросы через отдельный тестовый nfqws2".into()
+                "Приоритетные варианты проверяются по очереди, полный каталог — безопасными пакетами с последовательным подтверждением; отмена доступна в любой момент".into()
             } else {
-                format!("{community_notice}; каждый вариант проверяется на этом роутере")
+                "Проверяются реальные запросы через отдельный тестовый nfqws2".into()
             };
             current.updated_at = now_unix_seconds();
             let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
@@ -7877,11 +7730,7 @@ async fn start_strategy_pick(
             operation.total = plan_result.total;
             operation.results = plan_result.results;
             operation.current = None;
-            operation.message = if community_notice.is_empty() {
-                plan_result.message
-            } else {
-                format!("{} · {community_notice}", plan_result.message)
-            };
+            operation.message = plan_result.message;
             operation.updated_at = now_unix_seconds();
             let _ = write_strategy_pick_operation_sync(&operation_dir, &operation);
         }
@@ -8829,26 +8678,6 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
         })
         .collect();
     Json(ListsResponse { files }).into_response()
-}
-
-async fn get_asn_prefixes(Json(request): Json<AsnPrefixRequest>) -> Response {
-    if request.query.trim().is_empty() || request.query.len() > 253 {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "Укажите ASN, публичный IP-адрес или домен",
-        );
-    }
-    let (asn, resolved_from) = match resolve_asn_query(&request.query).await {
-        Ok(result) => result,
-        Err(message) => return error(StatusCode::BAD_REQUEST, message),
-    };
-    match fetch_ipv4_prefixes(asn).await {
-        Ok(prefixes) => Json(
-            serde_json::json!({ "asn": asn, "resolvedFrom": resolved_from, "prefixes": prefixes }),
-        )
-        .into_response(),
-        Err(message) => error(StatusCode::BAD_GATEWAY, message),
-    }
 }
 
 async fn get_list(
@@ -10825,10 +10654,6 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             post(start_multi_strategy_pick),
         )
         .route(
-            "/api/nfqws2/strategies/community",
-            post(get_community_strategies),
-        )
-        .route(
             "/api/nfqws2/strategies/pick/history",
             get(get_strategy_pick_history).delete(clear_strategy_pick_history),
         )
@@ -10861,7 +10686,6 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             post(stop_site_trace_operation),
         )
         .route("/api/nfqws2/apply", post(apply_config))
-        .route("/api/nfqws2/asn-prefixes", post(get_asn_prefixes))
         .route("/api/nfqws2/lists", get(get_lists))
         .route(
             "/api/nfqws2/lists/{id}",

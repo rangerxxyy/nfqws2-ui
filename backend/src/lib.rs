@@ -1,6 +1,4 @@
 use serde::Serialize;
-pub mod asn_prefixes;
-pub mod community_strategies;
 pub mod config_document;
 pub mod config_format;
 pub mod freeze_diagnostic;

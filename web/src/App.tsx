@@ -363,26 +363,6 @@ export default function App() {
               </button>
               {"\n\n            "}
               {"\n            "}
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["community"])} id={"navBtn-community"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                {"\n              "}
-                <div className={"flex items-center gap-3"}>
-                  {"\n                "}
-                  <svg className={"w-4 h-4 shrink-0 text-purple-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
-                    <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"}></path>
-                  </svg>
-                  {"\n                "}
-                  <span>
-                    {"Сообщество и ASN"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300"}>
-                  {"RIPE"}
-                </span>
-                {"\n            "}
-              </button>
-              {"\n\n          "}
             </nav>
             {"\n        "}
           </div>
@@ -419,7 +399,7 @@ export default function App() {
             {[['configuration', 'Конфигурация'], ['site-check', 'Проверка сайта'], ['tuning', 'Подбор'], ['monitoring', 'Мониторинг'], ['lists', 'Списки'], ['system', 'Система']].map(([group, label], index) => <button key={group} type={"button"} data-simplified-group={group} data-action-click={"switchSimplifiedNavGroup"} data-args={JSON.stringify([group])} aria-pressed={index === 0 ? "true" : "false"} className={"simplified-nav-button"}>{label}</button>)}
           </div>
           <div className={"simplified-nav-pages"} role={"group"} aria-label={"Страницы группы"}>
-            {[['conf', 'Конфигурация'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['diagnostic16k', 'Диагностика 16 КБ'], ['configCheck', 'Проверка конфигурации'], ['autotune', 'Авто-подбор'], ['community', 'Сообщество'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
+            {[['conf', 'Конфигурация'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['diagnostic16k', 'Диагностика 16 КБ'], ['configCheck', 'Проверка конфигурации'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
           </div>
         </nav>
         {"\n\n      "}
@@ -1072,10 +1052,6 @@ export default function App() {
                     <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
                     <span>Стратегии из истории других сайтов</span>
                   </label>
-                  <label htmlFor={"strategyIncludeCommunity"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
-                    <input id={"strategyIncludeCommunity"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
-                    <span>Стратегии сообщества для ASN провайдера</span>
-                  </label>
                   <p className={"strategy-option-help"}>Подходящие варианты будут загружены из каталога и проверены отдельными запросами.</p>
                 </div>
               </div>
@@ -1328,106 +1304,7 @@ export default function App() {
         {"\n      "}
         {"\n      "}
         {"\n      "}
-        <section id={"tabContent-community"} className={"hidden view-animate space-y-5"}>
-          {"\n        "}
-          <div><h1 className={"text-xl font-bold text-white"}>Стратегии сообщества</h1><p className={"mt-1 text-sm text-slate-400"}>Получите ограниченный набор вариантов для провайдера и сайта; применить можно только после проверки на роутере.</p></div>
-          <section className={"ui-card rounded-2xl p-4 sm:p-5"}>
-            <div className={"grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto] sm:items-end"}>
-              <label htmlFor={"communityHostInput"} className={"text-xs font-mono text-slate-400"}>Домен для подбора
-                <input id={"communityHostInput"} type={"text"} placeholder={"example.com"} autoCapitalize={"none"} spellCheck={false} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-white"} />
-              </label>
-              <label htmlFor={"communityProtocolSelect"} className={"text-xs font-mono text-slate-400"}>Транспорт
-                <select id={"communityProtocolSelect"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-white"}><option value={"https"}>HTTPS · TCP 443</option><option value={"http"}>HTTP · TCP 80</option></select>
-              </label>
-              <button type={"button"} data-action-click={"loadCommunityStrategies"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Загрузить варианты</button>
-            </div>
-            <p id={"communityCatalogStatus"} className={"mt-3 text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Backend проверит ASN провайдера, совместимость Lua-функций и кэш каталога.</p>
-          </section>
-          <div className={"grid grid-cols-1 lg:grid-cols-12 gap-5"}>
-            {"\n          \n          "}
-            {"\n          "}
-            <div className={"lg:col-span-7 ui-card rounded-2xl p-6 space-y-4"}>
-              {"\n            "}
-              <div className={"flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-slate-800"}>
-                {"\n              "}
-                <div>
-                  {"\n                "}
-                  <h2 className={"text-base sm:text-lg font-bold text-white"}>
-                    {"Совместимые варианты"}
-                  </h2>
-                  {"\n                "}
-                  <p className={"text-xs text-slate-400"}>
-                    {"Загрузите каталог для домена, чтобы увидеть варианты от вашего провайдера."}
-                  </p>
-                  {"\n              "}
-                </div>
-                {"\n              "}
-                <span id={"communityProviderBadge"} className={"px-3 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 text-xs font-mono font-bold"}>
-                    {"\n                ASN не определён\n              "}
-                </span>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              <div id={"communityPresetsEmptyState"} className={"p-4 rounded-xl bg-[#060a12] border border-slate-800 text-sm text-slate-400"}>
-                {"Варианты пока не загружены."}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n\n          "}
-            {"\n          "}
-            <div className={"lg:col-span-5 ui-card rounded-2xl p-6 space-y-4"}>
-              {"\n            "}
-              <div className={"pb-3 border-b border-slate-800"}>
-                {"\n              "}
-                <h3 className={"text-base font-bold text-white"}>
-                  {"Генератор подсетей по ASN в `ipset.list`"}
-                </h3>
-                {"\n              "}
-                <p className={"text-xs text-slate-400 mt-0.5"}>
-                  {"Находит сеть по ASN, IP или домену и загружает её IPv4-префиксы из RIPEstat"}
-                </p>
-                {"\n            "}
-              </div>
-              {"\n\n            "}
-              <div className={"space-y-3 text-xs"}>
-                {"\n              "}
-                <div>
-                  {"\n                "}
-                  <label htmlFor={"asnNumber"} className={"block text-slate-400 font-mono mb-1"}>
-                    {"ASN, публичный IPv4 или домен"}
-                  </label>
-                  {"\n                "}
-                  <input id={"asnNumber"} autoComplete={"off"} placeholder={"AS15169, 8.8.8.8 или example.com"} className={"w-full bg-[#060a12] border border-slate-800 rounded-xl px-3.5 py-2.5 font-mono text-white"} />
-                  <div className={"mt-2 flex flex-wrap gap-1.5"} role={"group"} aria-label={"Частые ASN"}>
-                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS24940"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Hetzner</button>
-                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS16276"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>OVH</button>
-                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS14061"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>DigitalOcean</button>
-                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS51167"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Contabo</button>
-                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS13335"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Cloudflare</button>
-                    <button type={"button"} data-action-click={"setAsnQuery"} data-args={JSON.stringify(["AS16509"])} className={"rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-300 hover:border-blue-500"}>Amazon AWS</button>
-                  </div>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <button id={"fetchAsnPrefixesButton"} data-action-click={"fetchAsnPrefixes"} className={"w-full py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold transition-all"}>
-                  {"\n                Загрузить IPv4-подсети и добавить в ipset.list\n              "}
-                </button>
-                {"\n\n              "}
-                <div id={"asnResultBox"} className={"p-3.5 rounded-xl bg-[#060a12] border border-slate-800 font-mono text-[11px] text-slate-400 space-y-1"}>
-                  {"\n                "}
-                  <div role={"status"} aria-live={"polite"}>
-                    {"Укажите ASN, публичный IP или домен, чтобы добавить префиксы сети в ipset.list."}
-                  </div>
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
-              {"\n          "}
-            </div>
-            {"\n\n        "}
-          </div>
-          {"\n      "}
-        </section>
+
         {"\n\n      "}
         {"\n      "}
         {"\n      "}
