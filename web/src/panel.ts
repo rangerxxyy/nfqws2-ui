@@ -84,7 +84,33 @@ function toast(message: string, type: 'success' | 'error' = 'success') {
   const icon = document.createElement('span');
   icon.className = `toast-card-icon toast-card-icon-${type}`;
   icon.setAttribute('aria-hidden', 'true');
-  icon.textContent = presentation.icon;
+  const iconSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  iconSvg.setAttribute('viewBox', '0 0 24 24');
+  iconSvg.setAttribute('fill', 'none');
+  iconSvg.setAttribute('stroke', 'currentColor');
+  iconSvg.setAttribute('stroke-width', '2');
+  iconSvg.setAttribute('stroke-linecap', 'round');
+  iconSvg.setAttribute('stroke-linejoin', 'round');
+  iconSvg.setAttribute('width', '20');
+  iconSvg.setAttribute('height', '20');
+  if (type === 'success') {
+    // Match XKeen UI's Tabler IconCircleCheck instead of a font glyph inside a hand-drawn circle.
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    circle.setAttribute('d', 'M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0');
+    const check = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    check.setAttribute('d', 'M9 12l2 2l4 -4');
+    iconSvg.append(circle, check);
+  } else {
+    // XKeen UI uses Tabler IconAlertCircle for error notifications.
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    circle.setAttribute('d', 'M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0 -18');
+    const mark = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    mark.setAttribute('d', 'M12 8v4');
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    dot.setAttribute('d', 'M12 16h.01');
+    iconSvg.append(circle, mark, dot);
+  }
+  icon.append(iconSvg);
   const copy = document.createElement('span'); copy.className = 'toast-card-copy';
   const title = document.createElement('strong'); title.textContent = presentation.title;
   const detail = document.createElement('span'); detail.textContent = message;
@@ -989,6 +1015,36 @@ async function saveConfigAndApply() {
     toast(lifecycleMessage('restart'));
   } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
   finally { setRestartInProgress(false); setBusy(false); }
+}
+async function formatConfigDraft() {
+  const editor = $('#nfqwsConfTextarea');
+  const button = $('#formatConfigButton');
+  if (!(editor instanceof HTMLTextAreaElement) || !(button instanceof HTMLButtonElement) || button.disabled) return;
+  button.disabled = true;
+  button.textContent = 'Оформляем…';
+  try {
+    const result = await nfqwsConfig.format(editor.value);
+    if (result.content === editor.value) {
+      toast('Форматирование не изменило черновик');
+      return;
+    }
+    editor.focus();
+    editor.setSelectionRange(0, editor.value.length);
+    const inserted = document.execCommand('insertText', false, result.content);
+    if (!inserted || editor.value !== result.content) {
+      editor.value = result.content;
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    syncConfigLines();
+    syncConfigHighlight(editor);
+    renderConfigOutline();
+    toast('Черновик оформлен; конфигурация ещё не применена');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось оформить черновик конфигурации', 'error');
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Оформить';
+  }
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart') {
   if (busy) return;
@@ -2142,6 +2198,7 @@ function bindPrototypeActions() {
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(serviceControlPresentation(status?.service.state).action),
     applyConfigAndRestart: () => void saveConfigAndApply(),
+    formatConfigDraft: () => void formatConfigDraft(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string) => void navigator.clipboard.writeText(String(value)).then(() => toast('Фрагмент скопирован')).catch(() => toast('Буфер обмена недоступен', 'error')),

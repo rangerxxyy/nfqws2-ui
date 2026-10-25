@@ -7,6 +7,7 @@ use crate::{
 use serde::Serialize;
 use std::{
     net::{IpAddr, SocketAddr},
+    path::Path,
     process::Stdio,
     time::{Duration, Instant},
 };
@@ -53,12 +54,192 @@ impl DiagnosticStep {
 pub struct DiagnosticReport {
     pub host: String,
     pub addresses: Vec<IpAddr>,
+    pub reverse_dns: Vec<ReverseDnsRecord>,
     pub steps: Vec<DiagnosticStep>,
     pub summary: String,
     pub limitations: Vec<String>,
     pub direct: DiagnosticStep,
     pub current: DiagnosticStep,
     pub quic: Option<QuicComparison>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReverseDnsRecord {
+    pub address: IpAddr,
+    pub names: Vec<String>,
+    pub resolver: Option<String>,
+    pub detail: String,
+}
+
+fn parse_ptr_names(program: &str, output: &[u8]) -> Vec<String> {
+    let program = Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program);
+    let text = String::from_utf8_lossy(output);
+    let candidates = if program == "nslookup" {
+        text.lines()
+            .filter_map(|line| {
+                line.trim()
+                    .strip_prefix("Name:")
+                    .map(str::trim)
+                    .or_else(|| line.split_once("name =").map(|(_, name)| name.trim()))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        text.lines().map(str::trim).collect::<Vec<_>>()
+    };
+    let mut names = Vec::new();
+    for candidate in candidates {
+        let name = candidate.trim_end_matches('.').to_ascii_lowercase();
+        let valid = name.len() <= 253
+            && !name.is_empty()
+            && name.parse::<IpAddr>().is_err()
+            && name.split('.').all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && label.as_bytes()[0].is_ascii_alphanumeric()
+                    && label.as_bytes()[label.len() - 1].is_ascii_alphanumeric()
+                    && label
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+            });
+        if valid && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn available_reverse_dns_utilities() -> Vec<(&'static str, String)> {
+    let mut directories = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .unwrap_or_default();
+    directories.extend(
+        [
+            "/opt/bin",
+            "/opt/sbin",
+            "/usr/bin",
+            "/usr/sbin",
+            "/bin",
+            "/sbin",
+        ]
+        .into_iter()
+        .map(Path::new)
+        .map(Path::to_path_buf),
+    );
+    let mut utilities = Vec::new();
+    for name in ["kdig", "dig", "nslookup"] {
+        if let Some(path) = directories.iter().find_map(|directory| {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                Some(candidate)
+            } else if cfg!(windows) {
+                let candidate = directory.join(format!("{name}.exe"));
+                candidate.is_file().then_some(candidate)
+            } else {
+                None
+            }
+        }) {
+            utilities.push((name, path.to_string_lossy().into_owned()));
+        }
+    }
+    utilities
+}
+
+async fn reverse_dns_for_ip(
+    address: IpAddr,
+    utilities: &[(&'static str, String)],
+) -> ReverseDnsRecord {
+    if utilities.is_empty() {
+        return ReverseDnsRecord {
+            address,
+            names: Vec::new(),
+            resolver: None,
+            detail: "kdig, dig и nslookup не найдены".into(),
+        };
+    }
+    let started = Instant::now();
+    let mut last_error = "PTR-запись не получена".to_owned();
+    let mut last_resolver = None;
+    for (name, program) in utilities {
+        if started.elapsed() >= Duration::from_secs(4) {
+            last_error = "Истекло время обратного DNS-запроса".into();
+            break;
+        }
+        last_resolver = Some((*name).to_owned());
+        let args = if *name == "nslookup" {
+            vec![address.to_string()]
+        } else {
+            vec!["-x".into(), address.to_string(), "+short".into()]
+        };
+        let remaining = Duration::from_secs(4).saturating_sub(started.elapsed());
+        let seconds = remaining.as_secs().clamp(1, 2);
+        match capture(program, &args, seconds, 4096).await {
+            Ok((0, output)) => {
+                let names = parse_ptr_names(name, &output);
+                let detail = if names.is_empty() {
+                    format!("PTR-запись не найдена ({name})")
+                } else {
+                    format!("Найдено обратным DNS ({name})")
+                };
+                return ReverseDnsRecord {
+                    address,
+                    names,
+                    resolver: Some((*name).into()),
+                    detail,
+                };
+            }
+            Ok((code, output)) => {
+                let names = parse_ptr_names(name, &output);
+                if !names.is_empty() {
+                    return ReverseDnsRecord {
+                        address,
+                        detail: format!("Найдено обратным DNS ({name})"),
+                        names,
+                        resolver: Some((*name).into()),
+                    };
+                }
+                last_error = format!("{name} завершился с кодом {code}");
+            }
+            Err(message) => last_error = format!("{name}: {message}"),
+        }
+    }
+    ReverseDnsRecord {
+        address,
+        names: Vec::new(),
+        resolver: last_resolver,
+        detail: last_error,
+    }
+}
+
+async fn reverse_dns_records(addresses: &[IpAddr]) -> Vec<ReverseDnsRecord> {
+    let utilities = available_reverse_dns_utilities();
+    if utilities.is_empty() {
+        return addresses
+            .iter()
+            .take(4)
+            .copied()
+            .map(|address| ReverseDnsRecord {
+                address,
+                names: Vec::new(),
+                resolver: None,
+                detail: "kdig, dig и nslookup не найдены".into(),
+            })
+            .collect();
+    }
+    let mut tasks = tokio::task::JoinSet::new();
+    for address in addresses.iter().take(4).copied() {
+        let utilities = utilities.clone();
+        tasks.spawn(async move { reverse_dns_for_ip(address, &utilities).await });
+    }
+    let mut records = Vec::new();
+    while let Some(Ok(record)) = tasks.join_next().await {
+        records.push(record);
+    }
+    records.sort_by_key(|record| record.address);
+    records
 }
 
 #[derive(Serialize)]
@@ -1081,6 +1262,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         addresses.clone_from(&reference);
         limitations.push("Для HTTP-проб использованы адреса DoH: системный DNS не дал публичного адреса (возможен FakeIP).".into());
     }
+    let reverse_dns = reverse_dns_records(&addresses).await;
     let Some(ip) = addresses.iter().find_map(|ip| match ip {
         IpAddr::V4(ip) => Some(*ip),
         _ => None,
@@ -1088,6 +1270,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         return DiagnosticReport {
             host,
             addresses,
+            reverse_dns,
             steps,
             summary: "Нет публичного IPv4 для сравнения доступности".into(),
             limitations,
@@ -1132,6 +1315,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
                 summary: diagnosis_summary(&direct, &current).into(),
                 host,
                 addresses,
+                reverse_dns,
                 steps,
                 limitations,
                 direct,
@@ -1155,6 +1339,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
                 summary: diagnosis_summary(&direct, &current).into(),
                 host,
                 addresses,
+                reverse_dns,
                 steps,
                 limitations,
                 direct,
@@ -1177,6 +1362,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
     DiagnosticReport {
         host,
         addresses,
+        reverse_dns,
         steps,
         summary,
         limitations,
@@ -1214,6 +1400,26 @@ mod tests {
             Some(false)
         );
         assert_eq!(http3_advertised(b"curl error"), None);
+    }
+
+    #[test]
+    fn parses_ptr_names_from_dig_kdig_and_nslookup_output() {
+        assert_eq!(
+            parse_ptr_names("dig", b"dns.google.\nedge.example.net.\n"),
+            vec!["dns.google", "edge.example.net"]
+        );
+        assert_eq!(
+            parse_ptr_names("nslookup", b"Server: 192.0.2.1\nAddress: 192.0.2.1#53\n\n8.8.8.8.in-addr.arpa name = dns.google.\n"),
+            vec!["dns.google"]
+        );
+        assert!(
+            parse_ptr_names(
+                "dig",
+                b";; connection timed out; no servers could be reached\n"
+            )
+            .is_empty()
+        );
+        assert!(parse_ptr_names("dig", b"not a hostname/../\n").is_empty());
     }
 
     #[test]

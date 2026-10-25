@@ -437,6 +437,7 @@ export default function App() {
               {"Скрипты"}
             </button>
             <div className={"ml-auto flex flex-wrap items-center gap-2"}>
+              <button id={"formatConfigButton"} data-action-click={"formatConfigDraft"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"Оформить"}</button>
               <button data-action-click={"copyConfigText"} className={"rounded-lg border border-slate-700 bg-slate-800/90 px-3 py-1.5 text-xs font-medium text-slate-200 transition-all hover:bg-slate-700"}>{"Копировать"}</button>
               <button data-action-click={"applyConfigAndRestart"} className={"rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all hover:bg-blue-500 active:scale-95"}>{"Применить конфигурацию"}</button>
             </div>

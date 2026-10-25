@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
+use nfqws2_ui::config_format::format_nfqws_config;
 use nfqws2_ui::freeze_diagnostic;
 use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::site_trace;
@@ -5863,6 +5864,19 @@ async fn validate_config(Json(request): Json<ConfigValidateRequest>) -> Response
     Json(response).into_response()
 }
 
+async fn format_config(Json(request): Json<ConfigValidateRequest>) -> Response {
+    if request.content.len() > MAX_CONFIG_BYTES {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Конфигурация превышает лимит 512 КБ",
+        );
+    }
+    match format_nfqws_config(&request.content) {
+        Ok(content) => Json(serde_json::json!({ "content": content })).into_response(),
+        Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    }
+}
+
 fn revision(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -7575,6 +7589,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/service", post(post_service))
         .route("/api/config", get(get_config).put(put_config))
         .route("/api/nfqws2/config/preview", post(preview_config))
+        .route("/api/nfqws2/config/format", post(format_config))
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
         .route("/api/nfqws2/diagnostics/monitor", post(monitor_sites))
@@ -9911,6 +9926,52 @@ mod tests {
         assert_eq!(
             tokio::fs::read_to_string(&config_path).await.unwrap(),
             "NFQWS_ARGS=\"--filter-tcp=443\"\n"
+        );
+        assert!(!dir.path().join("backups").exists());
+    }
+
+    #[tokio::test]
+    async fn config_format_endpoint_formats_only_the_draft_and_rejects_ambiguous_shell() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("nfqws2.conf");
+        let original = "NFQWS_ARGS=\"--filter-tcp=443 --lua-desync=fake\"\n";
+        tokio::fs::write(&config_path, original).await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().to_path_buf(), Some(config_path.clone())),
+            dir.path().into(),
+        );
+        let formatted = app
+            .clone()
+            .oneshot(
+                Request::post("/api/nfqws2/config/format")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"content": original}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(formatted.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(formatted).await["content"],
+            "NFQWS_ARGS=\"--filter-tcp=443\n    --lua-desync=fake\"\n"
+        );
+        let ambiguous = app
+            .oneshot(
+                Request::post("/api/nfqws2/config/format")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"content": "NFQWS_ARGS=\"$MODE\"\n"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ambiguous.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            tokio::fs::read_to_string(&config_path).await.unwrap(),
+            original
         );
         assert!(!dir.path().join("backups").exists());
     }

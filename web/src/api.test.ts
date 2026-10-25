@@ -121,6 +121,18 @@ describe('API client used by the source-based panel', () => {
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ content: 'NFQWS_EXTRA_ARGS="$MODE_AUTO"\n' });
   });
 
+  it('formats a config draft through the Rust backend without applying it', async () => {
+    const formatted = { content: 'NFQWS_ARGS="--filter-tcp=443\n    --lua-desync=fake"\n' };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(formatted), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsConfig.format('NFQWS_ARGS="--filter-tcp=443 --lua-desync=fake"\n')).toEqual(formatted);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/config/format');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      content: 'NFQWS_ARGS="--filter-tcp=443 --lua-desync=fake"\n',
+    });
+  });
+
   afterEach(() => { vi.restoreAllMocks(); });
 
   it('sends same-origin requests without session or CSRF requirements', async () => {

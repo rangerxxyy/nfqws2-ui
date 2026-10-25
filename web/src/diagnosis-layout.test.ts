@@ -19,3 +19,14 @@ it('keeps QUIC transport and advertised HTTP3 separate and includes both paths',
   expect(rows.find(row => row.id === 'quic')?.detail).toContain('Сейчас:');
   expect(rows.find(row => row.id === 'quic')?.note).toContain('полный запрос HTTP/3 не выполнялся');
 });
+it('shows reverse DNS names per address without claiming PTR when none is found', () => {
+  const report: SiteDiagnosticReport = {host:'example.com',addresses:['203.0.113.9','203.0.113.10'],reverseDns:[
+    {address:'203.0.113.9',names:['edge.example.net'],resolver:'dig',detail:'Найдено обратным DNS (dig)'},
+    {address:'203.0.113.10',names:[],resolver:'nslookup',detail:'PTR-запись не найдена (nslookup)'},
+  ],steps:[step('dns')],direct:step('direct'),current:step('current'),quic:null,summary:'',limitations:[]};
+  const ptr = diagnosisRows(report).find(row => row.id === 'reverse-dns');
+  expect(ptr).toMatchObject({kind:'success',label:'Обратный DNS · PTR'});
+  expect(ptr?.detail).toContain('203.0.113.9: edge.example.net · dig');
+  expect(ptr?.detail).toContain('203.0.113.10: PTR-запись не найдена (nslookup)');
+  expect(ptr?.note).toContain('может отличаться от домена сайта');
+});

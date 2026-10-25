@@ -1,6 +1,7 @@
 use serde::Serialize;
 pub mod community_strategies;
 pub mod config_document;
+pub mod config_format;
 pub mod freeze_diagnostic;
 pub mod probe_lanes;
 pub mod quic_probe;

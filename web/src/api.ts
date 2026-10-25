@@ -8,7 +8,7 @@ export type ConfigResponse = { file: string; content: string; revision: string }
 export type ConfigValidationDiagnostic = { severity: 'error' | 'warning'; code: string; message: string; line: number | null };
 export type ConfigValidationResponse = { valid: boolean; diagnostics: ConfigValidationDiagnostic[]; checks: { parser: 'passed' | 'failed'; installedBinary: 'not_run' } };
 export type SiteDiagnosticStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
-export type SiteDiagnosticReport = { host: string; addresses: string[]; steps: SiteDiagnosticStep[]; summary: string; limitations: string[]; direct: SiteDiagnosticStep; current: SiteDiagnosticStep; quic: null | { direct: SiteDiagnosticStep; current: SiteDiagnosticStep; method: 'quic_initial' | 'http3'; http3Advertised: boolean | null } };
+export type SiteDiagnosticReport = { host: string; addresses: string[]; reverseDns?: Array<{ address: string; names: string[]; resolver: string | null; detail: string }>; steps: SiteDiagnosticStep[]; summary: string; limitations: string[]; direct: SiteDiagnosticStep; current: SiteDiagnosticStep; quic: null | { direct: SiteDiagnosticStep; current: SiteDiagnosticStep; method: 'quic_initial' | 'http3'; http3Advertised: boolean | null } };
 export type SiteTracePhase = { state: 'complete' | 'error' | 'unavailable'; ok: boolean | null; code: number | null; durationMs: number | null; diagnosticClassification?: string | null; reason: string };
 export type SiteTraceReport = { host: string; address: string | null; withoutNfqws2: SiteTracePhase; withNfqws2: SiteTracePhase; traceLines: string[]; traceTruncated: boolean; traceHostname: string | null; traceProfile: string | null; traceActions: string[]; traceWarnings: string[]; summary: string };
 export type SiteTraceOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; message: string; report: SiteTraceReport | null; updatedAt: number };
@@ -151,6 +151,9 @@ export const nfqwsApply = {
 };
 
 export const nfqwsConfig = {
+  format: (content: string) => api<{ content: string }>('/api/nfqws2/config/format', {
+    method: 'POST', body: JSON.stringify({ content }),
+  }),
   validate: (content: string) => api<ConfigValidationResponse>('/api/nfqws2/config/validate', {
     method: 'POST', body: JSON.stringify({ content }),
   }),

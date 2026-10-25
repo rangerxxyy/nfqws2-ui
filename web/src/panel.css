@@ -588,7 +588,8 @@ textarea { line-height: 1.7; tab-size: 4; }
 }
 .toast-card-success { border-color: #04785780; }
 .toast-card-error { border-color: #be123c80; background: linear-gradient(145deg,#351322,#1b111b); }
-.toast-card-icon { display: grid; width: 1.65rem; height: 1.65rem; flex: none; place-items: center; border: 1px solid currentColor; border-radius: 50%; font-size: .82rem; font-weight: 800; }
+.toast-card-icon { display: grid; width: 1.65rem; height: 1.65rem; flex: none; place-items: center; }
+.toast-card-icon svg { display: block; width: 1.25rem; height: 1.25rem; }
 .toast-card-icon-success { color: #34d399; background: #10b98118; }
 .toast-card-icon-error { color: #fb7185; background: #f43f5e18; }
 .toast-card-copy { display: grid; gap: .15rem; min-width: 0; }
