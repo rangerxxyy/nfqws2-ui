@@ -1063,7 +1063,7 @@ textarea { line-height: 1.7; tab-size: 4; }
   [data-layout="tiles"] .app-main-layout > aside nav { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.4rem; }
   [data-layout="tiles"] .app-main-layout > aside nav button { min-height:3rem; padding:.45rem .55rem; border:1px solid #263247; border-radius:.75rem; background:#0c121d; }
   [data-layout="tiles"] .app-main-layout > aside nav button > div { gap:.45rem; }
-  [data-layout="tiles"] .app-main-layout > aside nav button > span { display:none; }
+  [data-layout="tiles"] .app-main-layout > aside nav button > span:last-child { display:none; }
 }
 [data-status-bar="minimal"] #headerStatusBar .metric-group { display:none !important; }
 [data-status-bar="minimal"] .status-pill { padding:.38rem .65rem; border-radius:.65rem; }
@@ -1100,7 +1100,7 @@ textarea { line-height: 1.7; tab-size: 4; }
   [data-layout="tiles"] .app-main-layout > aside > div:first-child { grid-template-columns:1fr; gap:.35rem; padding:.45rem; }
   [data-layout="tiles"] .app-main-layout > aside nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.35rem; }
   [data-layout="tiles"] .app-main-layout > aside nav button { min-height:3.2rem; padding:.45rem; border:1px solid #263247; border-radius:.65rem; background:#0c121d; }
-  [data-layout="tiles"] .app-main-layout > aside nav button > span { display:none; }
+  [data-layout="tiles"] .app-main-layout > aside nav button > span:last-child { display:none; }
 }
 
 /* v0.6.0: native checkbox semantics with consistent animated visual states. */
