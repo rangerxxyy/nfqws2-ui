@@ -9395,7 +9395,6 @@ async fn write_pending_config_apply(
         .map_err(|error| format!("не удалось сериализовать журнал применения: {error}"))?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
         let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
