@@ -51,6 +51,8 @@ describe('TSX panel without authentication', () => {
     expect(template).toContain('aria-label="Развернуть редактор"');
     expect(panelSource).toContain('requestClearConfig:');
     expect(panelSource).toContain('toggleConfigEditorFullscreen:');
+    expect(panelSource).toContain('document.body.append(panel)');
+    expect(panelSource).toContain('fullscreenPlaceholder');
     expect(panelStyles).toContain('.config-editor-fullscreen');
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
   });

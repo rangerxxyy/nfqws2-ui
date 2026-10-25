@@ -33,6 +33,7 @@ let config: ConfigResponse | null = null;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
 let activeLuaScript: string | null = null;
 let discoveredNetworkInterfaces: string[] = [];
+let fullscreenPlaceholder: Comment | null = null;
 let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
 const LIST_EDITOR_VIEW_KEY = 'nfqws2-ui-list-editor-view';
@@ -718,7 +719,20 @@ function toggleConfigEditorFullscreen() {
   const panel = $('#configEditorPanel');
   const button = $('#configEditorFullscreenToggle');
   if (!panel || !(button instanceof HTMLButtonElement)) return;
-  const fullscreen = panel.classList.toggle('config-editor-fullscreen');
+  const fullscreen = !panel.classList.contains('config-editor-fullscreen');
+  if (fullscreen) {
+    const parent = panel.parentNode;
+    if (!parent) return;
+    fullscreenPlaceholder = document.createComment('config-editor-placeholder');
+    parent.insertBefore(fullscreenPlaceholder, panel);
+    document.body.append(panel);
+    panel.classList.add('config-editor-fullscreen');
+  } else {
+    panel.classList.remove('config-editor-fullscreen');
+    if (fullscreenPlaceholder?.parentNode) fullscreenPlaceholder.parentNode.insertBefore(panel, fullscreenPlaceholder);
+    fullscreenPlaceholder?.remove();
+    fullscreenPlaceholder = null;
+  }
   button.setAttribute('aria-pressed', String(fullscreen));
   button.setAttribute('aria-label', fullscreen ? 'Свернуть редактор' : 'Развернуть редактор');
   button.title = fullscreen ? 'Свернуть редактор' : 'Развернуть редактор';
