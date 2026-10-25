@@ -184,6 +184,25 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.diag-result-card');
   });
 
+  it('adds a compact text, link, and file workflow for comparing external nfqws2 configs', () => {
+    const section = template.slice(template.indexOf('id="tabContent-configCheck"'), template.indexOf('id="tabContent-monitor"'));
+    expect(template).toContain('id="navBtn-configCheck"');
+    expect(section).toContain('id="foreignConfigTextContent"');
+    expect(section).toContain('id="foreignConfigUrl"');
+    expect(section).toContain('id="foreignConfigFileInput"');
+    expect(section).toContain('id="foreignConfigHosts"');
+    expect(section).toContain('id="foreignConfigResults"');
+    expect(section).toContain('data-action-click="runForeignConfigCheck"');
+    expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStart');
+    expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStatus');
+    expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigCancel');
+    expect(backendSource).toContain('MAX_FOREIGN_CONFIGS');
+    expect(backendSource).toContain('MAX_FOREIGN_CONFIG_HOSTS');
+    expect(backendSource).toContain('parse_public_https_config_url');
+    expect(backendSource).toContain('external_config_test_args');
+    expect(backendSource).toContain('NFQWS_BASE_ARGS');
+  });
+
   it('styles the trace protocol picker and diagnosis helper text for clear reading', () => {
     expect(template).toContain('class="trace-protocol-picker"');
     expect(template).toContain('diagnosis-help mt-4');
@@ -310,13 +329,19 @@ describe('TSX panel without authentication', () => {
 
   it('exposes a confirmed strategy preview followed by explicit guarded apply', () => {
     const renderer = panelSource.slice(panelSource.indexOf('function renderStrategyPick'), panelSource.indexOf('async function loadStrategyPickHistory'));
-    expect(renderer).toContain("operation.state === 'complete' && result.confirmed");
+    expect(renderer).toContain("['complete', 'partial', 'cancelled', 'failed'].includes(operation.state)");
+    expect(renderer).toContain("details.dataset.candidateKey = candidateKey");
+    expect(renderer).toContain('expandedResults.has(candidateKey)');
     expect(renderer).toContain("preview.dataset.actionClick = 'previewStrategyPick'");
+    expect(renderer).toContain('Предпросмотр и применение Strategy #1');
     expect(panelSource).toContain('nfqwsDiagnostics.strategyPreview');
     expect(template).toContain('id="autotunePreviewPanel"');
     expect(template).toContain('data-action-click="applyStrategyPick"');
     expect(panelSource).toContain('nfqwsDiagnostics.applyStrategy');
     expect(backendSource).toContain('/api/nfqws2/strategies/apply');
+    expect(backendSource).toContain('run_candidates_with_compaction_and_results');
+    expect(backendSource).toContain('run_full_candidates_with_batches_and_results');
+    expect(backendSource).toContain('operation.results.push(candidate.clone())');
     expect(panelSource).toContain('window.confirm(');
     expect(panelSource).toContain("result.targetKind");
     expect(panelStyles).toContain('freeze-result-error');
@@ -544,6 +569,11 @@ describe('TSX panel without authentication', () => {
   it('keeps custom strategy input inside its mode tile and exposes copy feedback', () => {
     const modeTile = appSource.slice(appSource.indexOf('id={"strategyModeSelect"}'), appSource.indexOf('id={"scanProgressLabel"}'));
     expect(modeTile).toContain('id={"strategyCustomInputPanel"}');
+    expect(modeTile).toContain('id={"strategyCustomDetailsDisclosure"}');
+    expect(modeTile).toContain('<summary');
+    expect(modeTile).toContain('text-xs leading-5 text-slate-400');
+    expect(modeTile).toContain('id={"strategyCustomSteps"}');
+    expect(modeTile).toContain('text-xs font-mono leading-5 text-white');
     expect(appSource).not.toMatch(/<div id=\{"strategyCustomInputPanel"\}[^>]*md:col-span-2/);
     expect(modeTile).toContain('data-action-click={"copyStrategyParams"}');
     expect(panelSource).toContain('copyStrategyParams:');
@@ -600,10 +630,10 @@ describe('TSX panel without authentication', () => {
     expect(panelStyles).toContain('.strategy-pick-result-badge.is-unconfirmed');
     expect(panelSource).toContain('strategy-pick-result-status-icon');
     expect(panelStyles).toContain('.strategy-pick-result-status-icon');
-    expect(panelSource).toContain("applyBase.dataset.actionClick = 'applyStrategyPickToBaseArgs'");
-    expect(panelSource).toContain('Применить в NFQWS_BASE_ARGS');
-    expect(panelSource).toContain('Стратегия подтверждена проверкой.');
-    expect(panelSource).toContain('Базовые параметры действуют для всех сайтов.');
+    expect(panelSource).toContain("preview.dataset.actionClick = 'previewStrategyPick'");
+    expect(panelSource).toContain('Предпросмотр и применение Strategy #1');
+    expect(panelSource).toContain('NFQWS_BASE_ARGS не меняется.');
+    expect(panelSource).toContain("nfqwsDiagnostics.strategyPreview(operationId, index)");
   });
 
   it('lets long mobile navigation labels wrap within their grid cells', () => {

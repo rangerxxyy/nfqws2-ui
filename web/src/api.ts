@@ -19,6 +19,7 @@ export type FreezeStrategyMatch = { sni: string; step: string; attempts: number;
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
 export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
 export type FreezeScanOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: FreezeNetworkResult[]; message: string; updatedAt: number };
+export type ForeignConfigCheckOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; hosts: string[]; comparisons: { name: string; source: string; sites: { host: string; currentOk: boolean | null; currentDetail: string; candidateOk: boolean | null; candidateDetail: string }[] }[]; message: string; updatedAt: number };
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
 export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = string;
@@ -200,6 +201,9 @@ export const nfqwsDiagnostics = {
   strategyPreview: (id: string, candidateIndex: number) => api<StrategyPickPreview>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/preview`, { method: 'POST', body: JSON.stringify({ candidateIndex }) }),
   freezeStrategyPreview: (id: string, resultIndex: number) => api<StrategyPickPreview>('/api/nfqws2/strategies/preview', { method: 'POST', body: JSON.stringify({ source: 'freezeScan', operationId: id, candidateIndex: resultIndex }) }),
   applyStrategy: (source: 'strategyPick' | 'freezeScan', operationId: string, candidateIndex: number, expectedRevision: string) => api<{ config: ConfigResponse; message: string }>('/api/nfqws2/strategies/apply', { method: 'POST', body: JSON.stringify({ source, operationId, candidateIndex, expectedRevision }) }),
+  foreignConfigStart: (configs: { name: string; source: string; content?: string; url?: string }[], hosts: string[]) => api<ForeignConfigCheckOperation>('/api/nfqws2/diagnostics/config-check', { method: 'POST', body: JSON.stringify({ configs, hosts }) }),
+  foreignConfigStatus: (id: string) => api<ForeignConfigCheckOperation>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}`),
+  foreignConfigCancel: (id: string) => api<ForeignConfigCheckOperation>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 };
 
 export const nfqwsMonitoring = {

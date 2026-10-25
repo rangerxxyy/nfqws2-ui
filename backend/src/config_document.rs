@@ -250,6 +250,12 @@ impl<'a> ConfigDocument<'a> {
         }
     }
 
+    pub fn contains_assignment(&self, name: &str) -> bool {
+        self.assignments
+            .iter()
+            .any(|assignment| assignment.name == name)
+    }
+
     fn replace(&self, assignment: &Assignment<'_>, value: &str) -> String {
         let mut result = self.source.to_owned();
         result.replace_range(assignment.value.clone(), value);
@@ -351,6 +357,36 @@ impl<'a> ConfigDocument<'a> {
             ));
         }
         Ok(raw.to_owned())
+    }
+
+    /// Read a literal NFQWS_EXTRA_ARGS value or expand one exact `$MODE_*`
+    /// assignment from the same document. This is a narrow static lookup; it
+    /// never evaluates shell code or concatenated expressions.
+    pub fn literal_or_mode_value(&self, name: &str) -> Result<String, String> {
+        if name != "NFQWS_EXTRA_ARGS" {
+            return self.literal_value(name);
+        }
+        if let Ok(value) = self.literal_value(name) {
+            return Ok(value);
+        }
+        let raw = &self.source[self.unique(name)?.value.clone()];
+        let reference = raw
+            .strip_prefix("\"$MODE_")
+            .and_then(|value| value.strip_suffix('"'))
+            .ok_or_else(|| {
+                format!("Значение {name} не является литералом или одной ссылкой $MODE_*")
+            })?;
+        let variable = format!("MODE_{reference}");
+        if reference.is_empty()
+            || !reference
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err(format!("Недопустимая статическая ссылка в {name}"));
+        }
+        self.literal_value(&variable).map_err(|message| {
+            format!("{name}: не удалось безопасно прочитать {variable}: {message}")
+        })
     }
 
     /// Append a sequence of plain nfqws2 argument tokens to a literal variable.

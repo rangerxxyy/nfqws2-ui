@@ -338,6 +338,10 @@ export default function App() {
                 <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>↔</span><span>Диагностика 16 КБ</span></span>
                 <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"}>HTTPS</span>
               </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["configCheck"])} id={"navBtn-configCheck"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <span className={"flex items-center gap-3"}><span className={"text-violet-300"}>⇄</span><span>Проверка конфигурации</span></span>
+                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300"}>.conf</span>
+              </button>
               {"\n\n            "}
               {"\n            "}
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["monitor"])} id={"navBtn-monitor"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
@@ -1067,13 +1071,20 @@ export default function App() {
                 <select id={"strategyModeSelect"} data-action-change={"toggleStrategyCustomInput"} data-value-source={"value"} defaultValue={"quick"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
                   <option value={"quick"}>Быстрый · текущие + базовые</option><option value={"extended"}>Расширенный · каталог blockcheck2</option><option value={"full"}>Полный · каталог blockcheck2 (~3 000)</option><option value={"custom"}>Своя стратегия</option>
                 </select>
-                <p id={"strategyModeHelp"} aria-live={"polite"} className={"strategy-mode-help mt-2 text-[11px] font-medium leading-4 text-slate-300"}>Проверяются текущие стратегии и небольшой базовый набор.</p>
+                <p id={"strategyModeHelp"} aria-live={"polite"} className={"strategy-mode-help mt-2 text-xs font-medium leading-5 text-slate-300"}>Проверяются текущие стратегии и небольшой базовый набор.</p>
                 <div id={"strategyCustomInputPanel"} className={"hidden mt-2 border-t border-slate-800 pt-2"}>
-                  <label htmlFor={"strategyCustomSteps"} className={"block text-xs font-mono text-slate-400"}>Свои параметры · для режима «Своя стратегия»</label>
-                  <textarea id={"strategyCustomSteps"} rows={3} spellCheck={false} placeholder={"одна стратегия на строку, например:\n--lua-desync=multisplit:pos=1,midsld\n--lua-desync=fakedsplit:pos=1"} className={"mt-1.5 w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs sm:text-sm font-mono text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
-                  <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>Каждая строка — отдельный вариант. Несколько --lua-desync в одной строке — шаги одного варианта; \ в конце строки продолжает его на следующей.</p>
-                  <p className={"mt-1 text-[11px] leading-4 text-slate-400"}>Разрешены только параметры --lua-desync.</p>
-                  <button type={"button"} data-action-click={"copyStrategyParams"} data-value-source={"self"} className={"strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200"}>Копировать</button>
+                  <details id={"strategyCustomDetailsDisclosure"} open className={"group"}>
+                    <summary className={"flex cursor-pointer list-none items-center gap-2 text-xs font-mono text-slate-400 marker:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"}>
+                      <span aria-hidden={"true"} className={"text-blue-400 transition-transform group-open:rotate-90"}>›</span>
+                      <span>Свои параметры · для режима «Своя стратегия»</span>
+                    </summary>
+                    <div className={"pt-2"}>
+                      <textarea id={"strategyCustomSteps"} rows={3} spellCheck={false} aria-label={"Параметры своей стратегии"} placeholder={"одна стратегия на строку, например:\n--lua-desync=multisplit:pos=1,midsld\n--lua-desync=fakedsplit:pos=1"} className={"w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono leading-5 text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
+                      <p className={"mt-1 text-xs leading-5 text-slate-400"}>Каждая строка — отдельный вариант. Несколько --lua-desync в одной строке — шаги одного варианта; \ в конце строки продолжает его на следующей.</p>
+                      <p className={"mt-1 text-xs leading-5 text-slate-400"}>Разрешены только параметры --lua-desync.</p>
+                      <button type={"button"} data-action-click={"copyStrategyParams"} data-value-source={"self"} className={"strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200"}>Копировать</button>
+                    </div>
+                  </details>
                 </div>
                 {"\n            "}
               </div>
@@ -1188,6 +1199,42 @@ export default function App() {
               <button id={"applyFreezeStrategyButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>Применить и перезапустить</button>
             </section>
             <p className={"text-xs font-semibold leading-relaxed text-slate-300"}>Проверки идут по очереди с ограничением времени. Причина сбоя отмечается как возможный обрыв, а не как доказательство DPI. Результаты и прогресс сохраняются при перезагрузке страницы.</p>
+          </div>
+        </section>
+        <section id={"tabContent-configCheck"} className={"hidden view-animate space-y-4"}>
+          <div className={"ui-card rounded-2xl p-4 sm:p-5 space-y-4"}>
+            <div>
+              <h2 className={"text-lg font-bold text-white"}>Проверка сторонней конфигурации</h2>
+              <p className={"mt-1 max-w-4xl text-sm leading-relaxed text-slate-400"}>Сравните установленный конфиг и до трёх вариантов на одних сайтах. Каждый вариант запускается отдельным проверочным nfqws2 и подтверждается тремя запросами подряд; после первой неудачи повторы прекращаются. Активный конфиг и обычный трафик не меняются.</p>
+            </div>
+            <div className={"flex flex-wrap items-center gap-2"}>
+              <button data-action-click={"openForeignConfigText"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ Текстом</button>
+              <button data-action-click={"openForeignConfigUrl"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ По ссылке</button>
+              <label className={"cursor-pointer rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>＋ Файл .conf<input id={"foreignConfigFileInput"} type={"file"} accept={".conf,text/plain"} className={"hidden"} /></label>
+            </div>
+            <div id={"foreignConfigTextForm"} className={"hidden space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3"}>
+              <input id={"foreignConfigTextName"} type={"text"} placeholder={"Название конфига (необязательно)"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 text-sm text-white placeholder:text-slate-500"} />
+              <textarea id={"foreignConfigTextContent"} rows={7} placeholder={"Вставьте содержимое nfqws2.conf целиком"} className={"w-full resize-y rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs leading-relaxed text-white placeholder:text-slate-500"}></textarea>
+              <div className={"flex justify-end gap-2"}><button data-action-click={"closeForeignConfigForms"} className={"rounded-lg px-3 py-2 text-sm text-slate-400"}>Закрыть</button><button data-action-click={"addForeignConfigText"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white"}>Добавить конфиг</button></div>
+            </div>
+            <div id={"foreignConfigUrlForm"} className={"hidden space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3"}>
+              <input id={"foreignConfigUrlName"} type={"text"} placeholder={"Название конфига (необязательно)"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 text-sm text-white placeholder:text-slate-500"} />
+              <input id={"foreignConfigUrl"} type={"url"} placeholder={"https://raw.githubusercontent.com/.../nfqws2.conf"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs text-white placeholder:text-slate-500"} />
+              <div className={"flex justify-end gap-2"}><button data-action-click={"closeForeignConfigForms"} className={"rounded-lg px-3 py-2 text-sm text-slate-400"}>Закрыть</button><button data-action-click={"addForeignConfigUrl"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white"}>Добавить ссылку</button></div>
+            </div>
+            <div id={"foreignConfigList"} className={"space-y-2"}><p className={"text-sm text-slate-500"}>Добавьте конфиг текстом, ссылкой или файлом .conf.</p></div>
+            <label htmlFor={"foreignConfigHosts"} className={"block max-w-3xl space-y-1.5 text-sm font-semibold text-slate-200"}>
+              <span>Сайты для сравнения <span className={"font-normal text-slate-500"}>(1–3, домен или публичный IPv4)</span></span>
+              <input id={"foreignConfigHosts"} type={"text"} defaultValue={"youtube.com, discord.com, googleusercontent.com"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs text-white"} />
+            </label>
+            <div className={"flex flex-wrap items-center gap-3"}>
+              <button id={"runForeignConfigCheck"} data-action-click={"runForeignConfigCheck"} className={"rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50"}>▷ Проверить конфиги</button>
+              <button id={"cancelForeignConfigCheck"} data-action-click={"cancelForeignConfigCheck"} className={"hidden rounded-lg border border-rose-500/30 px-4 py-2.5 text-sm font-semibold text-rose-200"}>Остановить</button>
+              <p id={"foreignConfigStatus"} className={"hidden text-sm text-blue-200"} role={"status"} aria-live={"polite"}></p>
+            </div>
+            <div id={"foreignConfigProgress"} className={"hidden h-1.5 overflow-hidden rounded-full bg-slate-800"}><div id={"foreignConfigProgressBar"} className={"h-full bg-blue-500 transition-[width] duration-300"}></div></div>
+            <div id={"foreignConfigResults"} className={"grid gap-3 lg:grid-cols-2"}></div>
+            <p className={"text-[11px] leading-relaxed text-slate-500"}>Принимаются статические конфиги до 64 КиБ. Известные пути Lua/blob-файлов подставляются из текущей установки; незнакомые Lua-файлы и shell-команды не запускаются. Ссылка должна использовать HTTPS без редиректов. Проверки идут последовательно.</p>
           </div>
         </section>
         <section id={"tabContent-monitor"} className={"hidden view-animate space-y-5"}>

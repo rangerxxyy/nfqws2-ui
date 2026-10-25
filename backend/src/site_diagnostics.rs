@@ -382,7 +382,7 @@ pub fn public_ip(ip: IpAddr) -> bool {
     }
 }
 
-pub(crate) async fn capture(
+pub async fn capture(
     program: &str,
     args: &[String],
     seconds: u64,
@@ -422,7 +422,7 @@ pub(crate) async fn capture(
         .map_err(|_| "Истекло время проверки".to_string())?
 }
 
-fn curl_program() -> &'static str {
+pub fn curl_program() -> &'static str {
     if std::path::Path::new("/opt/bin/curl").is_file() {
         "/opt/bin/curl"
     } else if cfg!(windows) {

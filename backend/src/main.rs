@@ -86,6 +86,7 @@ struct AppState {
     monitoring_lock: Arc<Mutex<()>>,
     site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     site_trace_runner: Arc<SiteTraceRunner>,
+    foreign_config_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     freeze_scan_controls: Mutex<HashMap<String, Arc<freeze_diagnostic::FreezeScanPause>>>,
@@ -259,6 +260,55 @@ struct SiteTraceOperation {
     updated_at: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForeignConfigCheckOperation {
+    id: String,
+    state: String,
+    stage: String,
+    current: Option<String>,
+    done: usize,
+    total: usize,
+    hosts: Vec<String>,
+    comparisons: Vec<ForeignConfigComparison>,
+    message: String,
+    updated_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForeignConfigComparison {
+    name: String,
+    source: String,
+    sites: Vec<ForeignConfigSiteResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForeignConfigSiteResult {
+    host: String,
+    current_ok: Option<bool>,
+    current_detail: String,
+    candidate_ok: Option<bool>,
+    candidate_detail: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForeignConfigCheckRequest {
+    configs: Vec<ForeignConfigInput>,
+    hosts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ForeignConfigInput {
+    name: String,
+    source: Option<String>,
+    content: Option<String>,
+    url: Option<String>,
+}
+
 fn update_site_trace_progress(
     operation: &mut SiteTraceOperation,
     stage: &str,
@@ -421,6 +471,16 @@ const MAX_STRATEGY_PICK_OPERATIONS: usize = 12;
 const MAX_TRANSFER_DIAGNOSTIC_STATE_BYTES: usize = 128 * 1024;
 const MAX_FREEZE_SCAN_STATE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_FREEZE_SCAN_PROGRESS: usize = freeze_diagnostic::MAX_TARGETS * 2;
+const MAX_FOREIGN_CONFIG_BYTES: usize = 64 * 1024;
+const MAX_FOREIGN_CONFIGS: usize = 3;
+const MAX_FOREIGN_CONFIG_HOSTS: usize = 3;
+const FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 3;
+
+fn foreign_config_should_retry(outcome: Option<bool>, completed_attempt: usize) -> bool {
+    outcome == Some(true) && completed_attempt + 1 < FOREIGN_CONFIG_CONFIRMATION_REPEATS
+}
+const MAX_FOREIGN_CONFIG_OPERATIONS: usize = 8;
+const MAX_FOREIGN_CONFIG_STATE_BYTES: usize = 128 * 1024;
 
 type SiteTraceRunner = dyn Fn(
         String,
@@ -815,9 +875,66 @@ fn build_strategy_pick_preview(
     functions: &HashSet<String>,
     blobs: &[String],
 ) -> Result<StrategyPickPreview, String> {
-    if operation.state != "complete" {
-        return Err("Применять можно только завершённый подбор".into());
+    if !matches!(
+        operation.state.as_str(),
+        "complete" | "partial" | "cancelled" | "failed"
+    ) {
+        return Err("Применять можно только подтверждённый результат завершённого или остановленного подбора".into());
     }
+    let protocol = match operation.protocol.as_str() {
+        "http" => StrategyProtocol::Http,
+        "https" => StrategyProtocol::Https,
+        _ => return Err("Применение этой версии протокола не поддерживается".into()),
+    };
+    let result = operation
+        .results
+        .get(candidate_index)
+        .ok_or_else(|| "Индекс кандидата вне сохранённого результата подбора".to_string())?;
+    if !result.confirmed || result.attempts < 2 || result.successes < 2 {
+        return Err("Кандидат не прошёл повторное подтверждение; preview недоступен".into());
+    }
+    let _validated_profile = strategy_picker::build_domain_profile(
+        &operation.host,
+        protocol,
+        &result.candidate.steps,
+        functions,
+        blobs,
+    )?;
+    let document = ConfigDocument::parse(original_content)?;
+    let current_args = document.literal_value("NFQWS_ARGS")?;
+    let next_args = insert_first_strategy_steps(&current_args, &result.candidate.steps)?;
+    let proposed_content = document.set_literal_or_append("NFQWS_ARGS", &next_args)?;
+    let diagnostics = validate_nfqws2_config(&proposed_content)?;
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
+        return Err("Сформированный профиль не прошёл статическую проверку конфигурации".into());
+    }
+    if proposed_content.len() > MAX_CONFIG_BYTES {
+        return Err("Изменённая конфигурация превышает лимит размера".into());
+    }
+    Ok(StrategyPickPreview {
+        operation_id: operation.id.clone(),
+        candidate_index,
+        host: operation.host.clone(),
+        protocol: operation.protocol.clone(),
+        candidate: result.candidate.clone(),
+        original_revision,
+        original_content: original_content.to_owned(),
+        proposed_content,
+        summary: "Подтверждённая стратегия станет Strategy #1 в NFQWS_ARGS; существующие номера сдвинутся вниз. Это общая группа правил для всех сайтов. NFQWS_BASE_ARGS не меняется.".into(),
+    })
+}
+
+fn build_freeze_strategy_preview(
+    operation: &StrategyPickOperation,
+    candidate_index: usize,
+    original_content: &str,
+    original_revision: String,
+    functions: &HashSet<String>,
+    blobs: &[String],
+) -> Result<StrategyPickPreview, String> {
     let protocol = match operation.protocol.as_str() {
         "http" => StrategyProtocol::Http,
         "https" => StrategyProtocol::Https,
@@ -872,6 +989,90 @@ fn build_strategy_pick_preview(
         proposed_content,
         summary: "Будет добавлен отдельный доменный профиль в NFQWS_ARGS_CUSTOM. Применение и перезапуск пока не выполняются.".into(),
     })
+}
+
+fn insert_first_strategy_steps(current: &str, steps: &[String]) -> Result<String, String> {
+    if steps.is_empty()
+        || steps
+            .iter()
+            .any(|step| !step.starts_with("--lua-desync=") || step.chars().any(char::is_whitespace))
+    {
+        return Err("Разрешены только параметры --lua-desync без пробелов".into());
+    }
+    if current.contains(['$', '`', '\\', ';', '|', '&', '\0', '\'', '"', '#']) {
+        return Err("NFQWS_ARGS содержит shell-синтаксис; безопасное применение недоступно".into());
+    }
+    let tokens = current.split_whitespace().collect::<Vec<_>>();
+    let existing = tokens
+        .iter()
+        .filter(|token| token.starts_with("--lua-desync="))
+        .map(|token| {
+            if token.starts_with("--lua-desync=circular:") || *token == "--lua-desync=circular" {
+                return Ok((*token).to_string());
+            }
+            let mut parts = token.split(':').map(str::to_string).collect::<Vec<_>>();
+            let strategy_indexes = parts
+                .iter()
+                .enumerate()
+                .filter_map(|(index, part)| {
+                    part.strip_prefix("strategy=")
+                        .map(|value| (index, value.to_string()))
+                })
+                .collect::<Vec<_>>();
+            if strategy_indexes.len() > 1 {
+                return Err("В NFQWS_ARGS у шага указано несколько номеров стратегии".into());
+            }
+            if let Some((index, value)) = strategy_indexes.first() {
+                let number = value
+                    .parse::<u32>()
+                    .map_err(|_| "В NFQWS_ARGS найден некорректный номер стратегии")?;
+                parts[*index] = format!("strategy={}", number.saturating_add(1));
+            } else {
+                parts.push("strategy=2".into());
+            }
+            Ok(parts.join(":"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let first = steps
+        .iter()
+        .map(|step| {
+            let mut parts = step
+                .split(':')
+                .map(str::to_string)
+                .filter(|part| !part.starts_with("strategy="))
+                .collect::<Vec<_>>();
+            parts.push("strategy=1".into());
+            parts.join(":")
+        })
+        .collect::<Vec<_>>();
+    let mut output = Vec::with_capacity(tokens.len() + first.len());
+    let mut inserted = false;
+    let mut existing_index = 0;
+    for token in tokens {
+        if !inserted
+            && token.starts_with("--lua-desync=")
+            && token != "--lua-desync=circular"
+            && !token.starts_with("--lua-desync=circular:")
+        {
+            output.extend(first.iter().cloned());
+            inserted = true;
+        }
+        if token.starts_with("--lua-desync=") {
+            output.push(
+                existing
+                    .get(existing_index)
+                    .cloned()
+                    .unwrap_or_else(|| token.to_string()),
+            );
+            existing_index += 1;
+        } else {
+            output.push(token.to_string());
+        }
+    }
+    if !inserted {
+        output.extend(first);
+    }
+    Ok(output.join("\n"))
 }
 
 fn strategy_dry_run_argv(
@@ -1092,7 +1293,7 @@ async fn preview_freeze_strategy(
             );
         }
     };
-    match build_strategy_pick_preview(
+    match build_freeze_strategy_preview(
         &operation,
         0,
         &content,
@@ -1321,14 +1522,25 @@ async fn apply_confirmed_strategy(
             "Активный процесс nfqws2 изменился во время проверки; конфигурация не изменена",
         );
     }
-    let preview = match build_strategy_pick_preview(
-        &operation,
-        candidate_index,
-        &content,
-        current_revision.clone(),
-        &functions,
-        &blobs,
-    ) {
+    let preview = match if request.source == "freezeScan" {
+        build_freeze_strategy_preview(
+            &operation,
+            candidate_index,
+            &content,
+            current_revision.clone(),
+            &functions,
+            &blobs,
+        )
+    } else {
+        build_strategy_pick_preview(
+            &operation,
+            candidate_index,
+            &content,
+            current_revision.clone(),
+            &functions,
+            &blobs,
+        )
+    } {
         Ok(preview) => preview,
         Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
     };
@@ -1336,9 +1548,27 @@ async fn apply_confirmed_strategy(
         content: preview.proposed_content,
         revision: current_revision,
     };
-    match apply_config_transaction(&state, write, || async {
-        service_action(ServiceAction::Restart).await
-    })
+    let monitoring = match load_monitoring_store(&state.data_dir).await {
+        Ok(monitoring) => monitoring,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let verify_hosts = strategy_apply_verification_hosts(&operation.host, &monitoring);
+    match apply_config_transaction_with_verification(
+        &state,
+        write,
+        || async { service_action(ServiceAction::Restart).await },
+        || async {
+            verify_strategy_hosts_with(verify_hosts.clone(), |host| async move {
+                let report = check_monitoring_host(host).await;
+                if report.current.status == "ok" {
+                    Ok(())
+                } else {
+                    Err(report.summary)
+                }
+            })
+            .await
+        },
+    )
     .await
     {
         Ok(result) => Json(result).into_response(),
@@ -4424,6 +4654,259 @@ fn start_monitoring_scheduler(state: Arc<AppState>) {
     });
 }
 
+fn foreign_config_operation_path(directory: &Path, id: &str) -> PathBuf {
+    directory.join(format!("{id}.json"))
+}
+
+fn write_foreign_config_operation_sync(
+    directory: &Path,
+    operation: &ForeignConfigCheckOperation,
+) -> Result<(), String> {
+    if !valid_site_trace_id(&operation.id) {
+        return Err("Недопустимый идентификатор проверки конфигурации".into());
+    }
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let bytes = serde_json::to_vec(operation).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_FOREIGN_CONFIG_STATE_BYTES {
+        return Err("Результаты проверки конфигурации превышают лимит".into());
+    }
+    let destination = foreign_config_operation_path(directory, &operation.id);
+    let temporary = directory.join(format!("{}.{}.tmp", operation.id, new_update_id()));
+    std::fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        let permissions = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(&temporary, permissions).map_err(|error| error.to_string())?;
+    }
+    std::fs::rename(&temporary, &destination).map_err(|error| error.to_string())
+}
+
+async fn read_foreign_config_operation(
+    directory: &Path,
+    id: &str,
+) -> Result<Option<ForeignConfigCheckOperation>, String> {
+    if !valid_site_trace_id(id) {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    let file = match tokio::fs::File::open(foreign_config_operation_path(directory, id)).await {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Не удалось прочитать результат проверки: {error}")),
+    };
+    file.take((MAX_FOREIGN_CONFIG_STATE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| format!("Не удалось прочитать результат проверки: {error}"))?;
+    if bytes.len() > MAX_FOREIGN_CONFIG_STATE_BYTES {
+        return Err("Сохранённый результат проверки превышает лимит".into());
+    }
+    let operation: ForeignConfigCheckOperation = serde_json::from_slice(&bytes)
+        .map_err(|_| "Повреждён результат проверки конфигурации".to_string())?;
+    let valid_state = matches!(
+        operation.state.as_str(),
+        "queued" | "running" | "stopping" | "complete" | "cancelled" | "failed"
+    );
+    if operation.id != id
+        || !valid_state
+        || operation.hosts.len() > MAX_FOREIGN_CONFIG_HOSTS
+        || operation.comparisons.len() > MAX_FOREIGN_CONFIGS
+        || operation
+            .comparisons
+            .iter()
+            .any(|comparison| comparison.sites.len() != operation.hosts.len())
+    {
+        return Err("Недопустимое состояние проверки конфигурации".into());
+    }
+    Ok(Some(operation))
+}
+
+async fn prune_foreign_config_operations(directory: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(directory).await else {
+        return;
+    };
+    let mut finished = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(id) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if let Ok(Some(operation)) = read_foreign_config_operation(directory, id).await
+            && matches!(
+                operation.state.as_str(),
+                "complete" | "cancelled" | "failed"
+            )
+        {
+            finished.push((operation.updated_at, path));
+        }
+    }
+    finished.sort_by_key(|item| std::cmp::Reverse(item.0));
+    for (_, path) in finished.into_iter().skip(MAX_FOREIGN_CONFIG_OPERATIONS) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+}
+
+fn external_config_test_args(source: &str, active_args: &[String]) -> Result<Vec<String>, String> {
+    let diagnostics = validate_nfqws2_config(source)?;
+    if let Some(diagnostic) = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
+        return Err(format!("{}: {}", diagnostic.code, diagnostic.message));
+    }
+    let document = ConfigDocument::parse(source)?;
+    let active_lua_init = active_args
+        .iter()
+        .filter(|argument| argument.starts_with("--lua-init="))
+        .filter_map(|argument| {
+            argument
+                .strip_prefix("--lua-init=")
+                .and_then(|path| path.trim_start_matches('@').rsplit('/').next())
+                .map(|filename| (filename.to_owned(), argument.as_str()))
+        })
+        .collect::<HashMap<_, _>>();
+    let active_blobs = active_args
+        .iter()
+        .filter(|argument| argument.starts_with("--blob="))
+        .filter_map(|argument| {
+            argument
+                .strip_prefix("--blob=")
+                .and_then(|value| value.split_once(':'))
+                .map(|(name, _)| (name.to_owned(), argument.as_str()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut arguments = Vec::new();
+    for name in [
+        "NFQWS_BASE_ARGS",
+        "NFQWS_ARGS",
+        "NFQWS_EXTRA_ARGS",
+        "NFQWS_ARGS_IPSET",
+        "NFQWS_ARGS_CUSTOM",
+    ] {
+        if !document.contains_assignment(name) {
+            continue;
+        }
+        let value = document
+            .literal_or_mode_value(name)
+            .map_err(|message| format!("{name}: {message}"))?;
+        for argument in value.split_whitespace() {
+            if let Some(path) = argument.strip_prefix("--lua-init=") {
+                let filename = path
+                    .trim_start_matches('@')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default();
+                let Some(active_path) = active_lua_init.get(filename) else {
+                    return Err(format!(
+                        "{name}: проверка отклонена: Lua-файл «{filename}» не подключён в текущем nfqws2"
+                    ));
+                };
+                arguments.push((*active_path).to_owned());
+            } else if let Some(blob) = argument.strip_prefix("--blob=") {
+                let blob_name = blob
+                    .split_once(':')
+                    .map(|(name, _)| name)
+                    .unwrap_or_default();
+                if let Some(active_blob) = active_blobs.get(blob_name) {
+                    arguments.push((*active_blob).to_owned());
+                } else {
+                    arguments.push(argument.to_owned());
+                }
+            } else {
+                arguments.push(argument.to_owned());
+            }
+        }
+    }
+    if !document.contains_assignment("NFQWS_ARGS") {
+        return Err("В конфигурации отсутствует NFQWS_ARGS".into());
+    }
+    if !arguments
+        .iter()
+        .any(|argument| argument.starts_with("--filter-tcp="))
+    {
+        return Err("В NFQWS_ARGS не найден --filter-tcp для проверки HTTPS/HTTP".into());
+    }
+    if arguments
+        .iter()
+        .any(|argument| argument.starts_with("--new") && !argument.eq("--new"))
+    {
+        return Err("Некорректный разделитель профилей --new".into());
+    }
+    Ok(arguments)
+}
+
+fn parse_public_https_config_url(value: &str) -> Result<(String, String), String> {
+    if value.len() > 2048 || !value.starts_with("https://") {
+        return Err("Ссылка должна начинаться с https://".into());
+    }
+    let authority = value[8..].split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') || authority.contains(['\\', '\r', '\n']) {
+        return Err("Ссылка содержит недопустимый адрес или учётные данные".into());
+    }
+    let host = if let Some((host, port)) = authority.rsplit_once(':') {
+        if port != "443" || host.contains(':') {
+            return Err("Для загрузки конфигурации разрешён только HTTPS-порт 443".into());
+        }
+        host
+    } else {
+        authority
+    };
+    // Keep the URL host byte-for-byte aligned with the host passed to curl's
+    // --resolve pin. Curl treats a trailing-dot FQDN as a distinct URL host;
+    // normalizing it before pinning could otherwise let curl resolve it again.
+    if host.ends_with('.') {
+        return Err("В ссылке не допускается точка в конце доменного имени".into());
+    }
+    let host = site_diagnostics::normalize_host(host)?;
+    Ok((host, value.to_owned()))
+}
+
+async fn fetch_external_config(url: &str) -> Result<String, String> {
+    let (host, url) = parse_public_https_config_url(url)?;
+    let address = site_diagnostics::public_ipv4_references(&host)
+        .await
+        .into_iter()
+        .find(|address| site_diagnostics::public_ip(*address))
+        .ok_or_else(|| "Ссылка не разрешилась в публичный IPv4-адрес".to_string())?;
+    let args = vec![
+        "--disable".into(),
+        "--silent".into(),
+        "--show-error".into(),
+        "--fail".into(),
+        "--noproxy".into(),
+        "*".into(),
+        "--proto".into(),
+        "=https".into(),
+        "--connect-timeout".into(),
+        "3".into(),
+        "--max-time".into(),
+        "8".into(),
+        "--max-filesize".into(),
+        MAX_FOREIGN_CONFIG_BYTES.to_string(),
+        "--max-redirs".into(),
+        "0".into(),
+        "--resolve".into(),
+        format!("{host}:443:{address}"),
+        url,
+    ];
+    let (status, bytes) = site_diagnostics::capture(
+        site_diagnostics::curl_program(),
+        &args,
+        9,
+        MAX_FOREIGN_CONFIG_BYTES,
+    )
+    .await?;
+    if status != 0 {
+        return Err(format!(
+            "Загрузка конфигурации завершилась с кодом {status}"
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| "Загруженный файл не является UTF-8 текстом".into())
+}
+
 async fn trace_site(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SiteTraceRequest>,
@@ -4547,6 +5030,393 @@ async fn trace_site(
         task_state.site_trace_controls.lock().await.remove(&task_id);
     });
     (StatusCode::ACCEPTED, Json(operation)).into_response()
+}
+
+async fn start_foreign_config_check(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<ForeignConfigCheckRequest>,
+) -> Response {
+    if request.configs.is_empty() || request.configs.len() > MAX_FOREIGN_CONFIGS {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Добавьте от одного до трёх конфигов для сравнения",
+        );
+    }
+    let mut hosts = Vec::new();
+    for input in request.hosts.iter().take(MAX_FOREIGN_CONFIG_HOSTS + 1) {
+        let host = match site_diagnostics::normalize_site_target(input) {
+            Ok(host) => host,
+            Err(message) => return error(StatusCode::BAD_REQUEST, message),
+        };
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    if hosts.is_empty() || hosts.len() > MAX_FOREIGN_CONFIG_HOSTS {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Укажите от одного до трёх сайтов или публичных IPv4",
+        );
+    }
+    let Some((_, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Не найден однозначно работающий nfqws2 для сравнения",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let binary = paths.binary.to_string_lossy().into_owned();
+    let mut prepared = Vec::new();
+    let mut total_bytes = 0usize;
+    for (index, input) in request.configs.into_iter().enumerate() {
+        let is_url = input.url.is_some();
+        let content = match (input.content, input.url) {
+            (Some(content), None) if !content.trim().is_empty() => content,
+            (None, Some(url)) => match fetch_external_config(&url).await {
+                Ok(content) => content,
+                Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+            },
+            _ => {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    "Для каждого конфига укажите содержимое или HTTPS-ссылку",
+                );
+            }
+        };
+        if content.len() > MAX_FOREIGN_CONFIG_BYTES {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Каждый конфиг ограничен 64 КиБ",
+            );
+        }
+        total_bytes = total_bytes.saturating_add(content.len());
+        if total_bytes > MAX_FOREIGN_CONFIG_BYTES * MAX_FOREIGN_CONFIGS {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Суммарный размер конфигов превышает лимит",
+            );
+        }
+        let args = match external_config_test_args(&content, &active_args) {
+            Ok(args) => args,
+            Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+        };
+        let name = input.name.trim().chars().take(48).collect::<String>();
+        let name = if name.is_empty() {
+            format!("Конфиг {}", index + 1)
+        } else {
+            name
+        };
+        let source = if input.source.as_deref() == Some("Файл") {
+            "Файл"
+        } else if input.source.as_deref() == Some("Ссылка") || is_url {
+            "Ссылка"
+        } else {
+            "Текст"
+        }
+        .to_owned();
+        prepared.push((name, source, args));
+    }
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Сейчас выполняется другая сетевая диагностика; дождитесь её завершения",
+        );
+    };
+    let directory = state.data_dir.join("foreign-config-check-operations");
+    prune_foreign_config_operations(&directory).await;
+    let id = new_update_id();
+    let control = Arc::new(AtomicBool::new(false));
+    let comparisons = prepared
+        .iter()
+        .map(|(name, source, _)| ForeignConfigComparison {
+            name: name.clone(),
+            source: source.clone(),
+            sites: hosts
+                .iter()
+                .map(|host| ForeignConfigSiteResult {
+                    host: host.clone(),
+                    current_ok: None,
+                    current_detail: "Ожидает проверки".into(),
+                    candidate_ok: None,
+                    candidate_detail: "Ожидает проверки".into(),
+                })
+                .collect(),
+        })
+        .collect();
+    let operation = ForeignConfigCheckOperation {
+        id: id.clone(),
+        state: "queued".into(),
+        stage: "queued".into(),
+        current: None,
+        done: 0,
+        total: hosts.len().saturating_mul(prepared.len() + 1),
+        hosts,
+        comparisons,
+        message: "Проверка конфигов поставлена в очередь; активная конфигурация не меняется".into(),
+        updated_at: now_unix_seconds(),
+    };
+    if let Err(message) = write_foreign_config_operation_sync(&directory, &operation) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    state
+        .foreign_config_controls
+        .lock()
+        .await
+        .insert(id.clone(), control.clone());
+    let task_state = state.clone();
+    let task_id = id.clone();
+    let task_active_args = active_args;
+    let worker_operation = operation.clone();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let operation_dir = task_state.data_dir.join("foreign-config-check-operations");
+        let progress = Arc::new(std::sync::Mutex::new(worker_operation));
+        if let Ok(mut operation) = progress.lock() {
+            operation.state = "running".into();
+            operation.stage = "validation".into();
+            operation.message = "Проверяется безопасность и совместимость конфигов".into();
+            operation.updated_at = now_unix_seconds();
+            let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+        }
+        for (name, _, args) in &prepared {
+            let mut dry_run = vec![binary.clone(), "--dry-run".into()];
+            dry_run.extend(args.iter().cloned());
+            if let Err(message) = validate_strategy_dry_run(&dry_run).await {
+                if let Ok(mut operation) = progress.lock() {
+                    operation.state = "failed".into();
+                    operation.stage = "failed".into();
+                    operation.message = format!("«{name}»: {message}");
+                    operation.updated_at = now_unix_seconds();
+                    let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+                }
+                task_state
+                    .foreign_config_controls
+                    .lock()
+                    .await
+                    .remove(&task_id);
+                return;
+            }
+        }
+        let runner = task_state.site_trace_runner.clone();
+        let mut stopped = false;
+        let total_hosts = progress
+            .lock()
+            .ok()
+            .map(|operation| operation.hosts.len())
+            .unwrap_or(0);
+        for host_index in 0..total_hosts {
+            if control.load(Ordering::Acquire) {
+                stopped = true;
+                break;
+            }
+            let (host, active_args) = match progress.lock() {
+                Ok(operation) => (
+                    operation.hosts[host_index].clone(),
+                    task_active_args.clone(),
+                ),
+                Err(_) => break,
+            };
+            if let Ok(mut operation) = progress.lock() {
+                operation.stage = "active".into();
+                operation.current = Some(format!("Текущий конфиг · {host}"));
+                operation.message = format!("Проверяется установленный конфиг: {host}");
+                operation.updated_at = now_unix_seconds();
+                let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+            }
+            let baseline = runner(
+                host.clone(),
+                "https".into(),
+                active_args,
+                binary.clone(),
+                control.clone(),
+                1,
+                None,
+                None,
+            )
+            .await;
+            let direct_ok = baseline.without_nfqws2.ok;
+            if let Ok(mut operation) = progress.lock() {
+                for comparison in &mut operation.comparisons {
+                    if let Some(site) = comparison.sites.get_mut(host_index) {
+                        site.current_ok = baseline.with_nfqws2.ok;
+                        site.current_detail = baseline.with_nfqws2.reason.clone();
+                    }
+                }
+                operation.done = operation.done.saturating_add(1);
+                operation.updated_at = now_unix_seconds();
+                let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+            }
+            for (config_index, (_, _, args)) in prepared.iter().enumerate() {
+                if control.load(Ordering::Acquire) {
+                    stopped = true;
+                    break;
+                }
+                if let Ok(mut operation) = progress.lock() {
+                    operation.stage = "candidate".into();
+                    operation.current = Some(format!(
+                        "{} · {host}",
+                        operation.comparisons[config_index].name
+                    ));
+                    operation.message = format!(
+                        "Проверяется конфиг «{}»: {host}",
+                        operation.comparisons[config_index].name
+                    );
+                    operation.updated_at = now_unix_seconds();
+                    let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+                }
+                let mut reports = Vec::with_capacity(FOREIGN_CONFIG_CONFIRMATION_REPEATS);
+                for attempt in 0..FOREIGN_CONFIG_CONFIRMATION_REPEATS {
+                    if control.load(Ordering::Acquire) {
+                        stopped = true;
+                        break;
+                    }
+                    if let Ok(mut operation) = progress.lock() {
+                        operation.current = Some(format!(
+                            "{} · {host} · проверка {}/{}",
+                            operation.comparisons[config_index].name,
+                            attempt + 1,
+                            FOREIGN_CONFIG_CONFIRMATION_REPEATS
+                        ));
+                        operation.updated_at = now_unix_seconds();
+                        let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+                    }
+                    let report = runner(
+                        host.clone(),
+                        "https".into(),
+                        args.clone(),
+                        binary.clone(),
+                        control.clone(),
+                        1,
+                        Some(direct_ok.unwrap_or(false)),
+                        None,
+                    )
+                    .await;
+                    let outcome = report.with_nfqws2.ok;
+                    reports.push(report);
+                    // Match Zemidala's fail-fast confirmation: one failed
+                    // attempt rules out this config for the site.
+                    if !foreign_config_should_retry(outcome, attempt) {
+                        break;
+                    }
+                }
+                if stopped {
+                    break;
+                }
+                let successes = reports
+                    .iter()
+                    .filter(|report| report.with_nfqws2.ok == Some(true))
+                    .count();
+                let confirmed = successes == FOREIGN_CONFIG_CONFIRMATION_REPEATS;
+                let last_report = reports.last();
+                let candidate_detail = format!(
+                    "{successes}/{} успешных · {}",
+                    FOREIGN_CONFIG_CONFIRMATION_REPEATS,
+                    last_report
+                        .map(|report| report.with_nfqws2.reason.as_str())
+                        .unwrap_or("проверка отменена")
+                );
+                if let Ok(mut operation) = progress.lock() {
+                    if let Some(site) = operation.comparisons[config_index]
+                        .sites
+                        .get_mut(host_index)
+                    {
+                        site.candidate_ok = Some(confirmed);
+                        site.candidate_detail = candidate_detail;
+                    }
+                    operation.done = operation.done.saturating_add(1);
+                    operation.updated_at = now_unix_seconds();
+                    let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+                }
+            }
+            if stopped {
+                break;
+            }
+        }
+        if let Ok(mut operation) = progress.lock() {
+            operation.state = if stopped || control.load(Ordering::Acquire) {
+                "cancelled"
+            } else {
+                "complete"
+            }
+            .into();
+            operation.stage = operation.state.clone();
+            operation.current = None;
+            operation.message = if operation.state == "cancelled" {
+                "Проверка остановлена; завершённые сравнения сохранены".into()
+            } else {
+                "Проверка конфигураций завершена; активный конфиг не изменялся".into()
+            };
+            operation.updated_at = now_unix_seconds();
+            let _ = write_foreign_config_operation_sync(&operation_dir, &operation);
+        }
+        task_state
+            .foreign_config_controls
+            .lock()
+            .await
+            .remove(&task_id);
+    });
+    (StatusCode::ACCEPTED, Json(operation)).into_response()
+}
+
+async fn get_foreign_config_check(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let directory = state.data_dir.join("foreign-config-check-operations");
+    match read_foreign_config_operation(&directory, &id).await {
+        Ok(Some(mut operation)) => {
+            if matches!(operation.state.as_str(), "queued" | "running" | "stopping")
+                && !state.foreign_config_controls.lock().await.contains_key(&id)
+            {
+                operation.state = "failed".into();
+                operation.stage = "failed".into();
+                operation.current = None;
+                operation.message =
+                    "Процесс проверки завершился; сохранённые результаты доступны".into();
+                operation.updated_at = now_unix_seconds();
+                let _ = write_foreign_config_operation_sync(&directory, &operation);
+            }
+            Json(operation).into_response()
+        }
+        Ok(None) => error(StatusCode::NOT_FOUND, "Проверка конфигурации не найдена"),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn cancel_foreign_config_check(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    if !valid_site_trace_id(&id) {
+        return error(StatusCode::NOT_FOUND, "Проверка конфигурации не найдена");
+    }
+    let directory = state.data_dir.join("foreign-config-check-operations");
+    let Some(mut operation) = (match read_foreign_config_operation(&directory, &id).await {
+        Ok(operation) => operation,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }) else {
+        return error(StatusCode::NOT_FOUND, "Проверка конфигурации не найдена");
+    };
+    if !matches!(operation.state.as_str(), "queued" | "running" | "stopping") {
+        return Json(operation).into_response();
+    }
+    let controls = state.foreign_config_controls.lock().await;
+    if let Some(control) = controls.get(&id) {
+        control.store(true, Ordering::Release);
+        operation.state = "stopping".into();
+        operation.stage = "stopping".into();
+        operation.message = "Остановка после безопасной очистки тестового процесса".into();
+        operation.updated_at = now_unix_seconds();
+        if let Err(message) = write_foreign_config_operation_sync(&directory, &operation) {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+        }
+    }
+    Json(operation).into_response()
 }
 
 async fn start_strategy_pick(
@@ -4949,8 +5819,32 @@ async fn start_strategy_pick(
                 let _ = write_strategy_pick_operation_sync(&progress_dir, &operation);
             }
         };
+        let result_state = shared.clone();
+        let result_dir = operation_dir.clone();
+        let mut publish_result = move |candidate: &strategy_picker::StrategyCandidateResult| {
+            if let Ok(mut operation) = result_state.lock() {
+                let existing = operation.results.iter().position(|row| {
+                    row.candidate.name == candidate.candidate.name
+                        && row.candidate.source == candidate.candidate.source
+                        && row.candidate.steps == candidate.candidate.steps
+                });
+                if let Some(index) = existing {
+                    operation.results[index] = candidate.clone();
+                } else if operation.results.len() < 256 {
+                    operation.results.push(candidate.clone());
+                } else if candidate.confirmed
+                    && let Some(index) = operation.results.iter().rposition(|row| !row.confirmed)
+                {
+                    operation.results[index] = candidate.clone();
+                } else {
+                    return;
+                }
+                operation.updated_at = now_unix_seconds();
+                let _ = write_strategy_pick_operation_sync(&result_dir, &operation);
+            }
+        };
         let mut plan_result = if mode == Some(StrategyMode::Full) {
-            strategy_picker::run_full_candidates_with_batches(
+            strategy_picker::run_full_candidates_with_batches_and_results(
                 plan,
                 control.clone(),
                 strategy_picker::FullBatchOptions {
@@ -4961,10 +5855,11 @@ async fn start_strategy_pick(
                 batch_runner,
                 &probe_candidate,
                 update_progress,
+                &mut publish_result,
             )
             .await
         } else {
-            strategy_picker::run_candidates_with_compaction(
+            strategy_picker::run_candidates_with_compaction_and_results(
                 plan,
                 control.clone(),
                 task_repeats,
@@ -4972,6 +5867,7 @@ async fn start_strategy_pick(
                 false,
                 &probe_candidate,
                 update_progress,
+                &mut publish_result,
             )
             .await
         };
@@ -6145,11 +7041,26 @@ async fn put_config(
 async fn apply_config_transaction<F, Fut>(
     state: &AppState,
     write: ConfigWrite,
-    mut restart: F,
+    restart: F,
 ) -> Result<ConfigApplyResponse, String>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<String, String>>,
+{
+    apply_config_transaction_with_verification(state, write, restart, || async { Ok(()) }).await
+}
+
+async fn apply_config_transaction_with_verification<F, Fut, V, VFut>(
+    state: &AppState,
+    write: ConfigWrite,
+    mut restart: F,
+    mut verify: V,
+) -> Result<ConfigApplyResponse, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+    V: FnMut() -> VFut,
+    VFut: std::future::Future<Output = Result<(), String>>,
 {
     if write.content.len() > MAX_CONFIG_BYTES || write.content.as_bytes().contains(&0) {
         return Err("Конфигурация превышает лимит или содержит запрещённый NUL-байт".into());
@@ -6215,7 +7126,14 @@ where
             Err(error) => format!("Повторное чтение конфига не совпало; откат не подтверждён: {error}"),
         });
     }
-    match restart().await {
+    let apply_result = match restart().await {
+        Ok(message) => verify()
+            .await
+            .map(|()| message)
+            .map_err(|error| format!("Проверка после перезапуска не пройдена: {error}")),
+        Err(error) => Err(error),
+    };
+    match apply_result {
         Ok(message) => Ok(ConfigApplyResponse {
             config: ConfigResponse {
                 file: path.display().to_string(),
@@ -6241,6 +7159,73 @@ where
                 )),
             }
         }
+    }
+}
+
+fn strategy_apply_verification_hosts(target: &str, monitoring: &MonitoringStore) -> Vec<String> {
+    let mut hosts = vec![target.to_owned()];
+    for site in &monitoring.sites {
+        if hosts.len() > 20 {
+            break;
+        }
+        if site.host != target
+            && site
+                .results
+                .first()
+                .is_some_and(|result| result.status == "ok")
+            && !hosts.contains(&site.host)
+        {
+            hosts.push(site.host.clone());
+        }
+    }
+    hosts
+}
+
+async fn verify_strategy_hosts_with<F, Fut>(hosts: Vec<String>, probe: F) -> Result<(), String>
+where
+    F: Fn(String) -> Fut + Clone + Send + Sync + 'static,
+    Fut: std::future::Future<Output = Result<(), String>> + Send + 'static,
+{
+    let mut tasks = tokio::task::JoinSet::new();
+    let network_slots = Arc::new(tokio::sync::Semaphore::new(3));
+    for host in hosts {
+        let probe = probe.clone();
+        let network_slots = network_slots.clone();
+        tasks.spawn(async move {
+            let first = {
+                let _permit = network_slots
+                    .clone()
+                    .acquire_owned()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                probe(host.clone()).await
+            };
+            if first.is_ok() {
+                return Ok::<(), String>(());
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let _permit = network_slots
+                .acquire_owned()
+                .await
+                .map_err(|error| error.to_string())?;
+            probe(host.clone())
+                .await
+                .map_err(|message| format!("{host}: {message}"))
+        });
+    }
+
+    let mut failures = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(message)) => failures.push(message),
+            Err(error) => failures.push(format!("проверка завершилась с ошибкой: {error}")),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
     }
 }
 
@@ -7612,6 +8597,18 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/format", post(format_config))
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
+        .route(
+            "/api/nfqws2/diagnostics/config-check",
+            post(start_foreign_config_check),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/config-check/operations/{id}",
+            get(get_foreign_config_check),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/config-check/operations/{id}/cancel",
+            post(cancel_foreign_config_check),
+        )
         .route("/api/nfqws2/diagnostics/monitor", post(monitor_sites))
         .route(
             "/api/nfqws2/monitoring",
@@ -7788,6 +8785,7 @@ async fn main() {
         monitoring_lock: Arc::new(Mutex::new(())),
         site_trace_controls: Mutex::new(HashMap::new()),
         site_trace_runner: Arc::new(router_site_trace_runner),
+        foreign_config_controls: Mutex::new(HashMap::new()),
         strategy_pick_controls: Mutex::new(HashMap::new()),
         transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         freeze_scan_controls: Mutex::new(HashMap::new()),
@@ -7832,6 +8830,105 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_config_repeats_stop_after_three_successes_or_the_first_failure() {
+        assert!(foreign_config_should_retry(Some(true), 0));
+        assert!(foreign_config_should_retry(Some(true), 1));
+        assert!(!foreign_config_should_retry(Some(true), 2));
+        assert!(!foreign_config_should_retry(Some(false), 0));
+        assert!(!foreign_config_should_retry(None, 0));
+    }
+
+    #[test]
+    fn foreign_config_parser_extracts_only_literal_tcp_groups_and_active_lua_paths() {
+        let active = vec![
+            "--lua-init=@/opt/nfqws/lua/zapret-lib.lua".to_string(),
+            "--blob=tls_clienthello:@/opt/nfqws/blobs/tls_clienthello.bin".to_string(),
+        ];
+        let source = "NFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua --blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin\"\nNFQWS_ARGS=\"--filter-tcp=80,443 --payload=tls_client_hello --lua-desync=fake\"\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443 --lua-desync=multisplit:pos=1\"\n";
+        let args = external_config_test_args(source, &active).unwrap();
+        assert_eq!(args.len(), 8);
+        assert!(args.contains(&"--new".to_string()));
+        assert!(args.contains(&active[0]));
+        assert!(args.contains(&active[1]));
+        assert!(
+            args.iter()
+                .any(|argument| argument == "--filter-tcp=80,443")
+        );
+
+        let mode_reference = "MODE_LIST=\"--hostlist=lists/user.list\"\nNFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n";
+        let args = external_config_test_args(mode_reference, &active).unwrap();
+        assert!(
+            args.iter()
+                .any(|argument| argument == "--hostlist=lists/user.list")
+        );
+    }
+
+    #[test]
+    fn foreign_config_parser_rejects_dynamic_values_new_lua_files_and_missing_tcp_filter() {
+        let active = vec!["--lua-init=@/safe.lua".to_string()];
+        for source in [
+            "NFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n",
+            "NFQWS_BASE_ARGS=\"--lua-init=@/untrusted.lua\"\nNFQWS_ARGS=\"--filter-tcp=443\"\n",
+            "NFQWS_ARGS=\"--filter-udp=443\"\n",
+            "NFQWS_ARGS=\"--filter-tcp=443 --new\"\n",
+        ] {
+            assert!(
+                external_config_test_args(source, &active).is_err(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn external_config_url_is_https_public_domain_without_credentials_or_custom_ports() {
+        assert_eq!(
+            parse_public_https_config_url(
+                "https://raw.githubusercontent.com/user/repo/main/nfqws2.conf"
+            )
+            .unwrap(),
+            (
+                "raw.githubusercontent.com".into(),
+                "https://raw.githubusercontent.com/user/repo/main/nfqws2.conf".into()
+            )
+        );
+        for url in [
+            "http://example.com/config.conf",
+            "https://user:pass@example.com/config.conf",
+            "https://example.com:8443/config.conf",
+            "https://example.com./config.conf",
+            "https://router.local/config.conf",
+            "https://127.0.0.1/config.conf",
+        ] {
+            assert!(parse_public_https_config_url(url).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn insert_first_strategy_steps_preserves_shared_circular_and_shifts_each_number() {
+        let steps = vec!["--lua-desync=new:pos=1".to_string()];
+        let changed = insert_first_strategy_steps(
+            "--filter-tcp=80,443 --payload=tls_client_hello --lua-desync=circular:fails=2 --lua-desync=old-a:strategy=1 --lua-desync=old-b:strategy=2",
+            &steps,
+        )
+        .unwrap();
+        assert_eq!(
+            changed,
+            "--filter-tcp=80,443\n--payload=tls_client_hello\n--lua-desync=circular:fails=2\n--lua-desync=new:pos=1:strategy=1\n--lua-desync=old-a:strategy=2\n--lua-desync=old-b:strategy=3"
+        );
+    }
+
+    #[test]
+    fn insert_first_strategy_steps_numbers_legacy_steps_and_rejects_ambiguous_input() {
+        let steps = vec!["--lua-desync=new:pos=1".to_string()];
+        assert_eq!(
+            insert_first_strategy_steps("--lua-desync=old:pos=2", &steps).unwrap(),
+            "--lua-desync=new:pos=1:strategy=1\n--lua-desync=old:pos=2:strategy=2"
+        );
+        assert!(insert_first_strategy_steps("--lua-desync=old:strategy=nope", &steps).is_err());
+        assert!(insert_first_strategy_steps("--lua-desync=old:$MODE", &steps).is_err());
+    }
     use axum::{
         body::{Body, to_bytes},
         http::Request,
@@ -8046,6 +9143,7 @@ mod tests {
             monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: Arc::new(router_site_trace_runner),
+            foreign_config_controls: Mutex::new(HashMap::new()),
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
             freeze_scan_controls: Mutex::new(HashMap::new()),
@@ -8156,7 +9254,7 @@ mod tests {
             0,
         )
         .unwrap();
-        let preview = build_strategy_pick_preview(
+        let preview = build_freeze_strategy_preview(
             &operation,
             0,
             "NFQWS_ARGS_CUSTOM=\"\"\n",
@@ -8190,6 +9288,7 @@ mod tests {
             monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: runner,
+            foreign_config_controls: Mutex::new(HashMap::new()),
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
             freeze_scan_controls: Mutex::new(HashMap::new()),
@@ -8276,7 +9375,7 @@ mod tests {
 
     #[test]
     fn strategy_preview_uses_only_the_confirmed_persisted_candidate_and_preserves_config() {
-        let original = "MODE_LIST='--hostlist=lists/user.list'\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80\" # custom\n";
+        let original = "MODE_LIST='--hostlist=lists/user.list'\nNFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua\"\nNFQWS_ARGS=\"--filter-tcp=80 --lua-desync=old:strategy=1\"\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80\" # custom\n";
         let functions = HashSet::from(["multisplit".to_string()]);
         let preview = build_strategy_pick_preview(
             &confirmed_strategy_pick("complete", "https", true),
@@ -8299,30 +9398,40 @@ mod tests {
         assert!(
             preview
                 .proposed_content
-                .contains("--hostlist-domains=example.com")
+                .contains("NFQWS_BASE_ARGS=\"--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua\"")
         );
+        assert!(preview.proposed_content.contains(
+            "--filter-tcp=80\n--lua-desync=multisplit:pos=1:strategy=1\n--lua-desync=old:strategy=2"
+        ));
         assert!(
-            preview
+            !preview
                 .proposed_content
-                .starts_with(original.split("NFQWS_ARGS_CUSTOM").next().unwrap())
+                .contains("--hostlist-domains=example.com")
         );
     }
 
     #[test]
-    fn strategy_preview_scopes_a_confirmed_ipv4_candidate_with_ipset_ip() {
+    fn strategy_preview_for_ipv4_keeps_shared_config_and_adds_first_strategy() {
         let mut operation = confirmed_strategy_pick("complete", "https", true);
         operation.host = "8.8.8.8".into();
         let preview = build_strategy_pick_preview(
             &operation,
             0,
-            "NFQWS_ARGS_CUSTOM=\"\"\n",
+            "NFQWS_BASE_ARGS=\"--blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin\"\nNFQWS_ARGS=\"--filter-tcp=443\"\n",
             "rev-ip".into(),
             &HashSet::from(["multisplit".to_string()]),
             &[],
         )
         .unwrap();
-        assert!(preview.proposed_content.contains("--ipset-ip=8.8.8.8"));
+        assert!(
+            preview
+                .proposed_content
+                .contains("--lua-desync=multisplit:pos=1:strategy=1")
+        );
         assert!(!preview.proposed_content.contains("--hostlist-domains"));
+        assert!(preview.proposed_content.contains(
+            "NFQWS_BASE_ARGS=\"--blob=tls_clienthello:@/opt/etc/nfqws2/blobs/tls_clienthello.bin\""
+        ));
         assert_eq!(preview.host, "8.8.8.8");
     }
 
@@ -8377,8 +9486,8 @@ mod tests {
         let functions = HashSet::from(["multisplit".to_string()]);
         let revision = "rev".to_owned();
         for (operation, index) in [
-            (confirmed_strategy_pick("cancelled", "https", true), 0),
             (confirmed_strategy_pick("complete", "https", false), 0),
+            (confirmed_strategy_pick("running", "https", true), 0),
             (confirmed_strategy_pick("complete", "quic", true), 0),
             (confirmed_strategy_pick("complete", "https", true), 1),
         ] {
@@ -8394,6 +9503,52 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn strategy_preview_accepts_a_confirmed_result_from_cancelled_scan() {
+        let preview = build_strategy_pick_preview(
+            &confirmed_strategy_pick("cancelled", "https", true),
+            0,
+            "NFQWS_ARGS=\"--filter-tcp=443\"\n",
+            "rev-cancelled".into(),
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .expect("a completed confirmed candidate remains usable after cancellation");
+
+        assert!(preview.proposed_content.contains("strategy=1"));
+        assert_eq!(preview.original_revision, "rev-cancelled");
+    }
+
+    #[test]
+    fn strategy_preview_accepts_a_confirmed_result_from_partial_scan() {
+        let preview = build_strategy_pick_preview(
+            &confirmed_strategy_pick("partial", "https", true),
+            0,
+            "NFQWS_ARGS=\"--filter-tcp=443\"\n",
+            "rev-partial".into(),
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .expect("a confirmed result remains usable when optional refinement was incomplete");
+
+        assert!(preview.proposed_content.contains("strategy=1"));
+    }
+
+    #[test]
+    fn strategy_preview_accepts_persisted_confirmed_result_when_scan_worker_failed_later() {
+        let preview = build_strategy_pick_preview(
+            &confirmed_strategy_pick("failed", "https", true),
+            0,
+            "NFQWS_ARGS=\"--filter-tcp=443\"\n",
+            "rev-failed".into(),
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .expect("a worker failure does not revoke the separately confirmed candidate");
+
+        assert!(preview.proposed_content.contains("strategy=1"));
     }
 
     #[test]
@@ -8900,6 +10055,148 @@ mod tests {
             tokio::fs::read(config).await.unwrap(),
             replacement.as_bytes()
         );
+    }
+
+    #[tokio::test]
+    async fn config_apply_rolls_back_when_post_restart_health_check_fails() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--filter-tcp=80,443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let restart_counter = restart_count.clone();
+
+        let result = apply_config_transaction_with_verification(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            move || {
+                restart_counter.fetch_add(1, Ordering::SeqCst);
+                async { Ok("service restarted".to_string()) }
+            },
+            || async { Err("target site remained unavailable".to_string()) },
+        )
+        .await;
+
+        let error = result.unwrap_err();
+        assert!(error.contains("target site remained unavailable"));
+        assert!(error.contains("Исходный конфиг восстановлен и служба перезапущена"));
+        assert_eq!(restart_count.load(Ordering::SeqCst), 2);
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
+    }
+
+    #[test]
+    fn strategy_apply_verifies_target_once_and_only_previously_healthy_peers() {
+        let store = MonitoringStore {
+            sites: vec![
+                MonitoredSite {
+                    host: "target.example".into(),
+                    results: vec![MonitoredResult {
+                        checked_at: 3,
+                        status: "ok".into(),
+                        summary: "ok".into(),
+                        latency_ms: Some(100),
+                        steps: vec![],
+                    }],
+                },
+                MonitoredSite {
+                    host: "healthy.example".into(),
+                    results: vec![MonitoredResult {
+                        checked_at: 3,
+                        status: "ok".into(),
+                        summary: "ok".into(),
+                        latency_ms: Some(100),
+                        steps: vec![],
+                    }],
+                },
+                MonitoredSite {
+                    host: "already-down.example".into(),
+                    results: vec![MonitoredResult {
+                        checked_at: 3,
+                        status: "error".into(),
+                        summary: "down".into(),
+                        latency_ms: None,
+                        steps: vec![],
+                    }],
+                },
+            ],
+            ..MonitoringStore::default()
+        };
+
+        assert_eq!(
+            strategy_apply_verification_hosts("target.example", &store),
+            vec!["target.example", "healthy.example"]
+        );
+    }
+
+    #[tokio::test]
+    async fn strategy_apply_retries_only_failed_host_checks_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let probe_calls = calls.clone();
+        let result = verify_strategy_hosts_with(vec!["target.example".into()], move |_| {
+            let calls = probe_calls.clone();
+            async move {
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err("temporary failure".to_string())
+                } else {
+                    Ok(())
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn strategy_apply_reports_hosts_that_still_fail_after_retry() {
+        let result = verify_strategy_hosts_with(vec!["broken.example".into()], |_| async {
+            Err("HTTP response missing".to_string())
+        })
+        .await;
+
+        assert_eq!(
+            result,
+            Err("broken.example: HTTP response missing".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn strategy_apply_limits_concurrent_network_probes_to_three() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let probe = {
+            let active = active.clone();
+            let maximum = maximum.clone();
+            move |_| {
+                let active = active.clone();
+                let maximum = maximum.clone();
+                async move {
+                    let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    maximum.fetch_max(now, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                }
+            }
+        };
+
+        let hosts = (0..9)
+            .map(|index| format!("site-{index}.example"))
+            .collect();
+        assert_eq!(verify_strategy_hosts_with(hosts, probe).await, Ok(()));
+        assert!(maximum.load(Ordering::SeqCst) <= 3);
     }
 
     #[tokio::test]

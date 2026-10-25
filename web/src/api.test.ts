@@ -77,6 +77,23 @@ describe('API client used by the source-based panel', () => {
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeCommunity: true, includeOtherHistory: true, refineLighter: true, customSteps: [['--lua-desync=multisplit:pos=1']] });
   });
 
+  it('starts, polls, and cancels a foreign configuration comparison', async () => {
+    const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', current: null, done: 0, total: 4, hosts: ['example.com'], comparisons: [], message: 'queued', updatedAt: 100 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(operation), { status: 202 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'running', current: 'Конфиг · example.com' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'stopping' }), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const configs = [{ name: 'из чата', source: 'Текст', content: 'NFQWS_ARGS="--filter-tcp=443"' }, { name: 'по ссылке', source: 'Ссылка', url: 'https://raw.githubusercontent.com/user/repo/main/nfqws2.conf' }];
+    const started = await nfqwsDiagnostics.foreignConfigStart(configs, ['example.com']);
+    expect(await nfqwsDiagnostics.foreignConfigStatus(started.id)).toMatchObject({ state: 'running', current: 'Конфиг · example.com' });
+    expect(await nfqwsDiagnostics.foreignConfigCancel(started.id)).toMatchObject({ state: 'stopping' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/config-check');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ configs, hosts: ['example.com'] });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/nfqws2/diagnostics/config-check/operations/${started.id}`);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/nfqws2/diagnostics/config-check/operations/${started.id}/cancel`);
+  });
+
   it('requests the full blockcheck2 candidate catalog explicitly', async () => {
     const queued = { id: '0123456789abcdef0123456789abcdef', host: 'example.com', protocol: 'https', state: 'queued', stage: 'queued', current: null, done: 0, total: 3100, results: [], message: 'queued', updatedAt: 100 } as const;
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(queued), { status: 202 }));

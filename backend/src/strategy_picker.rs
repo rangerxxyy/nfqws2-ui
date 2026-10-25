@@ -1429,8 +1429,67 @@ mod batch_argv_tests {
 mod repeat_tests {
     use super::{
         FullBatchOptions, StrategyBatchProbeResult, StrategyCandidate, StrategyPlan,
-        StrategyProbeResult, StrategyProtocol, run_candidates, run_full_candidates_with_batches,
+        StrategyProbeResult, StrategyProtocol, run_candidates,
+        run_candidates_with_compaction_and_results, run_full_candidates_with_batches,
+        run_full_candidates_with_batches_and_results,
     };
+
+    #[tokio::test]
+    async fn publishes_each_candidate_result_before_starting_the_next_candidate() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let runner_events = events.clone();
+        let callback_events = events.clone();
+        let candidates = (0..2)
+            .map(|index| StrategyCandidate {
+                name: format!("candidate {index}"),
+                source: "test".into(),
+                steps: vec![format!("--lua-desync=multisplit:pos={index}")],
+            })
+            .collect();
+        let result = run_candidates_with_compaction_and_results(
+            StrategyPlan {
+                protocol: StrategyProtocol::Https,
+                candidates,
+            },
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            2,
+            false,
+            false,
+            move |candidate, repeats| {
+                let events = runner_events.clone();
+                let name = candidate.name.clone();
+                async move {
+                    events.lock().unwrap().push(format!("start:{name}"));
+                    (0..repeats)
+                        .map(|_| StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: Some(true),
+                            detail: "confirmed probe".into(),
+                        })
+                        .collect::<Vec<_>>()
+                }
+            },
+            |_, _, _| {},
+            move |candidate| {
+                callback_events.lock().unwrap().push(format!(
+                    "result:{}:{}",
+                    candidate.candidate.name, candidate.confirmed
+                ));
+            },
+        )
+        .await;
+
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "start:candidate 0",
+                "result:candidate 0:true",
+                "start:candidate 1",
+                "result:candidate 1:true"
+            ]
+        );
+    }
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -1668,6 +1727,71 @@ mod repeat_tests {
                 .any(|row| row.candidate.name == "slow hit" && !row.confirmed)
         );
         assert_eq!(output.state, "complete");
+    }
+
+    #[tokio::test]
+    async fn full_mode_publishes_each_negative_batch_result_before_starting_the_next_batch() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let batch_events = events.clone();
+        let callback_events = events.clone();
+        let plan = StrategyPlan {
+            protocol: StrategyProtocol::Https,
+            candidates: (0..2)
+                .map(|index| StrategyCandidate {
+                    name: format!("negative {index}"),
+                    source: "Каталог zapret2 (полный)".into(),
+                    steps: vec![format!("--lua-desync=split:pos={index}")],
+                })
+                .collect(),
+        };
+        let result = run_full_candidates_with_batches_and_results(
+            plan,
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            FullBatchOptions {
+                repeats: 1,
+                stop_after_first_confirmed: false,
+                max_batch_size: 1,
+            },
+            move |candidates| {
+                batch_events
+                    .lock()
+                    .unwrap()
+                    .push(format!("batch:{}", candidates[0].name));
+                async move {
+                    Ok(vec![StrategyBatchProbeResult {
+                        candidate_index: 0,
+                        elapsed_ms: 12,
+                        probe: StrategyProbeResult {
+                            baseline_ok: Some(false),
+                            candidate_ok: Some(false),
+                            detail: "candidate did not open the site".into(),
+                        },
+                    }])
+                }
+            },
+            |_: &StrategyCandidate, _: usize| async { Vec::<StrategyProbeResult>::new() },
+            |_, _, _| {},
+            move |row| {
+                callback_events
+                    .lock()
+                    .unwrap()
+                    .push(format!("result:{}:{}", row.candidate.name, row.confirmed));
+            },
+        )
+        .await;
+
+        assert_eq!(result.checked, 2);
+        assert_eq!(result.results.len(), 2);
+        assert!(result.results.iter().all(|row| !row.confirmed));
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "batch:negative 0",
+                "result:negative 0:false",
+                "batch:negative 1",
+                "result:negative 1:false"
+            ]
+        );
     }
 
     #[tokio::test]
@@ -2056,6 +2180,36 @@ pub struct StrategyRunResult {
     pub message: String,
 }
 
+const MAX_FULL_CATALOG_RESULTS: usize = 256;
+
+fn merge_full_catalog_result(
+    results: &mut Vec<StrategyCandidateResult>,
+    omitted: &mut usize,
+    candidate_result: StrategyCandidateResult,
+) -> bool {
+    if let Some(existing) = results.iter_mut().find(|existing| {
+        existing.candidate.name == candidate_result.candidate.name
+            && existing.candidate.source == candidate_result.candidate.source
+            && existing.candidate.steps == candidate_result.candidate.steps
+    }) {
+        *existing = candidate_result;
+        return true;
+    }
+    if results.len() < MAX_FULL_CATALOG_RESULTS {
+        results.push(candidate_result);
+        return true;
+    }
+    if candidate_result.confirmed
+        && let Some(index) = results.iter().rposition(|existing| !existing.confirmed)
+    {
+        results[index] = candidate_result;
+        *omitted = omitted.saturating_add(1);
+        return true;
+    }
+    *omitted = omitted.saturating_add(1);
+    false
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrategyRefinementOutcome {
     pub state: String,
@@ -2314,14 +2468,47 @@ pub async fn run_candidates_with_compaction<F, Fut, P>(
     repeats: usize,
     stop_after_first_confirmed: bool,
     compact_failures: bool,
-    mut runner: F,
-    mut progress: P,
+    runner: F,
+    progress: P,
 ) -> StrategyRunResult
 where
     F: FnMut(&StrategyCandidate, usize) -> Fut,
     Fut: std::future::Future,
     Fut::Output: IntoProbeBatch,
     P: FnMut(usize, usize, &str),
+{
+    run_candidates_with_compaction_and_results(
+        plan,
+        cancel,
+        repeats,
+        stop_after_first_confirmed,
+        compact_failures,
+        runner,
+        progress,
+        |_| {},
+    )
+    .await
+}
+
+/// Run candidates and publish each stored result as soon as its probes finish.
+/// This lets callers persist useful results while a longer catalog scan continues.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_candidates_with_compaction_and_results<F, Fut, P, R>(
+    plan: StrategyPlan,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    repeats: usize,
+    stop_after_first_confirmed: bool,
+    compact_failures: bool,
+    mut runner: F,
+    mut progress: P,
+    mut on_result: R,
+) -> StrategyRunResult
+where
+    F: FnMut(&StrategyCandidate, usize) -> Fut,
+    Fut: std::future::Future,
+    Fut::Output: IntoProbeBatch,
+    P: FnMut(usize, usize, &str),
+    R: FnMut(&StrategyCandidateResult),
 {
     let total = plan.candidates.len();
     let mut result = StrategyRunResult {
@@ -2360,7 +2547,7 @@ where
                 Some(true) => successes += 1,
                 Some(false) => break,
                 _ if cancel.load(std::sync::atomic::Ordering::Acquire) => {
-                    result.results.push(StrategyCandidateResult {
+                    let candidate_result = StrategyCandidateResult {
                         candidate: candidate.clone(),
                         attempts,
                         successes,
@@ -2370,7 +2557,9 @@ where
                             .as_millis()
                             .min(u64::MAX as u128) as u64,
                         detail,
-                    });
+                    };
+                    result.results.push(candidate_result.clone());
+                    on_result(&candidate_result);
                     result.checked += 1;
                     result.state = "cancelled".into();
                     result.message = "Подбор отменён; завершённые повторы сохранены".into();
@@ -2383,7 +2572,7 @@ where
                 }
             }
             if cancel.load(std::sync::atomic::Ordering::Acquire) {
-                result.results.push(StrategyCandidateResult {
+                let candidate_result = StrategyCandidateResult {
                     candidate: candidate.clone(),
                     attempts,
                     successes,
@@ -2393,7 +2582,9 @@ where
                         .as_millis()
                         .min(u64::MAX as u128) as u64,
                     detail,
-                });
+                };
+                result.results.push(candidate_result.clone());
+                on_result(&candidate_result);
                 result.checked += 1;
                 result.state = "cancelled".into();
                 result.message = "Подбор отменён; завершённые повторы сохранены".into();
@@ -2415,12 +2606,18 @@ where
         if refinement_fake_index(&candidate.steps).is_some() && result.refinement_bases.len() < 64 {
             result.refinement_bases.push(candidate_result.clone());
         }
-        if compact_failures && successes == 0 {
+        let should_store = if compact_failures && successes == 0 {
             result.failures += 1;
+            false
         } else if compact_failures && result.results.len() >= 256 {
             result.omitted_results += 1;
+            false
         } else {
-            result.results.push(candidate_result);
+            result.results.push(candidate_result.clone());
+            true
+        };
+        if should_store {
+            on_result(&candidate_result);
         }
         result.checked += 1;
         if confirmed && stop_after_first_confirmed {
@@ -2469,9 +2666,9 @@ pub async fn run_full_candidates_with_batches<B, BFut, S, SFut, P>(
     plan: StrategyPlan,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     options: FullBatchOptions,
-    mut batch_runner: B,
-    mut serial_runner: S,
-    mut progress: P,
+    batch_runner: B,
+    serial_runner: S,
+    progress: P,
 ) -> StrategyRunResult
 where
     B: FnMut(Vec<StrategyCandidate>) -> BFut,
@@ -2480,6 +2677,36 @@ where
     SFut: std::future::Future,
     SFut::Output: IntoProbeBatch,
     P: FnMut(usize, usize, &str),
+{
+    run_full_candidates_with_batches_and_results(
+        plan,
+        cancel,
+        options,
+        batch_runner,
+        serial_runner,
+        progress,
+        |_| {},
+    )
+    .await
+}
+
+pub async fn run_full_candidates_with_batches_and_results<B, BFut, S, SFut, P, R>(
+    plan: StrategyPlan,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    options: FullBatchOptions,
+    mut batch_runner: B,
+    mut serial_runner: S,
+    mut progress: P,
+    mut on_result: R,
+) -> StrategyRunResult
+where
+    B: FnMut(Vec<StrategyCandidate>) -> BFut,
+    BFut: std::future::Future<Output = Result<Vec<StrategyBatchProbeResult>, String>>,
+    S: FnMut(&StrategyCandidate, usize) -> SFut,
+    SFut: std::future::Future,
+    SFut::Output: IntoProbeBatch,
+    P: FnMut(usize, usize, &str),
+    R: FnMut(&StrategyCandidateResult),
 {
     let FullBatchOptions {
         repeats,
@@ -2506,7 +2733,7 @@ where
     };
 
     if !prefix.is_empty() {
-        let prefix_result = run_candidates_with_compaction(
+        let prefix_result = run_candidates_with_compaction_and_results(
             StrategyPlan {
                 protocol: plan.protocol,
                 candidates: prefix,
@@ -2517,6 +2744,7 @@ where
             true,
             &mut serial_runner,
             |done, _, current| progress(done, total, current),
+            &mut on_result,
         )
         .await;
         result.checked = prefix_result.checked;
@@ -2582,7 +2810,7 @@ where
                     != 1
             })
         {
-            let mut one = run_candidates_with_compaction(
+            let mut one = run_candidates_with_compaction_and_results(
                 StrategyPlan {
                     protocol: plan.protocol,
                     candidates: vec![batch[0].clone()],
@@ -2593,6 +2821,7 @@ where
                 true,
                 &mut serial_runner,
                 |done, _, current| progress(result.checked + done, total, current),
+                &mut on_result,
             )
             .await;
             result.checked += one.checked;
@@ -2617,13 +2846,28 @@ where
         let mut positives = Vec::new();
         for probe in probes {
             let candidate = batch[probe.candidate_index].clone();
+            let candidate_result = StrategyCandidateResult {
+                candidate: candidate.clone(),
+                attempts: 1,
+                successes: usize::from(probe.probe.candidate_ok == Some(true)),
+                confirmed: false,
+                elapsed_ms: probe.elapsed_ms,
+                detail: probe.probe.detail.clone(),
+            };
             match probe.probe.candidate_ok {
-                Some(true) => positives.push((probe.elapsed_ms, candidate)),
+                Some(true) => positives.push((probe.elapsed_ms, candidate.clone())),
                 Some(false) => {
                     result.failures += 1;
                     result.checked += 1;
                 }
                 _ if cancel.load(std::sync::atomic::Ordering::Acquire) => {
+                    if merge_full_catalog_result(
+                        &mut result.results,
+                        &mut result.omitted_results,
+                        candidate_result.clone(),
+                    ) {
+                        on_result(&candidate_result);
+                    }
                     result.state = "cancelled".into();
                     result.message =
                         "Пакетная проверка отменена; положительные варианты не подтверждены".into();
@@ -2635,6 +2879,13 @@ where
                     result.failures += 1;
                     result.checked += 1;
                 }
+            }
+            if merge_full_catalog_result(
+                &mut result.results,
+                &mut result.omitted_results,
+                candidate_result.clone(),
+            ) {
+                on_result(&candidate_result);
             }
         }
         positives.sort_by_key(|(elapsed, _)| *elapsed);
@@ -2650,7 +2901,7 @@ where
                 total,
                 &format!("Подтверждение: {}", candidate.name),
             );
-            let mut confirmation = run_candidates_with_compaction(
+            let mut confirmation = run_candidates_with_compaction_and_results(
                 StrategyPlan {
                     protocol: plan.protocol,
                     candidates: vec![candidate],
@@ -2661,6 +2912,7 @@ where
                 true,
                 &mut serial_runner,
                 |done, _, current| progress(result.checked + done, total, current),
+                &mut on_result,
             )
             .await;
             result.checked += confirmation.checked;
@@ -2669,7 +2921,13 @@ where
             result
                 .refinement_bases
                 .append(&mut confirmation.refinement_bases);
-            result.results.append(&mut confirmation.results);
+            for candidate_result in confirmation.results.drain(..) {
+                merge_full_catalog_result(
+                    &mut result.results,
+                    &mut result.omitted_results,
+                    candidate_result,
+                );
+            }
             if confirmation.state == "cancelled" {
                 result.state = "cancelled".into();
                 result.message = confirmation.message;
@@ -2706,6 +2964,12 @@ where
         result
             .message
             .push_str(&format!(" · без успешного ответа: {}", result.failures));
+        if result.omitted_results > 0 {
+            result.message.push_str(&format!(
+                " · скрыто ещё результатов: {}",
+                result.omitted_results
+            ));
+        }
     }
     result.total = total;
     result

@@ -1,5 +1,4 @@
 import { diagnosisRows } from './diagnosis-layout';
-import { replaceBaseDesyncSteps } from './strategy-application';
 import { parseCustomStrategies } from './custom-strategy-input';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
@@ -11,7 +10,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
 import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -25,7 +24,7 @@ import { canShowToast, lifecycleMessage, toastPresentation } from './notificatio
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'monitor' | 'community' | 'snapshots' | 'appearance' | 'about';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'community' | 'snapshots' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['community'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
@@ -51,6 +50,10 @@ let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
+type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
+let foreignConfigInputs: ForeignConfigInput[] = [];
+let activeForeignConfigCheckId: string | null = null;
+let foreignConfigCheckRunning = false;
 let freezeScanRunning = false;
 let activeFreezeScanId: string | null = null;
 const freezeStrategyApplyPending = new Set<string>();
@@ -1511,6 +1514,177 @@ async function stopSiteTrace() {
   }
 }
 
+const FOREIGN_CONFIG_CHECK_STORAGE = 'nfqws2-ui-foreign-config-check-id';
+
+function showForeignConfigForm(kind: 'text' | 'url') {
+  $('#foreignConfigTextForm')?.classList.toggle('hidden', kind !== 'text');
+  $('#foreignConfigUrlForm')?.classList.toggle('hidden', kind !== 'url');
+  $(`#foreignConfig${kind === 'text' ? 'TextContent' : 'Url'}`)?.focus();
+}
+
+function closeForeignConfigForms() {
+  $('#foreignConfigTextForm')?.classList.add('hidden');
+  $('#foreignConfigUrlForm')?.classList.add('hidden');
+}
+
+function renderForeignConfigInputs() {
+  const list = $('#foreignConfigList');
+  if (!list) return;
+  list.replaceChildren();
+  if (!foreignConfigInputs.length) {
+    const empty = document.createElement('p'); empty.className = 'text-sm text-slate-500'; empty.textContent = 'Добавьте конфиг текстом, ссылкой или файлом .conf.'; list.append(empty); return;
+  }
+  foreignConfigInputs.forEach((item, index) => {
+    const row = document.createElement('div'); row.className = 'flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/35 px-3 py-2';
+    const title = document.createElement('div'); title.className = 'min-w-0';
+    const name = document.createElement('strong'); name.className = 'block truncate text-sm text-slate-200'; name.textContent = item.name;
+    const source = document.createElement('span'); source.className = 'block truncate text-[11px] text-slate-500'; source.textContent = item.source === 'Ссылка' ? item.url ?? '' : `${item.source} · ${new TextEncoder().encode(item.content ?? '').length} байт`;
+    title.append(name, source);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'shrink-0 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-rose-400 hover:text-rose-200'; remove.textContent = 'Убрать';
+    remove.addEventListener('click', () => { foreignConfigInputs.splice(index, 1); renderForeignConfigInputs(); });
+    row.append(title, remove); list.append(row);
+  });
+}
+
+function addForeignConfig(input: ForeignConfigInput) {
+  if (foreignConfigInputs.length >= 3) return toast('Можно сравнить не больше трёх конфигов за один запуск.', 'error');
+  foreignConfigInputs.push(input);
+  renderForeignConfigInputs();
+  closeForeignConfigForms();
+  toast(`Добавлен конфиг «${input.name}».`, 'success');
+}
+
+function addForeignConfigText() {
+  const content = $('#foreignConfigTextContent');
+  const nameInput = $('#foreignConfigTextName');
+  if (!(content instanceof HTMLTextAreaElement)) return;
+  const value = content.value.trim();
+  if (!value) return toast('Вставьте содержимое nfqws2.conf.', 'error');
+  if (new TextEncoder().encode(value).length > 65536) return toast('Размер конфига не должен превышать 64 КиБ.', 'error');
+  const name = nameInput instanceof HTMLInputElement && nameInput.value.trim() ? nameInput.value.trim() : `Конфиг ${foreignConfigInputs.length + 1}`;
+  addForeignConfig({ name, source: 'Текст', content: value });
+  content.value = '';
+  if (nameInput instanceof HTMLInputElement) nameInput.value = '';
+}
+
+function addForeignConfigUrl() {
+  const urlInput = $('#foreignConfigUrl');
+  const nameInput = $('#foreignConfigUrlName');
+  if (!(urlInput instanceof HTMLInputElement) || !urlInput.value.trim()) return toast('Укажите HTTPS-ссылку на .conf.', 'error');
+  const name = nameInput instanceof HTMLInputElement && nameInput.value.trim() ? nameInput.value.trim() : `Конфиг ${foreignConfigInputs.length + 1}`;
+  addForeignConfig({ name, source: 'Ссылка', url: urlInput.value.trim() });
+  urlInput.value = '';
+  if (nameInput instanceof HTMLInputElement) nameInput.value = '';
+}
+
+async function addForeignConfigFile(file: File) {
+  if (!file.name.toLowerCase().endsWith('.conf')) return toast('Выберите файл с расширением .conf.', 'error');
+  if (file.size > 65536) return toast('Размер файла не должен превышать 64 КиБ.', 'error');
+  try {
+    const content = await file.text();
+    if (!content.trim()) return toast('Файл пустой.', 'error');
+    addForeignConfig({ name: file.name, source: 'Файл', content });
+  } catch {
+    toast('Не удалось прочитать файл конфигурации.', 'error');
+  }
+}
+
+function foreignStatusLabel(value: boolean | null) {
+  return value === true ? 'Доступен' : value === false ? 'Не отвечает' : 'Ожидает';
+}
+
+function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
+  const status = $('#foreignConfigStatus');
+  const results = $('#foreignConfigResults');
+  const progress = $('#foreignConfigProgress');
+  const bar = $('#foreignConfigProgressBar');
+  const active = ['queued', 'running', 'stopping'].includes(operation.state);
+  if (status) { status.classList.remove('hidden'); status.textContent = operation.current ? `${operation.done}/${operation.total} · ${operation.current}` : operation.message; }
+  progress?.classList.toggle('hidden', !active);
+  if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(operation.done * 100 / operation.total) : 0}%`;
+  const cancel = $('#cancelForeignConfigCheck');
+  if (cancel instanceof HTMLButtonElement) {
+    cancel.classList.toggle('hidden', !active);
+    cancel.disabled = operation.state === 'stopping';
+    cancel.textContent = operation.state === 'stopping' ? 'Останавливаю…' : 'Остановить';
+  }
+  const start = $('#runForeignConfigCheck');
+  if (start instanceof HTMLButtonElement) { start.disabled = active; start.textContent = active ? 'Проверка…' : '▷ Проверить конфиги'; }
+  if (!results) return;
+  results.replaceChildren();
+  for (const comparison of operation.comparisons) {
+    const card = document.createElement('section'); card.className = 'ui-card min-w-0 rounded-xl border border-slate-800 p-3';
+    const heading = document.createElement('div'); heading.className = 'mb-2 flex items-center justify-between gap-2';
+    const title = document.createElement('h3'); title.className = 'truncate text-sm font-bold text-slate-100'; title.textContent = comparison.name;
+    const source = document.createElement('span'); source.className = 'shrink-0 text-[10px] text-slate-500'; source.textContent = comparison.source;
+    heading.append(title, source); card.append(heading);
+    for (const site of comparison.sites) {
+      const row = document.createElement('div'); row.className = 'grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-0.5 border-t border-slate-800/70 py-2 text-xs';
+      const host = document.createElement('strong'); host.className = 'truncate font-mono text-slate-300'; host.textContent = site.host;
+      const current = document.createElement('span'); current.className = `whitespace-nowrap ${site.currentOk === true ? 'text-emerald-300' : site.currentOk === false ? 'text-rose-300' : 'text-slate-500'}`; current.textContent = `Текущий: ${foreignStatusLabel(site.currentOk)}`;
+      const candidate = document.createElement('span'); candidate.className = `whitespace-nowrap ${site.candidateOk === true ? 'text-emerald-300' : site.candidateOk === false ? 'text-rose-300' : 'text-slate-500'}`; candidate.textContent = `Этот: ${foreignStatusLabel(site.candidateOk)}`;
+      const detail = document.createElement('p'); detail.className = 'col-span-3 break-words text-[10px] leading-4 text-slate-500'; detail.textContent = site.candidateOk === null ? site.currentDetail : site.candidateDetail;
+      row.append(host, current, candidate, detail); card.append(row);
+    }
+    results.append(card);
+  }
+}
+
+async function pollForeignConfigCheck(id: string) {
+  activeForeignConfigCheckId = id; foreignConfigCheckRunning = true;
+  localStorage.setItem(FOREIGN_CONFIG_CHECK_STORAGE, id);
+  const terminal = ['complete', 'cancelled', 'failed'];
+  let finished = false;
+  try {
+    let current = await nfqwsDiagnostics.foreignConfigStatus(id);
+    renderForeignConfigCheck(current);
+    for (let attempt = 0; attempt < 300 && !terminal.includes(current.state); attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      current = await nfqwsDiagnostics.foreignConfigStatus(id);
+      renderForeignConfigCheck(current);
+    }
+    if (!terminal.includes(current.state)) setText('#foreignConfigStatus', `${current.message} · проверка продолжится на роутере; можно вернуться позже.`);
+    if (terminal.includes(current.state)) {
+      finished = true;
+      localStorage.removeItem(FOREIGN_CONFIG_CHECK_STORAGE);
+      toast(current.message, current.state === 'failed' ? 'error' : 'success');
+    }
+  } catch (error) {
+    setText('#foreignConfigStatus', error instanceof Error ? error.message : 'Не удалось получить состояние проверки конфигурации.');
+  } finally {
+    // Keep the operation addressable after a polling timeout or a temporary
+    // connection error so the user can still cancel it from this page.
+    foreignConfigCheckRunning = !finished;
+    activeForeignConfigCheckId = finished ? null : id;
+  }
+}
+
+async function runForeignConfigCheck() {
+  if (foreignConfigCheckRunning) return;
+  if (!foreignConfigInputs.length) return toast('Добавьте хотя бы один конфиг для проверки.', 'error');
+  const hostsInput = $('#foreignConfigHosts');
+  const hosts = hostsInput instanceof HTMLInputElement ? hostsInput.value.split(/[\s,;]+/).filter(Boolean) : [];
+  if (!hosts.length || hosts.length > 3) return toast('Укажите от одного до трёх сайтов или публичных IPv4.', 'error');
+  const button = $('#runForeignConfigCheck');
+  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Запуск…'; }
+  try {
+    const operation = await nfqwsDiagnostics.foreignConfigStart(foreignConfigInputs, hosts);
+    renderForeignConfigCheck(operation);
+    await pollForeignConfigCheck(operation.id);
+  } catch (error) {
+    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '▷ Проверить конфиги'; }
+    toast(error instanceof Error ? error.message : 'Не удалось запустить проверку конфигураций.', 'error');
+  }
+}
+
+async function cancelForeignConfigCheck() {
+  if (!activeForeignConfigCheckId) return;
+  const button = $('#cancelForeignConfigCheck');
+  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Останавливаю…'; }
+  try { renderForeignConfigCheck(await nfqwsDiagnostics.foreignConfigCancel(activeForeignConfigCheckId)); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось остановить проверку.', 'error'); }
+}
+
 const STRATEGY_PICK_STORAGE = 'nfqws2-ui-strategy-pick-id';
 function renderStrategyPick(operation: StrategyPickOperation) {
   localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
@@ -1519,6 +1693,11 @@ function renderStrategyPick(operation: StrategyPickOperation) {
   if (bar) (bar as HTMLElement).style.width = `${operation.total ? Math.round(100 * operation.done / operation.total) : 0}%`;
   const container = $('#autotuneStrategiesList');
   if (!container) return;
+  const expandedResults = new Set(
+    [...container.querySelectorAll<HTMLDetailsElement>('details.strategy-pick-steps[open]')]
+      .map((details) => details.dataset.candidateKey)
+      .filter((key): key is string => Boolean(key)),
+  );
   container.replaceChildren();
   const confirmed = operation.results.filter((result) => result.confirmed);
   const windowsTcpTimestampsCommand = 'netsh interface tcp set global timestamps=enabled';
@@ -1583,18 +1762,21 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     const meta = document.createElement('p'); meta.className = 'strategy-pick-result-meta'; meta.textContent = `${result.candidate.source} · ${result.successes}/${result.attempts} успешных · ${result.elapsedMs} мс`;
     const detail = document.createElement('p'); detail.className = 'strategy-pick-result-detail'; detail.textContent = result.detail;
     const details = document.createElement('details'); details.className = 'strategy-pick-steps';
+    const candidateKey = JSON.stringify([result.candidate.name, result.candidate.steps]);
+    details.dataset.candidateKey = candidateKey;
+    details.open = expandedResults.has(candidateKey);
     const detailsSummary = document.createElement('summary'); detailsSummary.textContent = `Подробности и параметры · ${result.candidate.steps.length} шаг.`;
     const args = document.createElement('code'); args.textContent = result.candidate.steps.join('\n');
     const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-[11px] font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200'; copy.textContent = 'Копировать'; copy.dataset.actionClick = 'copyStrategyResult'; copy.dataset.args = JSON.stringify([result.candidate.steps.join('\n'), { source: 'self' }]);
-    const applyBase = document.createElement('button'); applyBase.type = 'button'; applyBase.className = 'strategy-copy-button mt-2 ml-2 rounded-md border border-emerald-700/70 px-2.5 py-1 text-[11px] font-semibold text-emerald-200 transition-colors hover:border-emerald-500 hover:bg-emerald-500/10 disabled:cursor-not-allowed disabled:opacity-50'; applyBase.textContent = operation.state === 'complete' ? 'Применить в NFQWS_BASE_ARGS' : 'Доступно после завершения'; applyBase.disabled = operation.state !== 'complete'; applyBase.dataset.actionClick = 'applyStrategyPickToBaseArgs'; applyBase.dataset.args = JSON.stringify([String(index), operation.id]);
-    details.append(detailsSummary, args, copy, applyBase); body.append(headingLine, meta, detail, details); card.append(status, body);
-    if (operation.state === 'complete' && result.confirmed) {
+    details.append(detailsSummary, args, copy); body.append(headingLine, meta, detail, details); card.append(status, body);
+    const canApplyConfirmedResult = ['complete', 'partial', 'cancelled', 'failed'].includes(operation.state);
+    if (canApplyConfirmedResult && result.confirmed) {
       const preview = document.createElement('button');
       preview.type = 'button';
       preview.className = 'rounded-lg border border-blue-400/30 bg-blue-500/15 px-3 py-2 text-sm font-semibold text-blue-100 transition hover:bg-blue-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
       preview.dataset.actionClick = 'previewStrategyPick';
       preview.dataset.arg = String(index);
-      preview.textContent = 'Предпросмотр профиля';
+      preview.textContent = 'Предпросмотр и применение Strategy #1';
       card.append(preview);
     }
     container.append(card);
@@ -1652,47 +1834,12 @@ async function previewStrategyPick(candidateIndex: string) {
   }
 }
 
-async function applyStrategyPickToBaseArgs(candidateIndex: string, operationId: string) {
-  const index = Number(candidateIndex);
-  const editor = $('#nfqwsConfTextarea');
-  if (busy) return;
-  if (!config || !(editor instanceof HTMLTextAreaElement)) return toast('Сначала загрузите конфигурацию с роутера.', 'error');
-  if (editor.value !== config.content) return toast('Сначала примените или отмените черновик конфигурации.', 'error');
-  if (!Number.isInteger(index) || index < 0 || !operationId) return toast('Выберите результат завершённого подбора.', 'error');
-  setBusy(true);
-  let proposed: string | null = null;
-  try {
-    const operation = await nfqwsDiagnostics.strategyStatus(operationId);
-    if (operation.state !== 'complete') throw new Error('Применить можно только после завершения подбора.');
-    const result = operation.results[index];
-    if (!result) throw new Error('Результат стратегии больше недоступен. Запустите подбор повторно.');
-    const baseArgs = configAssignmentValue(config.content, 'NFQWS_BASE_ARGS');
-    const nextBaseArgs = replaceBaseDesyncSteps(baseArgs, result.candidate.steps);
-    if (!window.confirm([
-      `Заменить стратегические параметры NFQWS_BASE_ARGS на «${result.candidate.name}»?`,
-      result.confirmed ? 'Стратегия подтверждена проверкой.' : 'ВНИМАНИЕ: стратегия не подтверждена и может не открыть сайты.',
-      'Базовые параметры действуют для всех сайтов. Конфигурация будет проверена и nfqws2 перезапустится.'
-    ].join('\n\n'))) return;
-    const before = editor.value;
-    const preview = await nfqwsConfig.preview(before, 'NFQWS_BASE_ARGS', nextBaseArgs);
-    if (editor.value !== before) throw new Error('Конфигурация изменилась во время подготовки; повторите действие.');
-    proposed = preview.content;
-    editor.value = preview.content;
-    editor.dispatchEvent(new Event('input', { bubbles: true }));
-  } catch (error) {
-    toast(error instanceof Error ? error.message : 'Не удалось подготовить базовую стратегию.', 'error');
-  } finally {
-    setBusy(false);
-  }
-  if (proposed) await saveConfigAndApply();
-}
-
 async function previewFreezeStrategy(operationId: string, resultIndex: string) {
   const index = Number(resultIndex);
   if (!Number.isInteger(index) || index < 0) return toast('Индекс проверенного домена некорректен.', 'error');
   const panel = $('#freezeApplyPreviewPanel');
   panel?.classList.remove('hidden');
-  setText('#freezeApplyPreviewSummary', 'Формируется профиль только для проверенного домена…');
+  setText('#freezeApplyPreviewSummary', 'Формируется Strategy #1 в NFQWS_ARGS…');
   const diff = $('#freezeApplyPreviewDiff');
   if (diff) diff.textContent = '';
   try {
@@ -1749,7 +1896,10 @@ async function applyStrategyPick(source: string, operationId: string, candidateI
   if (activeStrategyPreview.candidateIndex !== Number(candidateIndex) || activeStrategyPreview.revision !== expectedRevision) return toast('Предпросмотр устарел. Откройте его снова.', 'error');
   const editor = $('#nfqwsConfTextarea');
   if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) return toast('Сначала примените или отмените черновик конфигурации. Стратегия не применена.', 'error');
-  if (!window.confirm(`Добавить профиль только для ${$(summaryId)?.textContent?.split(' · ')[0] ?? 'проверенного домена'} и перезапустить nfqws2? Будет создана резервная копия; при ошибке запуска конфигурация откатится.`)) return;
+  const applyScope = source === 'strategyPick'
+    ? 'Добавить подтверждённую стратегию как Strategy #1 в NFQWS_ARGS и сдвинуть прежние номера вниз? Это повлияет на все сайты; NFQWS_BASE_ARGS не меняется.'
+    : `Добавить профиль только для ${$(summaryId)?.textContent?.split(' · ')[0] ?? 'проверенного домена'}?`;
+  if (!window.confirm(`${applyScope}\n\nnfqws2 перезапустится. Будет создана резервная копия; при ошибке проверки конфигурация откатится.`)) return;
   const button = $(buttonId);
   if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Применение…'; }
   let wasApplied = false;
@@ -1759,7 +1909,9 @@ async function applyStrategyPick(source: string, operationId: string, candidateI
     activeStrategyPreview = null;
     try { await loadConfig(); }
     catch { toast('Стратегия применена, но страницу конфигурации не удалось обновить. Перезагрузите панель.', 'error'); return; }
-    toast(`${applied.message} Профиль добавлен; резервная копия сохранена.`, 'success');
+    toast(source === 'strategyPick'
+      ? `${applied.message} Стратегия добавлена как Strategy #1; прежние номера сдвинуты. Резервная копия сохранена.`
+      : `${applied.message} Доменный профиль добавлен; резервная копия сохранена.`, 'success');
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось применить профиль.', 'error');
   } finally {
@@ -2289,6 +2441,13 @@ function bindPrototypeActions() {
     runSiteDiagnosis: () => void runSiteDiagnosis(),
     runSiteTrace: () => void runSiteTrace(),
     stopSiteTrace: () => void stopSiteTrace(),
+    openForeignConfigText: () => showForeignConfigForm('text'),
+    openForeignConfigUrl: () => showForeignConfigForm('url'),
+    closeForeignConfigForms: () => closeForeignConfigForms(),
+    addForeignConfigText: () => addForeignConfigText(),
+    addForeignConfigUrl: () => addForeignConfigUrl(),
+    runForeignConfigCheck: () => void runForeignConfigCheck(),
+    cancelForeignConfigCheck: () => void cancelForeignConfigCheck(),
     startStrategyPick: () => void startStrategyPick(),
     cancelStrategyPick: () => void cancelStrategyPick(),
     toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
@@ -2299,7 +2458,6 @@ function bindPrototypeActions() {
     },
     copyStrategyResult: (text: string, button: HTMLButtonElement) => copyStrategyText(text, button),
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
-    applyStrategyPickToBaseArgs: (index: string, operationId: string) => void applyStrategyPickToBaseArgs(index, operationId),
     previewFreezeStrategy: (operationId: string, index: string) => void previewFreezeStrategy(operationId, index),
     applyFreezeStrategyOneClick: (operationId: string, index: string) => void applyFreezeStrategyOneClick(operationId, index),
     applyStrategyPick: (source: string, operationId: string, index: string, revision: string) => void applyStrategyPick(source, operationId, index, revision),
@@ -2404,6 +2562,14 @@ function boot() {
     }
   }, 30_000);
   bindPrototypeActions();
+  const foreignFileInput = $('#foreignConfigFileInput');
+  foreignFileInput?.addEventListener('change', () => {
+    if (!(foreignFileInput instanceof HTMLInputElement)) return;
+    const file = foreignFileInput.files?.[0];
+    if (file) void addForeignConfigFile(file);
+    foreignFileInput.value = '';
+  });
+  renderForeignConfigInputs();
   document.documentElement.classList.add('dark');
   const initialStrategyMode = ($('#strategyModeSelect') as HTMLSelectElement | null)?.value ?? 'quick';
   updateStrategyMode(initialStrategyMode);
@@ -2411,6 +2577,8 @@ function boot() {
   showRoute('conf');
   const savedPick = localStorage.getItem(STRATEGY_PICK_STORAGE);
   if (savedPick) void pollStrategyPick(savedPick, false);
+  const savedForeignConfigCheck = localStorage.getItem(FOREIGN_CONFIG_CHECK_STORAGE);
+  if (savedForeignConfigCheck) void pollForeignConfigCheck(savedForeignConfigCheck);
   const savedFreezeScan = localStorage.getItem('nfqws2-ui-freeze-scan');
   if (savedFreezeScan) void pollFreezeScan(savedFreezeScan);
     void loadStrategyPickHistory();

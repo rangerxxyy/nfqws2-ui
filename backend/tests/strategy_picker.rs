@@ -764,8 +764,16 @@ async fn full_catalog_keeps_testing_after_an_inconclusive_probe_in_a_batch() {
     assert_eq!(result.state, "complete");
     assert_eq!(result.checked, 2);
     assert_eq!(result.failures, 1);
-    assert_eq!(result.results.len(), 1);
-    assert!(result.results[0].confirmed);
+    assert_eq!(result.results.len(), 2);
+    assert!(result.results.iter().any(|row| {
+        row.candidate.name == "catalog candidate 0" && !row.confirmed && row.attempts == 1
+    }));
+    assert!(
+        result
+            .results
+            .iter()
+            .any(|row| { row.candidate.name == "catalog candidate 1" && row.confirmed })
+    );
     assert_eq!(*serial_calls.lock().unwrap(), vec!["catalog candidate 1"]);
 }
 
