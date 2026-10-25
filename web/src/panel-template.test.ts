@@ -193,6 +193,10 @@ describe('TSX panel without authentication', () => {
     expect(section).toContain('id="foreignConfigHosts"');
     expect(section).toContain('id="foreignConfigRepeats"');
     expect(section).toContain('id="foreignConfigResults"');
+    expect(section).toContain('до 10 вариантов');
+    expect(section).toContain('(1–15, домен или публичный IPv4)');
+    expect(panelSource).toContain('foreignConfigInputs.length >= 10');
+    expect(panelSource).toContain('hosts.length > 15');
     expect(section).toContain('data-action-click="runForeignConfigCheck"');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStart');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStatus');

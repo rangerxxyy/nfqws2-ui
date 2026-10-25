@@ -473,8 +473,8 @@ const MAX_TRANSFER_DIAGNOSTIC_STATE_BYTES: usize = 128 * 1024;
 const MAX_FREEZE_SCAN_STATE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_FREEZE_SCAN_PROGRESS: usize = freeze_diagnostic::MAX_TARGETS * 2;
 const MAX_FOREIGN_CONFIG_BYTES: usize = 64 * 1024;
-const MAX_FOREIGN_CONFIGS: usize = 3;
-const MAX_FOREIGN_CONFIG_HOSTS: usize = 3;
+const MAX_FOREIGN_CONFIGS: usize = 10;
+const MAX_FOREIGN_CONFIG_HOSTS: usize = 15;
 const DEFAULT_FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 3;
 const MIN_FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 1;
 const MAX_FOREIGN_CONFIG_CONFIRMATION_REPEATS: usize = 5;
@@ -488,6 +488,16 @@ fn normalize_foreign_config_repeats(requested: Option<usize>) -> usize {
             MIN_FOREIGN_CONFIG_CONFIRMATION_REPEATS,
             MAX_FOREIGN_CONFIG_CONFIRMATION_REPEATS,
         )
+}
+
+fn validate_foreign_config_counts(configs: usize, hosts: usize) -> Result<(), &'static str> {
+    if configs == 0 || configs > MAX_FOREIGN_CONFIGS {
+        return Err("Добавьте от одного до десяти конфигов для сравнения");
+    }
+    if hosts == 0 || hosts > MAX_FOREIGN_CONFIG_HOSTS {
+        return Err("Укажите от одного до пятнадцати сайтов или публичных IPv4");
+    }
+    Ok(())
 }
 
 fn foreign_config_should_retry(
@@ -5741,11 +5751,11 @@ async fn start_foreign_config_check(
     if request.configs.is_empty() || request.configs.len() > MAX_FOREIGN_CONFIGS {
         return error(
             StatusCode::BAD_REQUEST,
-            "Добавьте от одного до трёх конфигов для сравнения",
+            "Добавьте от одного до десяти конфигов для сравнения",
         );
     }
     let mut hosts = Vec::new();
-    for input in request.hosts.iter().take(MAX_FOREIGN_CONFIG_HOSTS + 1) {
+    for input in &request.hosts {
         let host = match site_diagnostics::normalize_site_target(input) {
             Ok(host) => host,
             Err(message) => return error(StatusCode::BAD_REQUEST, message),
@@ -5754,11 +5764,8 @@ async fn start_foreign_config_check(
             hosts.push(host);
         }
     }
-    if hosts.is_empty() || hosts.len() > MAX_FOREIGN_CONFIG_HOSTS {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "Укажите от одного до трёх сайтов или публичных IPv4",
-        );
+    if let Err(message) = validate_foreign_config_counts(request.configs.len(), hosts.len()) {
+        return error(StatusCode::BAD_REQUEST, message);
     }
     let Some((_, active_args)) = active_process_snapshot() else {
         return error(
@@ -9586,6 +9593,16 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foreign_config_request_limits_match_zemidala() {
+        assert!(validate_foreign_config_counts(1, 1).is_ok());
+        assert!(validate_foreign_config_counts(10, 15).is_ok());
+        assert!(validate_foreign_config_counts(11, 1).is_err());
+        assert!(validate_foreign_config_counts(1, 16).is_err());
+        assert!(validate_foreign_config_counts(0, 1).is_err());
+        assert!(validate_foreign_config_counts(1, 0).is_err());
+    }
 
     #[test]
     fn foreign_config_repeats_stop_after_three_successes_or_the_first_failure() {

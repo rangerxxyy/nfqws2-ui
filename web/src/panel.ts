@@ -1547,7 +1547,7 @@ function renderForeignConfigInputs() {
 }
 
 function addForeignConfig(input: ForeignConfigInput) {
-  if (foreignConfigInputs.length >= 3) return toast('Можно сравнить не больше трёх конфигов за один запуск.', 'error');
+  if (foreignConfigInputs.length >= 10) return toast('Можно сравнить не больше десяти конфигов за один запуск.', 'error');
   foreignConfigInputs.push(input);
   renderForeignConfigInputs();
   closeForeignConfigForms();
@@ -1664,7 +1664,7 @@ async function runForeignConfigCheck() {
   if (!foreignConfigInputs.length) return toast('Добавьте хотя бы один конфиг для проверки.', 'error');
   const hostsInput = $('#foreignConfigHosts');
   const hosts = hostsInput instanceof HTMLInputElement ? hostsInput.value.split(/[\s,;]+/).filter(Boolean) : [];
-  if (!hosts.length || hosts.length > 3) return toast('Укажите от одного до трёх сайтов или публичных IPv4.', 'error');
+  if (!hosts.length || hosts.length > 15) return toast('Укажите от одного до пятнадцати сайтов или публичных IPv4.', 'error');
   const repeatsInput = $('#foreignConfigRepeats');
   const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
   const button = $('#runForeignConfigCheck');
