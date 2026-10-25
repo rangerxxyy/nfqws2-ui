@@ -193,13 +193,16 @@ describe('TSX panel without authentication', () => {
     expect(section).toContain('data-action-click="openForeignConfigFile"');
     expect(section).not.toContain('＋ Текстом');
     expect(section).not.toContain('＋ По ссылке');
-    expect(section).not.toContain('＋ Файл .conf');
+    expect(section).toContain('Файл .conf/.txt');
+    expect(section).toContain('accept=".conf,.txt,text/plain"');
+    expect(section).toContain('файлом .conf/.txt');
     expect(section).toContain('id="foreignConfigHosts"');
     expect(section).toContain('id="foreignConfigRepeats"');
     expect(section).toContain('id="foreignConfigResults"');
     expect(section).toContain('до 10 вариантов');
     expect(section).toContain('(1–15, домен или публичный IPv4)');
     expect(panelSource).toContain('foreignConfigInputs.length >= 10');
+    expect(panelSource).toContain('isSupportedForeignConfigFileName(file.name)');
     expect(panelSource).toContain('hosts.length > 15');
     expect(section).toContain('data-action-click="runForeignConfigCheck"');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStart');

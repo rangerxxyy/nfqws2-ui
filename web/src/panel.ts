@@ -20,6 +20,7 @@ import { installActionTooltips } from './action-tooltips';
 import { strategyNeedsWindowsTcpTimestamps } from './strategy-capability';
 import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
+import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
@@ -1533,7 +1534,7 @@ function renderForeignConfigInputs() {
   if (!list) return;
   list.replaceChildren();
   if (!foreignConfigInputs.length) {
-    const empty = document.createElement('p'); empty.className = 'text-sm text-slate-500'; empty.textContent = 'Добавьте конфиг текстом, ссылкой или файлом .conf.'; list.append(empty); return;
+    const empty = document.createElement('p'); empty.className = 'text-sm text-slate-500'; empty.textContent = 'Добавьте конфиг текстом, ссылкой или файлом .conf/.txt.'; list.append(empty); return;
   }
   foreignConfigInputs.forEach((item, index) => {
     const row = document.createElement('div'); row.className = 'flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/35 px-3 py-2';
@@ -1584,7 +1585,7 @@ function openForeignConfigFile() {
 }
 
 async function addForeignConfigFile(file: File) {
-  if (!file.name.toLowerCase().endsWith('.conf')) return toast('Выберите файл с расширением .conf.', 'error');
+  if (!isSupportedForeignConfigFileName(file.name)) return toast('Выберите файл с расширением .conf или .txt.', 'error');
   if (file.size > 65536) return toast('Размер файла не должен превышать 64 КиБ.', 'error');
   try {
     const content = await file.text();
