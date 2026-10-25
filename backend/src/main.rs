@@ -4958,7 +4958,6 @@ async fn prepare_foreign_auto_lists(
         };
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
             let mut file = tokio::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
