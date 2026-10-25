@@ -117,6 +117,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain(".styled-select-option[data-active='true'] { outline:none; background:rgba(59,130,246,.15); color:#60a5fa; }");
     expect(panelStyles).toContain('.styled-select-menu[data-side=\'top\']');
     expect(styledSelectSource).toContain('styledSelectMenuSide');
+    expect(styledSelectSource).toContain('state.activeIndex = -1;');
+    expect(styledSelectSource).toContain("item.dataset.active = String(state.open && index === state.activeIndex)");
     expect(panelStyles).toContain('#toastWrapper > .toast-card.is-removing { animation: toast-out');
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
     expect(panelStyles).toContain('[data-theme="dark"] [class*="text-purple-"]');

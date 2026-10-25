@@ -134,11 +134,10 @@ function refreshState(state: StyledSelectState) {
     menu.hidden = false;
     menu.removeAttribute('aria-hidden');
     const active = models[state.activeIndex];
-    if (!active || active.disabled) {
-      const next = nextEnabledOption(models, select.selectedIndex, 1);
-      setActiveOption(state, next);
-    } else {
+    if (active && !active.disabled) {
       setActiveOption(state, state.activeIndex);
+    } else {
+      state.trigger.removeAttribute('aria-activedescendant');
     }
     positionMenu(state);
   }
@@ -244,7 +243,7 @@ function installOne(select: HTMLSelectElement) {
     if (state.open) closeMenu(state);
     else {
       state.open = true;
-      state.activeIndex = select.selectedIndex;
+      state.activeIndex = -1;
       refreshState(state);
     }
   });
