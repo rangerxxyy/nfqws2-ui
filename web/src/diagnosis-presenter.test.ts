@@ -29,7 +29,8 @@ describe('diagnosis presentation', () => {
     expect(presentTrace({ ...phase, ok: null }, route).kind).toBe('unknown');
   });
   it('keeps QUIC network response distinct from HTTP/3 and advertising', () => {
-    expect(quicExplanation('quic_initial', true)).toBe('QUIC Initial отвечает; полный запрос HTTP/3 не выполнялся. Alt-Svc: HTTP/3 заявлен.');
-    expect(quicExplanation('http3', null)).toContain('Выполнен запрос HTTP/3');
+    expect(quicExplanation('quic_initial', true)).toBe('QUIC отвечает; HTTP/3 заявлен.');
+    expect(quicExplanation('quic_initial', false)).toBe('QUIC отвечает; HTTP/3 не заявлен.');
+    expect(quicExplanation('http3', null)).toBe('Проверен HTTP/3; поддержка сайта не определена.');
   });
 });

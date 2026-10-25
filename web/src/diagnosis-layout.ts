@@ -27,7 +27,7 @@ export function diagnosisRows(report: SiteDiagnosticReport): DiagnosisRow[] {
     row('sni','Проверка имени · SNI',step('sni')),row('http','Открытый HTTP · порт 80',step('http')),row('current','Как открывается сейчас',report.current)];
   if (report.quic) {
     const q = report.quic;
-    const describe = (label: string, result: SiteDiagnosticStep) => `${label}: ${presentStep(result).text}${result.durationMs === null ? '' : ` · ${result.durationMs} мс`}. ${result.detail}`;
+    const describe = (label: string, result: SiteDiagnosticStep) => `${label}: ${presentStep(result).text}${result.httpCode === null ? '' : ` · HTTP ${result.httpCode}`}${result.durationMs === null ? '' : ` · ${result.durationMs} мс`}`;
     rows.push({id:'quic',label:q.method === 'http3' ? 'QUIC · HTTP/3' : 'QUIC · UDP 443',kind:comparisonVerdict(q.direct,q.current).kind,
       detail:`${describe('Напрямую',q.direct)}\n${describe('Сейчас',q.current)}`,metrics:'',note:quicExplanation(q.method,q.http3Advertised)});
   } else rows.push(row('quic','QUIC · HTTP/3'));

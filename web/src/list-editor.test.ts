@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, listRowsFromContent, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
+import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listTabIdsFromInventory, listRowsFromContent, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 
 describe('list editor helpers', () => {
   it('builds searchable rows without losing source line indexes or comment identity', () => {
@@ -91,8 +91,4 @@ describe('list editor helpers', () => {
     expect(removeListLines(content, 8, 27)).toEqual({ content: '# note\r\n', removed: 2 });
   });
 
-  it('searches case-insensitively from the caret and wraps to the first match', () => {
-    expect(findNextListMatch('Alpha.test\nbeta.test\nALPHA.test', 'alpha', 5)).toEqual({ start: 21, end: 26 });
-    expect(findNextListMatch('Alpha.test\nbeta.test', 'missing', 0)).toBeNull();
-  });
 });

@@ -740,7 +740,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("localStorage.setItem(LIST_EDITOR_VIEW_KEY, view)");
     expect(panelSource).toContain('listRowsFromContent(editor.value');
     expect(panelSource).toContain('removeListLinesByIndices(editor.value');
-    expect(panelSource).toContain("$('#findNextListEntryButton')?.classList.toggle('hidden', listEditorView === 'rows')");
+    expect(panelSource).not.toContain('findNextListEntry');
+    expect(appSource).toContain('aria-label={"Вид списка"}');
     expect(panelStyles).toContain('.list-editor-row');
     expect(panelStyles).toContain('[data-theme="light"] .list-editor-row');
   });
@@ -818,16 +819,24 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('deduplicateListContent');
   });
 
-  it('provides list draft add, line removal, search, import, and export actions without fabricated presets', () => {
+  it('provides compact list draft tools, clear confirmation, and fullscreen controls without search', () => {
     expect(template).not.toContain('id="listAddEntriesInput"');
-    expect(template).toContain('id="listSearchInput"');
+    expect(template).not.toContain('id="listSearchInput"');
+    expect(template).not.toContain('id="findNextListEntryButton"');
+    expect(template).toContain('id="listEditorViewGroup"');
+    expect(template).toContain('id="listEditorFullscreenToggle"');
+    expect(template).toContain('data-action-click="requestClearListDraft"');
+    expect(template).toContain('id="listClearModal"');
+    expect(template).toContain('id="listEditorPanel"');
     expect(template).toContain('id="listImportFile"');
     expect(template).not.toContain('data-action-click="appendListEntriesToDraft"');
     expect(template).toContain('data-action-click="removeSelectedListLines"');
-    expect(template).toContain('data-action-click="findNextListEntry"');
     expect(template).toContain('data-action-click="exportListDraft"');
     expect(template).not.toContain('injectPresetDomains');
     expect(panelSource).toContain('nfqwsLists.save(activeList.id, editor.value, activeList.revision)');
+    expect(panelSource).toContain('function toggleListEditorFullscreen()');
+    expect(panelSource).toContain('function confirmClearListDraft()');
+    expect(panelStyles).toContain('.list-editor-fullscreen');
   });
 
   it('matches each list tab by its real element id when enabling files from the API index', () => {

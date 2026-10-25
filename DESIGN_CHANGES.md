@@ -53,3 +53,12 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - About-panel command rows now reserve an intrinsic copy-button column and wrap long command text in the remaining space, following the upstream narrow-screen overlap fix.
 - Select menus now render in the document overlay layer and use fixed viewport positioning, so long timezone and settings lists remain visible above scrollable panels. Their dark surface and border use the same color tokens as XKeen UI; options keep the compact 14 px/30 px rhythm, neutral selected row with a white vector check, and 15% blue hover/keyboard highlight.
 - The select menu remains in front of editor panels but below confirmation dialogs, while outside-click detection continues to distinguish the portaled menu from unrelated page clicks.
+
+## Diagnosis and list editor — 2026-10-25
+
+- Diagnosis queue rows now use compact divider lines, a neutral pending dot, and success/error markers instead of visible step numbers. The ordered list remains a semantic list with an explicit list role and accessible row status.
+- Per-step results remain visible long enough to read before the next stage activates. The final QUIC row summarizes each route with its result, HTTP code, and latency; backend detail paragraphs are no longer duplicated in the interface. The separate note states only whether HTTP/3 was checked or advertised.
+- The `.list` editor no longer reserves a full row for search. Its text/list toggle now sits alongside deduplication and apply actions, with file import/export and selected-row removal on a compact utility row.
+- Clearing a list edits only the active draft and requires an in-panel confirmation. A shared toolbar button expands any active `.list` into the animated near-fullscreen editor; Escape restores the panel to its original location.
+- Text mode now uses a 13.5 px editor font with a 24 px line rhythm. Row mode uses a slightly larger readable font, clearer hover feedback, and the existing selection/accessibility behavior.
+- Backend config apply transactions now persist an atomic recovery journal before changing the router config. At startup the journal path is checked against the detected allowlisted config path; the original file is restored only while the current revision is the expected candidate, and the service restarts before the journal is cleared. A third, externally edited revision stops recovery to prevent overwriting it.

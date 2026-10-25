@@ -8,6 +8,12 @@ export const SITE_DIAGNOSIS_STAGES = [
   { id: 'quic', label: 'QUIC · HTTP/3' },
 ] as const;
 
+export function diagnosisQueueMarker(state: 'complete' | 'active' | 'pending', resultKind?: 'success' | 'failure' | 'unknown'): string {
+  if (state === 'active') return '…';
+  if (state === 'pending') return '·';
+  return resultKind === 'failure' ? '×' : resultKind === 'unknown' ? '!' : '✓';
+}
+
 export function diagnosisQueueState(index: number, activeIndex: number, resultsReceived = true): 'complete' | 'active' | 'pending' {
   if (!resultsReceived) return index === activeIndex ? 'active' : 'pending';
   if (index < activeIndex) return 'complete';

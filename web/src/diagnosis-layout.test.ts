@@ -15,9 +15,11 @@ it('keeps QUIC transport and advertised HTTP3 separate and includes both paths',
   const report: SiteDiagnosticReport = {host:'example.com',addresses:[],steps:[step('dns'),step('doh','warning')],direct:step('direct'),current:step('current'),quic:{direct:step('direct'),current:step('current','error'),method:'quic_initial',http3Advertised:true},summary:'',limitations:[]};
   const rows = diagnosisRows(report);
   expect(rows.find(row => row.id === 'dns')?.kind).toBe('unknown');
-  expect(rows.find(row => row.id === 'quic')?.detail).toContain('Напрямую:');
-  expect(rows.find(row => row.id === 'quic')?.detail).toContain('Сейчас:');
-  expect(rows.find(row => row.id === 'quic')?.note).toContain('полный запрос HTTP/3 не выполнялся');
+  const quic = rows.find(row => row.id === 'quic');
+  expect(quic?.detail).toContain('Напрямую: Ответ получен');
+  expect(quic?.detail).toContain('Сейчас: Ответ не получен');
+  expect(quic?.detail).not.toContain('direct detail');
+  expect(quic?.note).toBe('QUIC отвечает; HTTP/3 заявлен.');
 });
 it('shows resolved site IP addresses in the DNS row without an extra reverse DNS row', () => {
   const report: SiteDiagnosticReport = {host:'example.com',addresses:['203.0.113.9','203.0.113.10'],reverseDns:[

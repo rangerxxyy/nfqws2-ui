@@ -96,16 +96,6 @@ export function toggleListComments(content: string, selectionStart: number, sele
   return { content: nextContent, selectionStart: from, selectionEnd: from + replacement.length };
 }
 
-export function findNextListMatch(content: string, query: string, caret: number): { start: number; end: number } | null {
-  const needle = query.trim().toLocaleLowerCase('en-US');
-  if (!needle) return null;
-  const haystack = content.toLocaleLowerCase('en-US');
-  const from = Math.max(0, Math.min(caret, content.length));
-  const start = haystack.indexOf(needle, from);
-  const wrappedStart = start === -1 ? haystack.indexOf(needle) : start;
-  return wrappedStart === -1 ? null : { start: wrappedStart, end: wrappedStart + needle.length };
-}
-
 export function deduplicateListContent(content: string, id: NfqwsListId): { content: string; removed: number } {
   const newline = content.includes('\r\n') ? '\r\n' : '\n';
   const seen = new Set<string>();

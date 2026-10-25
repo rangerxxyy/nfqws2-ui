@@ -787,7 +787,7 @@ export default function App() {
         {"\n      "}
         <section id={"tabContent-lists"} className={"hidden view-animate space-y-5"}>
           {"\n        \n        "}
-          <div className={"ui-card rounded-2xl overflow-hidden shadow-xl"}>
+          <div id={"listEditorPanel"} className={"ui-card rounded-2xl overflow-hidden shadow-xl"}>
             {"\n          "}
             {"\n          "}
             <div id={"listFileTabs"} className={"flex items-center overflow-x-auto bg-[#080d18] border-b border-slate-800 px-2"}>
@@ -867,47 +867,44 @@ export default function App() {
                 {"\n            "}
               </div>
               {"\n\n            "}
-              <div className={"flex flex-wrap items-center gap-2"}>
+              <div className={"list-editor-toolbar-actions flex w-full flex-wrap items-center gap-2 lg:w-auto"}>
+                <div id={"listEditorViewGroup"} className={"list-editor-view-group flex gap-1 rounded-lg border border-slate-700 bg-slate-950 p-1"} role={"group"} aria-label={"Вид списка"}>
+                  <button id={"listViewTextButton"} type={"button"} aria-pressed={"true"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["text"])} className={"list-view-button active rounded-md px-3 py-1.5 text-xs text-slate-300 transition-colors"}>Текстом</button>
+                  <button id={"listViewRowsButton"} type={"button"} aria-pressed={"false"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["rows"])} className={"list-view-button rounded-md px-3 py-1.5 text-xs text-slate-300 transition-colors"}>Списком</button>
+                </div>
                 {"\n              "}
-                <button data-action-click={"deduplicateCurrentList"} className={"px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
+                <button data-action-click={"deduplicateCurrentList"} data-action-tooltip={"Удалить повторяющиеся записи из черновика"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
                   {"Удалить дубли"}
                 </button>
                 {"\n              "}
-                <button data-action-click={"saveActiveListFile"} className={"px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-all"}>
+                <button data-action-click={"saveActiveListFile"} data-action-tooltip={"Проверить и сохранить текущий список"} className={"px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-all"}>
                   {"Применить список"}
+                </button>
+                <button type={"button"} data-action-click={"requestClearListDraft"} data-action-tooltip={"Очистить содержимое текущего черновика"} aria-label={"Очистить черновик списка"} className={"config-editor-icon-button list-editor-icon-button"}>
+                  <svg aria-hidden={"true"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.8"} strokeLinecap={"round"} strokeLinejoin={"round"}><path d={"M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"}></path></svg>
+                </button>
+                <button id={"listEditorFullscreenToggle"} type={"button"} data-action-click={"toggleListEditorFullscreen"} data-action-tooltip={"Развернуть редактор списка"} aria-label={"Развернуть редактор списка"} aria-pressed={"false"} className={"config-editor-icon-button list-editor-icon-button"}>
+                  <svg aria-hidden={"true"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.8"} strokeLinecap={"round"} strokeLinejoin={"round"}><path d={"M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"}></path></svg>
                 </button>
                 {"\n            "}
               </div>
               {"\n          "}
             </div>
             {"\n\n          "}
-            <div className={"flex items-center justify-between gap-3 px-4 py-2 border-b border-slate-800 bg-[#080d18]"}>
-              <span className={"text-xs text-slate-400"}>Вид списка</span>
-              <div className={"flex gap-1 rounded-lg border border-slate-700 bg-slate-950 p-1"} role={"group"} aria-label={"Вид списка"}>
-                <button id={"listViewTextButton"} type={"button"} aria-pressed={"true"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["text"])} className={"list-view-button active rounded-md px-3 py-1 text-xs text-slate-300 transition-colors"}>Текстом</button>
-                <button id={"listViewRowsButton"} type={"button"} aria-pressed={"false"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["rows"])} className={"list-view-button rounded-md px-3 py-1 text-xs text-slate-300 transition-colors"}>Списком</button>
-              </div>
-            </div>
-            <div className={"p-4 bg-[#090f1b] border-b border-slate-800 grid grid-cols-1 xl:grid-cols-[minmax(220px,1fr)_auto] gap-2 items-center"}>
-              <div className={"flex gap-2"}>
-                <input id={"listSearchInput"} type={"search"} placeholder={"Найти в списке"} className={"min-w-0 flex-1 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-xs text-slate-200 outline-none focus:border-sky-500"} />
-                <button id={"findNextListEntryButton"} data-action-click={"findNextListEntry"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Найти далее"}</button>
-              </div>
-              <div className={"flex flex-wrap gap-2"}>
-                <button data-action-click={"removeSelectedListLines"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Удалить строку/выделение"}</button>
-                <button data-action-click={"openListImport"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Импорт"}</button>
-                <button data-action-click={"exportListDraft"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Экспорт"}</button>
+            <div className={"list-editor-secondary-toolbar flex flex-wrap items-center gap-2 p-2.5 border-b border-slate-800 bg-[#080d18]"}>
+              <button data-action-click={"removeSelectedListLines"} data-action-tooltip={"Удалить выбранные строки или текущую строку курсора"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Удалить строку/выделение"}</button>
+              <button data-action-click={"openListImport"} data-action-tooltip={"Добавить записи из файла .list или .txt"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Импорт"}</button>
+              <button data-action-click={"exportListDraft"} data-action-tooltip={"Скачать текущий черновик списка"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Экспорт"}</button>
                 <input id={"listImportFile"} type={"file"} accept={".list,.txt,text/plain"} className={"hidden"} data-action-change={"importListDraft"} />
-              </div>
             </div>
             {"\n          "}
-            <div id={"listTextView"} className={"mobile-list-editor flex h-[610px] bg-[#060a12] font-mono text-[14.5px] leading-7 overflow-hidden"}>
+            <div id={"listTextView"} className={"mobile-list-editor flex h-[610px] bg-[#060a12] font-mono text-[13.5px] leading-6 overflow-hidden"}>
               {"\n            "}
-              <div id={"listLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3.5 w-14 overflow-hidden select-none text-xs leading-7"}>
+              <div id={"listLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3.5 w-14 overflow-hidden select-none text-xs leading-6"}>
                 {"\n              1\n            "}
               </div>
               {"\n            "}
-              <textarea id={"listEditorTextarea"} data-action-input={"syncListLineNumbers"} data-action-scroll={"syncListScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"flex-1 bg-transparent text-slate-100 py-4 px-6 outline-none resize-none leading-7 font-mono overflow-y-auto border-none"}></textarea>
+              <textarea id={"listEditorTextarea"} data-action-input={"syncListLineNumbers"} data-action-scroll={"syncListScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"flex-1 bg-transparent text-slate-100 py-4 px-6 outline-none resize-none leading-6 font-mono overflow-y-auto border-none"}></textarea>
               {"\n          "}
             </div>
             <div id={"listRowsView"} className={"hidden list-rows-view h-[610px] overflow-y-auto bg-[#060a12] p-3"} role={"list"} aria-label={"Записи списка"}></div>
@@ -1568,6 +1565,16 @@ export default function App() {
         <div className={"mt-5 flex justify-end gap-2"}>
           <button type={"button"} data-action-click={"cancelClearConfig"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button>
           <button type={"button"} data-action-click={"confirmClearConfig"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Очистить</button>
+        </div>
+      </section>
+    </div>
+    <div id={"listClearModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
+      <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"listClearTitle"}>
+        <h3 id={"listClearTitle"} className={"text-base font-bold text-white"}>Очистить черновик списка?</h3>
+        <p className={"mt-2 text-sm text-slate-300"}>Содержимое текущего файла будет удалено только из черновика. Чтобы записать изменения, отдельно нажмите «Применить список».</p>
+        <div className={"mt-5 flex justify-end gap-2"}>
+          <button type={"button"} data-action-click={"cancelClearListDraft"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button>
+          <button type={"button"} data-action-click={"confirmClearListDraft"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Очистить черновик</button>
         </div>
       </section>
     </div>

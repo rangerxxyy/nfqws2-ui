@@ -2473,6 +2473,14 @@ struct ConfigWrite {
     revision: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingConfigApplyJournal {
+    config_path: String,
+    original_content: Vec<u8>,
+    candidate_revision: String,
+}
+
 #[derive(Deserialize)]
 struct ConfigPreviewRequest {
     content: String,
@@ -9076,6 +9084,24 @@ where
         return Err("Файл изменился после загрузки; обновите страницу и проверьте diff".into());
     }
     let candidate_revision = revision(write.content.as_bytes());
+    let journal_path = pending_config_apply_path(&state.data_dir);
+    if tokio::fs::try_exists(&journal_path)
+        .await
+        .map_err(|error| format!("Не удалось проверить журнал применения: {error}"))?
+    {
+        return Err(
+            "Предыдущее применение конфига требует восстановления; перезапустите панель".into(),
+        );
+    }
+    write_pending_config_apply(
+        &state.data_dir,
+        &PendingConfigApplyJournal {
+            config_path: path.to_string_lossy().into_owned(),
+            original_content: original.clone(),
+            candidate_revision: candidate_revision.clone(),
+        },
+    )
+    .await?;
     if let Err(write_error) = backup_and_write_named(
         &state.data_dir,
         &path,
@@ -9094,14 +9120,17 @@ where
         };
         let rollback =
             restore_config_content(&state.data_dir, &path, &original, &candidate_revision).await;
-        return Err(match rollback {
-            Ok(()) => format!(
-                "Не удалось записать новую конфигурацию: {write_error}. Исходная версия восстановлена."
-            ),
-            Err(rollback_error) => format!(
+        return match rollback {
+            Ok(()) => {
+                clear_pending_config_apply(&state.data_dir).await?;
+                Err(format!(
+                    "Не удалось записать новую конфигурацию: {write_error}. Исходная версия восстановлена."
+                ))
+            }
+            Err(rollback_error) => Err(format!(
                 "Не удалось записать новую конфигурацию: {write_error}. Откат тоже не подтверждён: {rollback_error}"
-            ),
-        });
+            )),
+        };
     }
     let saved = match tokio::fs::read(&path).await {
         Ok(saved) => saved,
@@ -9109,23 +9138,31 @@ where
             let rollback =
                 restore_config_content(&state.data_dir, &path, &original, &candidate_revision)
                     .await;
-            return Err(match rollback {
-                Ok(()) => format!(
-                    "Конфиг записан, но повторное чтение не удалось: {error}. Исходная версия восстановлена."
-                ),
-                Err(rollback_error) => format!(
+            return match rollback {
+                Ok(()) => {
+                    clear_pending_config_apply(&state.data_dir).await?;
+                    Err(format!(
+                        "Конфиг записан, но повторное чтение не удалось: {error}. Исходная версия восстановлена."
+                    ))
+                }
+                Err(rollback_error) => Err(format!(
                     "Конфиг записан, повторное чтение не удалось: {error}. Откат тоже не подтверждён: {rollback_error}"
-                ),
-            });
+                )),
+            };
         }
     };
     if saved != write.content.as_bytes() {
         let rollback =
             restore_config_content(&state.data_dir, &path, &original, &candidate_revision).await;
-        return Err(match rollback {
-            Ok(()) => "Повторное чтение конфига не совпало с отправленным содержимым; исходная версия восстановлена.".into(),
-            Err(error) => format!("Повторное чтение конфига не совпало; откат не подтверждён: {error}"),
-        });
+        return match rollback {
+            Ok(()) => {
+                clear_pending_config_apply(&state.data_dir).await?;
+                Err("Повторное чтение конфига не совпало с отправленным содержимым; исходная версия восстановлена.".into())
+            }
+            Err(error) => Err(format!(
+                "Повторное чтение конфига не совпало; откат не подтверждён: {error}"
+            )),
+        };
     }
     let apply_result = match restart().await {
         Ok(message) => verify()
@@ -9135,14 +9172,18 @@ where
         Err(error) => Err(error),
     };
     match apply_result {
-        Ok(message) => Ok(ConfigApplyResponse {
-            config: ConfigResponse {
-                file: path.display().to_string(),
-                revision: revision(&saved),
-                content: String::from_utf8_lossy(&saved).into_owned(),
-            },
-            message,
-        }),
+        Ok(message) => {
+            let response = ConfigApplyResponse {
+                config: ConfigResponse {
+                    file: path.display().to_string(),
+                    revision: revision(&saved),
+                    content: String::from_utf8_lossy(&saved).into_owned(),
+                },
+                message,
+            };
+            clear_pending_config_apply(&state.data_dir).await?;
+            Ok(response)
+        }
         Err(apply_error) => {
             if let Err(rollback_error) =
                 restore_config_content(&state.data_dir, &path, &original, &candidate_revision).await
@@ -9152,9 +9193,12 @@ where
                 ));
             }
             match restart().await {
-                Ok(restore_message) => Err(format!(
-                    "Применение не удалось: {apply_error}. Исходный конфиг восстановлен и служба перезапущена: {restore_message}"
-                )),
+                Ok(restore_message) => {
+                    clear_pending_config_apply(&state.data_dir).await?;
+                    Err(format!(
+                        "Применение не удалось: {apply_error}. Исходный конфиг восстановлен и служба перезапущена: {restore_message}"
+                    ))
+                }
                 Err(restore_error) => Err(format!(
                     "Применение не удалось: {apply_error}. Исходный конфиг восстановлен, но повторный запуск службы не подтверждён: {restore_error}"
                 )),
@@ -9328,6 +9372,111 @@ async fn restore_config_content(
         );
     }
     Ok(())
+}
+
+fn pending_config_apply_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("pending-config-apply.json")
+}
+
+async fn write_pending_config_apply(
+    data_dir: &Path,
+    journal: &PendingConfigApplyJournal,
+) -> Result<(), String> {
+    tokio::fs::create_dir_all(data_dir)
+        .await
+        .map_err(|error| format!("не удалось подготовить журнал применения: {error}"))?;
+    let path = pending_config_apply_path(data_dir);
+    let temporary = path.with_extension(format!(
+        "json.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let bytes = serde_json::to_vec(journal)
+        .map_err(|error| format!("не удалось сериализовать журнал применения: {error}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .await
+            .map_err(|error| format!("не удалось создать журнал применения: {error}"))?;
+        file.write_all(&bytes)
+            .await
+            .map_err(|error| format!("не удалось записать журнал применения: {error}"))?;
+        file.sync_all()
+            .await
+            .map_err(|error| format!("не удалось сохранить журнал применения на диск: {error}"))?;
+    }
+    #[cfg(not(unix))]
+    tokio::fs::write(&temporary, bytes)
+        .await
+        .map_err(|error| format!("не удалось записать журнал применения: {error}"))?;
+    tokio::fs::rename(&temporary, &path)
+        .await
+        .map_err(|error| format!("не удалось сохранить журнал применения: {error}"))
+}
+
+async fn clear_pending_config_apply(data_dir: &Path) -> Result<(), String> {
+    match tokio::fs::remove_file(pending_config_apply_path(data_dir)).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("не удалось удалить журнал применения: {error}")),
+    }
+}
+
+async fn recover_pending_config_apply_with<F, Fut>(
+    state: &AppState,
+    restart: F,
+) -> Result<(), String>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let path = pending_config_apply_path(&state.data_dir);
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("не удалось прочитать журнал применения: {error}")),
+    };
+    let journal: PendingConfigApplyJournal = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("журнал применения повреждён: {error}"))?;
+    let config = config_path_for_state(state).ok_or_else(|| {
+        "разрешённый конфигурационный файл не найден при восстановлении".to_string()
+    })?;
+    if journal.config_path != config.to_string_lossy() {
+        return Err("путь в журнале применения не совпадает с разрешённым конфигом".into());
+    }
+    let current = tokio::fs::read(&config)
+        .await
+        .map_err(|error| format!("не удалось прочитать конфиг для восстановления: {error}"))?;
+    if revision(&current) == journal.candidate_revision {
+        restore_config_content(
+            &state.data_dir,
+            &config,
+            &journal.original_content,
+            &journal.candidate_revision,
+        )
+        .await?;
+    } else if current != journal.original_content {
+        return Err(
+            "конфиг отличается и от исходного, и от проверяемого; восстановление остановлено"
+                .into(),
+        );
+    }
+    restart().await.map_err(|error| {
+        format!("не удалось перезапустить службу после восстановления: {error}")
+    })?;
+    clear_pending_config_apply(&state.data_dir).await
+}
+
+async fn recover_pending_config_apply(state: &AppState) -> Result<(), String> {
+    recover_pending_config_apply_with(state, || async {
+        service_action(ServiceAction::Restart).await
+    })
+    .await
 }
 
 async fn apply_config(
@@ -10825,6 +10974,11 @@ async fn main() {
         transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         freeze_scan_controls: Mutex::new(HashMap::new()),
     });
+    if let Err(error) = recover_pending_config_apply(&state).await {
+        eprintln!("nfqws2-ui: не удалось восстановить прерванное применение конфига: {error}");
+        let _ = tokio::fs::remove_file(&port_file).await;
+        return;
+    }
     start_ui_update_checker(state.clone());
     start_monitoring_scheduler(state.clone());
     start_snapshot_scheduler(state.clone());
@@ -12933,6 +13087,118 @@ mod tests {
             tokio::fs::read(config).await.unwrap(),
             replacement.as_bytes()
         );
+    }
+
+    #[tokio::test]
+    async fn config_apply_persists_a_recovery_journal_until_health_verification_finishes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--filter-tcp=80,443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let journal_path = state.data_dir.join("pending-config-apply.json");
+        let journal_was_present = Arc::new(AtomicBool::new(false));
+        let observed = journal_was_present.clone();
+        let journal_seen_by_restart = journal_path.clone();
+
+        apply_config_transaction_with_verification(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            move || {
+                let path = journal_seen_by_restart.clone();
+                let observed = observed.clone();
+                async move {
+                    observed.store(tokio::fs::metadata(path).await.is_ok(), Ordering::SeqCst);
+                    Ok("restart confirmed".to_string())
+                }
+            },
+            || async { Ok(()) },
+        )
+        .await
+        .unwrap();
+
+        assert!(journal_was_present.load(Ordering::SeqCst));
+        assert!(
+            !journal_path.exists(),
+            "completed transactions clear their recovery journal"
+        );
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_restores_a_candidate_left_by_an_interrupted_config_apply() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let candidate = b"NFQWS_ARGS=--filter-tcp=80,443\n";
+        tokio::fs::write(&config, candidate).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        write_pending_config_apply(
+            &state.data_dir,
+            &PendingConfigApplyJournal {
+                config_path: config.to_string_lossy().into_owned(),
+                original_content: original.to_vec(),
+                candidate_revision: revision(candidate),
+            },
+        )
+        .await
+        .unwrap();
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let restart_counter = restart_count.clone();
+
+        recover_pending_config_apply_with(&state, move || {
+            restart_counter.fetch_add(1, Ordering::SeqCst);
+            async { Ok("service restarted".to_string()) }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(tokio::fs::read(config).await.unwrap(), original);
+        assert_eq!(restart_count.load(Ordering::SeqCst), 1);
+        assert!(!pending_config_apply_path(&state.data_dir).exists());
+    }
+
+    #[tokio::test]
+    async fn startup_recovery_preserves_config_changed_outside_the_pending_transaction() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let candidate = b"NFQWS_ARGS=--filter-tcp=80,443\n";
+        let external = b"NFQWS_ARGS=--filter-tcp=80,443,8443\n";
+        tokio::fs::write(&config, external).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        write_pending_config_apply(
+            &state.data_dir,
+            &PendingConfigApplyJournal {
+                config_path: config.to_string_lossy().into_owned(),
+                original_content: original.to_vec(),
+                candidate_revision: revision(candidate),
+            },
+        )
+        .await
+        .unwrap();
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let restart_counter = restart_count.clone();
+
+        let result = recover_pending_config_apply_with(&state, move || {
+            restart_counter.fetch_add(1, Ordering::SeqCst);
+            async { Ok("service restarted".to_string()) }
+        })
+        .await;
+
+        assert!(result.unwrap_err().contains("отличается и от исходного"));
+        assert_eq!(tokio::fs::read(config).await.unwrap(), external);
+        assert_eq!(restart_count.load(Ordering::SeqCst), 0);
+        assert!(pending_config_apply_path(&state.data_dir).exists());
     }
 
     #[tokio::test]

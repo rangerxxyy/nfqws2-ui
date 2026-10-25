@@ -12,7 +12,7 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsSnapshots, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsNetwork, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategyCatalog, type ConfigResponse, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus } from './api';
-import { appendListEntries, deduplicateListContent, findNextListMatch, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
+import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
 import { installStyledSelects } from './styled-select';
@@ -23,7 +23,7 @@ import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
-import { diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
@@ -36,6 +36,7 @@ let luaScripts: NfqwsLuaScriptInfo[] = [];
 let activeLuaScript: string | null = null;
 let discoveredNetworkInterfaces: string[] = [];
 let fullscreenPlaceholder: Comment | null = null;
+let listFullscreenPlaceholder: Comment | null = null;
 let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
 const LIST_EDITOR_VIEW_KEY = 'nfqws2-ui-list-editor-view';
@@ -759,6 +760,53 @@ function confirmClearConfig() {
   editor.focus();
   toast('Черновик конфигурации очищен.');
 }
+function setListClearModal(open: boolean) {
+  const modal = $('#listClearModal');
+  if (!modal) return;
+  modal.classList.toggle('hidden', !open);
+  modal.classList.toggle('flex', open);
+  if (open) modal.querySelector<HTMLButtonElement>('[data-action-click="cancelClearListDraft"]')?.focus();
+}
+function confirmClearListDraft() {
+  const editor = $('#listEditorTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return;
+  editor.value = '';
+  selectedListRows.clear();
+  syncListLineNumbers(editor);
+  setListClearModal(false);
+  editor.focus();
+  toast('Черновик списка очищен.');
+}
+function toggleListEditorFullscreen() {
+  const panel = $('#listEditorPanel');
+  const button = $('#listEditorFullscreenToggle');
+  if (!panel || !(button instanceof HTMLButtonElement)) return;
+  const fullscreen = !panel.classList.contains('list-editor-fullscreen');
+  if (fullscreen) {
+    const parent = panel.parentNode;
+    if (!parent) return;
+    listFullscreenPlaceholder = document.createComment('list-editor-placeholder');
+    parent.insertBefore(listFullscreenPlaceholder, panel);
+    document.body.append(panel);
+    panel.classList.add('list-editor-fullscreen');
+    document.documentElement.classList.add('list-editor-fullscreen-open');
+  } else {
+    panel.classList.remove('list-editor-fullscreen');
+    if (listFullscreenPlaceholder?.parentNode) listFullscreenPlaceholder.parentNode.insertBefore(panel, listFullscreenPlaceholder);
+    listFullscreenPlaceholder?.remove();
+    listFullscreenPlaceholder = null;
+    document.documentElement.classList.remove('list-editor-fullscreen-open');
+  }
+  button.setAttribute('aria-pressed', String(fullscreen));
+  const label = fullscreen ? 'Свернуть редактор списка' : 'Развернуть редактор списка';
+  button.setAttribute('aria-label', label);
+  button.setAttribute('data-action-tooltip', label);
+  button.removeAttribute('title');
+  button.innerHTML = fullscreen
+    ? '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 8H5a2 2 0 0 1-2-2V3m13 5h3a2 2 0 0 0 2-2V3M3 16v3a2 2 0 0 0 2 2h5m11-5v3a2 2 0 0 1-2 2h-3"></path></svg>'
+    : '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"></path></svg>';
+  if (fullscreen && listEditorView === 'text') $('#listEditorTextarea')?.focus({ preventScroll: true });
+}
 function toggleConfigEditorFullscreen() {
   const panel = $('#configEditorPanel');
   const button = $('#configEditorFullscreenToggle');
@@ -1262,7 +1310,6 @@ function setListEditorView(view: 'text' | 'rows') {
   }
   const remove = $('[data-action-click="removeSelectedListLines"]');
   if (remove) remove.textContent = listEditorView === 'rows' ? `Удалить выбранные (${selectedListRows.size})` : 'Удалить строку/выделение';
-  $('#findNextListEntryButton')?.classList.toggle('hidden', listEditorView === 'rows');
   if (listEditorView === 'rows') renderListRows();
 }
 
@@ -1281,14 +1328,12 @@ function renderListRows() {
   const root = $('#listRowsView');
   const editor = $('#listEditorTextarea');
   if (!root || !(editor instanceof HTMLTextAreaElement)) return;
-  const search = $('#listSearchInput');
-  const query = search instanceof HTMLInputElement ? search.value : '';
-  const rows = listRowsFromContent(editor.value, query);
+  const rows = listRowsFromContent(editor.value);
   root.replaceChildren();
   if (!rows.length) {
     const empty = document.createElement('p');
     empty.className = 'px-3 py-6 text-center text-sm text-slate-400';
-    empty.textContent = query.trim() ? 'Совпадений не найдено.' : 'Список пуст.';
+    empty.textContent = 'Список пуст.';
     root.append(empty);
   }
   for (const row of rows) {
@@ -1314,6 +1359,7 @@ function renderListRows() {
     remove.type = 'button';
     remove.className = 'list-editor-row-remove';
     remove.setAttribute('aria-label', `Удалить строку ${row.index + 1}`);
+    remove.setAttribute('data-action-tooltip', `Удалить строку ${row.index + 1}`);
     remove.textContent = 'Удалить';
     remove.addEventListener('click', () => removeListRows([row.index]));
     item.append(checkbox, line, text, remove);
@@ -1439,13 +1485,6 @@ function removeSelectedListLines() {
   syncListLineNumbers(editor);
   toast(`Удалено строк: ${result.removed}. Изменён только черновик.`);
 }
-function findNextListEntry() {
-  const editor = $('#listEditorTextarea'); const input = $('#listSearchInput');
-  if (!(editor instanceof HTMLTextAreaElement) || !(input instanceof HTMLInputElement)) return;
-  const match = findNextListMatch(editor.value, input.value, editor.selectionEnd);
-  if (!match) return toast(input.value.trim() ? 'Совпадений не найдено.' : 'Введите текст для поиска.', 'error');
-  editor.focus(); editor.setSelectionRange(match.start, match.end);
-}
 async function importListDraft() {
   if (!activeList) return toast('Сначала загрузите список из backend.', 'error');
   const input = $('#listImportFile'); const editor = $('#listEditorTextarea');
@@ -1483,7 +1522,7 @@ function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string
   const title = document.createElement('h3'); title.className = 'diagnosis-checks-title';
   title.textContent = activeIndex < 0 ? 'Этапы проверки' : resultsReceived && activeIndex >= stages.length ? 'Проверки завершены · результаты по этапам' : 'Проверка сайта';
   section.append(title);
-  const list = document.createElement('ol'); list.className = 'diagnosis-queue-list';
+  const list = document.createElement('ul'); list.className = 'diagnosis-queue-list';
   stages.forEach((stage, index) => {
     const state = diagnosisQueueState(index, activeIndex, resultsReceived);
     const result = results?.find((item) => item.id === stage.id);
@@ -1491,7 +1530,7 @@ function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string
     row.className = `diagnosis-queue-step is-${state}${result ? ` is-result-${result.kind}` : ''}`;
     row.setAttribute('aria-current', state === 'active' ? 'step' : 'false');
     const marker = document.createElement('span'); marker.className = 'diagnosis-queue-marker'; marker.setAttribute('aria-hidden', 'true');
-    marker.textContent = state === 'complete' ? (result?.kind === 'failure' ? '×' : result?.kind === 'unknown' ? '!' : '✓') : state === 'active' ? '…' : String(index + 1);
+    marker.textContent = diagnosisQueueMarker(state, result?.kind);
     const label = document.createElement('span'); label.textContent = stage.label;
     const status = document.createElement('small'); status.textContent = state === 'active' ? (resultsReceived ? 'Выполняется' : 'Проверка') : state === 'pending' ? 'Ожидает' : result?.kind === 'failure' ? 'Ошибка' : result?.kind === 'unknown' ? 'Не определено' : 'Готово';
     row.append(marker, label, status); list.append(row);
@@ -1504,7 +1543,7 @@ function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string
   }
   container.replaceChildren(section);
 }
-const waitForDiagnosisAnimation = () => new Promise<void>((resolve) => window.setTimeout(resolve, 120));
+const waitForDiagnosisAnimation = () => new Promise<void>((resolve) => window.setTimeout(resolve, 280));
 function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticReport) {
   container.replaceChildren();
   const verdict = comparisonVerdict(report.direct, report.current);
@@ -3008,6 +3047,10 @@ function bindPrototypeActions() {
     cancelClearStrategyPickHistory: () => setStrategyPickHistoryClearModal(false),
     confirmClearStrategyPickHistory: () => void clearStrategyPickHistory(),
     toggleConfigEditorFullscreen: () => toggleConfigEditorFullscreen(),
+    requestClearListDraft: () => setListClearModal(true),
+    cancelClearListDraft: () => setListClearModal(false),
+    confirmClearListDraft: () => confirmClearListDraft(),
+    toggleListEditorFullscreen: () => toggleListEditorFullscreen(),
     copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string | HTMLButtonElement) => void (async () => {
@@ -3050,7 +3093,6 @@ function bindPrototypeActions() {
     cancelDeleteCustomList: () => closeCustomListDeleteModal(),
     saveActiveListFile: () => void saveActiveList(),
     removeSelectedListLines: () => removeSelectedListLines(),
-    findNextListEntry: () => findNextListEntry(),
     openListImport: () => $('#listImportFile')?.click(),
     importListDraft: () => void importListDraft(),
     exportListDraft: () => exportListDraft(),
@@ -3161,7 +3203,9 @@ function boot() {
     editor.setSelectionRange(result.selectionStart, result.selectionEnd);
     editor.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  $('#listSearchInput')?.addEventListener('input', () => { if (listEditorView === 'rows') renderListRows(); });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && $('#listEditorPanel.list-editor-fullscreen')) toggleListEditorFullscreen();
+  });
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigScroll, { passive: true });
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();

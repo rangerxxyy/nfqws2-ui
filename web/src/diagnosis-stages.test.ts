@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 
 describe('site diagnosis stage queue', () => {
   it('lists checks in their intended order before a request starts', () => {
@@ -15,5 +15,11 @@ describe('site diagnosis stage queue', () => {
     expect(nextDiagnosisQueueIndex(0, SITE_DIAGNOSIS_STAGES.length)).toBe(1);
     expect(nextDiagnosisQueueIndex(5, SITE_DIAGNOSIS_STAGES.length)).toBe(6);
     expect(nextDiagnosisQueueIndex(6, SITE_DIAGNOSIS_STAGES.length)).toBeNull();
+  });
+  it('uses status icons instead of visible stage numbers', () => {
+    expect(diagnosisQueueMarker('pending')).toBe('·');
+    expect(diagnosisQueueMarker('active')).toBe('…');
+    expect(diagnosisQueueMarker('complete', 'success')).toBe('✓');
+    expect(diagnosisQueueMarker('complete', 'failure')).toBe('×');
   });
 });
