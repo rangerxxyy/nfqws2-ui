@@ -19,7 +19,14 @@ describe('TSX panel with optional server-side authentication', () => {
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");
+    expect(panelSource).toContain("cancel.setAttribute('aria-label', 'Отменить добавление UDP-порта')");
+    expect(panelSource).toContain("else if (event.key === 'Escape') { event.preventDefault(); cancel.click(); }");
     expect(panelStyles).toMatch(/\.profile-filter-add-text\s*\{[^}]*width:auto[^}]*min-height:1\.8rem/);
+  });
+
+  it('offers an explicit retry when the nfqws2 help catalog is incomplete', () => {
+    expect(panelSource).toContain("retry.setAttribute('aria-label', 'Повторить загрузку справки nfqws2')");
+    expect(panelSource).toContain("retry.addEventListener('click', () => void loadProfiles())");
   });
 
   it('keeps toast notifications below confirmation dialogs', () => {

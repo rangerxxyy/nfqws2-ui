@@ -628,9 +628,16 @@ function renderRuntimeProfiles() {
             if (!updated) { toast('Введите UDP-порт от 1 до 65535 или корректный диапазон.', 'error'); port.focus(); return; }
             if (target) storeRuntimeProfileArgs(profile.id, updated);
           };
-          port.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } });
+          const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'grid h-8 w-8 place-items-center rounded-md border border-slate-700 text-slate-400 hover:border-rose-500 hover:text-rose-300'; cancel.setAttribute('aria-label', 'Отменить добавление UDP-порта'); cancel.title = 'Отменить добавление UDP-порта';
+          const cancelIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); cancelIcon.setAttribute('viewBox', '0 0 24 24'); cancelIcon.setAttribute('width', '16'); cancelIcon.setAttribute('height', '16'); cancelIcon.setAttribute('fill', 'none'); cancelIcon.setAttribute('stroke', 'currentColor'); cancelIcon.setAttribute('stroke-width', '2'); cancelIcon.setAttribute('stroke-linecap', 'round'); cancelIcon.setAttribute('aria-hidden', 'true');
+          const cancelPath = document.createElementNS('http://www.w3.org/2000/svg', 'path'); cancelPath.setAttribute('d', 'M18 6 6 18M6 6l12 12'); cancelIcon.append(cancelPath); cancel.append(cancelIcon);
+          cancel.addEventListener('click', () => { row.replaceChildren(label, addUdp); addUdp.focus(); });
+          port.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') { event.preventDefault(); commit(); }
+            else if (event.key === 'Escape') { event.preventDefault(); cancel.click(); }
+          });
           const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'profile-filter-add-text'; confirm.textContent = 'Добавить'; confirm.addEventListener('click', commit);
-          row.replaceChildren(label, port, confirm); port.focus();
+          row.replaceChildren(label, port, confirm, cancel); port.focus();
         });
         row.append(label, addUdp); builder.append(row); continue;
       }
@@ -934,9 +941,16 @@ async function loadProfiles() {
     const cliStatus = runtimeProfileCliCatalog
       ? runtimeProfileCliCatalog.full
         ? `справка nfqws2 полная · ${runtimeProfileCliCatalog.options.length} параметров, ${runtimeProfileCliCatalog.l7.length} протоколов, ${runtimeProfileCliCatalog.payloads.length} типов пакетов`
-        : `справка nfqws2 неполная · найдено ${runtimeProfileCliCatalog.options.length} параметров; повторите загрузку каталога`
+        : `справка nfqws2 неполная · найдено ${runtimeProfileCliCatalog.options.length} параметров`
       : 'справка параметров nfqws2 недоступна';
-    if (label) label.textContent = `${result.profiles.length} профилей nfqws2 · пользовательских ${runtimeProfileDraft.length}; штатные UDP, HTTP/HTTPS и QUIC доступны для настройки · ${cliStatus}`;
+    if (label) {
+      label.textContent = `${result.profiles.length} профилей nfqws2 · пользовательских ${runtimeProfileDraft.length}; штатные UDP, HTTP/HTTPS и QUIC доступны для настройки · ${cliStatus}`;
+      if (!runtimeProfileCliCatalog?.full) {
+        const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'ml-1 inline-flex min-h-7 items-center rounded-md border border-slate-700 px-2 text-xs font-medium text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400'; retry.textContent = '⟳ Повторить'; retry.setAttribute('aria-label', 'Повторить загрузку справки nfqws2'); retry.title = 'Повторно запросить nfqws2 --help';
+        retry.addEventListener('click', () => void loadProfiles());
+        label.append(' ', retry);
+      }
+    }
   } catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили nfqws2.'; }
 }
 function addRuntimeProfile() {
