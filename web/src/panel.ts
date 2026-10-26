@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, profileArgumentChoices, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -442,12 +442,14 @@ function renderRuntimeProfiles() {
   for (const profile of profiles) {
     const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'selectRuntimeProfile'; button.dataset.args = JSON.stringify([profile.id]);
     button.setAttribute('aria-current', profile.id === selectedRuntimeProfileId ? 'true' : 'false');
-    button.className = `flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${profile.id === selectedRuntimeProfileId ? 'bg-blue-500/20 text-blue-200' : 'text-slate-300 hover:bg-slate-800'}`;
-    const num = document.createElement('span'); num.className = 'grid h-5 w-5 shrink-0 place-items-center rounded-full border border-emerald-400 text-[11px] font-bold text-emerald-300'; num.textContent = String(profile.index);
-    const name = document.createElement('span'); name.className = 'min-w-0 flex-1 truncate'; name.textContent = profile.name;
+    button.className = `flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${profile.id === selectedRuntimeProfileId ? 'bg-blue-500/20 text-blue-200' : 'text-slate-300 hover:bg-slate-800'}`;
+    const num = document.createElement('span'); num.className = 'mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-emerald-400 text-[11px] font-bold text-emerald-300'; num.textContent = String(profile.index);
+    const nameWrap = document.createElement('span'); nameWrap.className = 'grid min-w-0 flex-1 gap-0.5';
+    const name = document.createElement('span'); name.className = 'truncate font-medium'; name.textContent = profile.name;
+    const summary = document.createElement('span'); summary.className = 'truncate text-[10px] leading-4 text-slate-500'; summary.textContent = summarizeProfileSelection(profile.args); nameWrap.append(name, summary);
     const warnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
     const badge = document.createElement('span'); badge.className = warnings.length ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : 'text-xs text-slate-500'; badge.textContent = warnings.length ? String(warnings.length) : profile.editable ? '•' : '🔒'; badge.setAttribute('aria-label', warnings.length ? `Предупреждений профиля: ${warnings.length}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
-    button.append(num, name, badge); list.append(button);
+    button.append(num, nameWrap, badge); list.append(button);
   }
   editor.replaceChildren();
   const profile = profiles.find((item) => item.id === selectedRuntimeProfileId);
@@ -500,7 +502,7 @@ function renderRuntimeProfiles() {
     const groups: Array<[string, (argument: string) => boolean]> = [
       ['TCP-порты', (arg) => arg.startsWith('--filter-tcp=')],
       ['UDP-порты', (arg) => arg.startsWith('--filter-udp=')],
-      ['Другие фильтры', (arg) => arg.startsWith('--filter-') && !arg.startsWith('--filter-tcp=') && !arg.startsWith('--filter-udp=')],
+      ['Другие фильтры', (arg) => arg.startsWith('--filter-') && !arg.startsWith('--filter-tcp=') && !arg.startsWith('--filter-udp=') && !arg.startsWith('--filter-l7=') && !arg.startsWith('--filter-7=')],
       ['Протоколы', (arg) => arg.startsWith('--filter-l7=') || arg.startsWith('--filter-7=')],
       ['Списки доменов и IP', (arg) => arg.startsWith('--hostlist') || arg.startsWith('--ipset') || arg.startsWith('--autohostlist')],
       ['Упорядоченные шаги', (arg) => arg.startsWith('--lua-desync=') || arg.startsWith('--payload=') || arg.startsWith('--in-range=') || arg.startsWith('--out-range=')],
@@ -582,7 +584,7 @@ function renderRuntimeProfiles() {
         const addStep = document.createElement('select'); addStep.className = 'min-h-8 w-full max-w-xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200'; addStep.setAttribute('aria-label', 'Добавить шаг стратегии');
         const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ добавить шаг'; addStep.append(placeholder);
         for (const [value, label] of [['--payload=tls_client_hello', 'Типы пакетов · TLS ClientHello'], ['--payload=quic_initial', 'Типы пакетов · QUIC Initial'], ['--out-range=1', 'Исходящий диапазон'], ['--in-range=1', 'Входящий диапазон']] as const) { const option = document.createElement('option'); option.value = value; option.textContent = label; addStep.append(option); }
-        functions.filter((name) => !indexes.some((index) => profile.args[index]?.startsWith(`--lua-desync=${name}`))).forEach((name) => { const option = document.createElement('option'); option.value = `--lua-desync=${name}`; const info = runtimeProfileLuaCatalog.find((item) => item.name === name); option.textContent = `${name}${info?.docs[0] ? ` · ${info.docs[0]}` : ''}`; addStep.append(option); });
+        functions.forEach((name) => { const option = document.createElement('option'); option.value = `--lua-desync=${name}`; const info = runtimeProfileLuaCatalog.find((item) => item.name === name); option.textContent = `${name}${info?.docs[0] ? ` · ${info.docs[0]}` : ''}`; addStep.append(option); });
         addStep.dataset.actionChange = 'appendRuntimeProfileArgument'; addStep.dataset.valueSource = 'value'; section.append(addStep); builder.append(section); continue;
       }
       const row = document.createElement('div'); row.className = 'flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-2';
@@ -598,15 +600,22 @@ function renderRuntimeProfiles() {
       builder.append(row);
     }
     if (!profile.args.length) { const empty = document.createElement('p'); empty.className = 'rounded-lg border border-dashed border-slate-700 p-3 text-xs text-slate-400'; empty.textContent = 'В профиле пока нет аргументов. Добавьте фильтр и хотя бы один шаг desync.'; builder.append(empty); }
-    const addLabel = document.createElement('label'); addLabel.className = 'mt-1 block text-xs text-slate-400'; addLabel.textContent = 'Добавить параметр';
+    const addLabel = document.createElement('label'); addLabel.className = 'mt-1 block text-xs text-slate-400'; addLabel.textContent = 'Добавить условие, область или шаг';
     const select = document.createElement('select'); select.dataset.actionChange = 'appendRuntimeProfileArgument'; select.dataset.valueSource = 'value'; select.className = 'mt-1 w-full max-w-xl rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100';
-    const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ выбрать параметр'; select.append(placeholder);
-    for (const [value, label] of [['--filter-tcp=443', 'TCP-порты · 443'], ['--filter-udp=443', 'UDP-порты · 443'], ['--filter-l7=tls', 'Протокол · TLS'], ['--payload=tls_client_hello', 'Тип пакета · TLS ClientHello'], ['--payload=quic_initial', 'Тип пакета · QUIC Initial'], ['--out-range=1', 'Исходящие пакеты · диапазон'], ['--in-range=1', 'Входящие пакеты · диапазон'], ['--hostlist-domains=example.com', 'Домен · example.com'], ['--lua-desync=fake', 'Шаг desync · fake']] as const) {
-      const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option);
+    const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ выбрать, что добавить'; select.append(placeholder);
+    const groupedChoices = new Map<string, HTMLOptGroupElement>();
+    const argumentChoices = profileArgumentChoices(profile.args, profileListInventory)
+      .filter((choice) => !runtimeProfileLuaCatalogAvailable || !choice.value.startsWith('--lua-desync='));
+    for (const choice of argumentChoices) {
+      let group = groupedChoices.get(choice.group);
+      if (!group) { group = document.createElement('optgroup'); group.label = choice.group; groupedChoices.set(choice.group, group); select.append(group); }
+      const option = document.createElement('option'); option.value = choice.value; option.textContent = choice.label; group.append(option);
     }
-    for (const file of profileListInventory) {
-      const hostlist = document.createElement('option'); hostlist.value = `--hostlist=${file.path}`; hostlist.textContent = `Доменный список · ${file.id}`; select.append(hostlist);
-      if (/ipset/i.test(file.id)) { const ipset = document.createElement('option'); ipset.value = `--ipset=${file.path}`; ipset.textContent = `IP-список · ${file.id}`; select.append(ipset); }
+    for (const functionName of runtimeProfileLuaCatalog.map((item) => item.name)) {
+      const value = `--lua-desync=${functionName}`;
+      let group = groupedChoices.get('Что делает · стратегия');
+      if (!group) { group = document.createElement('optgroup'); group.label = 'Что делает · стратегия'; groupedChoices.set(group.label, group); select.append(group); }
+      const option = document.createElement('option'); option.value = value; option.textContent = `Lua-шаг · ${functionName}`; group.append(option);
     }
     addLabel.append(select); builder.append(addLabel); editor.append(builder);
   }

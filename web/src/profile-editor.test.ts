@@ -1,5 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { profileArgumentChoices, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+
+describe('profile builder choices', () => {
+  it('offers editable match conditions, list scopes, and ordered strategy steps', () => {
+    const choices = profileArgumentChoices([], [{ id: 'youtube', path: '/opt/etc/nfqws2/lists/youtube.txt', readable: true, writable: true }]);
+    expect(choices.map((choice) => choice.value)).toEqual(expect.arrayContaining([
+      '--filter-tcp=443', '--filter-udp=443', '--filter-l7=tls', '--hostlist=/opt/etc/nfqws2/lists/youtube.txt',
+      '--hostlist-exclude-domains=example.com', '--hostlist-domains=example.com', '--ipset-ip=192.0.2.1',
+      '--payload=tls_client_hello', '--in-range=1', '--out-range=1', '--lua-desync=fake',
+    ]));
+  });
+
+  it('keeps available list choices aligned with current profile list arguments', () => {
+    const choices = profileArgumentChoices(['--hostlist=/opt/etc/nfqws2/lists/youtube.txt'], [{ id: 'youtube-ipset', path: '/opt/etc/nfqws2/lists/youtube-ipset.txt', readable: true, writable: true }]);
+    expect(choices.some((choice) => choice.value.startsWith('--hostlist='))).toBe(false);
+    expect(choices.some((choice) => choice.value.startsWith('--ipset='))).toBe(true);
+  });
+
+  it('offers auto host lists only from the router list inventory', () => {
+    const absent = profileArgumentChoices([], []);
+    const installed = profileArgumentChoices([], [{ id: 'auto.list', path: '/etc/nfqws2/lists/auto.list', readable: true, writable: true }]);
+    expect(absent.some((choice) => choice.value.startsWith('--hostlist-auto='))).toBe(false);
+    expect(installed.some((choice) => choice.value === '--hostlist-auto=/etc/nfqws2/lists/auto.list')).toBe(true);
+  });
+});
+
+describe('profile selection summary', () => {
+  it('summarizes transport, protocol, and traffic scope in the profile picker', () => {
+    expect(summarizeProfileSelection(['--filter-tcp=80,443', '--filter-l7=tls,http', '--hostlist=lists/user.list', '--ipset=lists/ipset.list']))
+      .toBe('TCP 80,443 · TLS,HTTP · домены + IP');
+  });
+
+  it('describes an unfiltered profile without implying that it is disabled', () => {
+    expect(summarizeProfileSelection(['--lua-desync=fake'])).toBe('весь трафик · без списков');
+    expect(summarizeProfileSelection(['--hostlist-exclude=lists/excluded.list'])).toBe('весь трафик · все, кроме исключений');
+  });
+});
 
 describe('reorderProfileSteps', () => {
   it('moves a dragged step across several ordered steps without shifting unrelated arguments', () => {

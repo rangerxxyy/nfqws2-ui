@@ -1,4 +1,59 @@
-import type { NfqwsLuaFunctionInfo, NfqwsLuaStandardGroup } from './api';
+import type { NfqwsListSummary, NfqwsLuaFunctionInfo, NfqwsLuaStandardGroup } from './api';
+
+export type ProfileArgumentChoice = { group: string; value: string; label: string };
+
+export function summarizeProfileSelection(args: readonly string[]): string {
+  const parts: string[] = [];
+  for (const argument of args) {
+    if (argument.startsWith('--filter-tcp=')) parts.push(`TCP ${argument.slice('--filter-tcp='.length)}`);
+    else if (argument.startsWith('--filter-udp=')) parts.push(`UDP ${argument.slice('--filter-udp='.length)}`);
+    else if (argument.startsWith('--filter-l7=') || argument.startsWith('--filter-7=')) parts.push(argument.slice(argument.indexOf('=') + 1).toUpperCase());
+  }
+  if (!parts.length) parts.push('весь трафик');
+  const hasHost = args.some((arg) => (arg.startsWith('--hostlist') || arg.startsWith('--autohostlist')) && !arg.startsWith('--hostlist-exclude'));
+  const hasIp = args.some((arg) => arg.startsWith('--ipset') && !arg.startsWith('--ipset-exclude'));
+  const hasExclude = args.some((arg) => arg.startsWith('--hostlist-exclude') || arg.startsWith('--ipset-exclude'));
+  if (hasHost || hasIp) parts.push([hasHost ? 'домены' : '', hasIp ? 'IP' : ''].filter(Boolean).join(' + '));
+  else if (hasExclude) parts.push('все, кроме исключений');
+  else parts.push('без списков');
+  return parts.join(' · ');
+}
+
+/** Returns safe starter values for the full profile rule: match conditions, scope and ordered actions. */
+export function profileArgumentChoices(args: readonly string[], lists: readonly NfqwsListSummary[]): ProfileArgumentChoice[] {
+  const definitions: ProfileArgumentChoice[] = [
+    { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=443', label: 'TCP-порты · 443' },
+    { group: 'Когда срабатывает · транспорт', value: '--filter-udp=443', label: 'UDP-порты · 443' },
+    { group: 'Когда срабатывает · протокол', value: '--filter-l7=tls', label: 'TLS' },
+    { group: 'Когда срабатывает · протокол', value: '--filter-l7=http', label: 'HTTP' },
+    { group: 'Для кого · домены', value: '--hostlist-domains=example.com', label: 'Домен · example.com' },
+    { group: 'Для кого · домены', value: '--hostlist-exclude-domains=example.com', label: 'Исключить домен · example.com' },
+    { group: 'Для кого · IP', value: '--ipset-ip=192.0.2.1', label: 'IP-адрес · 192.0.2.1' },
+    { group: 'Для кого · IP', value: '--ipset-exclude-ip=192.0.2.1', label: 'Исключить IP · 192.0.2.1' },
+    { group: 'Что делает · пакеты', value: '--payload=tls_client_hello', label: 'TLS ClientHello' },
+    { group: 'Что делает · пакеты', value: '--payload=quic_initial', label: 'QUIC Initial' },
+    { group: 'Что делает · диапазон', value: '--out-range=1', label: 'Диапазон исходящих пакетов' },
+    { group: 'Что делает · диапазон', value: '--in-range=1', label: 'Диапазон входящих пакетов' },
+    { group: 'Что делает · стратегия', value: '--lua-desync=fake', label: 'Lua-шаг · fake' },
+  ];
+  for (const list of lists) {
+    const path = list.path;
+    const label = list.id;
+    if (/ipset/i.test(label) || /ipset|ipset4/i.test(path)) {
+      definitions.push({ group: 'Для кого · IP', value: `--ipset=${path}`, label: `IP-список · ${label}` });
+      definitions.push({ group: 'Для кого · IP', value: `--ipset-exclude=${path}`, label: `Исключить IP-список · ${label}` });
+    } else {
+      definitions.push({ group: 'Для кого · домены', value: `--hostlist=${path}`, label: `Список доменов · ${label}` });
+      definitions.push({ group: 'Для кого · домены', value: `--hostlist-exclude=${path}`, label: `Исключить список · ${label}` });
+      if (/auto/i.test(label) || /auto/i.test(path)) definitions.push({ group: 'Для кого · домены', value: `--hostlist-auto=${path}`, label: `Автосписок доменов · ${label}` });
+    }
+  }
+  return definitions.filter(({ value }) => {
+    // Repeated Lua steps are meaningful (for example, different desync stages);
+    // only hide an identical starter choice for the other argument kinds.
+    return value.startsWith('--lua-desync=') || !args.includes(value);
+  });
+}
 
 export type ProfileLuaWarning = { argument: string; message: string };
 export type LuaParameterOption = { key: string; value: string | null; display: string };
