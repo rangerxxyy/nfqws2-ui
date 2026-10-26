@@ -409,6 +409,7 @@ function profileFromArgs(index: number, args: string[], editable: boolean): Nfqw
     id: editable ? `custom-${index}` : `draft-managed-${index}`, index, name, source, editable, args,
     filters: args.filter((argument) => argument.startsWith('--filter-')),
     protocols: args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
+    payloads: args.filter((argument) => argument.startsWith('--payload=')),
     lists: args.filter((argument) => argument.startsWith('--hostlist') || argument.startsWith('--ipset') || argument.startsWith('--autohostlist')),
     steps: args.filter((argument) => argument.startsWith('--lua-desync=') || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=')),
   };
@@ -418,6 +419,7 @@ function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
   const managed = runtimeProfilesState.profiles.filter((profile) => !profile.editable).map((profile) => ({
     ...profile,
     protocols: profile.args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
+    payloads: profile.args.filter((argument) => argument.startsWith('--payload=')),
     steps: profile.args.filter((argument) => argument.startsWith('--lua-desync=') || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=')),
   }));
   const custom = runtimeProfileDraft.map((args, index) => profileFromArgs(index + 1, args, true));
@@ -482,7 +484,7 @@ function renderRuntimeProfiles() {
   editor.append(heading);
   const profileOrderIssues = orderWarnings[profiles.findIndex((item) => item.id === profile.id)] ?? [];
   for (const message of profileOrderIssues) { const notice = document.createElement('p'); notice.className = 'mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs leading-5 text-amber-200'; notice.textContent = message; editor.append(notice); }
-  const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы', profile.protocols], ['Списки', profile.lists], ['Упорядоченные шаги', profile.steps]];
+  const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы', profile.protocols], ['Типы пакетов', profile.payloads], ['Списки', profile.lists], ['Упорядоченные шаги', profile.steps]];
   for (const [label, values] of sections) {
     const row = document.createElement('div'); row.className = 'grid gap-1 border-b border-slate-800/80 py-2 sm:grid-cols-[10rem_minmax(0,1fr)]';
     const key = document.createElement('strong'); key.className = 'text-xs text-slate-300'; key.textContent = label;

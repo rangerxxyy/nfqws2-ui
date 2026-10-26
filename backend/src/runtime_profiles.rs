@@ -226,6 +226,7 @@ pub struct RuntimeProfile {
     pub args: Vec<String>,
     pub filters: Vec<String>,
     pub protocols: Vec<String>,
+    pub payloads: Vec<String>,
     pub lists: Vec<String>,
     pub steps: Vec<String>,
 }
@@ -354,18 +355,19 @@ fn describe_profile(
             "NFQWS_ARGS_IPSET" => "HTTP/HTTPS по IP".into(),
             _ => "HTTP/HTTPS по сайтам".into(),
         });
-    let (mut filters, mut protocols, mut lists, mut steps) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut filters, mut protocols, mut payloads, mut lists, mut steps) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for arg in &args {
         if arg.starts_with("--filter-") && filters.len() < 32 {
             filters.push(arg.clone());
         }
-        if (arg.starts_with("--payload=")
-            || arg.starts_with("--filter-7=")
-            || arg.starts_with("--filter-l7="))
+        if (arg.starts_with("--filter-7=") || arg.starts_with("--filter-l7="))
             && protocols.len() < 32
         {
             protocols.push(arg.clone());
+        }
+        if arg.starts_with("--payload=") && payloads.len() < 32 {
+            payloads.push(arg.clone());
         }
         if (arg.starts_with("--hostlist")
             || arg.starts_with("--ipset")
@@ -396,6 +398,7 @@ fn describe_profile(
         args,
         filters,
         protocols,
+        payloads,
         lists,
         steps,
     }
@@ -610,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn profile_summary_includes_l7_filters_and_ordered_range_steps() {
+    fn profile_summary_separates_match_protocols_from_packet_types_and_ordered_steps() {
         let response = from_config(
             "NFQWS_ARGS_CUSTOM=\"--filter-l7=tls --payload=tls_client_hello --out-range=<n2 --lua-desync=fake --in-range=2\"\n",
             "rev",
@@ -618,10 +621,8 @@ mod tests {
         .unwrap();
         let profile = &response.profiles[0];
 
-        assert_eq!(
-            profile.protocols,
-            ["--filter-l7=tls", "--payload=tls_client_hello"]
-        );
+        assert_eq!(profile.protocols, ["--filter-l7=tls"]);
+        assert_eq!(profile.payloads, ["--payload=tls_client_hello"]);
         assert_eq!(
             profile.steps,
             [

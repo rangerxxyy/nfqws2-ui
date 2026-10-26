@@ -305,7 +305,7 @@ describe('API client used by the source-based panel', () => {
 
   it('loads runtime profiles and applies only the custom profile argument groups', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('{"profiles":[{"id":"custom-1","index":1,"name":"Свой профиль 1","source":"NFQWS_ARGS_CUSTOM","editable":true,"args":["--filter-tcp=443"],"filters":["--filter-tcp=443"],"protocols":[],"lists":[],"steps":[]}],"customArgs":"--filter-tcp=443","revision":"rev"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"profiles":[{"id":"custom-1","index":1,"name":"Свой профиль 1","source":"NFQWS_ARGS_CUSTOM","editable":true,"args":["--filter-tcp=443"],"filters":["--filter-tcp=443"],"protocols":[],"payloads":[],"lists":[],"steps":[]}],"customArgs":"--filter-tcp=443","revision":"rev"}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"config":{"file":"/opt/etc/nfqws2/nfqws2.conf","content":"NFQWS_ARGS_CUSTOM=\\\"--filter-tcp=80\\\"\\n","revision":"next"},"message":"Профили применены"}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"deleted":true}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"items":[{"id":"snap-1","ts":2,"version":"1.1.0","reason":"apply","note":"","changedFiles":["nfqws2.conf"]}]}', { status: 200 }))
