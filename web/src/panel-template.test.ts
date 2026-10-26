@@ -79,6 +79,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
   });
 
+  it('removes the disconnected nfqws2 flags reference from configuration settings', () => {
+    expect(template).not.toContain('Справочник флагов nfqws2');
+    expect(template).not.toContain('docItemsContainer');
+    expect(panelSource).not.toContain('filterDocs:');
+  });
+
   it('restores profile constructor logic from v1.2.3 while allowing full profile labels to wrap', () => {
     expect(panelSource).toContain("name.className = 'truncate font-medium'");
     expect(panelSource).toContain('moveRuntimeProfileUp');

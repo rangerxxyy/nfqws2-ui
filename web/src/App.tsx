@@ -717,34 +717,6 @@ export default function App() {
                 </div>
               </div>
               {"\n            "}
-              <div className={"ui-card rounded-2xl p-4 shadow-lg flex flex-col h-[315px]"}>
-                {"\n              "}
-                <div className={"flex items-center justify-between pb-2.5 mb-2.5 border-b border-slate-800"}>
-                  {"\n                "}
-                  <div className={"flex items-center gap-2"}>
-                    {"\n                  "}
-                    <span className={"w-2 h-4 rounded-full bg-amber-400"}></span>
-                    {"\n                  "}
-                    <h3 className={"text-sm font-bold text-white"}>
-                      {"Справочник флагов nfqws2"}
-                    </h3>
-                    {"\n                "}
-                  </div>
-                  {"\n                "}
-                  <span className={"text-[11px] text-slate-400"}>
-                    {"Клик = копировать"}
-                  </span>
-                  {"\n              "}
-                </div>
-                {"\n\n              "}
-                <input type={"text"} data-action-input={"filterDocs"} data-args={JSON.stringify([{"source": "value"}])} placeholder={"Поиск флага (circular, seqovl, hostfakesplit)..."} className={"w-full bg-[#070b14] border border-slate-800 rounded-xl px-3 py-1.5 text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-2.5"} />
-                {"\n\n              "}
-                <div id={"docItemsContainer"} className={"flex-1 overflow-y-auto space-y-2 pr-1"}>
-                  {"\n                "}
-                  {"\n              "}
-                </div>
-                {"\n            "}
-              </div>
               {"\n\n          "}
             </div>
             <section id={"configScriptsPanel"} className={"config-section-panel hidden xl:col-span-12 ui-card rounded-2xl border border-slate-800 p-4 shadow-xl"} aria-label={"Lua-скрипты nfqws2"}>

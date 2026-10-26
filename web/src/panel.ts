@@ -3900,7 +3900,6 @@ function bindPrototypeActions() {
     dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
     selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { const toggling = expandedReleaseTag === tag; selectedReleaseTag = tag; expandedReleaseTag = toggling ? null : tag; renderReleases(); } },
     installSelectedRelease: () => void installSelectedRelease(),
-    filterDocs: (query: string) => { const box = $('#docItemsContainer'); if (box) box.textContent = query ? 'Справочник флагов не подключён.' : 'Справочник флагов не загружен.'; },
     syncListLineNumbers: (editor?: HTMLTextAreaElement) => syncListLineNumbers(editor),
     syncListScroll: (editor: HTMLTextAreaElement) => syncListScroll(editor),
     syncCustomHostInput: () => undefined,
