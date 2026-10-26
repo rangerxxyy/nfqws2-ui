@@ -25,6 +25,7 @@ import { decodeForeignConfigText } from './foreign-config-text';
 import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation } from './notifications';
 import { shouldPollLogs } from './log-polling';
+import { shouldFollowLogTail } from './log-scroll';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
 import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
@@ -1138,7 +1139,9 @@ async function loadLogs() {
   try {
     const result = await nfqwsLogs.get(source);
     if (generation !== logRequestGeneration || source !== currentLogSource) return;
-    currentLogContent = result.content; renderLogs();
+    const output = $('#logsOutput');
+    const followTail = output instanceof HTMLPreElement && shouldFollowLogTail(Boolean(output.textContent), output.scrollTop, output.clientHeight, output.scrollHeight);
+    currentLogContent = result.content; renderLogs(followTail);
     if (status) status.textContent = `Получен хвост журнала ${source} · ${result.content.split(/\r?\n/).filter(Boolean).length} строк.`;
   } catch (error) {
     if (generation !== logRequestGeneration || source !== currentLogSource) return;
@@ -1148,10 +1151,11 @@ async function loadLogs() {
     if (generation === logRequestGeneration) logRequestPending = false;
   }
 }
-function renderLogs() {
+function renderLogs(followTail = false) {
   const output = $('#logsOutput'); if (!(output instanceof HTMLPreElement)) return;
   const query = ($<HTMLInputElement>('#logsSearch')?.value ?? '').trim().toLocaleLowerCase();
   output.textContent = currentLogContent.split(/\r?\n/).filter((line) => !query || line.toLocaleLowerCase().includes(query)).join('\n') || 'Совпадений нет.';
+  if (followTail) output.scrollTop = output.scrollHeight;
 }
 function startLogPolling() {
   stopLogPolling();
