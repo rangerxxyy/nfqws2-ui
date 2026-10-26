@@ -49,6 +49,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("Штатная группа · ${argumentVariable}");
   });
 
+  it('keeps the list footer free of the three removed helper lines', () => {
+    expect(template).not.toContain('Ctrl+/ — комментировать строки или снять комментарий');
+    expect(template).not.toContain('Проверка валидности доменов и CIDR-масок активна');
+    expect(template).not.toContain('Служба не перезапускается при сохранении');
+    expect(template).toContain('id="listFooterCount"');
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");
