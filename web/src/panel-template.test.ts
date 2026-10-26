@@ -16,6 +16,13 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('offers profile renaming from the profile heading without browser prompts', () => {
+    expect(panelSource).toContain("openRuntimeProfileRenameDialog");
+    expect(panelSource).toContain("Изменить название профиля");
+    expect(panelSource).toContain("renameRuntimeProfile:");
+    expect(panelSource).not.toMatch(/\b(?:window\.)?prompt\s*\(/);
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");

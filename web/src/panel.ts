@@ -327,6 +327,41 @@ let runtimeProfileManagedDraft: Record<string, string[]> = {};
 let runtimeProfileManagedDirty = false;
 let runtimeProfileEditorMode: 'builder' | 'text' = 'builder';
 let runtimeProfileReferenceExpanded = false;
+const RUNTIME_PROFILE_LABELS_KEY = 'nfqws2-ui-profile-labels';
+function runtimeProfileLabelOverrides(): Record<string, string> {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(RUNTIME_PROFILE_LABELS_KEY) ?? '{}') as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, string> : {};
+  } catch { return {}; }
+}
+function setRuntimeProfileLabelOverride(id: string, label: string) {
+  try {
+    const labels = runtimeProfileLabelOverrides(); labels[id] = label;
+    window.localStorage.setItem(RUNTIME_PROFILE_LABELS_KEY, JSON.stringify(labels));
+    return true;
+  } catch { return false; }
+}
+function openRuntimeProfileRenameDialog(profile: NfqwsArgumentProfile) {
+  const dialog = document.createElement('dialog'); dialog.className = 'profile-choice-dialog'; dialog.setAttribute('aria-labelledby', 'renameRuntimeProfileTitle');
+  const panel = document.createElement('form'); panel.className = 'profile-choice-panel';
+  const title = document.createElement('h3'); title.id = 'renameRuntimeProfileTitle'; title.className = 'mb-3 font-bold'; title.textContent = 'Изменить название профиля';
+  const label = document.createElement('label'); label.className = 'grid gap-1 text-sm text-slate-300'; label.textContent = 'Название';
+  const input = document.createElement('input'); input.type = 'text'; input.name = 'profileName'; input.required = true; input.maxLength = 32; input.autocomplete = 'off'; input.spellcheck = false; input.className = 'min-h-9 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100'; input.value = profile.name; input.setAttribute('aria-label', 'Название профиля');
+  const hint = document.createElement('span'); hint.className = 'text-xs text-slate-500'; hint.textContent = 'Буквы, цифры, точка, дефис или подчёркивание · до 32 символов'; label.append(input, hint);
+  const actions = document.createElement('div'); actions.className = 'mt-4 flex justify-end gap-2';
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'backup-action'; cancel.textContent = 'Отмена'; cancel.addEventListener('click', () => dialog.close());
+  const save = document.createElement('button'); save.type = 'submit'; save.className = 'backup-action'; save.textContent = 'Сохранить'; actions.append(cancel, save);
+  panel.append(title, label, actions); dialog.append(panel);
+  panel.addEventListener('submit', (event) => {
+    event.preventDefault(); const name = input.value.trim();
+    if (!/^[\p{L}\p{N}_.-]{1,32}$/u.test(name)) { toast('Введите название из букв, цифр, точки, дефиса или подчёркивания (до 32 символов).', 'error'); input.focus(); return; }
+    if (profile.editable) renameRuntimeProfile(profile.id, name);
+    else if (!setRuntimeProfileLabelOverride(profile.id, name)) { toast('Не удалось сохранить название в хранилище браузера.', 'error'); return; }
+    renderRuntimeProfiles(); dialog.close(); toast('Название профиля сохранено.');
+  });
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+  document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove(), { once: true }); dialog.showModal(); input.focus(); input.select();
+}
 function renderBackups(data: SnapshotOverview) {
   const host = $('#backupList'); if (!host) return;
   snapshotOverview = data;
@@ -535,7 +570,7 @@ function markRuntimeProfilesDirty(id?: string, redraw = true) {
 function renderRuntimeProfiles() {
   const list = $('#profileList'); const editor = $('#profileEditor');
   if (!list || !editor || !runtimeProfilesState) return;
-  const profiles = visibleRuntimeProfiles();
+  const profiles = visibleRuntimeProfiles().map((profile) => ({ ...profile, name: profile.editable ? profile.name : runtimeProfileLabelOverrides()[profile.id] ?? profile.name }));
   const orderWarnings = profileOrderWarnings(profiles.map((profile) => profile.effectiveArgs ?? profile.args));
   if (!profiles.some((profile) => profile.id === selectedRuntimeProfileId)) selectedRuntimeProfileId = profiles[0]?.id ?? '';
   list.replaceChildren();
@@ -565,7 +600,9 @@ function renderRuntimeProfiles() {
   const profileWarnings = diagnoseProfileLuaArguments(profile.effectiveArgs ?? profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
   if (profileWarnings.length) { const warningBadge = document.createElement('span'); warningBadge.className = 'ml-2 inline-flex rounded-full bg-amber-500/15 px-2 py-0.5 align-middle text-[10px] font-semibold text-amber-300'; warningBadge.textContent = `${profileWarnings.length} предупреждений`; warningBadge.setAttribute('aria-label', profileWarnings.map((item) => item.message).join('. ')); name.append(warningBadge); }
   const source = document.createElement('p'); source.className = 'mt-1 text-xs text-slate-400'; source.textContent = `${profile.editable ? 'Пользовательский профиль · NFQWS_ARGS_CUSTOM' : `Штатная группа · ${profile.source}`} · параметры передаются в nfqws2`;
-  title.append(name, source); heading.append(title);
+  const titleLine = document.createElement('div'); titleLine.className = 'flex flex-wrap items-center gap-2'; titleLine.append(name);
+  const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'backup-action'; rename.textContent = '✎'; rename.setAttribute('aria-label', 'Изменить название профиля'); rename.title = 'Изменить название профиля'; rename.addEventListener('click', () => openRuntimeProfileRenameDialog(profile));
+  titleLine.append(rename); title.append(titleLine, source); heading.append(title);
   if (profile.editable) {
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-1';
     for (const [action, label, accessible] of [['shareRuntimeProfile', 'Для чата', 'Скопировать профиль для отправки в чат'], ['copyRuntimeProfile', 'Копия', 'Создать копию профиля'], ['moveRuntimeProfileUp', '↑', 'Переместить профиль выше'], ['moveRuntimeProfileDown', '↓', 'Переместить профиль ниже'], ['deleteRuntimeProfile', 'Удалить', 'Удалить профиль из черновика']] as const) {
