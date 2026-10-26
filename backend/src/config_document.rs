@@ -553,10 +553,16 @@ impl<'a> ConfigDocument<'a> {
             return Err("Добавляемые параметры содержат недопустимый shell-синтаксис".into());
         }
         let existing = self.literal_value(name)?;
+        let appended = words.split_whitespace().collect::<Vec<_>>().join("\n");
         let value = if existing.is_empty() {
-            words.to_owned()
+            appended
         } else {
-            format!("{existing} {words}")
+            let separator = if appended.starts_with("--new") {
+                "\n\n"
+            } else {
+                "\n"
+            };
+            format!("{}{}{}", existing.trim_end(), separator, appended)
         };
         self.set_literal(name, &value)
     }
@@ -845,7 +851,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             updated,
-            "OTHER='keep'\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80 --new --filter-tcp=443\" # profiles\n"
+            "OTHER='keep'\nNFQWS_ARGS_CUSTOM=\"--new --filter-tcp=80\n\n--new\n--filter-tcp=443\" # profiles\n"
         );
     }
 

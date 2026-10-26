@@ -70,7 +70,8 @@ export type SnapshotItem = { id: string; ts: number; reason: string; note: strin
 export type SnapshotRemoteSettings = { enabled: boolean; host: string; port: number; user: string; dir: string; keepLocal: number };
 export type SnapshotSettings = { maxCount: number; maxDays: number; remote: SnapshotRemoteSettings };
 export type SnapshotOverview = { items: SnapshotItem[]; settings: SnapshotSettings; directory: string; totalBytes: number; localCount: number; remote: { tool: string | null; publicKey: string; on: boolean; pending: number; stored: number; lastOk: number | null; error: string | null; setupCommand: string } };
-export type NfqwsArgumentProfile = { id: string; index: number; name: string; source: string; editable: boolean; args: string[]; filters: string[]; protocols: string[]; payloads: string[]; lists: string[]; steps: string[] };
+export type NfqwsProfileComponent = { source: string; args: string[] };
+export type NfqwsArgumentProfile = { id: string; index: number; name: string; source: string; editable: boolean; args: string[]; filters: string[]; protocols: string[]; payloads: string[]; lists: string[]; steps: string[]; components?: NfqwsProfileComponent[] };
 export type NfqwsProfilesResponse = { profiles: NfqwsArgumentProfile[]; customArgs: string; revision: string; limitation: string | null };
 export type NfqwsLuaFunctionInfo = { name: string; file: string; docs: string[]; arguments: string[]; fileArguments?: string[]; standardGroups: string[]; required: string[] };
 export type NfqwsLuaStandardGroup = { name: string; arguments: string[] };
@@ -175,6 +176,7 @@ export const nfqwsProfiles = {
   list: () => api<NfqwsProfilesResponse>('/api/profiles'),
   catalog: () => api<NfqwsLuaCatalogResponse>('/api/profiles/catalog'),
   saveCustom: (profiles: string[][], revision: string) => api<{ config: ConfigResponse; message: string }>('/api/profiles', { method: 'PUT', body: JSON.stringify({ profiles, revision }) }),
+  saveSettings: (variables: Record<string, string[]>, revision: string) => api<{ config: ConfigResponse; message: string }>('/api/profiles/settings', { method: 'PUT', body: JSON.stringify({ variables, revision }) }),
 };
 
 export const nfqwsChangeHistory = {

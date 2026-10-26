@@ -332,6 +332,16 @@ describe('API client used by the source-based panel', () => {
     expect(JSON.parse(String((fetchMock.mock.calls[5]?.[1] as RequestInit).body))).toEqual({ source: 'nfqws2-ui' });
   });
 
+  it('writes managed profile variables through the dedicated settings endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"message":"Штатные профили применены","config":{"file":"nfqws2.conf","content":"NFQWS_ARGS_UDP=\\\"--filter-udp=443\\\"","revision":"next"}}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await nfqwsProfiles.saveSettings({ NFQWS_ARGS_UDP: ['--filter-udp=443'] }, 'rev-1');
+    expect(result.message).toContain('Штатные профили');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/profiles/settings');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('PUT');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ variables: { NFQWS_ARGS_UDP: ['--filter-udp=443'] }, revision: 'rev-1' });
+  });
+
   it('loads profile function help from the installed Lua catalog endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"functions":[{"name":"multisplit","file":"zapret-auto.lua","docs":["Split a TLS record."],"arguments":["pos — positions"],"standardGroups":["general"],"required":["pos"]}],"standardGroups":[{"name":"general","arguments":["repeats=2 — repeat count"]}],"cli":{"options":[{"name":"lua-desync","syntax":"--lua-desync=<fn>","description":"desync function","global":false,"takesValue":true}],"l7":["tls"],"payloads":["tls_client_hello"],"full":true}}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);

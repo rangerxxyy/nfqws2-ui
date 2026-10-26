@@ -316,6 +316,8 @@ let runtimeProfileDraft: string[][] = [];
 let profileListInventory: NfqwsListSummary[] = [];
 let selectedRuntimeProfileId = '';
 let runtimeProfilesDirty = false;
+let runtimeProfileManagedDraft: Record<string, string[]> = {};
+let runtimeProfileManagedDirty = false;
 let runtimeProfileEditorMode: 'builder' | 'text' = 'builder';
 function renderBackups(data: SnapshotOverview) {
   const host = $('#backupList'); if (!host) return;
@@ -480,9 +482,8 @@ function renderRuntimeProfiles() {
   } else {
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap items-center gap-1.5';
     const copy = document.createElement('button'); copy.type = 'button'; copy.dataset.actionClick = 'copyRuntimeProfile'; copy.dataset.args = JSON.stringify([profile.id]); copy.dataset.actionTooltip = 'Скопировать в пользовательские профили для редактирования'; copy.className = 'backup-action'; copy.textContent = 'Копия';
-    const lock = document.createElement('span'); lock.className = 'rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400'; lock.textContent = 'Только просмотр';
     const share = document.createElement('button'); share.type = 'button'; share.dataset.actionClick = 'shareRuntimeProfile'; share.dataset.args = JSON.stringify([profile.id]); share.dataset.actionTooltip = 'Скопировать профиль вместе с подписью версии nfqws2'; share.className = 'backup-action'; share.textContent = 'Для чата';
-    actions.append(share, copy, lock); heading.append(actions);
+    actions.append(share, copy); heading.append(actions);
   }
   editor.append(heading);
   const profileOrderIssues = orderWarnings[profiles.findIndex((item) => item.id === profile.id)] ?? [];
@@ -682,12 +683,30 @@ function renderRuntimeProfiles() {
     });
     addLabel.append(addTitle, addChoice); builder.append(addLabel); editor.append(builder);
   }
-  if (!profile.editable || runtimeProfileEditorMode === 'text') {
+  if (!profile.editable) {
+    const components = profile.components ?? [];
+    if (components.length) {
+      const intro = document.createElement('p'); intro.className = 'mt-3 text-xs leading-5 text-slate-400'; intro.textContent = 'Штатная группа nfqws2. Здесь редактируются исходные переменные конфигурации; общие переменные могут влиять на несколько профилей.'; editor.append(intro);
+      for (const component of components) {
+        const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = component.source;
+        const textarea = document.createElement('textarea'); textarea.rows = Math.max(3, Math.min(10, component.args.length + 1)); textarea.spellcheck = false;
+        textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
+        textarea.value = (runtimeProfileManagedDraft[component.source] ?? component.args).join('\n');
+        textarea.setAttribute('aria-label', `Настройка ${component.source}`);
+        textarea.addEventListener('input', () => {
+          runtimeProfileManagedDraft[component.source] = textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
+          runtimeProfileManagedDirty = true;
+          const status = $('#profileStatus'); if (status) status.textContent = `Изменена ${component.source}. Применение проверит конфигурацию и перезапустит nfqws2 с откатом при ошибке.`;
+        });
+        label.append(textarea); editor.append(label);
+      }
+    }
+  } else if (runtimeProfileEditorMode === 'text') {
     const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = profile.editable ? 'Аргументы профиля · по одному на строку' : 'Аргументы штатной группы';
-    const textarea = document.createElement('textarea'); textarea.id = 'runtimeProfileArgs'; textarea.rows = Math.max(5, Math.min(12, profile.args.length + 2)); textarea.spellcheck = false; textarea.readOnly = !profile.editable;
-    textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none read-only:text-slate-400';
+    const textarea = document.createElement('textarea'); textarea.id = 'runtimeProfileArgs'; textarea.rows = Math.max(5, Math.min(12, profile.args.length + 2)); textarea.spellcheck = false;
+    textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
     textarea.value = profile.args.join('\n');
-    if (profile.editable) textarea.addEventListener('input', () => {
+    textarea.addEventListener('input', () => {
       const index = Number(profile.id.slice('custom-'.length)) - 1;
       if (Number.isInteger(index) && runtimeProfileDraft[index]) {
         runtimeProfileDraft[index] = textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
@@ -752,13 +771,14 @@ async function loadProfiles() {
     try { const catalog = await nfqwsProfiles.catalog(); runtimeProfileLuaCatalog = catalog.functions; runtimeProfileLuaStandardGroups = catalog.standardGroups ?? []; runtimeProfileCliCatalog = catalog.cli; runtimeProfileLuaCatalogAvailable = true; } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileCliCatalog = undefined; runtimeProfileLuaCatalogAvailable = false; }
     try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
+    runtimeProfileManagedDraft = {}; runtimeProfileManagedDirty = false;
     runtimeProfilesDirty = false; renderRuntimeProfiles();
     const cliStatus = runtimeProfileCliCatalog
       ? runtimeProfileCliCatalog.full
         ? `справка nfqws2 полная · ${runtimeProfileCliCatalog.options.length} параметров, ${runtimeProfileCliCatalog.l7.length} протоколов, ${runtimeProfileCliCatalog.payloads.length} типов пакетов`
         : `справка nfqws2 неполная · найдено ${runtimeProfileCliCatalog.options.length} параметров; повторите загрузку каталога`
       : 'справка параметров nfqws2 недоступна';
-    if (label) label.textContent = `${result.profiles.length} профилей в порядке nfqws2 · пользовательских ${runtimeProfileDraft.length} · ${cliStatus} · Lua-функций ${runtimeProfileLuaCatalogAvailable ? runtimeProfileLuaCatalog.length : 'каталог недоступен'} · штатные защищены от изменения`;
+    if (label) label.textContent = `${result.profiles.length} профилей nfqws2 · пользовательских ${runtimeProfileDraft.length}; штатные UDP, HTTP/HTTPS и QUIC доступны для настройки · ${cliStatus}`;
   } catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили nfqws2.'; }
 }
 function addRuntimeProfile() {
@@ -927,11 +947,21 @@ function mutateRuntimeProfile(id: string, action: 'up' | 'down' | 'delete') {
   markRuntimeProfilesDirty();
 }
 async function saveRuntimeProfiles() {
-  if (!runtimeProfilesState || !runtimeProfilesDirty) return toast('Нет изменений профилей для применения.');
-  requestDangerousConfirmation('Применить пользовательские профили?', 'Текущая конфигурация будет сохранена в резервных копиях, затем конфиг проверится и nfqws2 перезапустится. При ошибке панель попробует восстановить исходный конфиг.', async () => {
+  if (!runtimeProfilesState || (!runtimeProfilesDirty && !runtimeProfileManagedDirty)) return toast('Нет изменений профилей для применения.');
+  requestDangerousConfirmation('Применить изменения профилей?', 'Конфигурация будет сохранена в резервную копию, проверена через nfqws2 --dry-run, затем nfqws2 перезапустится с возможностью отката.', async () => {
     setBusy(true); setRestartInProgress(true);
     try {
-      const result = await nfqwsProfiles.saveCustom(runtimeProfileDraft, runtimeProfilesState!.revision);
+      let result: Awaited<ReturnType<typeof nfqwsProfiles.saveCustom>> | undefined;
+      if (runtimeProfilesDirty) {
+        result = await nfqwsProfiles.saveCustom(runtimeProfileDraft, runtimeProfilesState!.revision);
+        config = result.config;
+        runtimeProfilesDirty = false;
+      }
+      if (runtimeProfileManagedDirty) {
+        if (runtimeProfilesDirty === false && result) runtimeProfilesState = await nfqwsProfiles.list();
+        result = await nfqwsProfiles.saveSettings(runtimeProfileManagedDraft, runtimeProfilesState!.revision);
+      }
+      if (!result) return;
       config = result.config;
       const textarea = $('#nfqwsConfTextarea'); if (textarea instanceof HTMLTextAreaElement) textarea.value = config.content;
       toast(result.message || 'Профили nfqws2 применены.'); await Promise.all([loadProfiles(), fetchStatus()]);

@@ -581,7 +581,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toContain("const sections: Array<[string, string[]]> = [['Фильтры', profile.filters]");
     expect(panelSource).not.toContain("['Упорядоченные шаги', profile.steps]");
     expect(panelSource).toContain("if (profile.editable && runtimeProfileEditorMode === 'builder')");
-    expect(panelSource).toContain("if (!profile.editable || runtimeProfileEditorMode === 'text')");
+    expect(panelSource).toContain("else if (runtimeProfileEditorMode === 'text')");
+    expect(panelSource).toContain('const components = profile.components ?? []');
+    expect(panelSource).toContain('saveSettings(runtimeProfileManagedDraft');
     expect(panelSource).toContain("results.setAttribute('role', 'listbox')");
     expect(panelSource).toContain("section.setAttribute('role', 'group')");
     expect(panelSource).toContain('nextProfileChoiceIndex(options.indexOf(option), event.key, options.length)');

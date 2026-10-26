@@ -2676,6 +2676,13 @@ struct RuntimeProfilesWrite {
     revision: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeProfileSettingsWrite {
+    variables: std::collections::HashMap<String, Vec<String>>,
+    revision: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UiAppearanceSettings {
@@ -9670,6 +9677,123 @@ async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+fn build_runtime_profile_settings_config(
+    original: &str,
+    request: RuntimeProfileSettingsWrite,
+) -> Result<String, String> {
+    if revision(original.as_bytes()) != request.revision {
+        return Err(WRITE_REVISION_CONFLICT.into());
+    }
+    const ALLOWED: &[&str] = &[
+        "NFQWS_ARGS_UDP",
+        "NFQWS_ARGS_QUIC",
+        "NFQWS_ARGS_IPSET",
+        "NFQWS_ARGS",
+        "NFQWS_EXTRA_ARGS",
+    ];
+    if request.variables.is_empty() || request.variables.len() > ALLOWED.len() {
+        return Err("В запросе настроек профиля нет допустимых параметров".into());
+    }
+    ConfigDocument::parse(original)?;
+    nfqws2_ui::runtime_profiles::from_config(original, &request.revision)?;
+    let mut proposed = original.to_owned();
+    for (name, args) in request.variables {
+        if !ALLOWED.contains(&name.as_str()) {
+            return Err(format!(
+                "Изменение группы {name} через редактор профиля запрещено"
+            ));
+        }
+        if args.len() > 8192
+            || args.iter().any(|arg| {
+                arg.is_empty()
+                    || arg.len() > 4096
+                    || arg.split_whitespace().count() != 1
+                    || arg.chars().any(|c| {
+                        c.is_control()
+                            || matches!(c, '\'' | '"' | '`' | '$' | '\\' | ';' | '&' | '|')
+                    })
+            })
+        {
+            return Err(format!("Группа {name} содержит недопустимый параметр"));
+        }
+        proposed = ConfigDocument::parse(&proposed)?.set_literal_all(&name, &args.join("\n"))?;
+    }
+    let diagnostics = validate_nfqws2_config(&proposed)?;
+    if let Some(diagnostic) = diagnostics
+        .into_iter()
+        .find(|item| item.severity == DiagnosticSeverity::Error)
+    {
+        return Err(format!("{}: {}", diagnostic.code, diagnostic.message));
+    }
+    Ok(proposed)
+}
+
+async fn save_runtime_profile_settings(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<RuntimeProfileSettingsWrite>,
+) -> Response {
+    let Some(path) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось прочитать конфигурацию: {err}"),
+            );
+        }
+    };
+    let original = match std::str::from_utf8(&bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Конфигурация содержит некорректный UTF-8",
+            );
+        }
+    };
+    let proposed = match build_runtime_profile_settings_config(original, request) {
+        Ok(value) => value,
+        Err(message) if message == WRITE_REVISION_CONFLICT => {
+            return error(
+                StatusCode::CONFLICT,
+                "Конфигурация изменилась; обновите список профилей перед сохранением",
+            );
+        }
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Установка nfqws2 не обнаружена; настройки профиля не сохранены",
+        );
+    };
+    if let Err(message) = validate_profile_config_dry_run(&proposed, &paths).await {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("nfqws2 --dry-run отклонил конфигурацию; изменений нет: {message}"),
+        );
+    }
+    match apply_config_transaction(
+        &state,
+        ConfigWrite {
+            content: proposed,
+            revision: revision(&bytes),
+        },
+        || async { service_action(ServiceAction::Restart).await },
+    )
+    .await
+    {
+        Ok(result) => Json(result).into_response(),
+        Err(message) if message == WRITE_REVISION_CONFLICT => error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась во время сохранения профиля",
+        ),
+        Err(message) => error(StatusCode::BAD_GATEWAY, message),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct NfqwsCliOption {
@@ -11198,6 +11322,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         )
         .route("/api/profiles/catalog", get(get_profile_lua_catalog))
         .route(
+            "/api/profiles/settings",
+            axum::routing::put(save_runtime_profile_settings),
+        )
+        .route(
             "/api/snapshots/settings",
             axum::routing::put(update_snapshot_settings),
         )
@@ -11534,7 +11662,7 @@ mod tests {
         let document = ConfigDocument::parse(&updated).unwrap();
         assert_eq!(
             document.literal_or_mode_value("NFQWS_ARGS_CUSTOM").unwrap(),
-            "--filter-tcp=443 --new --filter-tcp=80 --lua-desync=fake"
+            "--filter-tcp=443\n--new\n--filter-tcp=80\n--lua-desync=fake"
         );
     }
 
@@ -11554,6 +11682,42 @@ mod tests {
             revision: revision(original.as_bytes()),
         };
         assert!(build_runtime_profiles_config(original, unsafe_args).is_err());
+    }
+
+    #[test]
+    fn managed_profile_settings_update_only_allowlisted_source_groups() {
+        let original = "NFQWS_ARGS_UDP=\"--filter-udp=443 --payload=quic_initial\"\nNFQWS_ARGS=\"--filter-tcp=80,443\" # shared HTTP base\n";
+        let mut variables = std::collections::HashMap::new();
+        variables.insert(
+            "NFQWS_ARGS_UDP".to_owned(),
+            vec![
+                "--filter-udp=443".to_owned(),
+                "--lua-desync=fake".to_owned(),
+            ],
+        );
+        let updated = build_runtime_profile_settings_config(
+            original,
+            RuntimeProfileSettingsWrite {
+                variables,
+                revision: revision(original.as_bytes()),
+            },
+        )
+        .unwrap();
+        assert!(updated.contains("NFQWS_ARGS_UDP=\"--filter-udp=443\n--lua-desync=fake\""));
+        assert!(updated.contains("NFQWS_ARGS=\"--filter-tcp=80,443\" # shared HTTP base"));
+
+        let mut forbidden = std::collections::HashMap::new();
+        forbidden.insert("IPV6_ENABLED".to_owned(), vec!["1".to_owned()]);
+        assert!(
+            build_runtime_profile_settings_config(
+                original,
+                RuntimeProfileSettingsWrite {
+                    variables: forbidden,
+                    revision: revision(original.as_bytes()),
+                }
+            )
+            .is_err()
+        );
     }
 
     #[tokio::test]

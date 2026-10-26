@@ -295,6 +295,16 @@ pub struct RuntimeProfile {
     pub payloads: Vec<String>,
     pub lists: Vec<String>,
     pub steps: Vec<String>,
+    /// Exact config variables that make up a managed profile. Some profiles
+    /// combine shared base arguments with IP or site-list settings.
+    pub components: Vec<RuntimeProfileComponent>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeProfileComponent {
+    pub source: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -385,7 +395,10 @@ pub fn encode_custom_profile_args(profiles: &[Vec<String>]) -> Result<String, St
             result.push(arg.clone());
         }
     }
-    let value = result.join(" ");
+    // Keep one argument per physical line in the shell config. Newlines are
+    // whitespace to nfqws2, but make custom strategies readable and preserve
+    // the multiline profile layout after edits in the UI.
+    let value = result.join("\n");
     if value.len() > 512 * 1024 {
         return Err("Пользовательские профили превышают лимит 512 КиБ".into());
     }
@@ -471,6 +484,7 @@ fn describe_profile(
         payloads,
         lists,
         steps,
+        components: Vec::new(),
     }
 }
 
@@ -498,7 +512,7 @@ pub fn from_config(source: &str, revision: &str) -> Result<RuntimeProfilesRespon
     }
     let udp = groups.get("NFQWS_ARGS_UDP").cloned().unwrap_or_default();
     if !udp.is_empty() {
-        definitions.push(("NFQWS_ARGS_UDP".into(), udp, None));
+        definitions.push(("NFQWS_ARGS_UDP".into(), udp.clone(), None));
     }
     let quic = groups.get("NFQWS_ARGS_QUIC").cloned().unwrap_or_default();
     let ipset = groups.get("NFQWS_ARGS_IPSET").cloned().unwrap_or_default();
@@ -511,24 +525,45 @@ pub fn from_config(source: &str, revision: &str) -> Result<RuntimeProfilesRespon
             args.push("--ipset-ip=0.0.0.0".into());
             definitions.push(("NFQWS_ARGS_QUIC_IPSET".into(), args, None));
         }
-        let mut args = quic;
+        let mut args = quic.clone();
         args.extend(extra.clone());
         definitions.push(("NFQWS_ARGS_QUIC_EXTRA".into(), args, None));
     }
     if !ipset.is_empty() {
         let mut args = tcp.clone();
-        args.extend(ipset);
+        args.extend(ipset.clone());
         args.push("--ipset-ip=0.0.0.0".into());
         definitions.push(("NFQWS_ARGS_IPSET".into(), args, None));
     }
-    let mut args = tcp;
-    args.extend(extra);
+    let mut args = tcp.clone();
+    args.extend(extra.clone());
     definitions.push(("NFQWS_ARGS".into(), args, None));
-    let profiles = definitions
+    let mut profiles: Vec<RuntimeProfile> = definitions
         .into_iter()
         .enumerate()
         .map(|(index, (source, args, part))| describe_profile(index + 1, &source, args, part))
         .collect();
+    for profile in &mut profiles {
+        let components: Vec<(&str, &Vec<String>)> = match profile.source.as_str() {
+            "NFQWS_ARGS_UDP" => vec![("NFQWS_ARGS_UDP", &udp)],
+            "NFQWS_ARGS_QUIC_IPSET" => {
+                vec![("NFQWS_ARGS_QUIC", &quic), ("NFQWS_ARGS_IPSET", &ipset)]
+            }
+            "NFQWS_ARGS_QUIC_EXTRA" => {
+                vec![("NFQWS_ARGS_QUIC", &quic), ("NFQWS_EXTRA_ARGS", &extra)]
+            }
+            "NFQWS_ARGS_IPSET" => vec![("NFQWS_ARGS", &tcp), ("NFQWS_ARGS_IPSET", &ipset)],
+            "NFQWS_ARGS" => vec![("NFQWS_ARGS", &tcp), ("NFQWS_EXTRA_ARGS", &extra)],
+            _ => Vec::new(),
+        };
+        profile.components = components
+            .into_iter()
+            .map(|(source, args)| RuntimeProfileComponent {
+                source: source.into(),
+                args: args.clone(),
+            })
+            .collect();
+    }
     Ok(RuntimeProfilesResponse {
         profiles,
         custom_args,
@@ -716,7 +751,7 @@ mod tests {
         let encoded = encode_custom_profile_args(&profiles).unwrap();
         assert_eq!(
             encoded,
-            "--filter-tcp=443 --lua-desync=fake --new=video --filter-tcp=80"
+            "--filter-tcp=443\n--lua-desync=fake\n--new=video\n--filter-tcp=80"
         );
         assert_eq!(split_custom_profile_args(&encoded).unwrap(), profiles);
     }
@@ -753,6 +788,17 @@ mod tests {
         assert_eq!(response.profiles[2].name, "video");
         assert_eq!(response.profiles[3].source, "NFQWS_ARGS_UDP");
         assert_eq!(response.profiles[4].source, "NFQWS_ARGS_QUIC_IPSET");
+        assert_eq!(response.profiles[3].components[0].source, "NFQWS_ARGS_UDP");
+        assert_eq!(response.profiles[6].components[0].source, "NFQWS_ARGS");
+        assert_eq!(
+            response.profiles[6].components[1].source,
+            "NFQWS_ARGS_IPSET"
+        );
+        assert_eq!(response.profiles[7].components[0].source, "NFQWS_ARGS");
+        assert_eq!(
+            response.profiles[7].components[1].source,
+            "NFQWS_EXTRA_ARGS"
+        );
         assert!(
             response.profiles[0].editable
                 && response.profiles[1].editable

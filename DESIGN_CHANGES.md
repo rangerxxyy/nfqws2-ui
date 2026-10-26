@@ -131,3 +131,10 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - Lua validation accepts nfqws2's `repeats` parameter for the `fake` function when older installed Lua comments omit it; this follows Zemidala's shipped strategy examples and avoids a false warning without widening the key to unrelated functions.
 - Lua validation recognizes `pos` for `fakeddisorder` when older installed Lua comments omit it. The constructor offers the documented `midsld` starter value and still warns on unrelated unknown keys.
 - The profile reference switches above the editor when the editor column itself is narrow, including desktop layouts where the fixed navigation consumes much of the viewport. This prevents the contextual guide from compressing or covering profile fields before the viewport-level mobile breakpoint.
+
+## Profile source editing and multiline config — 2026-10-26
+
+- The Zemidala comparison confirmed that built-in UDP and HTTP/HTTPS profile groups are editable in the reference. The Rust API now returns each managed profile's exact source variables; the UI edits those variables instead of flattening the composed profile into one unrelated config group.
+- UDP settings map to `NFQWS_ARGS_UDP`; HTTP/HTTPS by IP maps to `NFQWS_ARGS` plus `NFQWS_ARGS_IPSET`; HTTP/HTTPS by sites maps to `NFQWS_ARGS` plus `NFQWS_EXTRA_ARGS`. Shared source variables are shown explicitly because a change can affect multiple logical profile views. The reference combines HTTP and HTTPS into these two profiles; it does not expose separate HTTP-only and HTTPS-only groups.
+- Managed profile writes use an allowlisted Rust endpoint, reject stale config revisions and shell syntax, validate the proposed config, run the nfqws2 dry-run, then use the normal backup/restart/rollback transaction.
+- Custom profile saves and strategy-picker additions preserve one argument per line in `NFQWS_ARGS_CUSTOM`; a newly appended `--new` profile gets a blank-line separator. Newlines are argument whitespace to nfqws2, so this changes readability without changing profile semantics.
