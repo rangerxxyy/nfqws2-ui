@@ -28,6 +28,7 @@ import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterv
 import { copyProfileIntoDraft } from './copy-profile';
 import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
+import { navigationGroupForRoute } from './navigation';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['supportReport'] as const;
@@ -319,6 +320,7 @@ let runtimeProfilesDirty = false;
 let runtimeProfileManagedDraft: Record<string, string[]> = {};
 let runtimeProfileManagedDirty = false;
 let runtimeProfileEditorMode: 'builder' | 'text' = 'builder';
+let runtimeProfileReferenceExpanded = false;
 function renderBackups(data: SnapshotOverview) {
   const host = $('#backupList'); if (!host) return;
   snapshotOverview = data;
@@ -691,14 +693,17 @@ function renderRuntimeProfiles() {
         const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = component.source;
         const textarea = document.createElement('textarea'); textarea.rows = Math.max(3, Math.min(10, component.args.length + 1)); textarea.spellcheck = false;
         textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
+        textarea.readOnly = !component.editable;
+        if (!component.editable) textarea.classList.add('text-slate-400');
         textarea.value = (runtimeProfileManagedDraft[component.source] ?? component.args).join('\n');
         textarea.setAttribute('aria-label', `Настройка ${component.source}`);
-        textarea.addEventListener('input', () => {
+        if (component.editable) textarea.addEventListener('input', () => {
           runtimeProfileManagedDraft[component.source] = textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
           runtimeProfileManagedDirty = true;
           const status = $('#profileStatus'); if (status) status.textContent = `Изменена ${component.source}. Применение проверит конфигурацию и перезапустит nfqws2 с откатом при ошибке.`;
         });
         label.append(textarea); editor.append(label);
+        if (component.note) { const note = document.createElement('p'); note.className = 'mt-1 text-xs leading-5 text-slate-500'; note.textContent = component.note; editor.append(note); }
       }
     }
   } else if (runtimeProfileEditorMode === 'text') {
@@ -725,24 +730,29 @@ function renderRuntimeProfiles() {
   const layout = document.createElement('div'); layout.className = 'profile-editor-layout';
   const main = document.createElement('div'); main.className = 'profile-editor-main'; main.append(...bodyNodes);
   const reference = document.createElement('aside'); reference.className = 'profile-reference'; reference.setAttribute('aria-label', 'Справочник параметров профиля');
+  const referenceDetails = document.createElement('details'); referenceDetails.className = 'profile-reference-details';
+  const referenceSummary = document.createElement('summary'); referenceSummary.textContent = 'Справочник параметров профиля';
+  const referenceContent = document.createElement('div'); referenceContent.className = 'profile-reference-content';
+  let referenceExpanded = runtimeProfileReferenceExpanded;
+  referenceDetails.addEventListener('toggle', () => { referenceExpanded = referenceDetails.open; runtimeProfileReferenceExpanded = referenceExpanded; });
+  referenceDetails.append(referenceSummary, referenceContent); reference.append(referenceDetails);
   const renderReference = (functionName?: string, selectedKey?: string) => {
-    reference.replaceChildren();
-    const eyebrow = document.createElement('p'); eyebrow.className = 'profile-reference-eyebrow'; eyebrow.textContent = 'СПРАВОЧНИК';
+    referenceContent.replaceChildren();
     const cliOption = selectedKey?.startsWith('--') ? selectedKey.slice(2).split(/[=:]/, 1)[0] ?? '' : '';
     const referenceTitle = document.createElement('h3'); referenceTitle.textContent = functionName ? `Lua-функция · ${functionName}` : cliOption ? 'Параметр nfqws2' : 'Параметры профиля';
     const summary = document.createElement('p'); summary.className = 'profile-reference-summary';
     const functionInfo = runtimeProfileLuaCatalog.find((item) => item.name === functionName);
     summary.textContent = functionName ? getRussianLuaFunctionDescription(functionName) : cliOption ? getRussianNfqwsOptionDescription(cliOption) : 'Выберите параметр или шаг — здесь появится краткое объяснение на русском языке.';
-    reference.append(eyebrow, referenceTitle, summary);
-    if (selectedKey && !selectedKey.startsWith('--')) { const selected = document.createElement('p'); selected.className = 'profile-reference-selected'; selected.textContent = getRussianLuaArgumentDescription(selectedKey); reference.append(selected); }
-    if (selectedKey?.startsWith('--')) { const syntax = document.createElement('code'); syntax.className = 'mt-2 block break-all rounded bg-slate-950 px-2 py-1 font-mono text-xs text-cyan-200'; syntax.textContent = selectedKey; reference.append(syntax); }
+    referenceContent.append(referenceTitle, summary);
+    if (selectedKey && !selectedKey.startsWith('--')) { const selected = document.createElement('p'); selected.className = 'profile-reference-selected'; selected.textContent = getRussianLuaArgumentDescription(selectedKey); referenceContent.append(selected); }
+    if (selectedKey?.startsWith('--')) { const syntax = document.createElement('code'); syntax.className = 'mt-2 block break-all rounded bg-slate-950 px-2 py-1 font-mono text-xs text-cyan-200'; syntax.textContent = selectedKey; referenceContent.append(syntax); }
     if (functionName) {
       const options = getLuaProfileParameterOptions(functionInfo, runtimeProfileLuaStandardGroups, functionName);
       if (options.length) {
-        const listTitle = document.createElement('h4'); listTitle.textContent = 'Доступные параметры'; reference.append(listTitle);
+        const listTitle = document.createElement('h4'); listTitle.textContent = 'Доступные параметры'; referenceContent.append(listTitle);
         const list = document.createElement('ul'); list.className = 'profile-reference-list';
         for (const item of options) { const entry = document.createElement('li'); entry.textContent = getRussianLuaArgumentDescription(item); list.append(entry); }
-        reference.append(list);
+        referenceContent.append(list);
       }
     }
   };
@@ -761,6 +771,7 @@ function renderRuntimeProfiles() {
     renderReference(select.value, parameter);
   });
   if (headingElement) editor.replaceChildren(headingElement);
+  referenceDetails.open = referenceExpanded;
   layout.append(main, reference); editor.append(layout);
   installStyledSelects(editor);
 }
@@ -1035,9 +1046,8 @@ function syncAppearanceControls() {
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
 }
 function syncNavigationLayout(route?: Route) {
-  const routeToGroup: Record<string, string> = { conf: 'configuration', check: 'site-check', trace: 'site-check', diagnostic16k: 'site-check', configCheck: 'site-check', autotune: 'tuning', monitor: 'monitoring', lists: 'lists', profiles: 'system', snapshots: 'system', changes: 'system', logs: 'system', appearance: 'system', about: 'system' };
-  const activeRoute = route ?? (Object.keys(routeToGroup).find((key) => !document.getElementById(`tabContent-${key}`)?.classList.contains('hidden')) as Route | undefined);
-  const group = activeRoute ? routeToGroup[activeRoute] : undefined;
+  const activeRoute = route ?? (all<HTMLElement>('[id^="tabContent-"]').find((section) => !section.classList.contains('hidden'))?.id.replace('tabContent-', '') as Route | undefined);
+  const group = navigationGroupForRoute(activeRoute);
   const navigation = $('#simplifiedNavigation');
   navigation?.classList.toggle('hidden', appearanceSettings.layout !== 'simplified');
   all<HTMLButtonElement>('[data-simplified-group]').forEach((button) => {
@@ -1049,7 +1059,7 @@ function syncNavigationLayout(route?: Route) {
     const active = button.dataset.simplifiedRoute === activeRoute;
     button.setAttribute('aria-pressed', String(active));
     button.classList.toggle('simplified-nav-active', active);
-    button.classList.toggle('hidden', routeToGroup[button.dataset.simplifiedRoute ?? ''] !== group);
+    button.classList.toggle('hidden', navigationGroupForRoute(button.dataset.simplifiedRoute) !== group);
   });
 }
 function updateAppearance(change: Partial<AppearanceSettings>) {

@@ -445,6 +445,18 @@ impl<'a> ConfigDocument<'a> {
         }
     }
 
+    /// Return the literal `$MODE_*` name used by an assignment, without
+    /// expanding it. Editors can use this to avoid replacing a mode link with
+    /// its currently expanded arguments.
+    pub fn referenced_mode(&self, name: &str) -> Option<String> {
+        self.assignments
+            .iter()
+            .rev()
+            .find(|assignment| assignment.name == name)
+            .and_then(|assignment| Self::mode_reference(&self.source[assignment.value.clone()]))
+            .map(str::to_owned)
+    }
+
     fn self_append_suffix<'b>(raw: &'b str, name: &str) -> Result<Option<&'b str>, String> {
         let Some(value) = raw
             .strip_prefix('"')

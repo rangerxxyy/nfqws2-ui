@@ -1045,6 +1045,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('Перебор стратегий QUIC пока не поддерживается');
   });
 
+  it('keeps the Russian profile reference on the right and collapsed until requested', () => {
+    expect(panelSource).toContain("reference.className = 'profile-reference'");
+    expect(panelSource).toContain("referenceSummary.textContent = 'Справочник параметров профиля'");
+    expect(panelSource).toContain('let runtimeProfileReferenceExpanded = false');
+    expect(panelSource).toContain('let referenceExpanded = runtimeProfileReferenceExpanded');
+    expect(panelSource).toContain('referenceDetails.open = referenceExpanded');
+    expect(panelSource).toContain("referenceDetails.addEventListener('toggle'");
+    expect(panelStyles).toContain('.profile-editor-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(16rem,23rem)');
+  });
+
   it('has no duplicate action attributes and every template action is wired', () => {
     const tags = template.match(/<[a-z][^>]*>/gi) ?? [];
     for (const tag of tags) {

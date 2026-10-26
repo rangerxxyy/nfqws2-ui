@@ -125,12 +125,12 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - Removed the duplicate profile summary rows (filters, protocols, payload types, lists, and the flattened ordered-step command) from above the editor. The profile header and warnings remain, followed directly by the editable builder or text view.
 
 - Removed the introductory copy above the profile workspace so the profile list and current editor lead the page.
-- Replaced inline Lua source comments and English parameter descriptions with Russian summaries generated from the installed nfqws2 catalog. The contextual reference stays beside the editor on wide screens and moves above it on narrow screens.
+- Replaced inline Lua source comments and English parameter descriptions with Russian summaries generated from the installed nfqws2 catalog. The contextual reference stays beside the editor on wide screens and moves after it on narrow screens.
 - Added a searchable, grouped parameter chooser for profile-scoped nfqws2 options and Lua functions. Selecting an item updates the active profile draft through the existing profile editing flow; global options and the profile separator remain excluded.
 - The reference follows focused Lua steps and CLI arguments, showing their syntax and Russian purpose. Parameter names and command syntax remain unchanged for accuracy.
 - Lua validation accepts nfqws2's `repeats` parameter for the `fake` function when older installed Lua comments omit it; this follows Zemidala's shipped strategy examples and avoids a false warning without widening the key to unrelated functions.
 - Lua validation recognizes `pos` for `fakeddisorder` when older installed Lua comments omit it. The constructor offers the documented `midsld` starter value and still warns on unrelated unknown keys.
-- The profile reference switches above the editor when the editor column itself is narrow, including desktop layouts where the fixed navigation consumes much of the viewport. This prevents the contextual guide from compressing or covering profile fields before the viewport-level mobile breakpoint.
+- The profile reference moves after the editor when the editor column itself is narrow, including desktop layouts where the fixed navigation consumes much of the viewport. This prevents the contextual guide from compressing or covering profile fields before the viewport-level mobile breakpoint.
 
 ## Profile source editing and multiline config — 2026-10-26
 
@@ -138,3 +138,8 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - UDP settings map to `NFQWS_ARGS_UDP`; HTTP/HTTPS by IP maps to `NFQWS_ARGS` plus `NFQWS_ARGS_IPSET`; HTTP/HTTPS by sites maps to `NFQWS_ARGS` plus `NFQWS_EXTRA_ARGS`. Shared source variables are shown explicitly because a change can affect multiple logical profile views. The reference combines HTTP and HTTPS into these two profiles; it does not expose separate HTTP-only and HTTPS-only groups.
 - Managed profile writes use an allowlisted Rust endpoint, reject stale config revisions and shell syntax, validate the proposed config, run the nfqws2 dry-run, then use the normal backup/restart/rollback transaction.
 - Custom profile saves and strategy-picker additions preserve one argument per line in `NFQWS_ARGS_CUSTOM`; a newly appended `--new` profile gets a blank-line separator. Newlines are argument whitespace to nfqws2, so this changes readability without changing profile semantics.
+# Конструктор стратегий в разделе «Конфигурация»
+
+Навигация профилей nfqws2 объединена с разделом «Конфигурация»: в обычной боковой навигации конструктор показан вложенным пунктом, а в упрощённой — второй страницей группы «Конфигурация». Внутренний маршрут `profiles` и API оставлены прежними, чтобы не менять загрузку, редактирование и применение профилей.
+
+Справочник параметров остаётся справа от редактора на широком экране и свёрнут при первом открытии профилей. Нативный раскрываемый заголовок доступен с клавиатуры; выбранная функция и параметр обновляют содержимое справки, а раскрытое состояние сохраняется при перерисовке редактора. На узком экране справочник располагается после редактора.

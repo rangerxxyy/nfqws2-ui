@@ -305,6 +305,8 @@ pub struct RuntimeProfile {
 pub struct RuntimeProfileComponent {
     pub source: String,
     pub args: Vec<String>,
+    pub editable: bool,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -543,6 +545,7 @@ pub fn from_config(source: &str, revision: &str) -> Result<RuntimeProfilesRespon
         .enumerate()
         .map(|(index, (source, args, part))| describe_profile(index + 1, &source, args, part))
         .collect();
+    let extra_mode = document.referenced_mode("NFQWS_EXTRA_ARGS");
     for profile in &mut profiles {
         let components: Vec<(&str, &Vec<String>)> = match profile.source.as_str() {
             "NFQWS_ARGS_UDP" => vec![("NFQWS_ARGS_UDP", &udp)],
@@ -561,6 +564,10 @@ pub fn from_config(source: &str, revision: &str) -> Result<RuntimeProfilesRespon
             .map(|(source, args)| RuntimeProfileComponent {
                 source: source.into(),
                 args: args.clone(),
+                editable: source != "NFQWS_EXTRA_ARGS" || extra_mode.is_none(),
+                note: (source == "NFQWS_EXTRA_ARGS")
+                    .then(|| extra_mode.as_ref().map(|mode| format!("Используется режим ${mode}; его выбор изменяется в общих настройках конфигурации.")))
+                    .flatten(),
             })
             .collect();
     }

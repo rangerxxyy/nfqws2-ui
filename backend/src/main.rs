@@ -9694,7 +9694,7 @@ fn build_runtime_profile_settings_config(
     if request.variables.is_empty() || request.variables.len() > ALLOWED.len() {
         return Err("В запросе настроек профиля нет допустимых параметров".into());
     }
-    ConfigDocument::parse(original)?;
+    let original_document = ConfigDocument::parse(original)?;
     nfqws2_ui::runtime_profiles::from_config(original, &request.revision)?;
     let mut proposed = original.to_owned();
     for (name, args) in request.variables {
@@ -9702,6 +9702,13 @@ fn build_runtime_profile_settings_config(
             return Err(format!(
                 "Изменение группы {name} через редактор профиля запрещено"
             ));
+        }
+        if name == "NFQWS_EXTRA_ARGS"
+            && original_document
+                .referenced_mode("NFQWS_EXTRA_ARGS")
+                .is_some()
+        {
+            return Err("NFQWS_EXTRA_ARGS ссылается на MODE_LIST, MODE_AUTO или MODE_ALL; измените режим в общих настройках, чтобы сохранить связь со списками".into());
         }
         if args.len() > 8192
             || args.iter().any(|arg| {
@@ -9717,6 +9724,9 @@ fn build_runtime_profile_settings_config(
             return Err(format!("Группа {name} содержит недопустимый параметр"));
         }
         proposed = ConfigDocument::parse(&proposed)?.set_literal_all(&name, &args.join("\n"))?;
+        if proposed.len() > MAX_CONFIG_BYTES {
+            return Err("Изменённая конфигурация превышает лимит размера".into());
+        }
     }
     let diagnostics = validate_nfqws2_config(&proposed)?;
     if let Some(diagnostic) = diagnostics
@@ -11717,6 +11727,24 @@ mod tests {
                 }
             )
             .is_err()
+        );
+
+        let mode_config = "MODE_AUTO=\"--hostlist-auto=lists/auto.list\"\nNFQWS_ARGS=\"--filter-tcp=443\"\nNFQWS_EXTRA_ARGS=\"$MODE_AUTO\"\n";
+        let mut mode_variables = std::collections::HashMap::new();
+        mode_variables.insert(
+            "NFQWS_EXTRA_ARGS".to_owned(),
+            vec!["--hostlist-auto=lists/auto.list".to_owned()],
+        );
+        assert!(
+            build_runtime_profile_settings_config(
+                mode_config,
+                RuntimeProfileSettingsWrite {
+                    variables: mode_variables,
+                    revision: revision(mode_config.as_bytes()),
+                }
+            )
+            .unwrap_err()
+            .contains("чтобы сохранить связь со списками")
         );
     }
 
