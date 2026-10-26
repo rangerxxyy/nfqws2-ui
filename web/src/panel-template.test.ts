@@ -16,9 +16,12 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
-  it('offers profile renaming from the profile heading without browser prompts', () => {
-    expect(panelSource).toContain("openRuntimeProfileRenameDialog");
-    expect(panelSource).toContain("Изменить название профиля");
+  it('offers inline profile renaming in the name field without a pencil or browser prompt', () => {
+    expect(panelSource).toContain("nameLabel.textContent = 'Имя'");
+    expect(panelSource).toContain("nameInput.className = 'runtime-profile-name-input'");
+    expect(panelSource).toContain("nameInput.addEventListener('change'");
+    expect(panelSource).not.toContain("openRuntimeProfileRenameDialog");
+    expect(panelSource).not.toContain("textContent = '✎'");
     expect(panelSource).toContain("renameRuntimeProfile:");
     expect(panelSource).not.toMatch(/\b(?:window\.)?prompt\s*\(/);
   });
@@ -35,15 +38,18 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('overflow-wrap:anywhere');
   });
 
-  it('keeps profile rename in the heading and moves the constructor mode switch to it', () => {
-    expect(panelSource).toContain("openRuntimeProfileRenameDialog(profile)");
+  it('keeps the profile name field compact and the constructor mode switch in the heading', () => {
+    expect(panelSource).toContain("nameField.className = 'runtime-profile-name-field'");
     expect(panelSource).toContain("id = 'runtimeProfileModeToggle'");
     expect(panelSource).not.toContain("modeTitle.textContent = 'Редактор профиля'");
-    expect(panelSource).not.toContain("nameField.textContent = 'Имя профиля'");
     expect(panelStyles).toContain('.runtime-profile-mode-toggle::before');
+    expect(panelStyles).toContain('.runtime-profile-name-input');
   });
 
   it('renders profile parameter chips with separate key, value, and remove styles', () => {
+    const keyRule = [...panelStyles.matchAll(/\.profile-parameter-key \{([^}]*)\}/g)].map((match) => match[1]).find((rule) => rule.includes('display:inline-flex')) ?? '';
+    const valueRule = [...panelStyles.matchAll(/\.profile-parameter-value \{([^}]*)\}/g)].map((match) => match[1]).find((rule) => rule.includes('box-sizing:border-box')) ?? '';
+
     expect(panelSource).toContain("chip.className = 'profile-parameter-chip'");
     expect(panelSource).toContain("keyLabel.className = 'profile-parameter-key'");
     expect(panelSource).toContain('keyLabel.textContent = hasValue ? key : parameter');
@@ -54,7 +60,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.profile-parameter-value');
     expect(panelStyles).toContain('.profile-parameter-chip');
     expect(panelStyles).toContain('background:linear-gradient(105deg,#211b30 0%,#1c2234 48%,#172734 100%)');
-    expect(panelStyles).toContain('background:linear-gradient(100deg,#26304844,#203c4a55)');
+    expect(panelStyles).toContain('background:linear-gradient(100deg,#26304866,#203c4a77)');
+    expect(keyRule).toMatch(/display:inline-flex/);
+    expect(keyRule).toMatch(/align-items:center/);
+    expect(keyRule).toMatch(/height:1\.2rem/);
+    expect(keyRule).toMatch(/background:/);
+    expect(keyRule).toMatch(/border-right:1px solid/);
+    expect(valueRule).toMatch(/border:1px solid/);
+    expect(valueRule).toMatch(/border-radius:\.24rem/);
+    expect(valueRule).toMatch(/height:1\.2rem/);
+    expect(valueRule).not.toMatch(/margin-left:/);
   });
 
   it('keeps strategy rows and long parameter chips within a responsive grid', () => {
@@ -1236,6 +1251,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("row.classList.add('is-dragging')");
     expect(panelStyles).toContain('.profile-step-row.is-dragging');
     expect(panelStyles).toContain('transition:transform .18s ease,opacity .18s ease');
+  });
+
+  it('keeps the grab cursor on the drag grip instead of parameter chips', () => {
+    const rowRule = panelStyles.match(/\.profile-step-row \{([^}]*)\}/)?.[1] ?? '';
+    const rowActiveRule = panelStyles.match(/\.profile-step-row:active \{([^}]*)\}/)?.[1] ?? '';
+    const gripRule = panelStyles.match(/\.profile-step-grip \{([^}]*)\}/)?.[1] ?? '';
+
+    expect(rowRule).not.toMatch(/cursor:\s*grab/);
+    expect(rowActiveRule).not.toMatch(/cursor:\s*grabbing/);
+    expect(gripRule).toMatch(/cursor:\s*grab/);
   });
 
   it('labels strategy tiles by lua-desync order, excluding payload and range rows', () => {
