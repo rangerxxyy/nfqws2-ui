@@ -683,7 +683,12 @@ async function loadProfiles() {
     try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
     runtimeProfilesDirty = false; renderRuntimeProfiles();
-    if (label) label.textContent = `${result.profiles.length} профилей в порядке nfqws2 · пользовательских ${runtimeProfileDraft.length} · Lua-функций ${runtimeProfileLuaCatalogAvailable ? runtimeProfileLuaCatalog.length : 'каталог недоступен'} · штатные защищены от изменения`;
+    const cliStatus = runtimeProfileCliCatalog
+      ? runtimeProfileCliCatalog.full
+        ? `справка nfqws2 полная · ${runtimeProfileCliCatalog.options.length} параметров, ${runtimeProfileCliCatalog.l7.length} протоколов, ${runtimeProfileCliCatalog.payloads.length} типов пакетов`
+        : `справка nfqws2 неполная · найдено ${runtimeProfileCliCatalog.options.length} параметров; повторите загрузку каталога`
+      : 'справка параметров nfqws2 недоступна';
+    if (label) label.textContent = `${result.profiles.length} профилей в порядке nfqws2 · пользовательских ${runtimeProfileDraft.length} · ${cliStatus} · Lua-функций ${runtimeProfileLuaCatalogAvailable ? runtimeProfileLuaCatalog.length : 'каталог недоступен'} · штатные защищены от изменения`;
   } catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили nfqws2.'; }
 }
 function addRuntimeProfile() {

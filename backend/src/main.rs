@@ -9686,6 +9686,7 @@ struct NfqwsCliCatalog {
     options: Vec<NfqwsCliOption>,
     l7: Vec<String>,
     payloads: Vec<String>,
+    full: bool,
 }
 
 fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
@@ -9762,7 +9763,58 @@ fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
             takes_value,
         });
     }
+    const REQUIRED_OPTIONS: [&str; 7] = [
+        "qnum",
+        "blob",
+        "lua-init",
+        "new",
+        "filter-tcp",
+        "payload",
+        "lua-desync",
+    ];
+    catalog.full = !catalog.l7.is_empty()
+        && !catalog.payloads.is_empty()
+        && REQUIRED_OPTIONS.iter().all(|required| {
+            catalog
+                .options
+                .iter()
+                .any(|option| option.name == *required)
+        });
     catalog
+}
+
+async fn run_nfqws_cli_help(binary: &Path, timeout: std::time::Duration) -> NfqwsCliCatalog {
+    match tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(binary)
+            .arg("--help")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => parse_nfqws_cli_catalog(&format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )),
+        _ => NfqwsCliCatalog::default(),
+    }
+}
+
+async fn load_nfqws_cli_catalog(binary: &Path) -> NfqwsCliCatalog {
+    let first = run_nfqws_cli_help(binary, std::time::Duration::from_secs(5)).await;
+    if first.full {
+        return first;
+    }
+    // Match Zemidala's fallback: --help may be truncated on a busy router,
+    // so retry once with a longer deadline before exposing the catalog.
+    let retry = run_nfqws_cli_help(binary, std::time::Duration::from_secs(15)).await;
+    if retry.full || retry.options.len() >= first.options.len() {
+        retry
+    } else {
+        first
+    }
 }
 
 fn strip_terminal_controls(value: &str) -> String {
@@ -9792,22 +9844,7 @@ async fn get_profile_lua_catalog() -> Response {
     let Some(paths) = discover_system_paths() else {
         return error(StatusCode::NOT_FOUND, "Установка nfqws2 не обнаружена");
     };
-    let cli_catalog = match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        tokio::process::Command::new(&paths.binary)
-            .arg("--help")
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    {
-        Ok(Ok(output)) => parse_nfqws_cli_catalog(&format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        )),
-        _ => NfqwsCliCatalog::default(),
-    };
+    let cli_catalog = load_nfqws_cli_catalog(&paths.binary).await;
     let Ok(entries) = std::fs::read_dir(&paths.lua_dir) else {
         return Json(
             serde_json::json!({ "functions": [], "standardGroups": [], "cli": cli_catalog }),
@@ -11400,6 +11437,19 @@ mod tests {
                 .unwrap()
                 .takes_value
         );
+    }
+
+    #[test]
+    fn nfqws_help_catalog_marks_partial_and_complete_help_output() {
+        let partial = parse_nfqws_cli_catalog(
+            "GLOBAL:\n  --qnum=<n>\nMULTI-STRATEGY:\n  --filter-l7=proto ; protocols : tls http\nLUA PACKET PASS MODE:\n  --payload=type ; payloads : known tls_client_hello\n",
+        );
+        assert!(!partial.full);
+
+        let complete = parse_nfqws_cli_catalog(
+            "GLOBAL:\n  --qnum=<n>\n  --lua-init=<code>\n  --blob=<name>:<file>\nMULTI-STRATEGY:\n  --new\n  --filter-tcp=<ports>\n  --filter-l7=proto ; protocols : tls http\n  --lua-desync=<fn>\nLUA PACKET PASS MODE:\n  --payload=type ; payloads : known tls_client_hello\n",
+        );
+        assert!(complete.full);
     }
 
     #[test]
