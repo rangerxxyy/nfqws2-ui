@@ -71,6 +71,14 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toContain('navigator.clipboard.writeText(editor.value)');
   });
 
+  it('offers a validated manual ISP interface field when discovery returns none', () => {
+    expect(template).toContain('id="ispInterfaceManualInput"');
+    expect(panelSource).toContain("interfaceSelect.classList.toggle('hidden', networkInterfaces.length === 0)");
+    expect(panelSource).toContain("manualInterface?.classList.toggle('hidden', networkInterfaces.length > 0)");
+    expect(panelSource).toContain('isValidNetworkInterfaceName(value)');
+    expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
+  });
+
   it('restores profile constructor logic from v1.2.3 while allowing full profile labels to wrap', () => {
     expect(panelSource).toContain("name.className = 'truncate font-medium'");
     expect(panelSource).toContain('moveRuntimeProfileUp');

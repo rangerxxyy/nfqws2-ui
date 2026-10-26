@@ -523,9 +523,9 @@ export default function App() {
                     {"\n                  "}
                     <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
                       {"\n                    "}
-                      <span>
+                      <label htmlFor={"ispInterfaceSelect"}>
                         {"ISP_INTERFACE"}
-                      </span>
+                      </label>
                       {"\n                    "}
                       <span className={"text-emerald-400"}>
                         {"WAN"}
@@ -533,9 +533,11 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     {"\n                  "}
-                    <select defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       <option value={""}>{"Backend ещё не обнаружил сетевые интерфейсы"}</option>
                     </select>
+                    <input id={"ispInterfaceManualInput"} type={"text"} inputMode={"text"} autoComplete={"off"} maxLength={15} aria-label={"Имя сетевого интерфейса"} placeholder={"например eth0 или ppp0"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 hidden w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs font-bold text-white focus:border-blue-500 focus:outline-none"} />
+                    <p id={"ispInterfaceDiscoveryHint"} className={"mt-1 hidden text-xs text-slate-500"}>{"Интерфейсы не обнаружены; введите имя вручную."}</p>
                     {"\n                "}
                   </div>
                   {"\n\n                "}

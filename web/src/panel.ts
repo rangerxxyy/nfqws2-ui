@@ -31,6 +31,7 @@ import { copyProfileIntoDraft } from './copy-profile';
 import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileProtocol, appendProfileUdpFilter, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
+import { isValidNetworkInterfaceName } from './network-interface';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['supportReport'] as const;
@@ -1815,7 +1816,13 @@ function updateQuickParameters(content: string, networkInterfaces: string[] = []
       interfaceSelect.value = configured;
     }
     interfaceSelect.disabled = networkInterfaces.length === 0;
-    interfaceSelect.title = networkInterfaces.length ? 'Варианты получены из /sys/class/net на устройстве' : 'Backend не обнаружил сетевые интерфейсы; измените ISP_INTERFACE в raw-конфиге после проверки устройства';
+    interfaceSelect.title = networkInterfaces.length ? 'Варианты получены из /sys/class/net на устройстве' : 'Backend не обнаружил сетевые интерфейсы';
+    interfaceSelect.classList.toggle('hidden', networkInterfaces.length === 0);
+    const manualInterface = $('#ispInterfaceManualInput');
+    manualInterface?.classList.toggle('hidden', networkInterfaces.length > 0);
+    const discoveryHint = $('#ispInterfaceDiscoveryHint');
+    discoveryHint?.classList.toggle('hidden', networkInterfaces.length > 0);
+    if (manualInterface instanceof HTMLInputElement) manualInterface.value = configured;
   }
   all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-key]').forEach((select) => {
     const key = select.dataset.key;
@@ -1840,6 +1847,14 @@ async function updateConfigVariable(key: string, value: string) {
   if (busy || !config) return;
   const editor = $('#nfqwsConfTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return;
+  if (key === 'ISP_INTERFACE') {
+    value = value.trim();
+    if (!isValidNetworkInterfaceName(value)) {
+      toast('Имя интерфейса должно содержать 1–15 латинских букв, цифр или символов . _ @ + -.', 'error');
+      updateQuickParameters(editor.value, discoveredNetworkInterfaces);
+      return;
+    }
+  }
   const before = editor.value;
   setBusy(true);
   try {
