@@ -56,6 +56,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('id="listFooterCount"');
   });
 
+  it('defines shared typography and semantic color tokens for UI sections', () => {
+    expect(panelStyles).toContain('--ui-font-sans:');
+    expect(panelStyles).toContain('--ui-text-caption:');
+    expect(panelStyles).toContain('--ui-color-text-secondary:');
+    expect(panelStyles).toContain('--ui-color-warning:');
+    expect(panelStyles).toContain('[class~="text-[11px]"]');
+    expect(panelStyles).toContain('--ui-space-4:');
+    expect(panelStyles).toContain('code,kbd,pre,samp,.font-mono');
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");

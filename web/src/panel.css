@@ -541,7 +541,7 @@ textarea { line-height: 1.7; tab-size: 4; }
 .list-editor-icon-button { width:2.25rem; height:2.25rem; flex:none; }
 .list-editor-toolbar { align-items:center; }
 .list-editor-toolbar-actions { justify-content:flex-end; }
-.list-toolbar-button { display:inline-flex; min-height:2.25rem; align-items:center; justify-content:center; gap:.4rem; border:1px solid #334155; border-radius:.55rem; padding:.45rem .7rem; background:#111827; color:#dbeafe; font-family:var(--font-sans); font-size:.75rem; line-height:1rem; font-weight:600; white-space:nowrap; cursor:pointer; transition:color .16s ease,background-color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .12s ease; }
+.list-toolbar-button { display:inline-flex; min-height:2.25rem; align-items:center; justify-content:center; gap:var(--ui-space-1); border:1px solid #334155; border-radius:var(--ui-radius-control); padding:.45rem var(--ui-space-3); background:#111827; color:#dbeafe; font-family:var(--ui-font-sans); font-size:var(--ui-text-caption); line-height:1rem; font-weight:600; white-space:nowrap; cursor:pointer; transition:color .16s ease,background-color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .12s ease; }
 .list-toolbar-button-secondary { background:#111827; color:#dbeafe; }
 .list-toolbar-button-primary { border-color:var(--accent-strong,#2563eb); background:var(--accent-strong,#2563eb); color:#fff; }
 .list-toolbar-button-danger { border-color:#9f1239; background:rgb(76 5 25 / 55%); color:#fecdd3; }
@@ -1364,13 +1364,67 @@ input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .55; }
 .profile-builder-add-select { min-height:2.75rem; }
 @media (max-width:640px) { .profile-step-row { padding:.65rem !important; } .profile-step-desync .profile-function-select,.profile-step-desync select { max-width:100%; } }
 
+/* Shared design tokens for typography, semantic text colors, and status accents. */
+:root {
+  --ui-font-sans:'Inter Variable',Inter,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --ui-font-mono:'JetBrains Mono Variable','Cascadia Mono',ui-monospace,monospace;
+  --ui-text-title:1.125rem;
+  --ui-text-section:1rem;
+  --ui-text-body:.875rem;
+  --ui-text-caption:.75rem;
+  --ui-text-micro:.6875rem;
+  --ui-line-body:1.5;
+  --ui-color-text-primary:#e2e8f0;
+  --ui-color-text-secondary:#cbd5e1;
+  --ui-color-text-muted:#94a3b8;
+  --ui-color-text-subtle:#64748b;
+  --ui-color-warning:#fbbf24;
+  --ui-color-error:#fb7185;
+  --ui-color-success:#34d399;
+  --ui-color-panel:#0b111e;
+  --ui-color-border:#263247;
+  --ui-space-1:.25rem;
+  --ui-space-2:.5rem;
+  --ui-space-3:.75rem;
+  --ui-space-4:1rem;
+  --ui-radius-control:.5rem;
+  --ui-radius-panel:.75rem;
+}
+[data-theme="light"] {
+  --ui-color-text-primary:#172033;
+  --ui-color-text-secondary:#334155;
+  --ui-color-text-muted:#475569;
+  --ui-color-text-subtle:#64748b;
+  --ui-color-panel:#fff;
+  --ui-color-border:#cbd5e1;
+}
+[data-theme="neon"] {
+  --ui-color-text-primary:#f5eaff;
+  --ui-color-text-secondary:#e9d5ff;
+  --ui-color-text-muted:#c4b5fd;
+  --ui-color-text-subtle:#a78bfa;
+  --ui-color-panel:#171024;
+  --ui-color-border:#4c1d65;
+}
+
 /* v0.6.0: keep the XKeen-matched Inter typography and shared controls readable. */
 html {
-  font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: var(--ui-font-sans);
   color-scheme: dark;
 }
 html[data-theme="light"] { color-scheme: light; }
-body { line-height: 1.55; }
+body { font-size:var(--ui-text-body); line-height:var(--ui-line-body); color:var(--ui-color-text-primary); }
+button,input,select,textarea { font-family:var(--ui-font-sans); }
+code,kbd,pre,samp,.font-mono { font-family:var(--ui-font-mono); }
+[class~="text-[10px]"] { font-size:var(--ui-text-micro) !important; }
+[class~="text-[11px]"] { font-size:var(--ui-text-caption) !important; }
+.text-slate-100,.text-slate-200 { color:var(--ui-color-text-primary); }
+.text-slate-300 { color:var(--ui-color-text-secondary); }
+.text-slate-400 { color:var(--ui-color-text-muted); }
+.text-slate-500,.text-slate-600 { color:var(--ui-color-text-subtle); }
+.text-amber-300,.text-amber-400,.text-yellow-300 { color:var(--ui-color-warning); }
+.text-rose-300,.text-rose-400,.text-red-300 { color:var(--ui-color-error); }
+.text-emerald-300,.text-green-300 { color:var(--ui-color-success); }
 main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
   font-size: max(0.75rem, 1em);
   line-height: 1.5;
