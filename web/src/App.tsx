@@ -821,19 +821,19 @@ export default function App() {
                   <button id={"listViewRowsButton"} type={"button"} aria-pressed={"false"} data-action-click={"setListEditorView"} data-args={JSON.stringify(["rows"])} className={"list-view-button rounded-md px-3 py-1.5 text-xs text-slate-300 transition-colors"}>Списком</button>
                 </div>
                 {"\n              "}
-                <button data-action-click={"deduplicateCurrentList"} data-action-tooltip={"Удалить повторяющиеся записи из черновика"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all"}>
+                <button data-action-click={"deduplicateCurrentList"} data-action-tooltip={"Удалить повторяющиеся записи из черновика"} className={"list-toolbar-button list-toolbar-button-secondary"}>
                   {"Удалить дубли"}
                 </button>
                 {"\n              "}
-                <button data-action-click={"saveActiveListFile"} data-action-tooltip={"Проверить и сохранить текущий список"} className={"px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-all"}>
+                <button data-action-click={"saveActiveListFile"} data-action-tooltip={"Проверить и сохранить текущий список"} className={"list-toolbar-button list-toolbar-button-primary"}>
                   {"Применить список"}
                 </button>
                 <details className={"list-toolbar-menu"}>
                   <summary aria-label={"Дополнительные действия со списком"} title={"Дополнительные действия"}>⋯</summary>
                   <div className={"list-toolbar-menu-items"}>
-                    <button data-action-click={"removeSelectedListLines"} data-action-tooltip={"Удалить выбранные строки или текущую строку курсора"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Удалить строку/выделение"}</button>
-                    <button data-action-click={"openListImport"} data-action-tooltip={"Добавить записи из файла .list или .txt"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Импорт"}</button>
-                    <button data-action-click={"exportListDraft"} data-action-tooltip={"Скачать текущий черновик списка"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Экспорт"}</button>
+                    <button data-action-click={"removeSelectedListLines"} data-action-tooltip={"Удалить выбранные строки или текущую строку курсора"} className={"list-toolbar-button list-toolbar-button-danger"}>{"Удалить строку/выделение"}</button>
+                    <button data-action-click={"openListImport"} data-action-tooltip={"Добавить записи из файла .list или .txt"} className={"list-toolbar-button list-toolbar-button-secondary"}>{"Импорт"}</button>
+                    <button data-action-click={"exportListDraft"} data-action-tooltip={"Скачать текущий черновик списка"} className={"list-toolbar-button list-toolbar-button-secondary"}>{"Экспорт"}</button>
                     <input id={"listImportFile"} type={"file"} accept={".list,.txt,text/plain"} className={"hidden"} data-action-change={"importListDraft"} />
                   </div>
                 </details>

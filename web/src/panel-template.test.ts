@@ -34,6 +34,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('overflow-wrap:anywhere');
   });
 
+  it('uses shared UI button states in the list toolbar', () => {
+    expect(template).toContain('list-toolbar-button list-toolbar-button-secondary');
+    expect(template).toContain('list-toolbar-button list-toolbar-button-primary');
+    expect(template).toContain('list-toolbar-button list-toolbar-button-danger');
+    expect(panelStyles).toContain('.list-toolbar-button:focus-visible');
+    expect(panelStyles).toContain('.list-view-button[aria-pressed="true"]');
+    expect(panelStyles).toContain('.list-toolbar-button:disabled');
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");
