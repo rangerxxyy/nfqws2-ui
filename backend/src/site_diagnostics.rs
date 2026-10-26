@@ -499,6 +499,10 @@ fn monitor_should_test_upload(received_bytes: u64, status: &str) -> bool {
     status == "ok" && received_bytes < MONITOR_VOLUME_SMALL_BYTES
 }
 
+pub fn monitor_probe_needs_fallback(status: &str) -> bool {
+    status != "ok"
+}
+
 fn monitor_upload_stall_confirmed(exit_code: i32, appconnect_seconds: Option<f64>) -> bool {
     exit_code == 28
         && appconnect_seconds.is_some_and(|seconds| seconds.is_finite() && seconds > 0.0)
@@ -1607,6 +1611,14 @@ mod tests {
             parse_monitor_curl(63, b"\nNFQWS2_MON|200|0.020|0.080|0.150|0.350|12000");
         assert_eq!(short_size_limited.current.status, "warning");
         assert!(short_size_limited.steps[3].detail.contains("12000"));
+    }
+
+    #[test]
+    fn monitoring_retries_another_resolved_ipv4_after_non_ok_probe() {
+        assert!(!monitor_probe_needs_fallback("ok"));
+        assert!(monitor_probe_needs_fallback("warning"));
+        assert!(monitor_probe_needs_fallback("error"));
+        assert!(monitor_probe_needs_fallback("unavailable"));
     }
 
     #[test]

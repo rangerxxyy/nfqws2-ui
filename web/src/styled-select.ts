@@ -354,5 +354,7 @@ export function installStyledSelects(root: ParentNode = document): void {
     state.menu.remove();
     activeStates.delete(state);
   }
-  root.querySelectorAll<HTMLSelectElement>('select').forEach(installOne);
+  // Keep the Lua function picker native: the choice must commit immediately
+  // through the browser's normal select/change path, matching Zemidala.
+  root.querySelectorAll<HTMLSelectElement>('select:not([data-native-select])').forEach(installOne);
 }

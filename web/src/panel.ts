@@ -54,6 +54,7 @@ let busy = false;
 let statusPolling = false;
 let diagnosisRunning = false;
 let monitoringRunning = false;
+const monitoringHostsRunning = new Set<string>();
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
 let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
@@ -766,7 +767,7 @@ function renderRuntimeProfiles() {
           const grip = createProfileStepGrip(); bindProfileStepDrop(row, profile.id, stepIndex);
           const badge = document.createElement('span'); badge.className = 'profile-step-number grid h-6 w-6 place-items-center rounded-full border text-xs font-bold'; badge.textContent = String(strategyNumber); badge.setAttribute('aria-label', `Стратегия ${strategyNumber}`); badge.title = `Стратегия ${strategyNumber}`;
           const content = document.createElement('div'); content.className = 'profile-step-content';
-          const functionSelect = document.createElement('select'); functionSelect.className = 'profile-function-select min-h-9 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm font-semibold';
+          const functionSelect = document.createElement('select'); functionSelect.dataset.nativeSelect = 'true'; functionSelect.className = 'profile-function-select min-h-9 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm font-semibold';
           functionSelect.dataset.actionTooltip = `Стратегия ${strategyNumber}. Выберите Lua-функцию шага; доступность проверит nfqws2 при применении.`;
           functionSelect.addEventListener('change', () => updateRuntimeProfileStep(profile.id, String(argumentIndex), (current) => replaceDesyncFunction(current, functionSelect.value)));
           [...new Set([...functions, functionName])].sort().forEach((name) => { const option = document.createElement('option'); option.value = name; option.textContent = name; option.selected = name === functionName; functionSelect.append(option); });
@@ -1406,7 +1407,7 @@ function renderMonitoringSites() {
     const summary = document.createElement('span'); summary.className = `monitor-site-status monitor-status-${latest?.status ?? 'unavailable'}`;
     summary.textContent = latest ? `${latest.status === 'ok' ? 'Доступен' : latest.status === 'error' ? 'Ошибка' : latest.status === 'warning' ? 'Есть предупреждение' : 'Нет результата'}${latest.latencyMs === null ? '' : ` · ${latest.latencyMs} мс`}` : 'Ещё не проверялся';
     heading.append(name, summary);
-    const check = document.createElement('button'); check.type = 'button'; check.className = 'monitor-row-action'; check.dataset.actionClick = 'checkMonitoringSite'; check.dataset.args = JSON.stringify([site.host]); check.textContent = '⟳ Проверить'; check.title = `Проверить ${site.host}`;
+    const check = document.createElement('button'); check.type = 'button'; check.className = 'monitor-row-action'; check.dataset.actionClick = 'checkMonitoringSite'; check.dataset.args = JSON.stringify([site.host]); check.textContent = monitoringHostsRunning.has(site.host) ? 'Проверяем…' : '⟳ Проверить'; check.disabled = monitoringRunning || monitoringHostsRunning.has(site.host); check.title = `Проверить ${site.host}`;
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'monitor-remove'; remove.dataset.actionClick = 'removeMonitoringSite'; remove.dataset.args = JSON.stringify([site.host]); remove.textContent = '×'; remove.title = `Убрать ${site.host} из мониторинга`;
     heading.append(check, remove); card.append(heading);
     if (latest) {
@@ -1441,11 +1442,18 @@ function currentMonitoringInterval() {
   const minutes = Number(($('#monitoringMinutes') as HTMLInputElement | null)?.value ?? 30);
   return normalizeMonitoringInterval(hours, minutes);
 }
-function persistMonitoring() {
-  if (!monitoringState) return;
+async function persistMonitoring() {
+  if (!monitoringState) return false;
   saveMonitoringState(getMonitoringStorage(), monitoringState); renderMonitoringSites();
   const enabled = ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? true;
-  void nfqwsMonitoring.save({ enabled, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) }).catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить мониторинг на роутере.', 'error'));
+  monitoringIntervalMinutes = currentMonitoringInterval();
+  try {
+    await nfqwsMonitoring.save({ enabled, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) });
+    return true;
+  } catch (error) {
+    toast(error instanceof Error ? error.message : 'Не удалось сохранить мониторинг на роутере.', 'error');
+    return false;
+  }
 }
 async function loadBackendMonitoring() {
   const saved = await nfqwsMonitoring.get();
@@ -1533,21 +1541,27 @@ async function runMonitoring(host?: string) {
   if (monitoringRunning || !monitoringState) return;
   const hosts = host ? monitoringState.sites.filter((site) => site.host === host).map((site) => site.host) : monitoringState.sites.map((site) => site.host);
   if (!hosts.length) return toast('Сначала добавьте домен для проверки.', 'error');
+  if (hosts.some((item) => monitoringHostsRunning.has(item))) return;
   monitoringRunning = true;
   const button = $('[data-action-click="runMonitoring"]'); if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Проверяем…'; }
-  const statusNode = $('#monitoringStatus'); if (statusNode) { statusNode.textContent = `Проверка 0 из ${hosts.length}`; statusNode.setAttribute('aria-busy', 'true'); }
+  hosts.forEach((item) => monitoringHostsRunning.add(item)); renderMonitoringSites();
+  const statusNode = $('#monitoringStatus'); if (statusNode) { statusNode.textContent = `Проверяются ${hosts.length} ${hosts.length === 1 ? 'сайт' : 'сайтов'} · DNS → TCP → TLS → HTTP и передача до 64 КиБ`; statusNode.setAttribute('aria-busy', 'true'); }
   try {
-    if (statusNode) statusNode.textContent = `Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ`;
     await nfqwsMonitoring.run(hosts);
     await loadBackendMonitoring();
     toast(`Мониторинг завершён: ${hosts.length} сайтов проверено.`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Не удалось выполнить проверку мониторинга.';
+    if (statusNode) statusNode.textContent = `Проверка не завершена: ${message}`;
+    toast(message, 'error');
   } finally {
     monitoringRunning = false;
-    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Проверить сайты'; }
-    if (statusNode) { statusNode.textContent = 'Проверка завершена'; statusNode.removeAttribute('aria-busy'); }
+    hosts.forEach((item) => monitoringHostsRunning.delete(item)); renderMonitoringSites();
+    if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = '⟳ Проверить все'; }
+    if (statusNode) statusNode.removeAttribute('aria-busy');
   }
 }
-function addMonitoringSite() {
+async function addMonitoringSite() {
   const input = $('#monitorHostInput');
   if (!(input instanceof HTMLInputElement) || !monitoringState) return;
   const host = normalizeMonitoringHost(input.value);
@@ -1555,7 +1569,8 @@ function addMonitoringSite() {
   if (monitoringState.sites.some((site) => site.host === host)) return toast('Этот домен уже добавлен.', 'error');
   if (monitoringState.sites.length >= 20) return toast('Можно добавить не более 20 доменов.', 'error');
   monitoringState = { ...monitoringState, sites: [{ host, results: [] }, ...monitoringState.sites] };
-  input.value = ''; persistMonitoring();
+  input.value = '';
+  if (await persistMonitoring()) await runMonitoring(host);
 }
 async function fetchStatus() {
   if (statusPolling) return;
@@ -2240,11 +2255,8 @@ function setListEditorView(view: 'text' | 'rows') {
   const rowsView = $('#listRowsView');
   textView?.classList.toggle('hidden', listEditorView !== 'text');
   rowsView?.classList.toggle('hidden', listEditorView !== 'rows');
-  for (const [id, active] of [['listViewTextButton', listEditorView === 'text'], ['listViewRowsButton', listEditorView === 'rows']] as const) {
-    const button = $(`#${id}`);
-    button?.setAttribute('aria-pressed', String(active));
-    button?.classList.toggle('active', active);
-  }
+  const viewSelect = $('#listEditorViewSelect') as HTMLSelectElement | null;
+  if (viewSelect && viewSelect.value !== listEditorView) viewSelect.value = listEditorView;
   const remove = $('[data-action-click="removeSelectedListLines"]');
   if (remove) remove.textContent = listEditorView === 'rows' ? `Удалить выбранные (${selectedListRows.size})` : 'Удалить строку/выделение';
   if (listEditorView === 'rows') renderListRows();
@@ -3914,7 +3926,7 @@ function bindPrototypeActions() {
     removeMonitoringSite: (host: string) => {
       if (!monitoringState || monitoringRunning) return;
       monitoringState = { ...monitoringState, sites: monitoringState.sites.filter((site) => site.host !== host) };
-      persistMonitoring();
+      void persistMonitoring();
     },
     switchConfigSection: (section: 'editor' | 'settings' | 'scripts') => switchConfigSection(section),
     refreshLuaScripts: () => void loadLuaScripts(),

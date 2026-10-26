@@ -4713,7 +4713,15 @@ async fn check_monitoring_host(host: String) -> MonitoringHostResult {
         duration_ms: Some(dns_ms),
         http_code: None,
     };
-    let probe = site_diagnostics::monitor_probe(&host, ip).await;
+    let mut probe = site_diagnostics::monitor_probe(&host, ip).await;
+    if site_diagnostics::monitor_probe_needs_fallback(probe.current.status)
+        && let Some(fallback_ip) = addresses.get(1).copied()
+    {
+        let fallback = site_diagnostics::monitor_probe(&host, fallback_ip).await;
+        if !site_diagnostics::monitor_probe_needs_fallback(fallback.current.status) {
+            probe = fallback;
+        }
+    }
     MonitoringHostResult {
         host,
         summary: probe.summary,

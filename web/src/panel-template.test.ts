@@ -266,7 +266,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(16);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(17);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -667,7 +667,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('/api/nfqws2/diagnostics/monitor');
     expect(panelSource).toContain("const labels: Record<string, string> = { dns: 'DNS', tcp: 'TCP connect', tls: 'TLS', http: 'HTTP', transfer: 'Передача' }");
     expect(panelStyles).toContain('.monitor-stage-list');
-    expect(template).toContain('История последних 96 проверок хранится на роутере');
+    expect(template).toContain('история до 96 циклов');
     expect(panelSource).toContain('nfqwsMonitoring.run(hosts)');
     expect(panelSource).toContain('slice(0, 48).reverse()');
     expect(panelSource).toContain('Проверок в истории: ${site.results.length}');
@@ -694,7 +694,10 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsMonitoring.run(hosts)');
     expect(panelSource).toContain('renderTelegramNotifications(cfg.notifications)');
     expect(monitoringSource).toContain('MAX_MONITORING_SITES = 20');
-    expect(panelSource).toContain('Проверка ${hosts.length} сайтов параллельно: DNS → TCP → TLS → HTTP и до 64 КиБ');
+    expect(panelSource).toContain('Проверяются ${hosts.length}');
+    expect(panelSource).toContain('catch (error) {\n    const message = error instanceof Error ? error.message');
+    expect(panelSource).toContain("monitoringHostsRunning.has(site.host) ? 'Проверяем…'");
+    expect(panelStyles).toContain('.monitor-site-card { min-width:0;');
     expect(template).not.toContain('navBtn-community');
     expect(template).not.toContain('tabContent-community');
     expect(template).not.toContain('asnNumber');
@@ -932,7 +935,8 @@ describe('TSX panel with optional server-side authentication', () => {
     const lists = template.slice(template.indexOf('id="tabContent-lists"'), template.indexOf('id="tabContent-check"'));
     expect(lists).toContain('id="listTextView"');
     expect(lists).toContain('id="listRowsView"');
-    expect(lists).toContain('data-args="[&quot;rows&quot;]"');
+    expect(lists).toContain('id="listEditorViewSelect"');
+    expect(lists).toContain('option value="rows">Списком');
     expect(panelSource).toContain("localStorage.setItem(LIST_EDITOR_VIEW_KEY, view)");
     expect(panelSource).toContain('listRowsFromContent(editor.value');
     expect(panelSource).toContain('removeListLinesByIndices(editor.value');
@@ -1027,7 +1031,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).not.toContain('id="listAddEntriesInput"');
     expect(template).not.toContain('id="listSearchInput"');
     expect(template).not.toContain('id="findNextListEntryButton"');
-    expect(template).toContain('id="listEditorViewGroup"');
+    expect(template).toContain('id="listEditorViewSelect"');
+    expect(template).not.toContain('id="listEditorViewGroup"');
     expect(template).toContain('id="listEditorFullscreenToggle"');
     expect(template).toContain('data-action-click="requestClearListDraft"');
     expect(template).toContain('id="listClearModal"');
@@ -1040,6 +1045,7 @@ describe('TSX panel with optional server-side authentication', () => {
     const listToolbar = template.slice(template.indexOf('class="list-editor-toolbar-actions'), template.indexOf('id="listEditorFullscreenToggle"'));
     expect(listToolbar).toContain('class="list-toolbar-menu"');
     expect(listToolbar).toContain('removeSelectedListLines');
+    expect(listToolbar).toContain('deduplicateCurrentList');
     expect(listToolbar).toContain('openListImport');
     expect(listToolbar).toContain('exportListDraft');
     expect(template).not.toContain('injectPresetDomains');
@@ -1190,7 +1196,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toMatch(/id="ramProgressBar"[^>]*style="width:0%"/);
     expect(template).toMatch(/id="cpuProgressBar"[^>]*style="width:0%"/);
     expect(template).toContain('Уведомления Telegram');
-    expect(template).toContain('каждые 30 мин');
+    expect(template).toContain('30 мин');
     expect(template).not.toContain('ASN не определён');
     expect(template).not.toContain('Варианты пока не загружены.');
     expect(template).toContain('0%');
@@ -1257,6 +1263,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('replaces the selected Lua function directly when the strategy function picker changes', () => {
+    expect(panelSource).toContain("functionSelect.dataset.nativeSelect = 'true'");
     expect(panelSource).toContain("functionSelect.addEventListener('change'");
     expect(panelSource).toContain('replaceDesyncFunction(current, functionSelect.value)');
     expect(panelSource).not.toContain("functionSelect.dataset.actionChange = 'setRuntimeProfileStepFunction'");
