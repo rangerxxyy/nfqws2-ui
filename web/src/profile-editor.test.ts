@@ -1,5 +1,53 @@
 import { describe, expect, it } from 'vitest';
-import { filterProfileArgumentChoices, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import type { NfqwsArgumentProfile } from './api';
+import { filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+
+describe('runtime profile constructor targets', () => {
+  it('uses each managed profile primary config component while keeping shared scope components separate', () => {
+    const sources = ['NFQWS_ARGS_UDP', 'NFQWS_ARGS_QUIC', 'NFQWS_ARGS_QUIC', 'NFQWS_ARGS', 'NFQWS_ARGS'];
+    const targets = sources.map((source, index) => getRuntimeProfileConstructorTarget({
+      id: `managed-${index + 1}`, index: index + 1, name: `Built-in ${index + 1}`, source,
+      editable: false, args: [`--filter-tcp=${index + 1}`, '--lua-desync=fake'],
+      filters: [], protocols: [], payloads: [], lists: [], steps: [],
+      components: [
+        { source, args: [`--filter-tcp=${index + 1}`, '--lua-desync=fake'], editable: true, note: null },
+        { source: index === 0 ? 'NFQWS_ARGS_IPSET' : 'NFQWS_EXTRA_ARGS', args: ['--hostlist=lists/user.list'], editable: false, note: 'shared scope' },
+      ],
+    }));
+
+    expect(targets.map((target) => target?.source)).toEqual(sources);
+    expect(targets.every((target) => target?.managed)).toBe(true);
+    expect(targets[1]?.args).toEqual(['--filter-tcp=2', '--lua-desync=fake']);
+    expect(targets[1]?.linkedComponents[0]?.source).toBe('NFQWS_EXTRA_ARGS');
+  });
+
+  it('keeps custom profiles on their own NFQWS_ARGS_CUSTOM editor target', () => {
+    const target = getRuntimeProfileConstructorTarget({
+      id: 'custom-1', index: 1, name: 'Свой профиль 1', source: 'NFQWS_ARGS_CUSTOM', editable: true,
+      args: ['--filter-tcp=443', '--lua-desync=fake'], filters: [], protocols: [], payloads: [], lists: [], steps: [],
+    });
+    expect(target).toEqual({ source: 'NFQWS_ARGS_CUSTOM', args: ['--filter-tcp=443', '--lua-desync=fake'], linkedComponents: [], managed: false });
+  });
+
+  it('routes managed list choices to shared list variables and permits UDP-local lists', () => {
+    const profile = (components: NfqwsArgumentProfile['components']): NfqwsArgumentProfile => ({
+      id: 'managed', index: 1, name: 'Built-in', source: 'managed', editable: false,
+      args: ['--filter-udp=443'], filters: [], protocols: [], payloads: [], lists: [], steps: [], components,
+    });
+    expect(getRuntimeProfileListTarget(profile([
+      { source: 'NFQWS_ARGS', args: [], editable: true, note: null },
+      { source: 'NFQWS_ARGS_IPSET', args: [], editable: true, note: null },
+      { source: 'NFQWS_EXTRA_ARGS', args: [], editable: true, note: null },
+    ]), '--ipset=lists/ipset.list')).toEqual({ source: 'NFQWS_ARGS_IPSET', editable: true });
+    expect(getRuntimeProfileListTarget(profile([
+      { source: 'NFQWS_ARGS_QUIC', args: [], editable: true, note: null },
+      { source: 'NFQWS_EXTRA_ARGS', args: [], editable: false, note: 'mode-linked' },
+    ]), '--hostlist=lists/user.list')).toEqual({ source: 'NFQWS_EXTRA_ARGS', editable: false });
+    expect(getRuntimeProfileListTarget(profile([
+      { source: 'NFQWS_ARGS_UDP', args: [], editable: true, note: null },
+    ]), '--hostlist=lists/user.list')).toEqual({ source: 'NFQWS_ARGS_UDP', editable: true });
+  });
+});
 
 describe('profile builder choices', () => {
   it('moves through a long choice list with arrows and jumps to its ends', () => {

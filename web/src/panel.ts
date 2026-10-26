@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -411,7 +411,7 @@ function profileFromArgs(index: number, args: string[], editable: boolean): Nfqw
   const explicitName = args.find((argument) => argument.startsWith('--name='))?.slice('--name='.length);
   const name = explicitName || (editable ? `Свой профиль ${index}` : `Профиль ${index}`);
   return {
-    id: editable ? `custom-${index}` : `draft-managed-${index}`, index, name, source, editable, args,
+    id: editable ? `custom-${index}` : `draft-managed-${index}`, index, name, source, editable, hasConstructor: editable, effectiveArgs: args, args,
     filters: args.filter((argument) => argument.startsWith('--filter-') && !argument.startsWith('--filter-7=') && !argument.startsWith('--filter-l7=')),
     protocols: args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
     payloads: args.filter((argument) => argument.startsWith('--payload=')),
@@ -421,13 +421,20 @@ function profileFromArgs(index: number, args: string[], editable: boolean): Nfqw
 }
 function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
   if (!runtimeProfilesState) return [];
-  const managed = runtimeProfilesState.profiles.filter((profile) => !profile.editable).map((profile) => ({
-    ...profile,
-    filters: profile.args.filter((argument) => argument.startsWith('--filter-') && !argument.startsWith('--filter-7=') && !argument.startsWith('--filter-l7=')),
-    protocols: profile.args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
-    payloads: profile.args.filter((argument) => argument.startsWith('--payload=')),
-    steps: profile.args.filter((argument) => argument.startsWith('--lua-desync=') || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=')),
-  }));
+  const managed = runtimeProfilesState.profiles.filter((profile) => !profile.editable).map((profile) => {
+    const target = getRuntimeProfileConstructorTarget(profile);
+    const args = target ? [...(runtimeProfileManagedDraft[target.source] ?? target.args)] : profile.args;
+    const linkedArgs = target?.linkedComponents.flatMap((component) => runtimeProfileManagedDraft[component.source] ?? component.args) ?? [];
+    const syntheticArgs = target ? profile.args.slice(target.args.length + target.linkedComponents.reduce((total, component) => total + component.args.length, 0)) : [];
+    const effectiveArgs = target ? [...args, ...linkedArgs, ...syntheticArgs] : profile.args;
+    return {
+      ...profile, hasConstructor: Boolean(target), effectiveArgs, args,
+      filters: args.filter((argument) => argument.startsWith('--filter-') && !argument.startsWith('--filter-7=') && !argument.startsWith('--filter-l7=')),
+      protocols: args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
+      payloads: args.filter((argument) => argument.startsWith('--payload=')),
+      steps: args.filter((argument) => argument.startsWith('--lua-desync=') || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=')),
+    };
+  });
   const custom = runtimeProfileDraft.map((args, index) => profileFromArgs(index + 1, args, true));
   return [...custom, ...managed].map((profile, index) => ({ ...profile, index: index + 1 }));
 }
@@ -435,17 +442,39 @@ function appendProfileBuilderSectionHeading(parent: HTMLElement, text: string) {
   const tone = text === 'Когда срабатывает' ? 'profile-builder-heading-condition' : text === 'Для кого' ? 'profile-builder-heading-scope' : 'profile-builder-heading-action';
   const heading = document.createElement('h3'); heading.className = `profile-builder-section-heading ${tone}`; heading.textContent = text; parent.append(heading);
 }
-function markRuntimeProfilesDirty() {
-  runtimeProfilesDirty = true;
+function runtimeProfileDraftTarget(id: string): { source: string; args: string[]; managed: boolean; customIndex: number | null } | null {
+  const customMatch = /^custom-(\d+)$/.exec(id);
+  if (customMatch) {
+    const customIndex = Number(customMatch[1]) - 1;
+    const args = runtimeProfileDraft[customIndex];
+    return args ? { source: 'NFQWS_ARGS_CUSTOM', args: [...args], managed: false, customIndex } : null;
+  }
+  const profile = runtimeProfilesState?.profiles.find((item) => item.id === id);
+  if (!profile) return null;
+  const target = getRuntimeProfileConstructorTarget(profile);
+  if (!target) return null;
+  return { source: target.source, args: [...(runtimeProfileManagedDraft[target.source] ?? target.args)], managed: true, customIndex: null };
+}
+function storeRuntimeProfileArgs(id: string, args: string[], redraw = true) {
+  const target = runtimeProfileDraftTarget(id);
+  if (!target) return false;
+  if (target.managed) runtimeProfileManagedDraft[target.source] = [...args];
+  else if (target.customIndex !== null) runtimeProfileDraft[target.customIndex] = [...args];
+  markRuntimeProfilesDirty(id, redraw);
+  return true;
+}
+function markRuntimeProfilesDirty(id?: string, redraw = true) {
+  if (id && !id.startsWith('custom-')) runtimeProfileManagedDirty = true;
+  else runtimeProfilesDirty = true;
   const status = $('#profileStatus');
   if (status) status.textContent = 'Есть несохранённые изменения. Применение сохранит снимок, проверит конфиг и перезапустит nfqws2.';
-  renderRuntimeProfiles();
+  if (redraw) renderRuntimeProfiles();
 }
 function renderRuntimeProfiles() {
   const list = $('#profileList'); const editor = $('#profileEditor');
   if (!list || !editor || !runtimeProfilesState) return;
   const profiles = visibleRuntimeProfiles();
-  const orderWarnings = profileOrderWarnings(profiles.map((profile) => profile.args));
+  const orderWarnings = profileOrderWarnings(profiles.map((profile) => profile.effectiveArgs ?? profile.args));
   if (!profiles.some((profile) => profile.id === selectedRuntimeProfileId)) selectedRuntimeProfileId = profiles[0]?.id ?? '';
   list.replaceChildren();
   const sideHeading = document.createElement('p'); sideHeading.className = 'px-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400'; sideHeading.textContent = 'Профили · порядок проверки'; list.append(sideHeading);
@@ -456,11 +485,11 @@ function renderRuntimeProfiles() {
     const num = document.createElement('span'); num.className = 'mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-emerald-400 text-[11px] font-bold text-emerald-300'; num.textContent = String(profile.index);
     const nameWrap = document.createElement('span'); nameWrap.className = 'grid min-w-0 flex-1 gap-0.5';
     const name = document.createElement('span'); name.className = 'truncate font-medium'; name.textContent = profile.name;
-    const summary = document.createElement('span'); summary.className = 'truncate text-[10px] leading-4 text-slate-500'; summary.textContent = summarizeProfileSelection(profile.args); nameWrap.append(name, summary);
-    const warnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
+    const summary = document.createElement('span'); summary.className = 'truncate text-[10px] leading-4 text-slate-500'; summary.textContent = summarizeProfileSelection(profile.effectiveArgs ?? profile.args); nameWrap.append(name, summary);
+    const warnings = diagnoseProfileLuaArguments(profile.effectiveArgs ?? profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
     const ruleWarnings = orderWarnings[profileIndex] ?? [];
     const warningCount = warnings.length + ruleWarnings.length;
-    const badge = document.createElement('span'); badge.className = warningCount ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : profile.editable ? 'text-xs text-slate-500' : 'sr-only'; badge.textContent = warningCount ? String(warningCount) : profile.editable ? 'Свой' : 'Штатный профиль'; badge.setAttribute('aria-label', warningCount ? `Предупреждений профиля: ${[...warnings.map((item) => item.message), ...ruleWarnings].join('. ')}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
+    const badge = document.createElement('span'); badge.className = warningCount ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : profile.editable ? 'text-xs text-slate-500' : 'sr-only'; badge.textContent = warningCount ? String(warningCount) : profile.editable ? 'Свой' : 'Штатный профиль'; badge.setAttribute('aria-label', warningCount ? `Предупреждений профиля: ${[...warnings.map((item) => item.message), ...ruleWarnings].join('. ')}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль');
     button.append(num, nameWrap, badge); list.append(button);
   }
   editor.replaceChildren();
@@ -471,7 +500,7 @@ function renderRuntimeProfiles() {
   const heading = document.createElement('div'); heading.className = 'flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3';
   const title = document.createElement('div');
   const name = document.createElement('h2'); name.className = 'font-bold text-white'; name.textContent = `#${profile.index} ${profile.name}`;
-  const profileWarnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
+  const profileWarnings = diagnoseProfileLuaArguments(profile.effectiveArgs ?? profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
   if (profileWarnings.length) { const warningBadge = document.createElement('span'); warningBadge.className = 'ml-2 inline-flex rounded-full bg-amber-500/15 px-2 py-0.5 align-middle text-[10px] font-semibold text-amber-300'; warningBadge.textContent = `${profileWarnings.length} предупреждений`; warningBadge.setAttribute('aria-label', profileWarnings.map((item) => item.message).join('. ')); name.append(warningBadge); }
   const source = document.createElement('p'); source.className = 'mt-1 text-xs text-slate-400'; source.textContent = `${profile.editable ? 'Пользовательский профиль · NFQWS_ARGS_CUSTOM' : `Штатная группа · ${profile.source}`} · параметры передаются в nfqws2`;
   title.append(name, source); heading.append(title);
@@ -490,7 +519,7 @@ function renderRuntimeProfiles() {
   editor.append(heading);
   const profileOrderIssues = orderWarnings[profiles.findIndex((item) => item.id === profile.id)] ?? [];
   for (const message of profileOrderIssues) { const notice = document.createElement('p'); notice.className = 'mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs leading-5 text-amber-200'; notice.textContent = message; editor.append(notice); }
-  if (profile.editable) {
+  if (profile.hasConstructor) {
     const modeBar = document.createElement('div'); modeBar.className = 'mt-3 flex flex-wrap items-center justify-between gap-2';
     const modeTitle = document.createElement('strong'); modeTitle.className = 'text-xs text-slate-300'; modeTitle.textContent = 'Редактор профиля'; modeBar.append(modeTitle);
     const modeButtons = document.createElement('div'); modeButtons.className = 'flex gap-1 rounded-lg border border-slate-700 p-1';
@@ -500,12 +529,19 @@ function renderRuntimeProfiles() {
     }
     modeBar.append(modeButtons); editor.append(modeBar);
   }
-  if (profile.editable && runtimeProfileEditorMode === 'builder') {
+  if (profile.hasConstructor && runtimeProfileEditorMode === 'builder') {
     const builder = document.createElement('div'); builder.className = 'mt-2 grid gap-2';
-    const nameField = document.createElement('label'); nameField.className = 'grid gap-1 text-xs font-semibold text-slate-300'; nameField.textContent = 'Имя профиля';
-    const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.maxLength = 32; nameInput.autocomplete = 'off'; nameInput.spellcheck = false; nameInput.className = 'min-h-9 w-full max-w-sm rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100'; nameInput.value = profile.args.find((arg) => arg.startsWith('--name='))?.slice('--name='.length) ?? '';
-    nameInput.placeholder = profile.name; nameInput.setAttribute('aria-label', 'Имя пользовательского профиля'); nameInput.dataset.actionChange = 'renameRuntimeProfile'; nameInput.dataset.args = JSON.stringify([profile.id, { source: 'value' }]);
-    const nameHelp = document.createElement('span'); nameHelp.className = 'font-normal text-slate-500'; nameHelp.textContent = 'Буквы, цифры, точка, дефис или подчёркивание · до 32 символов'; nameField.append(nameInput, nameHelp); builder.append(nameField);
+    if (profile.editable) {
+      const nameField = document.createElement('label'); nameField.className = 'grid gap-1 text-xs font-semibold text-slate-300'; nameField.textContent = 'Имя профиля';
+      const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.maxLength = 32; nameInput.autocomplete = 'off'; nameInput.spellcheck = false; nameInput.className = 'min-h-9 w-full max-w-sm rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100'; nameInput.value = profile.args.find((arg) => arg.startsWith('--name='))?.slice('--name='.length) ?? '';
+      nameInput.placeholder = profile.name; nameInput.setAttribute('aria-label', 'Имя пользовательского профиля'); nameInput.dataset.actionChange = 'renameRuntimeProfile'; nameInput.dataset.args = JSON.stringify([profile.id, { source: 'value' }]);
+      const nameHelp = document.createElement('span'); nameHelp.className = 'font-normal text-slate-500'; nameHelp.textContent = 'Буквы, цифры, точка, дефис или подчёркивание · до 32 символов'; nameField.append(nameInput, nameHelp); builder.append(nameField);
+    } else {
+      const target = runtimeProfilesState?.profiles.find((item) => item.id === profile.id);
+      const source = target && getRuntimeProfileConstructorTarget(target)?.source;
+      const shared = source === 'NFQWS_ARGS_QUIC' ? 'Эта переменная общая для «QUIC по IP» и «QUIC по сайтам».' : source === 'NFQWS_ARGS' ? 'Эта переменная общая для «HTTP/HTTPS по IP» и «HTTP/HTTPS по сайтам».' : null;
+      if (shared) { const note = document.createElement('p'); note.className = 'text-xs leading-5 text-slate-400'; note.textContent = shared; builder.append(note); }
+    }
     const groups: Array<[string, string, (argument: string) => boolean]> = [
       ['TCP-порты', 'condition', (arg) => arg.startsWith('--filter-tcp=')],
       ['UDP-порты', 'condition', (arg) => arg.startsWith('--filter-udp=')],
@@ -592,7 +628,7 @@ function renderRuntimeProfiles() {
       const title = document.createElement('span'); title.className = 'mr-1 text-xs font-semibold text-slate-300'; title.textContent = groupName; row.append(title);
       for (const index of indexes) {
         const argument = profile.args[index]!;
-        if (!profile.editable) { const chip = document.createElement('span'); chip.className = 'max-w-full break-all rounded-md bg-slate-800 px-2 py-1 font-mono text-xs text-blue-200'; chip.textContent = argument; row.append(chip); continue; }
+        if (!profile.hasConstructor) { const chip = document.createElement('span'); chip.className = 'max-w-full break-all rounded-md bg-slate-800 px-2 py-1 font-mono text-xs text-blue-200'; chip.textContent = argument; row.append(chip); continue; }
         if (argument.startsWith('--filter-tcp=') || argument.startsWith('--filter-udp=') || argument.startsWith('--filter-l7=') || argument.startsWith('--filter-7=')) {
           const filterType = argument.startsWith('--filter-tcp=') ? 'tcp' : argument.startsWith('--filter-udp=') ? 'udp' : 'protocol';
           const filterEditor = document.createElement('div'); filterEditor.className = `profile-filter-editor profile-filter-editor-${filterType} flex min-w-0 flex-wrap items-center gap-1.5`;
@@ -623,6 +659,10 @@ function renderRuntimeProfiles() {
     const addLabel = document.createElement('div'); addLabel.className = 'mt-1 grid gap-1 text-xs text-slate-400';
     const addTitle = document.createElement('span'); addTitle.textContent = 'Добавить условие, область или шаг';
     const argumentChoices = profileArgumentChoices(profile.args, profileListInventory, runtimeProfileCliCatalog)
+      .filter((choice) => {
+        if (profile.editable || !choice.group.startsWith('Для кого ·')) return true;
+        return getRuntimeProfileListTarget(profile, choice.value)?.editable === true;
+      })
       .filter((choice) => !runtimeProfileLuaCatalogAvailable || !choice.value.startsWith('--lua-desync='));
     const groupedChoices = new Map<string, Array<{ group: string; value: string; label: string }>>();
     for (const choice of argumentChoices) groupedChoices.set(choice.group, [...(groupedChoices.get(choice.group) ?? []), choice]);
@@ -687,9 +727,11 @@ function renderRuntimeProfiles() {
   }
   if (!profile.editable) {
     const components = profile.components ?? [];
-    if (components.length) {
-      const intro = document.createElement('p'); intro.className = 'mt-3 text-xs leading-5 text-slate-400'; intro.textContent = 'Штатная группа nfqws2. Здесь редактируются исходные переменные конфигурации; общие переменные могут влиять на несколько профилей.'; editor.append(intro);
-      for (const component of components) {
+    const editorComponents = runtimeProfileEditorMode === 'text' || !profile.hasConstructor ? components : components.slice(1);
+    if (editorComponents.length) {
+      const intro = document.createElement('p'); intro.className = 'mt-3 text-xs leading-5 text-slate-400'; intro.textContent = runtimeProfileEditorMode === 'text' ? 'Текстовый режим показывает исходные переменные профиля. Общие переменные могут менять сразу несколько профилей.' : 'Связанные списки и дополнительные настройки. Они могут использоваться несколькими профилями.'; editor.append(intro);
+      const componentEditors = document.createElement('div'); componentEditors.className = 'grid gap-3';
+      for (const component of editorComponents) {
         const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = component.source;
         const textarea = document.createElement('textarea'); textarea.rows = Math.max(3, Math.min(10, component.args.length + 1)); textarea.spellcheck = false;
         textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
@@ -702,24 +744,21 @@ function renderRuntimeProfiles() {
           runtimeProfileManagedDirty = true;
           const status = $('#profileStatus'); if (status) status.textContent = `Изменена ${component.source}. Применение проверит конфигурацию и перезапустит nfqws2 с откатом при ошибке.`;
         });
-        label.append(textarea); editor.append(label);
-        if (component.note) { const note = document.createElement('p'); note.className = 'mt-1 text-xs leading-5 text-slate-500'; note.textContent = component.note; editor.append(note); }
+        label.append(textarea); componentEditors.append(label);
+        if (component.note) { const note = document.createElement('p'); note.className = 'mt-1 text-xs leading-5 text-slate-500'; note.textContent = component.note; componentEditors.append(note); }
       }
+      if (runtimeProfileEditorMode === 'builder' && editorComponents.length) {
+        const details = document.createElement('details'); details.className = 'mt-3 rounded-lg border border-slate-800 px-3 py-2';
+        const summary = document.createElement('summary'); summary.className = 'cursor-pointer text-sm font-semibold text-slate-300'; summary.textContent = 'Общие списки и дополнительные настройки';
+        details.append(summary, componentEditors); editor.append(details);
+      } else editor.append(componentEditors);
     }
   } else if (runtimeProfileEditorMode === 'text') {
     const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = profile.editable ? 'Аргументы профиля · по одному на строку' : 'Аргументы штатной группы';
     const textarea = document.createElement('textarea'); textarea.id = 'runtimeProfileArgs'; textarea.rows = Math.max(5, Math.min(12, profile.args.length + 2)); textarea.spellcheck = false;
     textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
     textarea.value = profile.args.join('\n');
-    textarea.addEventListener('input', () => {
-      const index = Number(profile.id.slice('custom-'.length)) - 1;
-      if (Number.isInteger(index) && runtimeProfileDraft[index]) {
-        runtimeProfileDraft[index] = textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
-        runtimeProfilesDirty = true;
-        const status = $('#profileStatus');
-        if (status) status.textContent = 'Есть несохранённые изменения. Применение сохранит снимок, проверит конфиг и перезапустит nfqws2.';
-      }
-    });
+    textarea.addEventListener('input', () => storeRuntimeProfileArgs(profile.id, textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean), false));
     label.append(textarea); editor.append(label);
   }
   if (profile.editable) {
@@ -800,7 +839,7 @@ function addRuntimeProfile() {
 function copyRuntimeProfile(id: string) {
   const source = visibleRuntimeProfiles().find((profile) => profile.id === id);
   if (!source) return toast('Профиль для копирования не найден. Обновите список профилей.', 'error');
-  const result = copyProfileIntoDraft(runtimeProfileDraft, source.args);
+  const result = copyProfileIntoDraft(runtimeProfileDraft, source.effectiveArgs ?? source.args);
   if (!result.ok) return toast(result.reason === 'profile-limit' ? 'Нельзя создать больше 64 пользовательских профилей.' : 'Копия превысит ограничение в 8192 аргумента.', 'error');
   runtimeProfileDraft = result.profiles;
   selectedRuntimeProfileId = `custom-${runtimeProfileDraft.length}`;
@@ -810,7 +849,7 @@ function copyRuntimeProfile(id: string) {
 async function shareRuntimeProfile(id: string) {
   const profile = visibleRuntimeProfiles().find((item) => item.id === id);
   if (!profile) return toast('Профиль не найден. Обновите список профилей.', 'error');
-  const text = serializeProfileForSharing(profile.name, profile.args, status?.service.version ?? null);
+  const text = serializeProfileForSharing(profile.name, profile.effectiveArgs ?? profile.args, status?.service.version ?? null);
   try { await writeTextToClipboard(text); toast('Профиль скопирован для чата. Если в нём есть списки, получателю может понадобиться заменить их пути.'); }
   catch { toast('Не удалось скопировать профиль. Проверьте доступ к буферу обмена.', 'error'); }
 }
@@ -845,17 +884,29 @@ function setRuntimeProfileMode(mode: string) {
 }
 function appendRuntimeProfileArgument(argument: string) {
   if (!argument) return;
-  const index = Number(selectedRuntimeProfileId.slice('custom-'.length)) - 1;
-  if (!Number.isInteger(index) || !runtimeProfileDraft[index]) return;
-  runtimeProfileDraft[index]!.push(argument); markRuntimeProfilesDirty();
+  const profile = runtimeProfilesState?.profiles.find((item) => item.id === selectedRuntimeProfileId);
+  if (profile && !profile.editable) {
+    const listTarget = getRuntimeProfileListTarget(profile, argument);
+    if (listTarget) {
+      if (!listTarget.editable) return toast(`${listTarget.source} связан с общим режимом и здесь доступен только для просмотра.`, 'error');
+      const current = profile.components?.find((component) => component.source === listTarget.source);
+      const args = [...(runtimeProfileManagedDraft[listTarget.source] ?? current?.args ?? [])];
+      if (!args.includes(argument)) args.push(argument);
+      runtimeProfileManagedDraft[listTarget.source] = args;
+      markRuntimeProfilesDirty(profile.id);
+      return;
+    }
+  }
+  const target = runtimeProfileDraftTarget(selectedRuntimeProfileId);
+  if (!target) return;
+  target.args.push(argument); storeRuntimeProfileArgs(selectedRuntimeProfileId, target.args);
 }
 function updateRuntimeProfileStep(id: string, argumentIndex: string, update: (argument: string) => string) {
-  const index = Number(id.slice('custom-'.length)); const position = Number(argumentIndex);
-  const args = runtimeProfileDraft[index - 1];
+  const position = Number(argumentIndex); const target = runtimeProfileDraftTarget(id); const args = target?.args;
   if (!args || !Number.isInteger(position) || !args[position]?.startsWith('--lua-desync=')) return;
   const updated = update(args[position]!);
   if (updated === args[position]) return;
-  args[position] = updated; markRuntimeProfilesDirty();
+  args[position] = updated; storeRuntimeProfileArgs(id, args);
 }
 function createProfileStepGrip(profileId: string, index: number) {
   const grip = document.createElement('span'); grip.className = 'profile-step-grip'; grip.textContent = '⋮⋮'; grip.draggable = true; grip.setAttribute('aria-hidden', 'true');
@@ -873,55 +924,55 @@ function bindProfileStepDrop(row: HTMLElement, profileId: string, targetIndex: n
   });
 }
 function moveRuntimeProfileStepTo(id: string, from: number, to: number) {
-  const index = Number(id.slice('custom-'.length)) - 1;
-  if (!Number.isInteger(index) || index < 0 || !runtimeProfileDraft[index]) return;
-  runtimeProfileDraft[index] = moveProfileStepTo(runtimeProfileDraft[index]!, from, to); markRuntimeProfilesDirty();
+  const target = runtimeProfileDraftTarget(id);
+  if (!target || !Number.isInteger(from) || !Number.isInteger(to)) return;
+  storeRuntimeProfileArgs(id, moveProfileStepTo(target.args, from, to));
 }
 function renameRuntimeProfile(id: string, name: string) {
-  const index = Number(id.slice('custom-'.length)) - 1; const args = runtimeProfileDraft[index];
-  if (!args) return;
+  const target = runtimeProfileDraftTarget(id); const args = target?.args;
+  if (!args || target?.managed) return;
   if (name.trim() && !/^[\p{L}\p{N}_.-]{1,32}$/u.test(name.trim())) return toast('Имя: буквы, цифры, точка, дефис или подчёркивание; не больше 32 символов.', 'error');
-  runtimeProfileDraft[index] = replaceProfileName(args, name); markRuntimeProfilesDirty();
+  storeRuntimeProfileArgs(id, replaceProfileName(args, name));
 }
 function updateRuntimeProfileArgument(id: string, argumentIndex: string, value: string) {
-  const index = Number(id.slice('custom-'.length)); const position = Number(argumentIndex); const args = runtimeProfileDraft[index - 1];
+  const position = Number(argumentIndex); const target = runtimeProfileDraftTarget(id); const args = target?.args;
   if (!args || !Number.isInteger(position) || !args[position]) return;
   const updated = replaceProfileArgument(args, position, value.trim());
   if (updated[position] === args[position] && value.trim() !== args[position]) return toast('Один параметр должен оставаться единым аргументом без shell-синтаксиса.', 'error');
-  runtimeProfileDraft[index - 1] = updated; markRuntimeProfilesDirty();
+  storeRuntimeProfileArgs(id, updated);
 }
 function updateRuntimeProfileFilterValue(id: string, argumentIndex: string, valueIndex: string, value: string) {
   if (!value.trim()) return removeRuntimeProfileFilterValue(id, argumentIndex, valueIndex);
-  const profileIndex = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const args = runtimeProfileDraft[profileIndex]; const current = args?.[position];
+  const target = runtimeProfileDraftTarget(id); const position = Number(argumentIndex); const args = target?.args; const current = args?.[position];
   if (!args || !current) return;
   const updated = updateProfileFilterValue(current, Number(valueIndex), value);
   if (!updated) return toast('Значение фильтра должно быть одним элементом без запятых и shell-синтаксиса.', 'error');
-  args[position] = updated; markRuntimeProfilesDirty();
+  args[position] = updated; storeRuntimeProfileArgs(id, args);
 }
 function removeRuntimeProfileFilterValue(id: string, argumentIndex: string, valueIndex: string) {
-  const profileIndex = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const args = runtimeProfileDraft[profileIndex]; const current = args?.[position];
+  const target = runtimeProfileDraftTarget(id); const position = Number(argumentIndex); const args = target?.args; const current = args?.[position];
   if (!args || !current) return;
   const updated = removeProfileFilterValue(current, Number(valueIndex));
   if (updated) args[position] = updated;
   else args.splice(position, 1);
-  markRuntimeProfilesDirty();
+  storeRuntimeProfileArgs(id, args);
 }
 function appendRuntimeProfileFilterValue(id: string, argumentIndex: string, value: string): boolean {
-  const profileIndex = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const args = runtimeProfileDraft[profileIndex]; const current = args?.[position];
+  const target = runtimeProfileDraftTarget(id); const position = Number(argumentIndex); const args = target?.args; const current = args?.[position];
   if (!args || !current) return false;
   const updated = appendProfileFilterValue(current, value);
   if (!updated) { toast('Введите одно значение без запятых и shell-синтаксиса.', 'error'); return false; }
-  args[position] = updated; markRuntimeProfilesDirty(); return true;
+  args[position] = updated; storeRuntimeProfileArgs(id, args); return true;
 }
 function addRuntimeProfileStepParameter(id: string, argumentIndex: string, parameter: string) {
-  const index = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const current = runtimeProfileDraft[index]?.[position];
+  const position = Number(argumentIndex); const current = runtimeProfileDraftTarget(id)?.args[position];
   if (!current) return;
   const updated = appendDesyncParameter(current, parameter);
   if (updated === current) return toast('Параметр должен быть одним ключом, значением или флагом без пробелов.', 'error');
   updateRuntimeProfileStep(id, argumentIndex, () => updated);
 }
 function updateRuntimeProfileStepParameter(id: string, argumentIndex: string, parameterIndex: string, value: string) {
-  const index = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const current = runtimeProfileDraft[index]?.[position];
+  const position = Number(argumentIndex); const current = runtimeProfileDraftTarget(id)?.args[position];
   if (!current) return;
   const parameter = splitDesyncParameters(current)[Number(parameterIndex)];
   if (!parameter) return;
@@ -933,15 +984,14 @@ function removeRuntimeProfileStepParameter(id: string, argumentIndex: string, pa
   updateRuntimeProfileStep(id, argumentIndex, (argument) => removeDesyncParameter(argument, Number(parameterIndex)));
 }
 function moveRuntimeProfileStep(id: string, stepIndex: string, direction: string) {
-  const index = Number(id.slice('custom-'.length)) - 1; const step = Number(stepIndex);
-  const args = runtimeProfileDraft[index];
+  const step = Number(stepIndex); const target = runtimeProfileDraftTarget(id); const args = target?.args;
   if (!args || !Number.isInteger(step) || (direction !== 'up' && direction !== 'down')) return;
-  runtimeProfileDraft[index] = reorderProfileSteps(args, step, direction === 'up' ? -1 : 1); markRuntimeProfilesDirty();
+  storeRuntimeProfileArgs(id, reorderProfileSteps(args, step, direction === 'up' ? -1 : 1));
 }
 function removeRuntimeProfileArgument(id: string, argIndex: string) {
-  const index = Number(id.slice('custom-'.length)) - 1; const position = Number(argIndex);
-  if (!Number.isInteger(index) || !Number.isInteger(position) || !runtimeProfileDraft[index]?.[position]) return;
-  runtimeProfileDraft[index]!.splice(position, 1); markRuntimeProfilesDirty();
+  const position = Number(argIndex); const target = runtimeProfileDraftTarget(id);
+  if (!Number.isInteger(position) || !target?.args[position]) return;
+  target.args.splice(position, 1); storeRuntimeProfileArgs(id, target.args);
 }
 function mutateRuntimeProfile(id: string, action: 'up' | 'down' | 'delete') {
   const index = Number(id.slice('custom-'.length)) - 1;

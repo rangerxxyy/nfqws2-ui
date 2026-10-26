@@ -1,6 +1,32 @@
-import type { NfqwsCliCatalog, NfqwsListSummary, NfqwsLuaFunctionInfo, NfqwsLuaStandardGroup } from './api';
+import type { NfqwsArgumentProfile, NfqwsCliCatalog, NfqwsListSummary, NfqwsLuaFunctionInfo, NfqwsLuaStandardGroup, NfqwsProfileComponent } from './api';
 
 export type ProfileArgumentChoice = { group: string; value: string; label: string };
+export type RuntimeProfileConstructorTarget = { source: string; args: string[]; linkedComponents: NfqwsProfileComponent[]; managed: boolean };
+
+/** Picks the actual config variable edited by a profile's constructor. Managed profile summaries can contain several shared variables. */
+export function getRuntimeProfileConstructorTarget(profile: NfqwsArgumentProfile): RuntimeProfileConstructorTarget | null {
+  if (profile.editable) {
+    return { source: profile.source, args: [...profile.args], linkedComponents: [], managed: false };
+  }
+  const primary = profile.components?.[0];
+  if (!primary?.editable) return null;
+  return { source: primary.source, args: [...primary.args], linkedComponents: (profile.components ?? []).slice(1), managed: true };
+}
+
+/** Resolves list arguments to the managed profile's linked scope variable, or to UDP's own variable. */
+export function getRuntimeProfileListTarget(profile: NfqwsArgumentProfile, argument: string): { source: string; editable: boolean } | null {
+  if (profile.editable) return null;
+  const source = argument.startsWith('--ipset')
+    ? 'NFQWS_ARGS_IPSET'
+    : /^(--hostlist|--autohostlist)/.test(argument)
+      ? 'NFQWS_EXTRA_ARGS'
+      : null;
+  if (!source) return null;
+  const component = profile.components?.find((item) => item.source === source);
+  if (component) return { source: component.source, editable: component.editable };
+  const primary = profile.components?.[0];
+  return primary ? { source: primary.source, editable: primary.editable } : null;
+}
 
 /** Filters the runtime-backed profile argument catalog by visible label, syntax, or group. */
 export function filterProfileArgumentChoices(

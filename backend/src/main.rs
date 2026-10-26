@@ -11716,6 +11716,24 @@ mod tests {
         assert!(updated.contains("NFQWS_ARGS_UDP=\"--filter-udp=443\n--lua-desync=fake\""));
         assert!(updated.contains("NFQWS_ARGS=\"--filter-tcp=80,443\" # shared HTTP base"));
 
+        let mut previously_missing_group = std::collections::HashMap::new();
+        previously_missing_group.insert(
+            "NFQWS_ARGS_QUIC".to_owned(),
+            vec![
+                "--filter-udp=443".to_owned(),
+                "--payload=quic_initial".to_owned(),
+            ],
+        );
+        let updated = build_runtime_profile_settings_config(
+            original,
+            RuntimeProfileSettingsWrite {
+                variables: previously_missing_group,
+                revision: revision(original.as_bytes()),
+            },
+        )
+        .unwrap();
+        assert!(updated.contains("NFQWS_ARGS_QUIC=\"--filter-udp=443\n--payload=quic_initial\""));
+
         let mut forbidden = std::collections::HashMap::new();
         forbidden.insert("IPV6_ENABLED".to_owned(), vec!["1".to_owned()]);
         assert!(
@@ -11749,7 +11767,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn profile_api_lists_nfws2_argument_groups_with_custom_only_editable() {
+    async fn profile_api_lists_all_groups_and_only_custom_are_marked_editable() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
         std::fs::write(
@@ -11774,13 +11792,20 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let profiles = result["profiles"].as_array().unwrap();
-        assert_eq!(profiles.len(), 4);
+        assert_eq!(profiles.len(), 7);
         assert_eq!(profiles[0]["name"], "Свой профиль 1");
         assert_eq!(profiles[1]["source"], "NFQWS_ARGS_CUSTOM");
         assert_eq!(profiles[2]["source"], "NFQWS_ARGS_UDP");
-        assert_eq!(profiles[3]["source"], "NFQWS_ARGS");
+        assert_eq!(profiles[3]["name"], "QUIC по IP");
+        assert_eq!(profiles[4]["name"], "QUIC по сайтам");
+        assert_eq!(profiles[5]["name"], "HTTP/HTTPS по IP");
+        assert_eq!(profiles[6]["name"], "HTTP/HTTPS по сайтам");
         assert_eq!(profiles[0]["editable"], true);
         assert_eq!(profiles[2]["editable"], false);
+        assert_eq!(profiles[3]["components"][0]["source"], "NFQWS_ARGS_QUIC");
+        assert_eq!(profiles[3]["components"][0]["editable"], true);
+        assert_eq!(profiles[4]["components"][1]["source"], "NFQWS_EXTRA_ARGS");
+        assert_eq!(profiles[4]["components"][1]["editable"], false);
         assert!(
             result["revision"]
                 .as_str()

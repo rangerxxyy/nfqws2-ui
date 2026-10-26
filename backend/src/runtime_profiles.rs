@@ -513,30 +513,29 @@ pub fn from_config(source: &str, revision: &str) -> Result<RuntimeProfilesRespon
         }
     }
     let udp = groups.get("NFQWS_ARGS_UDP").cloned().unwrap_or_default();
-    if !udp.is_empty() {
-        definitions.push(("NFQWS_ARGS_UDP".into(), udp.clone(), None));
-    }
     let quic = groups.get("NFQWS_ARGS_QUIC").cloned().unwrap_or_default();
     let ipset = groups.get("NFQWS_ARGS_IPSET").cloned().unwrap_or_default();
     let tcp = groups.get("NFQWS_ARGS").cloned().unwrap_or_default();
     let extra = groups.get("NFQWS_EXTRA_ARGS").cloned().unwrap_or_default();
-    if !quic.is_empty() {
-        if !ipset.is_empty() {
-            let mut args = quic.clone();
-            args.extend(ipset.clone());
-            args.push("--ipset-ip=0.0.0.0".into());
-            definitions.push(("NFQWS_ARGS_QUIC_IPSET".into(), args, None));
-        }
-        let mut args = quic.clone();
-        args.extend(extra.clone());
-        definitions.push(("NFQWS_ARGS_QUIC_EXTRA".into(), args, None));
-    }
+    // Keep all five managed entries visible even when a corresponding group is
+    // empty. This lets the UI configure a previously unused transport/profile
+    // without making users first edit raw config or infer a missing profile.
+    definitions.push(("NFQWS_ARGS_UDP".into(), udp.clone(), None));
+    let mut quic_ip = quic.clone();
+    quic_ip.extend(ipset.clone());
     if !ipset.is_empty() {
-        let mut args = tcp.clone();
-        args.extend(ipset.clone());
-        args.push("--ipset-ip=0.0.0.0".into());
-        definitions.push(("NFQWS_ARGS_IPSET".into(), args, None));
+        quic_ip.push("--ipset-ip=0.0.0.0".into());
     }
+    definitions.push(("NFQWS_ARGS_QUIC_IPSET".into(), quic_ip, None));
+    let mut quic_sites = quic.clone();
+    quic_sites.extend(extra.clone());
+    definitions.push(("NFQWS_ARGS_QUIC_EXTRA".into(), quic_sites, None));
+    let mut tcp_ip = tcp.clone();
+    tcp_ip.extend(ipset.clone());
+    if !ipset.is_empty() {
+        tcp_ip.push("--ipset-ip=0.0.0.0".into());
+    }
+    definitions.push(("NFQWS_ARGS_IPSET".into(), tcp_ip, None));
     let mut args = tcp.clone();
     args.extend(extra.clone());
     definitions.push(("NFQWS_ARGS".into(), args, None));
@@ -816,9 +815,67 @@ mod tests {
                 .iter()
                 .all(|profile| !profile.editable)
         );
+        assert!(response.profiles[3..].iter().all(|profile| {
+            profile.components.first().is_some_and(|component| {
+                component.editable && component.source != "NFQWS_EXTRA_ARGS"
+            })
+        }));
+        assert_eq!(
+            response.profiles[3..]
+                .iter()
+                .map(|profile| profile.components[0].source.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "NFQWS_ARGS_UDP",
+                "NFQWS_ARGS_QUIC",
+                "NFQWS_ARGS_QUIC",
+                "NFQWS_ARGS",
+                "NFQWS_ARGS",
+            ]
+        );
+        assert_eq!(
+            response.profiles[3..]
+                .iter()
+                .map(|profile| profile.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "UDP: игры, звонки",
+                "QUIC по IP",
+                "QUIC по сайтам",
+                "HTTP/HTTPS по IP",
+                "HTTP/HTTPS по сайтам",
+            ]
+        );
         assert_eq!(response.profiles[1].filters, ["--filter-tcp=443"]);
         assert_eq!(response.profiles[1].steps, ["--lua-desync=fake"]);
         assert!(response.custom_args.contains("--new=video"));
+    }
+
+    #[test]
+    fn exposes_all_five_managed_profiles_when_their_config_groups_are_empty() {
+        let response = from_config("", "rev").unwrap();
+        assert_eq!(response.profiles.len(), 5);
+        assert_eq!(
+            response
+                .profiles
+                .iter()
+                .map(|profile| profile.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "UDP: игры, звонки",
+                "QUIC по IP",
+                "QUIC по сайтам",
+                "HTTP/HTTPS по IP",
+                "HTTP/HTTPS по сайтам",
+            ]
+        );
+        assert!(response.profiles.iter().all(|profile| {
+            profile.args.is_empty()
+                && profile
+                    .components
+                    .first()
+                    .is_some_and(|component| component.editable)
+        }));
     }
 
     #[test]
