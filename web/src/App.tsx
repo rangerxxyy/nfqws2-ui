@@ -1309,11 +1309,11 @@ export default function App() {
         </section>
         <section id={"tabContent-profiles"} className={"hidden view-animate space-y-4"}>
           <div className={"flex flex-wrap items-center justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Конструктор стратегий</h1><p className={"mt-1 text-sm text-slate-400"}>Настройка профилей nfqws2 из раздела конфигурации.</p></div><div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"pasteRuntimeProfile"} className={"backup-action"}>Вставить чужой</button><button type={"button"} data-action-click={"addRuntimeProfile"} className={"backup-action"}>＋ Свой профиль</button><button type={"button"} data-action-click={"saveRuntimeProfiles"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Применить изменения</button></div></div>
-          <section className={"ui-card profile-constructor-card max-w-[90rem] rounded-xl p-3 sm:p-4"}>
-            <p id={"profileStatus"} className={"sr-only"} role={"status"} aria-live={"polite"}>Профили загружаются из конфигурации nfqws2…</p>
-            <div className={"profile-constructor-workspace grid min-h-[34rem] gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]"}>
-              <nav id={"profileList"} className={"profile-list-panel grid content-start gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-2"} aria-label={"Профили nfqws2"}></nav>
-              <div id={"profileEditor"} className={"profile-editor-panel min-w-0 rounded-lg border border-slate-800 bg-slate-950/20 p-3 sm:p-4"}></div>
+          <section className={"ui-card max-w-[90rem] rounded-xl p-3 sm:p-4"}>
+            <p id={"profileStatus"} className={"mb-3 text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Профили загружаются из конфигурации nfqws2…</p>
+            <div className={"grid min-h-[34rem] gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]"}>
+              <nav id={"profileList"} className={"grid content-start gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-2"} aria-label={"Порядок профилей nfqws2"}></nav>
+              <div id={"profileEditor"} className={"min-w-0 rounded-lg border border-slate-800 bg-slate-950/20 p-3 sm:p-4"}></div>
             </div>
           </section>
         </section>

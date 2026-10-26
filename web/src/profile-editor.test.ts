@@ -1,18 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NfqwsArgumentProfile } from './api';
-import { appendArgumentToCustomProfile, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste, removeCustomProfileDisplayPreference } from './profile-editor';
-
-describe('custom profile display preferences', () => {
-  it('removes a deleted profile name and shifts later positional IDs in names and visual order', () => {
-    expect(removeCustomProfileDisplayPreference({
-      names: { 'custom-1': 'Видео', 'custom-2': 'Игры', 'custom-3': 'Работа', 'managed-1': 'UDP' },
-      order: ['managed-1', 'custom-1', 'custom-2', 'custom-3'],
-    }, 1)).toEqual({
-      names: { 'custom-1': 'Видео', 'custom-2': 'Работа', 'managed-1': 'UDP' },
-      order: ['managed-1', 'custom-1', 'custom-2'],
-    });
-  });
-});
+import { appendArgumentToCustomProfile, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('adding strategy arguments to NFQWS_ARGS_CUSTOM profiles', () => {
   it('adds a strategy only to the selected profile between --new separators', () => {
