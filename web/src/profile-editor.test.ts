@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NfqwsArgumentProfile } from './api';
-import { appendArgumentToCustomProfile, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, prepareVisibleRuntimeProfiles, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('adding strategy arguments to NFQWS_ARGS_CUSTOM profiles', () => {
   it('adds a strategy only to the selected profile between --new separators', () => {
@@ -26,6 +26,24 @@ describe('adding strategy arguments to NFQWS_ARGS_CUSTOM profiles', () => {
 });
 
 describe('runtime profile constructor targets', () => {
+  it('hides only the built-in HTTP IP entry and shortens the built-in QUIC label', () => {
+    const makeProfile = (id: string, name: string, source: string, editable = false): NfqwsArgumentProfile => ({
+      id, index: 99, name, source, editable, args: [], filters: [], protocols: [], payloads: [], lists: [], steps: [],
+    });
+    const visible = prepareVisibleRuntimeProfiles([
+      makeProfile('custom-1', 'HTTP/HTTPS по IP', 'NFQWS_ARGS_CUSTOM', true),
+      makeProfile('managed-quic-ip', 'QUIC по IP', 'NFQWS_ARGS_QUIC_IPSET'),
+      makeProfile('managed-http-ip', 'HTTP/HTTPS по IP', 'NFQWS_ARGS_IPSET'),
+      makeProfile('managed-http-sites', 'HTTP/HTTPS по сайтам', 'NFQWS_ARGS'),
+    ]);
+
+    expect(visible.map(({ id, name, index }) => ({ id, name, index }))).toEqual([
+      { id: 'custom-1', name: 'HTTP/HTTPS по IP', index: 1 },
+      { id: 'managed-quic-ip', name: 'QUIC', index: 2 },
+      { id: 'managed-http-sites', name: 'HTTP/HTTPS по сайтам', index: 3 },
+    ]);
+  });
+
   it('uses each managed profile primary config component while keeping shared scope components separate', () => {
     const sources = ['NFQWS_ARGS_UDP', 'NFQWS_ARGS_QUIC', 'NFQWS_ARGS_QUIC', 'NFQWS_ARGS', 'NFQWS_ARGS'];
     const targets = sources.map((source, index) => getRuntimeProfileConstructorTarget({

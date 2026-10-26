@@ -3,6 +3,17 @@ import type { NfqwsArgumentProfile, NfqwsCliCatalog, NfqwsListSummary, NfqwsLuaF
 export type ProfileArgumentChoice = { group: string; value: string; label: string };
 export type RuntimeProfileConstructorTarget = { source: string; args: string[]; linkedComponents: NfqwsProfileComponent[]; managed: boolean };
 
+/** Shapes only the built-in constructor navigation; stored config sources and custom names stay intact. */
+export function prepareVisibleRuntimeProfiles(profiles: readonly NfqwsArgumentProfile[]): NfqwsArgumentProfile[] {
+  return profiles
+    .filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')
+    .map((profile, index) => ({
+      ...profile,
+      name: profile.source === 'NFQWS_ARGS_QUIC_IPSET' ? 'QUIC' : profile.name,
+      index: index + 1,
+    }));
+}
+
 /** Returns a new custom-profile draft with one argument added to exactly one --new-delimited profile. */
 export function appendArgumentToCustomProfile(profiles: readonly string[][], profileIndex: number, argument: string): string[][] | null {
   if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex >= profiles.length || !argument.trim()) return null;

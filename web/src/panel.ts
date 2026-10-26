@@ -27,7 +27,7 @@ import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation 
 import { shouldPollLogs } from './log-polling';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -454,9 +454,7 @@ function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
     };
   });
   const custom = runtimeProfileDraft.map((args, index) => profileFromArgs(index + 1, args, true));
-  return [...custom, ...managed]
-    .filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')
-    .map((profile, index) => ({ ...profile, name: profile.source === 'NFQWS_ARGS_QUIC_IPSET' ? 'QUIC' : profile.name, index: index + 1 }));
+  return prepareVisibleRuntimeProfiles([...custom, ...managed]);
 }
 function appendProfileBuilderSectionHeading(parent: HTMLElement, text: string) {
   const tone = text === 'Когда срабатывает' ? 'profile-builder-heading-condition' : text === 'Для кого' ? 'profile-builder-heading-scope' : 'profile-builder-heading-action';

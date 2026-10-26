@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ACTION_TOOLTIP_DELAY_MS, fallbackTooltipText, scheduleDelayedTooltip } from './action-tooltips';
+import { DEFAULT_ACTION_TOOLTIP_DELAY_MS, fallbackTooltipText, scheduleDelayedTooltip, shouldShowTooltipForFocus } from './action-tooltips';
 
 describe('delayed action tooltip timer', () => {
   afterEach(() => vi.useRealTimers());
@@ -29,5 +29,14 @@ describe('delayed action tooltip timer', () => {
     expect(fallbackTooltipText(nav)).toContain('ручную проверку');
     const action = { dataset: { actionClick: 'runMonitoring' }, getAttribute: () => null, textContent: '' } as unknown as HTMLButtonElement;
     expect(fallbackTooltipText(action)).toContain('Проверить доступность');
+  });
+
+  it('shows focus-triggered hints only for keyboard-visible focus, not touch-generated focus', () => {
+    const keyboardFocused = { matches: vi.fn((selector: string) => selector === ':focus-visible') } as unknown as HTMLButtonElement;
+    const pointerFocused = { matches: vi.fn(() => false) } as unknown as HTMLButtonElement;
+    expect(shouldShowTooltipForFocus(keyboardFocused)).toBe(true);
+    expect(shouldShowTooltipForFocus(pointerFocused)).toBe(false);
+    expect(shouldShowTooltipForFocus(null)).toBe(false);
+    expect(keyboardFocused.matches).toHaveBeenCalledWith(':focus-visible');
   });
 });

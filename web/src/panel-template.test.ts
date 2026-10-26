@@ -57,8 +57,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("sideHeading.className = 'px-2 pb-1 text-[10px] font-bold text-slate-400'");
     expect(panelSource).not.toContain('summarizeProfileSelection(profile.effectiveArgs');
     expect(panelSource).not.toContain('nameWrap.append(name, summary)');
-    expect(panelSource).toContain("profile.source !== 'NFQWS_ARGS_IPSET'");
-    expect(panelSource).toContain("profile.source === 'NFQWS_ARGS_QUIC_IPSET' ? 'QUIC' : profile.name");
+    expect(panelSource).toContain('prepareVisibleRuntimeProfiles([...custom, ...managed])');
     expect(panelStyles).toContain('#profileList button > span:nth-child(2) > span { display:block; overflow:visible; text-overflow:clip; white-space:normal; overflow-wrap:anywhere;');
   });
 

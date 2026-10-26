@@ -5,6 +5,10 @@ export function scheduleDelayedTooltip(callback: () => void, delayMs = DEFAULT_A
   return () => globalThis.clearTimeout(timer);
 }
 
+export function shouldShowTooltipForFocus(button: Pick<Element, 'matches'> | null): boolean {
+  return Boolean(button?.matches(':focus-visible'));
+}
+
 const ACTION_DESCRIPTIONS: Record<string, string> = {
   addMonitoringSite: 'Добавить домен в список ручного мониторинга.',
   runMonitoring: 'Проверить доступность сохранённых доменов.',
@@ -123,7 +127,10 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
     const button = findButton(event.target);
     if (button && !button.contains(event.relatedTarget as Node | null) && button === active) clear();
   });
-  root.addEventListener('focusin', (event) => schedule(findButton(event.target)));
+  root.addEventListener('focusin', (event) => {
+    const button = findButton(event.target);
+    if (shouldShowTooltipForFocus(button)) schedule(button);
+  });
   root.addEventListener('focusout', (event) => {
     const button = findButton(event.target);
     if (button && button === active) clear();
