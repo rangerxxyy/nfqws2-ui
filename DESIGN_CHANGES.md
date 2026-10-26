@@ -147,6 +147,14 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - Lua validation recognizes `pos` for `fakeddisorder` when older installed Lua comments omit it. The constructor offers the documented `midsld` starter value and still warns on unrelated unknown keys.
 - The profile reference moves after the editor when the editor column itself is narrow, including desktop layouts where the fixed navigation consumes much of the viewport. This prevents the contextual guide from compressing or covering profile fields before the viewport-level mobile breakpoint.
 
+## Profile constructor navigation — 2026-10-26
+
+- On wide screens, the profile list, strategy editor, and parameter encyclopedia occupy independent scroll areas. This keeps profile switching and the reference visible while working through long strategy lists; on phones the layout returns to natural page scrolling for touch.
+- The profile list now has compact rename and visual reorder controls for every built-in and custom profile. Those display names and list order are stored in this browser only; they do not alter nfqws2 configuration or its processing order.
+- Removed the verbose successful profile/catalog summary from the workspace and the old “order of checking” caption. Load errors remain visible, while the visual-only reorder note is a small amber badge beside “Профили”.
+- Kept the profile list pinned on narrow screens so switching profiles does not require scrolling back to the top. Removed the separate “HTTP/HTTPS по IP” constructor entry; its shared configuration source remains available through the HTTP/HTTPS by sites editor. Visible profile numbering is recalculated after filtering so list numbers and editor headings stay aligned.
+- Moved list row deletion, import, and export into a compact “Ещё” menu within the primary toolbar. This removes the extra toolbar strip while preserving the actions and gives the list editor more vertical space.
+
 ## Profile source editing and multiline config — 2026-10-26
 
 - The Zemidala comparison confirmed that built-in UDP and HTTP/HTTPS profile groups are editable in the reference. The Rust API now returns each managed profile's exact source variables; the UI edits those variables instead of flattening the composed profile into one unrelated config group.

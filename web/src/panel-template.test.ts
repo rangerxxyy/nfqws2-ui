@@ -57,6 +57,27 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
   });
 
+  it('keeps the profile list and encyclopedia visible while the strategy editor scrolls independently', () => {
+    expect(template).toContain('id="profileList" class="profile-list-panel');
+    expect(template).toContain('id="profileEditor" class="profile-editor-panel');
+    expect(panelSource).toContain("main.className = 'profile-editor-main profile-strategy-scroll'");
+    expect(panelSource).toContain('runtimeProfileDisplayNames');
+    expect(panelSource).toContain('moveRuntimeProfileDisplay');
+    expect(panelSource).toContain('PROFILE_DISPLAY_PREFERENCES_KEY');
+    expect(panelSource).toContain("sideHeadingLabel.textContent = 'Профили'");
+    expect(panelSource).toContain("displayOrderNote.textContent = 'Визуально'");
+    expect(panelSource).toContain("label.className = 'sr-only'");
+    expect(panelSource).toContain(".filter((profile) => profile.name !== 'HTTP/HTTPS по IP')");
+    expect(panelSource.indexOf(".filter((profile) => profile.name !== 'HTTP/HTTPS по IP')")).toBeLessThan(panelSource.indexOf('.map((profile, index) => ({ ...profile, index: index + 1 }))'));
+    expect(panelStyles).toContain('.profile-list-controls');
+    expect(panelStyles).toContain('.profile-display-order-note');
+    expect(panelStyles).toContain('.profile-constructor-workspace');
+    expect(panelStyles).toContain('.profile-strategy-scroll { min-height:0; overflow-y:auto;');
+    expect(panelStyles).toContain('.profile-reference { position:sticky;');
+    expect(panelStyles).toContain('@media (max-width:767px)');
+    expect(panelStyles).toContain('.profile-constructor-workspace { height:auto; min-height:0; }');
+  });
+
   it('shows the six backend-discovered Lua scripts in a dedicated read-only section', () => {
     const tabs = ['configTabEditor', 'configTabSettings', 'configTabScripts'].map((id) => template.indexOf(`id="${id}"`));
     expect(tabs[0]).toBeLessThan(tabs[1]);
@@ -570,10 +591,10 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsProfiles.saveCustom(runtimeProfileDraft');
     expect(template).toContain('id="profileEditor"');
     expect(panelStyles).toContain('#profileEditor { container-type:inline-size; }');
-    expect(panelStyles).toContain('@container (max-width: 920px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); }');
+    expect(panelStyles).toContain('@container (max-width: 700px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); overflow:visible; }');
     expect(template).toContain('id="profileImportDialog"');
     expect(panelSource).toContain('runtimeProfileDraft.push');
-    expect(panelSource).toContain('moveRuntimeProfileUp');
+    expect(panelSource).not.toContain('moveRuntimeProfileUp');
     expect(panelSource).toContain('deleteRuntimeProfile');
     expect(panelSource).toContain("['builder', 'Конструктор']");
     expect(panelSource).toContain("['text', 'Текст']");
@@ -860,10 +881,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('data-action-click="requestClearListDraft"');
     expect(template).toContain('id="listClearModal"');
     expect(template).toContain('id="listEditorPanel"');
-    expect(template).toContain('id="listImportFile"');
     expect(template).not.toContain('data-action-click="appendListEntriesToDraft"');
+    expect(template).toContain('id="listImportFile"');
     expect(template).toContain('data-action-click="removeSelectedListLines"');
     expect(template).toContain('data-action-click="exportListDraft"');
+    expect(template).not.toContain('list-editor-secondary-toolbar');
+    const listToolbar = template.slice(template.indexOf('class="list-editor-toolbar-actions'), template.indexOf('id="listEditorFullscreenToggle"'));
+    expect(listToolbar).toContain('class="list-toolbar-menu"');
+    expect(listToolbar).toContain('removeSelectedListLines');
+    expect(listToolbar).toContain('openListImport');
+    expect(listToolbar).toContain('exportListDraft');
     expect(template).not.toContain('injectPresetDomains');
     expect(panelSource).toContain('nfqwsLists.save(activeList.id, editor.value, activeList.revision)');
     expect(panelSource).toContain('function toggleListEditorFullscreen()');

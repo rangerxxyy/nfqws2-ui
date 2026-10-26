@@ -864,6 +864,15 @@ export default function App() {
                 <button data-action-click={"saveActiveListFile"} data-action-tooltip={"Проверить и сохранить текущий список"} className={"px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs transition-all"}>
                   {"Применить список"}
                 </button>
+                <details className={"list-toolbar-menu"}>
+                  <summary aria-label={"Дополнительные действия со списком"} title={"Дополнительные действия"}>⋯</summary>
+                  <div className={"list-toolbar-menu-items"}>
+                    <button data-action-click={"removeSelectedListLines"} data-action-tooltip={"Удалить выбранные строки или текущую строку курсора"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Удалить строку/выделение"}</button>
+                    <button data-action-click={"openListImport"} data-action-tooltip={"Добавить записи из файла .list или .txt"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Импорт"}</button>
+                    <button data-action-click={"exportListDraft"} data-action-tooltip={"Скачать текущий черновик списка"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Экспорт"}</button>
+                    <input id={"listImportFile"} type={"file"} accept={".list,.txt,text/plain"} className={"hidden"} data-action-change={"importListDraft"} />
+                  </div>
+                </details>
                 <button type={"button"} data-action-click={"requestClearListDraft"} data-action-tooltip={"Очистить содержимое текущего черновика"} aria-label={"Очистить черновик списка"} className={"config-editor-icon-button list-editor-icon-button"}>
                   <svg aria-hidden={"true"} viewBox={"0 0 24 24"} fill={"none"} stroke={"currentColor"} strokeWidth={"1.8"} strokeLinecap={"round"} strokeLinejoin={"round"}><path d={"M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"}></path></svg>
                 </button>
@@ -875,12 +884,6 @@ export default function App() {
               {"\n          "}
             </div>
             {"\n\n          "}
-            <div className={"list-editor-secondary-toolbar flex flex-wrap items-center gap-2 p-2.5 border-b border-slate-800 bg-[#080d18]"}>
-              <button data-action-click={"removeSelectedListLines"} data-action-tooltip={"Удалить выбранные строки или текущую строку курсора"} className={"px-3 py-2 rounded-lg bg-rose-950/50 hover:bg-rose-900/60 border border-rose-900 text-xs text-rose-200"}>{"Удалить строку/выделение"}</button>
-              <button data-action-click={"openListImport"} data-action-tooltip={"Добавить записи из файла .list или .txt"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Импорт"}</button>
-              <button data-action-click={"exportListDraft"} data-action-tooltip={"Скачать текущий черновик списка"} className={"px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-slate-200"}>{"Экспорт"}</button>
-                <input id={"listImportFile"} type={"file"} accept={".list,.txt,text/plain"} className={"hidden"} data-action-change={"importListDraft"} />
-            </div>
             {"\n          "}
             <div id={"listTextView"} className={"mobile-list-editor flex h-[610px] bg-[#060a12] font-mono text-[13.5px] leading-6 overflow-hidden"}>
               {"\n            "}
@@ -1306,11 +1309,11 @@ export default function App() {
         </section>
         <section id={"tabContent-profiles"} className={"hidden view-animate space-y-4"}>
           <div className={"flex flex-wrap items-center justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Конструктор стратегий</h1><p className={"mt-1 text-sm text-slate-400"}>Настройка профилей nfqws2 из раздела конфигурации.</p></div><div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"pasteRuntimeProfile"} className={"backup-action"}>Вставить чужой</button><button type={"button"} data-action-click={"addRuntimeProfile"} className={"backup-action"}>＋ Свой профиль</button><button type={"button"} data-action-click={"saveRuntimeProfiles"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Применить изменения</button></div></div>
-          <section className={"ui-card max-w-[90rem] rounded-xl p-3 sm:p-4"}>
-            <p id={"profileStatus"} className={"mb-3 text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Профили загружаются из конфигурации nfqws2…</p>
-            <div className={"grid min-h-[34rem] gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]"}>
-              <nav id={"profileList"} className={"grid content-start gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-2"} aria-label={"Порядок профилей nfqws2"}></nav>
-              <div id={"profileEditor"} className={"min-w-0 rounded-lg border border-slate-800 bg-slate-950/20 p-3 sm:p-4"}></div>
+          <section className={"ui-card profile-constructor-card max-w-[90rem] rounded-xl p-3 sm:p-4"}>
+            <p id={"profileStatus"} className={"sr-only"} role={"status"} aria-live={"polite"}>Профили загружаются из конфигурации nfqws2…</p>
+            <div className={"profile-constructor-workspace grid min-h-[34rem] gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]"}>
+              <nav id={"profileList"} className={"profile-list-panel grid content-start gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-2"} aria-label={"Профили nfqws2"}></nav>
+              <div id={"profileEditor"} className={"profile-editor-panel min-w-0 rounded-lg border border-slate-800 bg-slate-950/20 p-3 sm:p-4"}></div>
             </div>
           </section>
         </section>
