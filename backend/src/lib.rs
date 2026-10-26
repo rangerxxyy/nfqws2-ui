@@ -81,6 +81,14 @@ impl ServiceAction {
     }
 }
 
+fn service_success_message(action: ServiceAction) -> &'static str {
+    match action {
+        ServiceAction::Start => "nfqws2 запущен",
+        ServiceAction::Stop => "nfqws2 остановлен",
+        ServiceAction::Restart => "nfqws2 перезапущен",
+    }
+}
+
 pub fn known_init_scripts() -> [PathBuf; 2] {
     [
         PathBuf::from("/opt/etc/init.d/S51nfqws2"),
@@ -341,11 +349,7 @@ pub async fn service_action_at(
             "Команда выполнена, но проверка службы не подтвердила ожидаемое состояние: {detail}"
         ));
     }
-    Ok(if output.trim().is_empty() {
-        detail
-    } else {
-        output.trim().to_string()
-    })
+    Ok(service_success_message(action).to_string())
 }
 
 #[cfg(test)]
@@ -360,6 +364,22 @@ mod tests {
         );
         assert!(ServiceAction::try_from("restart;reboot").is_err());
         assert!(ServiceAction::try_from("reload").is_err());
+    }
+
+    #[test]
+    fn successful_service_actions_return_only_a_short_status_message() {
+        assert_eq!(
+            service_success_message(ServiceAction::Start),
+            "nfqws2 запущен"
+        );
+        assert_eq!(
+            service_success_message(ServiceAction::Stop),
+            "nfqws2 остановлен"
+        );
+        assert_eq!(
+            service_success_message(ServiceAction::Restart),
+            "nfqws2 перезапущен"
+        );
     }
 
     #[test]

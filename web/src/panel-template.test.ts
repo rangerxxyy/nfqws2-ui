@@ -815,9 +815,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.app-main-layout > aside nav button > div > span');
     expect(panelStyles).toContain('overflow-wrap: anywhere; line-height: 1.25;');
     expect(panelStyles).toContain('grid-template-columns: minmax(0, 1fr);');
-    expect(panelStyles).toContain('max-height: 50vh; overflow-y: auto;');
+    expect(panelStyles).toContain('max-height: none; overflow: visible;');
     expect(template).toContain('Списки доменов и IP');
     expect(template).toContain('id="navBtn-snapshots"');
+  });
+
+  it('uses native page scrolling for vertical touch gestures on phones', () => {
+    expect(panelStyles).toContain('body.h-screen.overflow-hidden { height: auto !important; min-height: 100dvh; overflow-x: hidden !important; overflow-y: auto !important;');
+    expect(panelStyles).toContain('.app-main-layout.flex-1.min-h-0.overflow-hidden { flex: 0 0 auto !important; min-height: auto !important; overflow: visible !important;');
+    expect(panelStyles).toContain('.app-main-layout > main { width: 100%; min-width: 0; min-height: auto; flex: 0 0 auto;');
+    expect(panelStyles).toContain('overflow-x: visible; overflow-y: visible; touch-action: pan-y;');
+    expect(panelStyles).toContain('-webkit-overflow-scrolling: touch;');
   });
 
   it('does not ship example credentials in login controls', () => {

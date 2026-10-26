@@ -863,7 +863,10 @@ html.list-editor-fullscreen-open { overflow:hidden; }
 }
 /* ---------- Компактная раскладка для телефонов ---------- */
 @media (max-width: 767px) {
-  .app-main-layout { flex-direction: column; overflow: hidden; }
+  body.h-screen.overflow-hidden { height: auto !important; min-height: 100dvh; overflow-x: hidden !important; overflow-y: auto !important; }
+  #root { height: auto !important; min-height: 100dvh; }
+  .app-main-layout.flex-1.min-h-0.overflow-hidden { flex: 0 0 auto !important; min-height: auto !important; overflow: visible !important; }
+  .app-main-layout { flex-direction: column; }
   .app-main-layout > aside {
     width: 100%;
     height: auto;
@@ -891,7 +894,7 @@ html.list-editor-fullscreen-open { overflow:hidden; }
   .app-main-layout > aside nav button > div { min-width: 0; gap: 0.45rem; }
   .app-main-layout > aside nav button > div span { overflow-wrap: anywhere; }
   .app-main-layout > aside nav button > span { flex: 0 0 auto; }
-  .app-main-layout > main { width: 100%; min-width: 0; padding: 0.75rem; overflow-x: hidden; }
+  .app-main-layout > main { width: 100%; min-width: 0; min-height: auto; flex: 0 0 auto; padding: 0.75rem; overflow-x: visible; overflow-y: visible; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
   .mobile-code-editor { height: min(62vh, 560px); min-height: 300px; }
   .mobile-list-editor { height: min(55vh, 480px); min-height: 260px; }
   .list-rows-view { height: min(55vh, 480px); min-height: 260px; }
@@ -903,7 +906,7 @@ html.list-editor-fullscreen-open { overflow:hidden; }
   #tabContent-lists .list-file-tab { padding: 0.65rem 0.8rem; font-size: 0.78rem; }
   #tabContent-lists #listFooterCount { flex: 0 0 100%; }
   #tabContent-lists .list-editor-footer { flex-wrap: wrap; gap: 0.35rem 0.75rem; }
-  .app-main-layout > aside > div:first-child { max-height: 50vh; overflow-y: auto; overscroll-behavior: contain; }
+  .app-main-layout > aside > div:first-child { max-height: none; overflow: visible; }
   .app-main-layout > aside nav button { min-height: 2.5rem; }
   .app-main-layout > aside nav button { padding: 0.38rem 0.42rem; font-size: 0.7rem; gap: 0.25rem; }
   .app-main-layout > aside nav button > div { flex: 1 1 auto; min-width: 0; gap: 0.3rem; }
