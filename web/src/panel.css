@@ -1355,8 +1355,7 @@ input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .55; }
 .strategy-multi-domain-result strong { color:#5eead4; font-variant-numeric:tabular-nums; }
 @media (max-width:640px) { .strategy-multi-target-panel { margin-left:0; } .strategy-target-mode-switch { width:100%; } .strategy-target-mode-switch button { flex:1; } }
 
-.profile-step-grip { display:flex; width:1rem; align-items:center; justify-content:center; color:#64748b; cursor:grab; user-select:none; font-size:.8rem; letter-spacing:-.2rem; touch-action:none; }
-.profile-step-grip:active { cursor:grabbing; }
+.profile-step-grip { display:flex; width:1rem; align-items:center; justify-content:center; color:#64748b; user-select:none; font-size:.8rem; letter-spacing:-.2rem; }
 .profile-step-grip:focus-visible { outline:2px solid var(--accent-border,#60a5fa); outline-offset:2px; border-radius:.2rem; }
 .profile-step-row.is-drop-target { border-color:var(--accent-border,#60a5fa); background-color:color-mix(in srgb,var(--accent-color,#3b82f6) 9%,transparent); }
 .profile-builder-section-heading { display:flex; align-items:center; gap:.55rem; margin-top:.8rem; border-bottom:1px solid #263244; padding:.45rem 0; font-size:.9rem; font-weight:750; letter-spacing:.005em; }
@@ -1396,8 +1395,8 @@ input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .55; }
 .profile-parameter-picker select { width:100%; max-width:100%; }
 .profile-step-row.is-drop-target { border-color:var(--accent-border,#60a5fa); background-color:color-mix(in srgb,var(--accent-color,#3b82f6) 9%,transparent); }
 .profile-builder-add-select { min-height:2.75rem; }
-@media (max-width:640px) { .profile-step-row { grid-template-columns:1rem 1.75rem minmax(0,1fr); gap:.5rem; } .profile-step-controls { grid-column:3; justify-self:end; } .profile-step-desync .profile-function-select,.profile-step-desync select { max-width:100%; } .profile-parameter-value { max-width:55vw; } }
-@container (max-width:640px) { .profile-step-row { grid-template-columns:1rem 1.75rem minmax(0,1fr); gap:.5rem; } .profile-step-controls { grid-column:3; justify-self:end; } .profile-step-desync .profile-function-select,.profile-step-desync select { max-width:100%; } .profile-parameter-value { max-width:55vw; } }
+@media (max-width:640px) { .profile-step-grip { display:none; } .profile-step-row { grid-template-columns:1.75rem minmax(0,1fr); gap:.5rem; } .profile-step-controls { grid-column:2; justify-self:end; } .profile-step-desync .profile-function-select,.profile-step-desync select { max-width:100%; } .profile-parameter-value { max-width:55vw; } }
+@container (max-width:640px) { .profile-step-grip { display:none; } .profile-step-row { grid-template-columns:1.75rem minmax(0,1fr); gap:.5rem; } .profile-step-controls { grid-column:2; justify-self:end; } .profile-step-desync .profile-function-select,.profile-step-desync select { max-width:100%; } .profile-parameter-value { max-width:55vw; } }
 
 /* Shared design tokens for typography, semantic text colors, and status accents. */
 :root {

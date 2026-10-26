@@ -738,7 +738,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsProfiles.saveCustom(runtimeProfileDraft');
     expect(template).toContain('id="profileEditor"');
     expect(panelStyles).toContain('#profileEditor { container-type:inline-size; }');
-    expect(panelStyles).toContain('@container (max-width:640px) { .profile-step-row { grid-template-columns:1rem 1.75rem minmax(0,1fr);');
+    expect(panelStyles).toContain('@container (max-width:640px) { .profile-step-grip { display:none; } .profile-step-row { grid-template-columns:1.75rem minmax(0,1fr);');
     expect(template).toContain('id="profileImportDialog"');
     expect(panelSource).toContain('runtimeProfileDraft.push');
     expect(panelSource).toContain('moveRuntimeProfileUp');
@@ -1253,14 +1253,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('transition:transform .18s ease,opacity .18s ease');
   });
 
-  it('keeps the grab cursor on the drag grip instead of parameter chips', () => {
+  it('keeps drag feedback out of the cursor and hides the grip on narrow touch layouts', () => {
     const rowRule = panelStyles.match(/\.profile-step-row \{([^}]*)\}/)?.[1] ?? '';
     const rowActiveRule = panelStyles.match(/\.profile-step-row:active \{([^}]*)\}/)?.[1] ?? '';
     const gripRule = panelStyles.match(/\.profile-step-grip \{([^}]*)\}/)?.[1] ?? '';
 
     expect(rowRule).not.toMatch(/cursor:\s*grab/);
     expect(rowActiveRule).not.toMatch(/cursor:\s*grabbing/);
-    expect(gripRule).toMatch(/cursor:\s*grab/);
+    expect(gripRule).not.toMatch(/cursor:\s*grab|touch-action:\s*none/);
+    expect(panelStyles).toContain('@media (max-width:640px) { .profile-step-grip { display:none; } .profile-step-row { grid-template-columns:1.75rem minmax(0,1fr);');
+    expect(panelStyles).toContain('.profile-step-grip { display:none; }');
   });
 
   it('labels strategy tiles by lua-desync order, excluding payload and range rows', () => {
