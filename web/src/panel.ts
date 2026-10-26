@@ -445,7 +445,7 @@ function renderRuntimeProfiles() {
     button.className = `flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${profile.id === selectedRuntimeProfileId ? 'bg-blue-500/20 text-blue-200' : 'text-slate-300 hover:bg-slate-800'}`;
     const num = document.createElement('span'); num.className = 'grid h-5 w-5 shrink-0 place-items-center rounded-full border border-emerald-400 text-[11px] font-bold text-emerald-300'; num.textContent = String(profile.index);
     const name = document.createElement('span'); name.className = 'min-w-0 flex-1 truncate'; name.textContent = profile.name;
-    const warnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog);
+    const warnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
     const badge = document.createElement('span'); badge.className = warnings.length ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : 'text-xs text-slate-500'; badge.textContent = warnings.length ? String(warnings.length) : profile.editable ? '•' : '🔒'; badge.setAttribute('aria-label', warnings.length ? `Предупреждений профиля: ${warnings.length}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
     button.append(num, name, badge); list.append(button);
   }
@@ -457,7 +457,7 @@ function renderRuntimeProfiles() {
   const heading = document.createElement('div'); heading.className = 'flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3';
   const title = document.createElement('div');
   const name = document.createElement('h2'); name.className = 'font-bold text-white'; name.textContent = `#${profile.index} ${profile.name}`;
-  const profileWarnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog);
+  const profileWarnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
   if (profileWarnings.length) { const warningBadge = document.createElement('span'); warningBadge.className = 'ml-2 inline-flex rounded-full bg-amber-500/15 px-2 py-0.5 align-middle text-[10px] font-semibold text-amber-300'; warningBadge.textContent = `${profileWarnings.length} предупреждений`; warningBadge.setAttribute('aria-label', profileWarnings.map((item) => item.message).join('. ')); name.append(warningBadge); }
   const source = document.createElement('p'); source.className = 'mt-1 text-xs text-slate-400'; source.textContent = `${profile.editable ? 'Пользовательский профиль · NFQWS_ARGS_CUSTOM' : `Штатная группа · ${profile.source}`} · параметры передаются в nfqws2`;
   title.append(name, source); heading.append(title);
@@ -544,7 +544,7 @@ function renderRuntimeProfiles() {
           const parameterList = document.createElement('div'); parameterList.className = 'flex min-w-0 flex-wrap items-center gap-1';
           const parameterParts = splitDesyncParameters(argument);
           if (functionInfo?.arguments.length) { const help = document.createElement('span'); help.className = 'text-[11px] leading-4 text-slate-500'; help.textContent = `Аргументы: ${functionInfo.arguments.join(' · ')}`; content.append(help); }
-          diagnoseProfileLuaArguments([argument], runtimeProfileLuaCatalog).forEach((item) => { const warning = document.createElement('span'); warning.className = 'rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200'; warning.textContent = item.message; content.append(warning); });
+          diagnoseProfileLuaArguments([argument], runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups).forEach((item) => { const warning = document.createElement('span'); warning.className = 'rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200'; warning.textContent = item.message; content.append(warning); });
           parameterParts.forEach((parameter, parameterIndex) => {
             const [key, ...valueParts] = parameter.split('='); const hasValue = parameter.includes('=');
             const chip = document.createElement('span'); chip.className = 'inline-flex max-w-full items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-1.5 py-1 font-mono text-xs';
@@ -562,11 +562,12 @@ function renderRuntimeProfiles() {
           parameterList.append(knownParameterSelect, addParameterInput, addParameter);
           content.append(functionSelect, description, parameterList);
           const luaHelp = getLuaProfileHelp(functionInfo, runtimeProfileLuaStandardGroups);
-          if (luaHelp && functionInfo && (luaHelp.docs.length || luaHelp.arguments.length || luaHelp.standardGroups.length || luaHelp.required.length)) {
+          if (luaHelp && functionInfo && (luaHelp.docs.length || luaHelp.arguments.length || luaHelp.fileArguments.length || luaHelp.standardGroups.length || luaHelp.required.length)) {
             const help = document.createElement('details'); help.className = 'rounded-md border border-slate-800 px-2 py-1.5 text-xs text-slate-400';
             const summary = document.createElement('summary'); summary.className = 'cursor-pointer select-none text-slate-300'; summary.textContent = `Справка Lua · ${functionInfo.name}`; help.append(summary);
             for (const line of luaHelp.docs) { const doc = document.createElement('p'); doc.className = 'mt-1 leading-5'; doc.textContent = line; help.append(doc); }
             if (luaHelp.arguments.length) { const args = document.createElement('p'); args.className = 'mt-1 leading-5'; args.textContent = `Параметры: ${luaHelp.arguments.join(' · ')}`; help.append(args); }
+            if (luaHelp.fileArguments.length) { const args = document.createElement('p'); args.className = 'mt-1 leading-5'; args.textContent = `Общие параметры скрипта: ${luaHelp.fileArguments.join(' · ')}`; help.append(args); }
             for (const group of luaHelp.standardGroups) { const standard = document.createElement('p'); standard.className = 'mt-1 leading-5'; standard.textContent = `Стандартные параметры · ${group.name}: ${group.arguments.join(' · ')}`; help.append(standard); }
             if (luaHelp.required.length) { const required = document.createElement('p'); required.className = 'mt-1 leading-5 text-amber-300'; required.textContent = `Обязательные: ${luaHelp.required.join(', ')}`; help.append(required); }
             content.append(help);

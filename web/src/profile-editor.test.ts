@@ -39,6 +39,7 @@ describe('desync step editing', () => {
     expect(getLuaProfileHelp(functionInfo, groups)).toEqual({
       docs: ['Creates a fake packet.', 'The second help line.'],
       arguments: ['blob=<name> — fake data', 'repeats=2 — count'],
+      fileArguments: [],
       standardGroups: [{ name: 'general', arguments: ['tcp_ack=-1000 — ACK offset', 'repeats=4 — default repeats'] }],
       required: ['blob'],
     });
@@ -54,6 +55,14 @@ describe('desync step editing', () => {
     expect(diagnoseProfileLuaArguments(['--lua-desync=multisplit', '--lua-desync=ghost', '--lua-desync=multisplit:pos=1'], catalog)).toEqual([
       { argument: '--lua-desync=multisplit', message: 'Для multisplit не указан обязательный параметр pos' },
       { argument: '--lua-desync=ghost', message: 'Функция ghost отсутствует в установленных Lua-скриптах' },
+    ]);
+  });
+  it('recognizes standard and Lua-file arguments and flags undocumented step keys', () => {
+    const catalog = [{ name: 'multisplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos — split positions'], fileArguments: ['repeats=2 — repeat count'], standardGroups: ['general'], required: [] }];
+    const groups = [{ name: 'general', arguments: ['tcp_ack=-1000 — ACK offset'] }];
+
+    expect(diagnoseProfileLuaArguments(['--lua-desync=multisplit:pos=1:repeats=2:tcp_ack=-1:typo=3:strategy=2'], catalog, groups)).toEqual([
+      { argument: '--lua-desync=multisplit:pos=1:repeats=2:tcp_ack=-1:typo=3:strategy=2', message: 'Неизвестный параметр «typo»' },
     ]);
   });
 

@@ -5,6 +5,7 @@ export type LuaParameterOption = { key: string; value: string | null; display: s
 export type LuaProfileHelp = {
   docs: string[];
   arguments: string[];
+  fileArguments: string[];
   standardGroups: Array<{ name: string; arguments: string[] }>;
   required: string[];
 };
@@ -21,6 +22,7 @@ export function getLuaProfileHelp(
   return {
     docs: [...info.docs],
     arguments: [...info.arguments],
+    fileArguments: [...(info.fileArguments ?? [])],
     standardGroups,
     required: [...info.required],
   };
@@ -40,9 +42,26 @@ export function parseLuaParameterOption(definition: string): LuaParameterOption 
 }
 
 /** Reports only issues that can be proven from the installed Lua catalog. */
-export function diagnoseProfileLuaArguments(args: readonly string[], catalog: readonly NfqwsLuaFunctionInfo[]): ProfileLuaWarning[] {
+export function diagnoseProfileLuaArguments(
+  args: readonly string[],
+  catalog: readonly NfqwsLuaFunctionInfo[],
+  groups: readonly NfqwsLuaStandardGroup[] = [],
+): ProfileLuaWarning[] {
   if (!catalog.length) return [];
   const known = new Map(catalog.map((item) => [item.name, item]));
+  const knownSomewhere = new Set(['strategy', 'final', 'cond', 'cond_neg']);
+  for (const item of catalog) {
+    for (const definition of [...item.arguments, ...(item.fileArguments ?? [])]) {
+      const parsed = parseLuaParameterOption(definition);
+      if (parsed) knownSomewhere.add(parsed.key);
+    }
+  }
+  for (const group of groups) {
+    for (const definition of group.arguments) {
+      const parsed = parseLuaParameterOption(definition);
+      if (parsed) knownSomewhere.add(parsed.key);
+    }
+  }
   const warnings: ProfileLuaWarning[] = [];
   for (const argument of args) {
     if (!argument.startsWith('--lua-desync=')) continue;
@@ -55,6 +74,33 @@ export function diagnoseProfileLuaArguments(args: readonly string[], catalog: re
     const supplied = new Set(parameters.map((value) => value.split('=', 1)[0]));
     for (const required of info.required) {
       if (!supplied.has(required)) warnings.push({ argument, message: `Для ${name} не указан обязательный параметр ${required}` });
+    }
+    const allowed = new Set(['strategy', 'final', 'cond', 'cond_neg', ...(info.fileArguments ?? [])
+      .map(parseLuaParameterOption).filter((item) => item !== null).map((item) => item.key)]);
+    for (const definition of info.arguments) {
+      const parsed = parseLuaParameterOption(definition);
+      if (parsed) allowed.add(parsed.key);
+    }
+    for (const groupName of info.standardGroups) {
+      const group = groups.find((item) => item.name === groupName);
+      for (const definition of group?.arguments ?? []) {
+        const parsed = parseLuaParameterOption(definition);
+        if (parsed) allowed.add(parsed.key);
+      }
+    }
+    const hasParameterInventory = info.arguments.length > 0
+      || (info.fileArguments?.length ?? 0) > 0
+      || info.standardGroups.some((groupName) => groups.some((group) => group.name === groupName));
+    if (!hasParameterInventory) continue;
+    for (const parameter of parameters) {
+      const key = parameter.split('=', 1)[0] ?? '';
+      if (!key || allowed.has(key)) continue;
+      warnings.push({
+        argument,
+        message: knownSomewhere.has(key)
+          ? `Параметр «${key}» не описан для функции ${name}`
+          : `Неизвестный параметр «${key}»`,
+      });
     }
   }
   return warnings;

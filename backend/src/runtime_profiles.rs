@@ -10,6 +10,7 @@ pub struct LuaFunctionInfo {
     pub file: String,
     pub docs: Vec<String>,
     pub arguments: Vec<String>,
+    pub file_arguments: Vec<String>,
     pub standard_groups: Vec<String>,
     pub required: Vec<String>,
 }
@@ -87,6 +88,7 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
     let lines = source.lines().collect::<Vec<_>>();
     let mut result = Vec::new();
     let mut docs = Vec::<String>::new();
+    let mut file_arguments = std::collections::BTreeSet::<String>::new();
     let mut in_block_comment = false;
     for (index, raw) in lines.iter().enumerate() {
         let line = raw.trim();
@@ -109,6 +111,22 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
         }
         if let Some(doc) = line.strip_prefix("-- ") {
             docs.push(doc.to_string());
+            if let Some(definition) = doc.strip_prefix("arg:") {
+                let key = definition
+                    .trim()
+                    .split([' ', '—', ':'])
+                    .next()
+                    .unwrap_or_default();
+                if !key.is_empty()
+                    && key.bytes().enumerate().all(|(index, byte)| {
+                        byte.is_ascii_lowercase()
+                            || (index > 0 && byte.is_ascii_digit())
+                            || byte == b'_'
+                    })
+                {
+                    file_arguments.insert(key.to_string());
+                }
+            }
             continue;
         }
         if let Some(signature) = line.strip_prefix("function ") {
@@ -174,12 +192,16 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                     file: file.to_string(),
                     docs: function_docs,
                     arguments,
+                    file_arguments: Vec::new(),
                     standard_groups,
                     required,
                 });
             }
         }
         docs.clear();
+    }
+    for function in &mut result {
+        function.file_arguments = file_arguments.iter().cloned().collect();
     }
     result
 }
@@ -466,6 +488,16 @@ mod tests {
         );
         assert_eq!(catalog[0].standard_groups, ["general"]);
         assert_eq!(catalog[0].required, ["pos"]);
+        assert!(catalog[0].file_arguments.is_empty());
+    }
+
+    #[test]
+    fn lua_catalog_attaches_file_level_arguments_to_every_function_in_that_script() {
+        let source = "-- arg: detect_host — hostname detector\nfunction first(ctx, desync)\nend\nfunction second(ctx, desync)\nend\n";
+        let catalog = parse_lua_catalog("zapret-auto.lua", source);
+        assert_eq!(catalog.len(), 2);
+        assert_eq!(catalog[0].file_arguments, ["detect_host"]);
+        assert_eq!(catalog[1].file_arguments, ["detect_host"]);
     }
 
     #[test]
