@@ -144,8 +144,12 @@ export function getLuaProfileParameterOptions(
   groups: readonly NfqwsLuaStandardGroup[],
 ): string[] {
   if (!info) return [];
+  const compatible = compatibilityLuaArguments[info.name] ?? {};
   const definitions = [
-    ...info.arguments,
+    ...info.arguments.filter((definition) => {
+      const option = parseLuaParameterOption(definition);
+      return !(option && Object.hasOwn(compatible, option.key) && definition.includes('обнаружен в коде функции'));
+    }),
     ...(info.fileArguments ?? []),
     ...groups.filter((group) => info.standardGroups.includes(group.name)).flatMap((group) => group.arguments),
     ...Object.entries(compatibilityLuaArguments[info.name] ?? {}).map(([key, value]) => `${value === null ? key : `${key}=${value}`} — поддерживается nfqws2`),

@@ -163,8 +163,36 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                     }
                 }
                 for body_line in lines.iter().skip(index + 1).take(4096) {
-                    if body_line.trim() == "end" {
+                    let trimmed_body_line = body_line.trim();
+                    if body_line.len() == body_line.trim_start().len()
+                        && trimmed_body_line.starts_with("function ")
+                        && trimmed_body_line.contains("(ctx, desync)")
+                    {
                         break;
+                    }
+                    let mut rest = *body_line;
+                    while let Some(position) = rest.find("desync.arg.") {
+                        rest = &rest[position + "desync.arg.".len()..];
+                        let key_len = rest
+                            .bytes()
+                            .take_while(|byte| {
+                                byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_'
+                            })
+                            .count();
+                        if key_len == 0 {
+                            continue;
+                        }
+                        let key = &rest[..key_len];
+                        let already_documented = arguments.iter().any(|argument| {
+                            argument
+                                .split([' ', '—', ':', '='])
+                                .next()
+                                .is_some_and(|documented| documented == key)
+                        });
+                        if !already_documented {
+                            arguments.push(format!("{key} — обнаружен в коде функции"));
+                        }
+                        rest = &rest[key_len..];
                     }
                     for marker in ["'", "\""] {
                         let needle = format!("{marker} arg required");
@@ -496,6 +524,24 @@ mod tests {
         assert_eq!(catalog[0].standard_groups, ["general"]);
         assert_eq!(catalog[0].required, ["pos"]);
         assert!(catalog[0].file_arguments.is_empty());
+    }
+
+    #[test]
+    fn lua_catalog_infers_undocumented_keys_read_directly_by_the_function() {
+        let source = "--[[\nSplit packets.\narg: pos=<marker> — split position\n]]\nfunction fakedsplit(ctx, desync)\n  if desync.arg.oob then\n    send_oob(desync.arg.oob_data)\n  end\n  local order = desync.arg.altorder\n  if desync.arg.nofake2 then return end\nend\nfunction following(ctx, desync)\n  local ignored = desync.arg.other\nend\n";
+        let catalog = parse_lua_catalog("zapret-auto.lua", source);
+        let arguments = &catalog[0].arguments;
+        assert!(
+            arguments
+                .iter()
+                .any(|argument| argument.starts_with("pos="))
+        );
+        for key in ["oob", "oob_data", "altorder", "nofake2"] {
+            assert!(
+                arguments.iter().any(|argument| argument.starts_with(key)),
+                "missing inferred Lua argument {key}"
+            );
+        }
     }
 
     #[test]
