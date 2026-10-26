@@ -881,9 +881,9 @@ case "$op" in
   put) if [ "$name" != index.json ] && [ -e "$dir/$name" ]; then cat >/dev/null; echo 'снимок уже существует' >&2; exit 3; fi; cat > "$dir/.$name.part" && mv -f "$dir/.$name.part" "$dir/$name" ;;
 esac
 "#;
-    let line = format!("command=\"sh .nfqws-ui-store.sh {dir}\",restrict {public_key}");
+    let line = format!("command=\"sh .nfqws2-ui-snapshot-store.sh {dir}\",restrict {public_key}");
     format!(
-        "umask 077 && mkdir -p ~/.ssh && cat > ~/.nfqws-ui-store.sh <<'NFQWSUI'\n{script}NFQWSUI\ngrep -qF '{}' ~/.ssh/authorized_keys 2>/dev/null || echo '{}' >> ~/.ssh/authorized_keys",
+        "umask 077 && mkdir -p ~/.ssh && cat > ~/.nfqws2-ui-snapshot-store.sh <<'NFQWS2UI'\n{script}NFQWS2UI\nkey_marker='{}'; new_line='{}'; key_tmp=\"$HOME/.ssh/authorized_keys.nfqws2-ui.$$\"; awk -v key=\"$key_marker\" 'index($0,key) && index($0,\".nfqws-ui-store.sh\") {{ next }} {{ print }}' ~/.ssh/authorized_keys > \"$key_tmp\" 2>/dev/null || :; grep -qF -- \"$new_line\" \"$key_tmp\" || printf '%s\\n' \"$new_line\" >> \"$key_tmp\"; chmod 600 \"$key_tmp\" && mv -f \"$key_tmp\" ~/.ssh/authorized_keys",
         public_key.replace('\'', "'\\''"),
         line.replace('\'', "'\\''")
     )
@@ -911,6 +911,20 @@ mod manual_operations_tests {
             remote: false,
             pinned: false,
         }
+    }
+
+    #[test]
+    fn remote_snapshot_setup_uses_a_unique_helper_and_migrates_its_legacy_key() {
+        let command = remote_setup_command(
+            "/srv/nfqws-snapshots",
+            "ssh-ed25519 AAAATESTKEY user@router",
+        );
+
+        assert!(command.contains("~/.nfqws2-ui-snapshot-store.sh"));
+        assert!(command.contains("sh .nfqws2-ui-snapshot-store.sh /srv/nfqws-snapshots"));
+        assert!(command.contains(".nfqws-ui-store.sh"));
+        assert!(command.contains("awk -v key=\"$key_marker\""));
+        assert!(!command.contains("cat > ~/.nfqws-ui-store.sh"));
     }
 
     #[test]

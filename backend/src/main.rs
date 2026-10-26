@@ -13473,7 +13473,14 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let report = body_json(response).await;
-        assert_eq!(report["platform"], "unknown");
+        let expected_platform = nfqws2_ui::discover_system_paths().map_or("unknown", |paths| {
+            if paths.root == Path::new("/opt") {
+                "entware"
+            } else {
+                "openwrt"
+            }
+        });
+        assert_eq!(report["platform"], expected_platform);
         assert!(report["networkInterfaces"].is_array());
         assert_eq!(report["config"]["path"], config.display().to_string());
         assert_eq!(report["config"]["exists"], true);
