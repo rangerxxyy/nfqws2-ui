@@ -131,6 +131,25 @@ export function getLuaProfileHelp(
   };
 }
 
+export function getLuaProfileParameterOptions(
+  info: NfqwsLuaFunctionInfo | undefined,
+  groups: readonly NfqwsLuaStandardGroup[],
+): string[] {
+  if (!info) return [];
+  const definitions = [
+    ...info.arguments,
+    ...(info.fileArguments ?? []),
+    ...groups.filter((group) => info.standardGroups.includes(group.name)).flatMap((group) => group.arguments),
+  ];
+  const seen = new Set<string>();
+  return definitions.filter((definition) => {
+    const option = parseLuaParameterOption(definition);
+    if (!option || seen.has(option.key)) return false;
+    seen.add(option.key);
+    return true;
+  });
+}
+
 export function parseLuaParameterOption(definition: string): LuaParameterOption | null {
   const display = definition.trim();
   const token = display.split(/[\s—]/, 1)[0] ?? '';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { profileArgumentChoices, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { profileArgumentChoices, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 
 describe('profile builder choices', () => {
   it('offers editable match conditions, list scopes, and ordered strategy steps', () => {
@@ -22,6 +22,14 @@ describe('profile builder choices', () => {
     const installed = profileArgumentChoices([], [{ id: 'auto.list', path: '/etc/nfqws2/lists/auto.list', readable: true, writable: true }]);
     expect(absent.some((choice) => choice.value.startsWith('--hostlist-auto='))).toBe(false);
     expect(installed.some((choice) => choice.value === '--hostlist-auto=/etc/nfqws2/lists/auto.list')).toBe(true);
+  });
+});
+
+describe('Lua profile parameter choices', () => {
+  it('combines function, file, and standard-group parameters without duplicate keys', () => {
+    const functionInfo = { name: 'fake', file: 'zapret.lua', docs: [], arguments: ['blob=<name>', 'repeats=2'], fileArguments: ['detect_host — hostname source'], standardGroups: ['general'], required: ['blob'] };
+    const groups = [{ name: 'general', arguments: ['tcp_ack=-1000', 'repeats=4'] }];
+    expect(getLuaProfileParameterOptions(functionInfo, groups)).toEqual(['blob=<name>', 'repeats=2', 'detect_host — hostname source', 'tcp_ack=-1000']);
   });
 });
 
