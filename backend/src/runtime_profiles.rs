@@ -22,6 +22,29 @@ pub struct LuaStandardGroup {
     pub arguments: Vec<String>,
 }
 
+fn lua_argument_key_after_reference(value: &str) -> Option<(&str, usize)> {
+    let (candidate, consumed) = if let Some(rest) = value.strip_prefix('.') {
+        let length = rest
+            .bytes()
+            .take_while(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
+            .count();
+        (rest.get(..length)?, length + 1)
+    } else if let Some(rest) = value.strip_prefix("['") {
+        let length = rest.find("']")?;
+        (rest.get(..length)?, length + 4)
+    } else if let Some(rest) = value.strip_prefix("[\"") {
+        let length = rest.find("\"]")?;
+        (rest.get(..length)?, length + 4)
+    } else {
+        return None;
+    };
+    (!candidate.is_empty()
+        && candidate
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
+    .then_some((candidate, consumed))
+}
+
 pub fn parse_lua_standard_args(source: &str) -> Vec<LuaStandardGroup> {
     let mut groups = std::collections::BTreeMap::<String, Vec<String>>::new();
     let mut in_block = false;
@@ -171,18 +194,11 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                         break;
                     }
                     let mut rest = *body_line;
-                    while let Some(position) = rest.find("desync.arg.") {
-                        rest = &rest[position + "desync.arg.".len()..];
-                        let key_len = rest
-                            .bytes()
-                            .take_while(|byte| {
-                                byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_'
-                            })
-                            .count();
-                        if key_len == 0 {
+                    while let Some(position) = rest.find("desync.arg") {
+                        rest = &rest[position + "desync.arg".len()..];
+                        let Some((key, consumed)) = lua_argument_key_after_reference(rest) else {
                             continue;
-                        }
-                        let key = &rest[..key_len];
+                        };
                         let already_documented = arguments.iter().any(|argument| {
                             argument
                                 .split([' ', '—', ':', '='])
@@ -192,7 +208,7 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                         if !already_documented {
                             arguments.push(format!("{key} — обнаружен в коде функции"));
                         }
-                        rest = &rest[key_len..];
+                        rest = &rest[consumed..];
                     }
                     for marker in ["'", "\""] {
                         let needle = format!("{marker} arg required");
@@ -540,6 +556,21 @@ mod tests {
             assert!(
                 arguments.iter().any(|argument| argument.starts_with(key)),
                 "missing inferred Lua argument {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn lua_catalog_infers_keys_from_dot_and_quoted_bracket_access() {
+        let source = "function custom(ctx, desync)\n  local a = desync.arg.dot_key\n  local b = desync.arg['single_key']\n  local c = desync.arg[\"double_key\"]\nend\n";
+        let catalog = parse_lua_catalog("custom.lua", source);
+        for key in ["dot_key", "single_key", "double_key"] {
+            assert!(
+                catalog[0]
+                    .arguments
+                    .iter()
+                    .any(|argument| argument.starts_with(key)),
+                "missing Lua key {key}"
             );
         }
     }
