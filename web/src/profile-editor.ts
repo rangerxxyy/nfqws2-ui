@@ -1,6 +1,20 @@
 import type { NfqwsLuaFunctionInfo } from './api';
 
 export type ProfileLuaWarning = { argument: string; message: string };
+export type LuaParameterOption = { key: string; value: string | null; display: string };
+
+export function parseLuaParameterOption(definition: string): LuaParameterOption | null {
+  const display = definition.trim();
+  const token = display.split(/[\s—]/, 1)[0] ?? '';
+  const remainder = display.slice(token.length).trimStart();
+  if (remainder && !/^[-—:]/.test(remainder)) return null;
+  const separator = token.indexOf('=');
+  const key = (separator < 0 ? token : token.slice(0, separator)).replace(/\[[^\]]*\]$/, '');
+  if (!/^[a-z][a-z0-9_]*$/.test(key)) return null;
+  const example = separator < 0 ? null : token.slice(separator + 1);
+  const value = example === null ? null : example.startsWith('<') || example.endsWith('>') ? '' : example;
+  return { key, value, display };
+}
 
 /** Reports only issues that can be proven from the installed Lua catalog. */
 export function diagnoseProfileLuaArguments(args: readonly string[], catalog: readonly NfqwsLuaFunctionInfo[]): ProfileLuaWarning[] {

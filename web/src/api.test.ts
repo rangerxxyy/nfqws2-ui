@@ -329,10 +329,11 @@ describe('API client used by the source-based panel', () => {
   });
 
   it('loads profile function help from the installed Lua catalog endpoint', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{"functions":[{"name":"multisplit","file":"zapret-auto.lua","docs":["Split a TLS record."],"arguments":["pos — positions"],"required":["pos"]}]}', { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"functions":[{"name":"multisplit","file":"zapret-auto.lua","docs":["Split a TLS record."],"arguments":["pos — positions"],"standardGroups":["general"],"required":["pos"]}],"standardGroups":[{"name":"general","arguments":["repeats=2 — repeat count"]}]}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const catalog = await nfqwsProfiles.catalog();
     expect(catalog.functions[0]?.required).toEqual(['pos']);
+    expect(catalog.standardGroups[0]?.arguments[0]).toContain('repeats=2');
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/profiles/catalog');
   });
 

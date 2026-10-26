@@ -9624,11 +9624,12 @@ async fn get_profile_lua_catalog() -> Response {
         return error(StatusCode::NOT_FOUND, "Установка nfqws2 не обнаружена");
     };
     let Ok(entries) = std::fs::read_dir(&paths.lua_dir) else {
-        return Json(serde_json::json!({ "functions": [] })).into_response();
+        return Json(serde_json::json!({ "functions": [], "standardGroups": [] })).into_response();
     };
     let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
     let mut catalog = std::collections::BTreeMap::new();
+    let mut standard_groups = std::collections::BTreeMap::new();
     let mut total_bytes = 0usize;
     for entry in entries {
         if !entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
@@ -9670,6 +9671,21 @@ async fn get_profile_lua_catalog() -> Response {
             .unwrap_or_default()
             .trim_end_matches(".gz")
             .to_string();
+        for group in
+            nfqws2_ui::runtime_profiles::parse_lua_standard_args(&String::from_utf8_lossy(&decoded))
+        {
+            let entry = standard_groups
+                .entry(group.name.clone())
+                .or_insert_with(|| nfqws2_ui::runtime_profiles::LuaStandardGroup {
+                    name: group.name,
+                    arguments: Vec::new(),
+                });
+            for argument in group.arguments {
+                if !entry.arguments.contains(&argument) {
+                    entry.arguments.push(argument);
+                }
+            }
+        }
         for function in nfqws2_ui::runtime_profiles::parse_lua_catalog(
             &file,
             &String::from_utf8_lossy(&decoded),
@@ -9677,8 +9693,7 @@ async fn get_profile_lua_catalog() -> Response {
             catalog.entry(function.name.clone()).or_insert(function);
         }
     }
-    Json(serde_json::json!({ "functions": catalog.into_values().collect::<Vec<_>>() }))
-        .into_response()
+    Json(serde_json::json!({ "functions": catalog.into_values().collect::<Vec<_>>(), "standardGroups": standard_groups.into_values().collect::<Vec<_>>() })).into_response()
 }
 
 fn build_runtime_profiles_config(

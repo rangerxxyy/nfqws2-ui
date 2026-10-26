@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diagnoseProfileLuaArguments, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 
 describe('reorderProfileSteps', () => {
   it('moves ordered payload and desync steps while leaving filters in place', () => {
@@ -27,8 +27,13 @@ describe('reorderProfileSteps', () => {
 });
 
 describe('desync step editing', () => {
+  it('turns documented Lua parameter entries into editable flag or key-value options', () => {
+    expect(parseLuaParameterOption('tcp_ack=-1000 — acknowledgement offset')).toEqual({ key: 'tcp_ack', value: '-1000', display: 'tcp_ack=-1000 — acknowledgement offset' });
+    expect(parseLuaParameterOption('blob=<name> — select a blob')).toEqual({ key: 'blob', value: '', display: 'blob=<name> — select a blob' });
+    expect(parseLuaParameterOption('bad key')).toBeNull();
+  });
   it('reports missing required Lua arguments and unavailable functions from the installed catalog', () => {
-    const catalog = [{ name: 'multisplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos — split positions'], required: ['pos'] }];
+    const catalog = [{ name: 'multisplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos — split positions'], standardGroups: ['general'], required: ['pos'] }];
     expect(diagnoseProfileLuaArguments(['--lua-desync=multisplit', '--lua-desync=ghost', '--lua-desync=multisplit:pos=1'], catalog)).toEqual([
       { argument: '--lua-desync=multisplit', message: 'Для multisplit не указан обязательный параметр pos' },
       { argument: '--lua-desync=ghost', message: 'Функция ghost отсутствует в установленных Lua-скриптах' },

@@ -10,7 +10,75 @@ pub struct LuaFunctionInfo {
     pub file: String,
     pub docs: Vec<String>,
     pub arguments: Vec<String>,
+    pub standard_groups: Vec<String>,
     pub required: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LuaStandardGroup {
+    pub name: String,
+    pub arguments: Vec<String>,
+}
+
+pub fn parse_lua_standard_args(source: &str) -> Vec<LuaStandardGroup> {
+    let mut groups = std::collections::BTreeMap::<String, Vec<String>>::new();
+    let mut in_block = false;
+    let mut group: Option<String> = None;
+    for raw in source.lines() {
+        let line = raw.trim();
+        if line.starts_with("--[[") {
+            in_block = true;
+            group = None;
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        if line.starts_with("]]") {
+            in_block = false;
+            group = None;
+            continue;
+        }
+        if let Some(name) = line
+            .strip_prefix("standard ")
+            .and_then(|value| value.strip_suffix(':'))
+        {
+            let name = name.trim().replace(' ', "_");
+            if !name.is_empty() {
+                groups.entry(name.clone()).or_default();
+                group = Some(name);
+            }
+            continue;
+        }
+        if let (Some(name), Some(entry)) = (&group, line.strip_prefix('*')) {
+            let entry = entry.trim();
+            let entry = entry
+                .split_once(':')
+                .filter(|(prefix, _)| !prefix.contains('='))
+                .map_or(entry, |(_, rest)| rest.trim());
+            let (key, description) = entry.split_once(" - ").unwrap_or((entry, ""));
+            let key = key.trim();
+            if !key.is_empty()
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_=<>[],-".contains(&byte))
+            {
+                groups
+                    .entry(name.clone())
+                    .or_default()
+                    .push(if description.is_empty() {
+                        key.to_string()
+                    } else {
+                        format!("{key} — {}", description.trim())
+                    });
+            }
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(name, arguments)| LuaStandardGroup { name, arguments })
+        .collect()
 }
 
 /// Extract function help from installed nfqws2 Lua comment blocks. This keeps
@@ -55,9 +123,23 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                 let mut arguments = Vec::new();
                 let mut required = Vec::new();
                 let mut function_docs = Vec::new();
+                let mut standard_groups = Vec::new();
                 for doc in &docs {
                     if let Some(value) = doc.strip_prefix("arg:") {
                         arguments.push(value.trim().to_string());
+                    } else if let Some(value) = doc.strip_prefix("standard args:") {
+                        let (groups, note) =
+                            value.trim().split_once('.').unwrap_or((value.trim(), ""));
+                        standard_groups.extend(
+                            groups
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|name| !name.is_empty())
+                                .map(|name| name.replace(' ', "_")),
+                        );
+                        if !note.trim().is_empty() {
+                            function_docs.push(note.trim().to_string());
+                        }
                     } else if !doc.trim().is_empty() && !doc.starts_with("standard args:") {
                         function_docs.push(doc.trim().to_string());
                     }
@@ -92,6 +174,7 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                     file: file.to_string(),
                     docs: function_docs,
                     arguments,
+                    standard_groups,
                     required,
                 });
             }
@@ -354,22 +437,40 @@ pub fn from_config(source: &str, revision: &str) -> Result<RuntimeProfilesRespon
 #[cfg(test)]
 mod tests {
     use super::{
-        encode_custom_profile_args, from_config, parse_lua_catalog, split_custom_profile_args,
+        encode_custom_profile_args, from_config, parse_lua_catalog, parse_lua_standard_args,
+        split_custom_profile_args,
     };
 
     #[test]
     fn lua_catalog_extracts_help_declared_arguments_and_required_keys() {
-        let source = "--[[\nSplit a TLS record.\narg: pos — split positions\narg: fooling — fooling mode\n]]\nfunction multisplit(ctx, desync)\n  check_and_die(desync, 'pos' arg required)\nend\n";
+        let source = "--[[\nSplit a TLS record.\nstandard args: general. Uses common options.\narg: pos — split positions\narg: fooling — fooling mode\n]]\nfunction multisplit(ctx, desync)\n  check_and_die(desync, 'pos' arg required)\nend\n";
         let catalog = parse_lua_catalog("zapret-auto.lua", source);
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].name, "multisplit");
         assert_eq!(catalog[0].file, "zapret-auto.lua");
-        assert_eq!(catalog[0].docs, ["Split a TLS record."]);
+        assert_eq!(
+            catalog[0].docs,
+            ["Split a TLS record.", "Uses common options."]
+        );
         assert_eq!(
             catalog[0].arguments,
             ["pos — split positions", "fooling — fooling mode"]
         );
+        assert_eq!(catalog[0].standard_groups, ["general"]);
         assert_eq!(catalog[0].required, ["pos"]);
+    }
+
+    #[test]
+    fn lua_standard_argument_groups_keep_keys_and_descriptions() {
+        let source =
+            "--[[\nstandard general:\n* repeats=2 - repeat count\n* tcp_ack - send ACK\n]]\n";
+        let groups = parse_lua_standard_args(source);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "general");
+        assert_eq!(
+            groups[0].arguments,
+            ["repeats=2 — repeat count", "tcp_ack — send ACK"]
+        );
     }
 
     #[test]
