@@ -6,7 +6,7 @@ export type RuntimeProfileConstructorTarget = { source: string; args: string[]; 
 /** Shapes only the built-in constructor navigation; stored config sources and custom names stay intact. */
 export function prepareVisibleRuntimeProfiles(profiles: readonly NfqwsArgumentProfile[]): NfqwsArgumentProfile[] {
   return profiles
-    .filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')
+    .filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET' && profile.name !== 'QUIC по сайтам')
     .map((profile, index) => ({
       ...profile,
       name: profile.source === 'NFQWS_ARGS_QUIC_IPSET' ? 'QUIC' : profile.name,

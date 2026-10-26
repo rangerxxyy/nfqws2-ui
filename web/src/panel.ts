@@ -982,7 +982,7 @@ async function loadProfiles() {
         : `справка nfqws2 неполная · найдено ${runtimeProfileCliCatalog.options.length} параметров`
       : 'справка параметров nfqws2 недоступна';
     if (label) {
-      label.textContent = `${result.profiles.length} профилей nfqws2 · пользовательских ${runtimeProfileDraft.length}; штатные UDP, HTTP/HTTPS и QUIC доступны для настройки · ${cliStatus}`;
+      label.textContent = `${visibleRuntimeProfiles().length} профилей nfqws2 · пользовательских ${runtimeProfileDraft.length}; штатные UDP, HTTP/HTTPS и QUIC доступны для настройки · ${cliStatus}`;
       if (!runtimeProfileCliCatalog?.full) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'ml-1 inline-flex min-h-7 items-center rounded-md border border-slate-700 px-2 text-xs font-medium text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400'; retry.textContent = '⟳ Повторить'; retry.setAttribute('aria-label', 'Повторить загрузку справки nfqws2'); retry.title = 'Повторно запросить nfqws2 --help';
         retry.addEventListener('click', () => void loadProfiles());

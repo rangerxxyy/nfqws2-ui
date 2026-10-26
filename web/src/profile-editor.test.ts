@@ -26,13 +26,14 @@ describe('adding strategy arguments to NFQWS_ARGS_CUSTOM profiles', () => {
 });
 
 describe('runtime profile constructor targets', () => {
-  it('hides only the built-in HTTP IP entry and shortens the built-in QUIC label', () => {
+  it('hides IP-only technical entries and QUIC-by-sites from constructor navigation', () => {
     const makeProfile = (id: string, name: string, source: string, editable = false): NfqwsArgumentProfile => ({
       id, index: 99, name, source, editable, args: [], filters: [], protocols: [], payloads: [], lists: [], steps: [],
     });
     const visible = prepareVisibleRuntimeProfiles([
       makeProfile('custom-1', 'HTTP/HTTPS по IP', 'NFQWS_ARGS_CUSTOM', true),
       makeProfile('managed-quic-ip', 'QUIC по IP', 'NFQWS_ARGS_QUIC_IPSET'),
+      makeProfile('managed-quic-sites', 'QUIC по сайтам', 'NFQWS_ARGS_QUIC'),
       makeProfile('managed-http-ip', 'HTTP/HTTPS по IP', 'NFQWS_ARGS_IPSET'),
       makeProfile('managed-http-sites', 'HTTP/HTTPS по сайтам', 'NFQWS_ARGS'),
     ]);
