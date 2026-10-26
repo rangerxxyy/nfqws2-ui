@@ -81,7 +81,17 @@ pub fn parse_lua_standard_args(source: &str) -> Vec<LuaStandardGroup> {
                 .split_once(':')
                 .filter(|(prefix, _)| !prefix.contains('='))
                 .map_or(entry, |(_, rest)| rest.trim());
-            let (key, description) = entry.split_once(" - ").unwrap_or((entry, ""));
+            let description_start = [" — ", " - "]
+                .into_iter()
+                .filter_map(|separator| entry.find(separator).map(|position| (position, separator)))
+                .min_by_key(|(position, _)| *position);
+            let (key, description) =
+                description_start.map_or((entry, ""), |(position, separator)| {
+                    (
+                        &entry[..position],
+                        entry[position + separator.len()..].trim(),
+                    )
+                });
             let key = key.trim();
             if !key.is_empty()
                 && key
@@ -94,7 +104,7 @@ pub fn parse_lua_standard_args(source: &str) -> Vec<LuaStandardGroup> {
                     .push(if description.is_empty() {
                         key.to_string()
                     } else {
-                        format!("{key} — {}", description.trim())
+                        format!("{key} — {description}")
                     });
             }
         }
@@ -132,12 +142,15 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
             docs.push(line.to_string());
             continue;
         }
-        if let Some(doc) = line.strip_prefix("-- ") {
+        if let Some(doc) = line.strip_prefix("--").map(str::trim_start) {
             docs.push(doc.to_string());
-            if let Some(definition) = doc.strip_prefix("arg:") {
+            if let Some(definition) = doc
+                .strip_prefix("arg")
+                .and_then(|definition| definition.trim_start().strip_prefix(':'))
+            {
                 let key = definition
                     .trim()
-                    .split([' ', '—', ':'])
+                    .split([' ', '—', ':', '='])
                     .next()
                     .unwrap_or_default();
                 if !key.is_empty()
@@ -154,7 +167,13 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
         }
         if let Some(signature) = line.strip_prefix("function ") {
             if let Some((name, signature)) = signature.split_once('(')
-                && signature.starts_with("ctx, desync)")
+                && signature.split_once(')').is_some_and(|(parameters, _)| {
+                    parameters
+                        .split(',')
+                        .map(str::trim)
+                        .take(2)
+                        .eq(["ctx", "desync"])
+                })
                 && !name.is_empty()
                 && name.len() <= 48
                 && name
@@ -166,9 +185,15 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                 let mut function_docs = Vec::new();
                 let mut standard_groups = Vec::new();
                 for doc in &docs {
-                    if let Some(value) = doc.strip_prefix("arg:") {
+                    if let Some(value) = doc
+                        .strip_prefix("arg")
+                        .and_then(|value| value.trim_start().strip_prefix(':'))
+                    {
                         arguments.push(value.trim().to_string());
-                    } else if let Some(value) = doc.strip_prefix("standard args:") {
+                    } else if let Some(value) = doc
+                        .strip_prefix("standard args")
+                        .and_then(|value| value.trim_start().strip_prefix(':'))
+                    {
                         let (groups, note) =
                             value.trim().split_once('.').unwrap_or((value.trim(), ""));
                         standard_groups.extend(
@@ -594,6 +619,35 @@ mod tests {
         assert_eq!(
             groups[0].arguments,
             ["repeats=2 — repeat count", "tcp_ack — send ACK"]
+        );
+    }
+
+    #[test]
+    fn lua_standard_arguments_match_reference_prefixes_and_unicode_descriptions() {
+        let source = "--[[\nstandard general:\n* payload: payload=all — accept any payload\n* direction: pos=<marker> - split positions\n* tcp_ack — acknowledge offset\n]]\n";
+        let groups = parse_lua_standard_args(source);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].arguments,
+            [
+                "payload=all — accept any payload",
+                "pos=<marker> — split positions",
+                "tcp_ack — acknowledge offset",
+            ]
+        );
+    }
+
+    #[test]
+    fn lua_catalog_accepts_reference_function_spacing_and_file_argument_spacing() {
+        let source = "--arg : detector2=<name> — host detector\nfunction custom(ctx,desync)\n  return desync.arg.detector2\nend\n";
+        let catalog = parse_lua_catalog("custom.lua", source);
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].file_arguments, ["detector2"]);
+        assert!(
+            catalog[0]
+                .arguments
+                .iter()
+                .any(|item| item.starts_with("detector2"))
         );
     }
 

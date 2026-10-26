@@ -565,6 +565,7 @@ function renderRuntimeProfiles() {
           });
           const documentedOptions = getLuaProfileParameterOptions(functionInfo, runtimeProfileLuaStandardGroups, functionName);
           const knownParameterSelect = document.createElement('select'); knownParameterSelect.className = 'min-h-8 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'; knownParameterSelect.setAttribute('aria-label', 'Добавить документированный параметр');
+          knownParameterSelect.dataset.menuMinWidth = '360';
           const knownPlaceholder = document.createElement('option'); knownPlaceholder.value = ''; knownPlaceholder.textContent = '+ параметр из каталога'; knownParameterSelect.append(knownPlaceholder);
           documentedOptions.forEach((definition) => { const parsed = parseLuaParameterOption(definition); if (!parsed || parameterParts.some((part) => part.split('=', 1)[0] === parsed.key)) return; const option = document.createElement('option'); option.value = definition; option.textContent = definition; knownParameterSelect.append(option); });
           knownParameterSelect.addEventListener('change', () => { const parsed = parseLuaParameterOption(knownParameterSelect.value); if (parsed) addRuntimeProfileStepParameter(profile.id, String(argumentIndex), parsed.value === null ? parsed.key : `${parsed.key}=${parsed.value}`); });

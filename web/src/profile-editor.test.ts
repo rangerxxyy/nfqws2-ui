@@ -44,11 +44,11 @@ describe('Lua profile parameter choices', () => {
   it('combines function, file, and standard-group parameters without duplicate keys', () => {
     const functionInfo = { name: 'fake', file: 'zapret.lua', docs: [], arguments: ['blob=<name>', 'repeats=2'], fileArguments: ['detect_host — hostname source'], standardGroups: ['general'], required: ['blob'] };
     const groups = [{ name: 'general', arguments: ['tcp_ack=-1000', 'repeats=4'] }];
-    expect(getLuaProfileParameterOptions(functionInfo, groups)).toEqual(['blob=<name>', 'repeats=2', 'detect_host — hostname source', 'tcp_ack=-1000', 'strategy=1 — номер стратегии для circular']);
+    expect(getLuaProfileParameterOptions(functionInfo, groups)).toEqual(['blob=<name>', 'repeats=2', 'tcp_ack=-1000', 'detect_host — hostname source', 'strategy=1 — номер стратегии для circular']);
   });
   it('keeps supported parameter choices available for compatibility functions when Lua help is incomplete', () => {
     const options = getLuaProfileParameterOptions(undefined, [], 'fakedsplit');
-    expect(options).toEqual(expect.arrayContaining(['strategy=1 — номер стратегии для circular', 'altorder=1 — поддерживается nfqws2', 'oob — поддерживается nfqws2', 'oob_data=0x00 — поддерживается nfqws2', 'nofake2 — поддерживается nfqws2']));
+    expect(options).toEqual(expect.arrayContaining(['strategy=1 — номер стратегии для circular', 'altorder=1 — поддерживается nfqws2', 'oob — поддерживается nfqws2', 'oob_data=0x00 — поддерживается nfqws2', 'nofake1 — поддерживается nfqws2', 'nofake2 — поддерживается nfqws2', 'nofake3 — поддерживается nfqws2', 'nofake4 — поддерживается nfqws2']));
   });
 });
 

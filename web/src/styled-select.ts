@@ -30,6 +30,11 @@ export function styledSelectMenuMaxHeight(availableHeight: number, maximum = 34 
   return Math.max(0, Math.min(maximum, availableHeight));
 }
 
+export function styledSelectMenuWidth(triggerWidth: number, minimumWidth: number, viewportWidth: number, edge = 8): number {
+  const preferred = Math.max(triggerWidth, Number.isFinite(minimumWidth) ? minimumWidth : 0);
+  return Math.max(0, Math.min(preferred, viewportWidth - edge * 2));
+}
+
 type StyledSelectState = {
   select: HTMLSelectElement;
   wrapper: HTMLDivElement;
@@ -50,7 +55,7 @@ let selectSequence = 0;
 
 function positionMenu(state: StyledSelectState) {
   const rect = state.trigger.getBoundingClientRect();
-  const width = Math.min(rect.width, Math.max(0, window.innerWidth - 16));
+  const width = styledSelectMenuWidth(rect.width, Number(state.select.dataset.menuMinWidth ?? 0), window.innerWidth);
   const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
   state.menu.style.maxHeight = '';
   const side = styledSelectMenuSide(rect.top, rect.bottom, state.menu.offsetHeight, window.innerHeight);

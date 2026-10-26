@@ -189,8 +189,8 @@ export function getLuaProfileParameterOptions(
       const option = parseLuaParameterOption(definition);
       return !(option && Object.hasOwn(compatible, option.key) && definition.includes('обнаружен в коде функции'));
     }),
-    ...(info?.fileArguments ?? []),
     ...groups.filter((group) => info?.standardGroups.includes(group.name)).flatMap((group) => group.arguments),
+    ...(info?.fileArguments ?? []),
     'strategy=1 — номер стратегии для circular',
     ...Object.entries(compatible).map(([key, value]) => `${value === null ? key : `${key}=${value}`} — поддерживается nfqws2`),
   ];
