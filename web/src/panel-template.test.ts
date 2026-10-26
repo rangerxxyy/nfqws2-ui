@@ -16,6 +16,12 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
+    expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
+    expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");
+    expect(panelStyles).toMatch(/\.profile-filter-add-text\s*\{[^}]*width:auto[^}]*min-height:1\.8rem/);
+  });
+
   it('keeps toast notifications below confirmation dialogs', () => {
     const toastClass = template.match(/id="toastWrapper" class="([^"]+)"/)?.[1] ?? '';
     const dialogClass = template.match(/id="updateModalBackdrop" class="([^"]+)"/)?.[1] ?? '';

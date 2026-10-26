@@ -1385,6 +1385,8 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 .profile-filter-remove:hover,.profile-filter-remove-argument:hover { color:#fca5a5; }
 .profile-filter-add { width:1.8rem; height:1.8rem; border:1px solid #2dd4bf66; border-radius:.5rem; color:#5eead4; font-weight:700; transition:background .15s ease,transform .15s ease; }
 .profile-filter-add:hover { background:#0f766e44; transform:scale(1.04); }
+.profile-filter-add-text { width:auto; min-height:1.8rem; border:1px solid #2dd4bf66; border-radius:.5rem; padding:0 .65rem; color:#5eead4; font-size:.75rem; font-weight:650; white-space:nowrap; transition:background .15s ease,border-color .15s ease; }
+.profile-filter-add-text:hover { border-color:#5eead4; background:#0f766e44; }
 .profile-manual-parameter { min-width:0; }
 .profile-manual-parameter summary { cursor:pointer; color:#94a3b8; font-size:.72rem; }
 .profile-parameter-picker { width:min(100%,25rem); min-width:min(100%,20rem); flex:1 1 25rem; }

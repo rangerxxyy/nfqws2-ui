@@ -619,7 +619,7 @@ function renderRuntimeProfiles() {
         if (!conditionsHeadingAdded) { appendProfileBuilderSectionHeading(builder, 'Когда срабатывает'); conditionsHeadingAdded = true; }
         const row = document.createElement('div'); row.className = 'profile-filter-empty-row flex flex-wrap items-center gap-2 px-1 py-1';
         const label = document.createElement('span'); label.className = 'w-28 text-xs text-slate-400'; label.textContent = 'UDP-порты';
-        const addUdp = document.createElement('button'); addUdp.type = 'button'; addUdp.className = 'profile-filter-add'; addUdp.textContent = '+ добавить фильтр UDP-порты';
+        const addUdp = document.createElement('button'); addUdp.type = 'button'; addUdp.className = 'profile-filter-add-text'; addUdp.textContent = '+ добавить фильтр UDP-порты';
         addUdp.addEventListener('click', () => {
           const port = document.createElement('input'); port.type = 'text'; port.inputMode = 'numeric'; port.className = 'profile-filter-add-input min-w-36 rounded-md border bg-slate-950 px-2 py-1 font-mono text-xs'; port.placeholder = '443 или 5000-5010'; port.setAttribute('aria-label', 'UDP-порт или диапазон');
           const commit = () => {
@@ -629,7 +629,7 @@ function renderRuntimeProfiles() {
             if (target) storeRuntimeProfileArgs(profile.id, updated);
           };
           port.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } });
-          const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'profile-filter-add'; confirm.textContent = 'Добавить'; confirm.addEventListener('click', commit);
+          const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'profile-filter-add-text'; confirm.textContent = 'Добавить'; confirm.addEventListener('click', commit);
           row.replaceChildren(label, port, confirm); port.focus();
         });
         row.append(label, addUdp); builder.append(row); continue;
