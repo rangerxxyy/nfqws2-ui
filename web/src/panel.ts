@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { diagnoseProfileLuaArguments, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -561,6 +561,16 @@ function renderRuntimeProfiles() {
           const addParameter = document.createElement('button'); addParameter.type = 'button'; addParameter.className = 'backup-action'; addParameter.textContent = '+ параметр'; addParameter.addEventListener('click', () => { const value = addParameterInput.value.trim(); if (value) addRuntimeProfileStepParameter(profile.id, String(argumentIndex), value); });
           parameterList.append(knownParameterSelect, addParameterInput, addParameter);
           content.append(functionSelect, description, parameterList);
+          const luaHelp = getLuaProfileHelp(functionInfo, runtimeProfileLuaStandardGroups);
+          if (luaHelp && functionInfo && (luaHelp.docs.length || luaHelp.arguments.length || luaHelp.standardGroups.length || luaHelp.required.length)) {
+            const help = document.createElement('details'); help.className = 'rounded-md border border-slate-800 px-2 py-1.5 text-xs text-slate-400';
+            const summary = document.createElement('summary'); summary.className = 'cursor-pointer select-none text-slate-300'; summary.textContent = `Справка Lua · ${functionInfo.name}`; help.append(summary);
+            for (const line of luaHelp.docs) { const doc = document.createElement('p'); doc.className = 'mt-1 leading-5'; doc.textContent = line; help.append(doc); }
+            if (luaHelp.arguments.length) { const args = document.createElement('p'); args.className = 'mt-1 leading-5'; args.textContent = `Параметры: ${luaHelp.arguments.join(' · ')}`; help.append(args); }
+            for (const group of luaHelp.standardGroups) { const standard = document.createElement('p'); standard.className = 'mt-1 leading-5'; standard.textContent = `Стандартные параметры · ${group.name}: ${group.arguments.join(' · ')}`; help.append(standard); }
+            if (luaHelp.required.length) { const required = document.createElement('p'); required.className = 'mt-1 leading-5 text-amber-300'; required.textContent = `Обязательные: ${luaHelp.required.join(', ')}`; help.append(required); }
+            content.append(help);
+          }
           const controls = document.createElement('div'); controls.className = 'flex items-center gap-1';
           for (const [direction, label, accessible] of [['up', '↑', 'Переместить шаг выше'], ['down', '↓', 'Переместить шаг ниже']] as const) {
             const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'moveRuntimeProfileStep'; button.dataset.args = JSON.stringify([profile.id, String(stepIndex), direction]); button.className = 'backup-action'; button.textContent = label; button.setAttribute('aria-label', accessible); button.dataset.actionTooltip = accessible; button.disabled = direction === 'up' ? stepIndex === 0 : stepIndex === indexes.length - 1; controls.append(button);

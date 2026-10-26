@@ -1,7 +1,30 @@
-import type { NfqwsLuaFunctionInfo } from './api';
+import type { NfqwsLuaFunctionInfo, NfqwsLuaStandardGroup } from './api';
 
 export type ProfileLuaWarning = { argument: string; message: string };
 export type LuaParameterOption = { key: string; value: string | null; display: string };
+export type LuaProfileHelp = {
+  docs: string[];
+  arguments: string[];
+  standardGroups: Array<{ name: string; arguments: string[] }>;
+  required: string[];
+};
+
+export function getLuaProfileHelp(
+  info: NfqwsLuaFunctionInfo | undefined,
+  groups: readonly NfqwsLuaStandardGroup[],
+): LuaProfileHelp | null {
+  if (!info) return null;
+  const standardGroups = info.standardGroups.flatMap((name) => {
+    const group = groups.find((item) => item.name === name);
+    return group ? [{ name, arguments: [...group.arguments] }] : [];
+  });
+  return {
+    docs: [...info.docs],
+    arguments: [...info.arguments],
+    standardGroups,
+    required: [...info.required],
+  };
+}
 
 export function parseLuaParameterOption(definition: string): LuaParameterOption | null {
   const display = definition.trim();

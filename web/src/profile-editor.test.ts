@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diagnoseProfileLuaArguments, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 
 describe('reorderProfileSteps', () => {
   it('moves a dragged step across several ordered steps without shifting unrelated arguments', () => {
@@ -32,6 +32,18 @@ describe('reorderProfileSteps', () => {
 });
 
 describe('desync step editing', () => {
+  it('collects complete installed Lua function help and referenced standard groups', () => {
+    const functionInfo = { name: 'fake', file: 'zapret-antidpi.lua', docs: ['Creates a fake packet.', 'The second help line.'], arguments: ['blob=<name> — fake data', 'repeats=2 — count'], standardGroups: ['general'], required: ['blob'] };
+    const groups = [{ name: 'general', arguments: ['tcp_ack=-1000 — ACK offset', 'repeats=4 — default repeats'] }, { name: 'other', arguments: ['unused=1'] }];
+
+    expect(getLuaProfileHelp(functionInfo, groups)).toEqual({
+      docs: ['Creates a fake packet.', 'The second help line.'],
+      arguments: ['blob=<name> — fake data', 'repeats=2 — count'],
+      standardGroups: [{ name: 'general', arguments: ['tcp_ack=-1000 — ACK offset', 'repeats=4 — default repeats'] }],
+      required: ['blob'],
+    });
+  });
+
   it('turns documented Lua parameter entries into editable flag or key-value options', () => {
     expect(parseLuaParameterOption('tcp_ack=-1000 — acknowledgement offset')).toEqual({ key: 'tcp_ack', value: '-1000', display: 'tcp_ack=-1000 — acknowledgement offset' });
     expect(parseLuaParameterOption('blob=<name> — select a blob')).toEqual({ key: 'blob', value: '', display: 'blob=<name> — select a blob' });
