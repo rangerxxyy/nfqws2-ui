@@ -23,6 +23,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toMatch(/\b(?:window\.)?prompt\s*\(/);
   });
 
+  it('shows full list labels together with their filenames', () => {
+    expect(template).toContain('Пользовательские домены');
+    expect(template).toContain('Исключённые домены');
+    expect(template).toContain('Домены для автообучения');
+    expect(template).toContain('IP-адреса');
+    expect(template).toContain('Исключённые IP-адреса');
+    expect(panelSource).toContain('Пользовательский список');
+    expect(panelStyles).toContain('.list-file-tab-caption');
+    expect(panelStyles).toContain('overflow-wrap:anywhere');
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");

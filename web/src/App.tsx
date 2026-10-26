@@ -756,9 +756,7 @@ export default function App() {
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span>
-                  {"user.list"}
-                </span>
+                <span className={"list-file-tab-caption"}><span>Пользовательские домены</span><code>user.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
@@ -768,9 +766,7 @@ export default function App() {
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span>
-                  {"exclude.list"}
-                </span>
+                <span className={"list-file-tab-caption"}><span>Исключённые домены</span><code>exclude.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
@@ -780,9 +776,7 @@ export default function App() {
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span>
-                  {"auto.list"}
-                </span>
+                <span className={"list-file-tab-caption"}><span>Домены для автообучения</span><code>auto.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
@@ -792,9 +786,7 @@ export default function App() {
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span>
-                  {"ipset.list"}
-                </span>
+                <span className={"list-file-tab-caption"}><span>IP-адреса</span><code>ipset.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
@@ -804,9 +796,7 @@ export default function App() {
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span>
-                  {"ipset_exclude.list"}
-                </span>
+                <span className={"list-file-tab-caption"}><span>Исключённые IP-адреса</span><code>ipset_exclude.list</code></span>
                 {"\n            "}
               </button>
               <div id={"customListTabs"} className={"flex items-center"}></div>

@@ -2149,7 +2149,7 @@ async function loadList(id: NfqwsListId) {
     if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
     const locationLabel = $('#currentListFilePath');
     if (locationLabel) {
-      locationLabel.textContent = listDisplayName(id);
+      locationLabel.textContent = `${listDisplayName(id)} — ${id}`;
       locationLabel.title = result.path;
       locationLabel.setAttribute('aria-label', `${listDisplayName(id)}. Путь: ${result.path}`);
     }
@@ -2261,8 +2261,9 @@ function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
     button.dataset.customListTab = 'true';
     button.className = 'list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap';
     button.title = `${listDisplayName(id)} — ${summary.path}`;
-    const label = document.createElement('span');
-    label.textContent = id;
+    const label = document.createElement('span'); label.className = 'list-file-tab-caption';
+    const description = document.createElement('span'); description.textContent = 'Пользовательский список';
+    const filename = document.createElement('code'); filename.textContent = id; label.append(description, filename);
     button.append(label);
     const remove = document.createElement('button');
     remove.type = 'button';
