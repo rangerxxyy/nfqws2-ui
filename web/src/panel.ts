@@ -1601,6 +1601,8 @@ function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
   }
   const activePanel = document.getElementById(selectedId);
   if (!activePanel) return;
+  const copyButton = $('#copyConfigTextButton');
+  copyButton?.classList.toggle('hidden', section !== 'editor');
   activePanel.classList.remove('config-panel-enter');
   void activePanel.offsetWidth;
   activePanel.classList.add('config-panel-enter');
@@ -3629,6 +3631,17 @@ async function copySupportReport() {
   catch { toast('Не удалось скопировать отчёт.', 'error'); }
 }
 
+async function copyConfigText() {
+  const editor = $('#nfqwsConfTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return toast('Редактор конфигурации недоступен.', 'error');
+  try {
+    await writeTextToClipboard(editor.value);
+    toast('Конфигурация скопирована.');
+  } catch {
+    toast('Не удалось скопировать конфигурацию. Проверьте разрешение на буфер обмена.', 'error');
+  }
+}
+
 function downloadSupportReport() {
   const textarea = $('#supportReportText');
   if (!(textarea instanceof HTMLTextAreaElement) || !textarea.value) return toast('Сначала соберите отчёт.', 'error');
@@ -3841,7 +3854,7 @@ function bindPrototypeActions() {
     cancelClearListDraft: () => setListClearModal(false),
     confirmClearListDraft: () => confirmClearListDraft(),
     toggleListEditorFullscreen: () => toggleListEditorFullscreen(),
-    copyConfigText: () => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) void navigator.clipboard.writeText(editor.value).then(() => toast('Конфигурация скопирована')).catch(() => toast('Буфер обмена недоступен', 'error')); },
+    copyConfigText: () => void copyConfigText(),
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     copySnippetToClipboard: (value: string | HTMLButtonElement) => void (async () => {
       const button = value instanceof HTMLButtonElement ? value : null;

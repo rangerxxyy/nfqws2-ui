@@ -62,6 +62,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(configSection).toContain('conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono');
   });
 
+  it('copies the current configuration with the secure-context fallback and only shows copy in the editor tab', () => {
+    expect(template).toContain('id="copyConfigTextButton"');
+    expect(template.indexOf('data-action-click="applyConfigAndRestart"')).toBeLessThan(template.indexOf('id="configSettingsPanel"'));
+    expect(panelSource).toContain("copyButton?.classList.toggle('hidden', section !== 'editor')");
+    expect(panelSource).toContain('await writeTextToClipboard(editor.value)');
+    expect(panelSource).toContain("toast('Конфигурация скопирована.')");
+    expect(panelSource).not.toContain('navigator.clipboard.writeText(editor.value)');
+  });
+
   it('restores profile constructor logic from v1.2.3 while allowing full profile labels to wrap', () => {
     expect(panelSource).toContain("name.className = 'truncate font-medium'");
     expect(panelSource).toContain('moveRuntimeProfileUp');
