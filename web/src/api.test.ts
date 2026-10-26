@@ -313,7 +313,12 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response('{"cleared":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const listed = await nfqwsProfiles.list();
-    const saved = await nfqwsProfiles.saveCustom([['--filter-tcp=80']], listed.revision);
+    const customProfiles = [
+      ['--filter-tcp=80', '--lua-desync=fake'],
+      ['--filter-udp=443', '--lua-desync=fakedsplit:oob'],
+      ['--filter-tcp=443', '--lua-desync=multisplit:pos=1'],
+    ];
+    const saved = await nfqwsProfiles.saveCustom(customProfiles, listed.revision);
     await nfqwsSnapshots.delete('snap-1');
     const history = await nfqwsChangeHistory.list();
     await nfqwsLogs.get('nfqws2-ui', 20);
@@ -326,7 +331,7 @@ describe('API client used by the source-based panel', () => {
     ]);
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBeUndefined();
     expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe('PUT');
-    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ profiles: [['--filter-tcp=80']], revision: 'rev' });
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ profiles: customProfiles, revision: 'rev' });
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('DELETE');
     expect((fetchMock.mock.calls[5]?.[1] as RequestInit).method).toBe('POST');
     expect(JSON.parse(String((fetchMock.mock.calls[5]?.[1] as RequestInit).body))).toEqual({ source: 'nfqws2-ui' });

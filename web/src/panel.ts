@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -311,7 +311,6 @@ let runtimeProfilesState: NfqwsProfilesResponse | null = null;
 let runtimeProfileLuaCatalog: NfqwsLuaFunctionInfo[] = [];
 let runtimeProfileLuaStandardGroups: NfqwsLuaStandardGroup[] = [];
 let runtimeProfileCliCatalog: NfqwsLuaCatalogResponse['cli'] | undefined;
-let runtimeProfileLuaCatalogAvailable = false;
 let draggedRuntimeProfileStep: { profileId: string; index: number } | null = null;
 let runtimeProfileDraft: string[][] = [];
 let profileListInventory: NfqwsListSummary[] = [];
@@ -442,6 +441,48 @@ function appendProfileBuilderSectionHeading(parent: HTMLElement, text: string) {
   const tone = text === 'Когда срабатывает' ? 'profile-builder-heading-condition' : text === 'Для кого' ? 'profile-builder-heading-scope' : 'profile-builder-heading-action';
   const heading = document.createElement('h3'); heading.className = `profile-builder-section-heading ${tone}`; heading.textContent = text; parent.append(heading);
 }
+function openProfileChoiceDialog(choices: Array<{ group: string; value: string; label: string }>, headingText: string, onSelect: (value: string) => void) {
+  const dialog = document.createElement('dialog'); dialog.className = 'profile-choice-dialog'; dialog.setAttribute('aria-labelledby', 'profileChoiceTitle');
+  const panel = document.createElement('div'); panel.className = 'profile-choice-panel';
+  const heading = document.createElement('div'); heading.className = 'profile-choice-heading';
+  const title = document.createElement('h3'); title.id = 'profileChoiceTitle'; title.textContent = headingText;
+  const close = document.createElement('button'); close.type = 'button'; close.className = 'backup-action'; close.textContent = 'Закрыть'; close.addEventListener('click', () => dialog.close()); heading.append(title, close);
+  const search = document.createElement('input'); search.type = 'search'; search.className = 'profile-choice-search'; search.placeholder = 'Найти по названию или назначению'; search.setAttribute('aria-label', `Поиск: ${headingText.toLocaleLowerCase()}`);
+  const results = document.createElement('div'); results.className = 'profile-choice-results'; results.setAttribute('role', 'listbox'); results.setAttribute('aria-label', headingText);
+  const drawChoices = () => {
+    results.replaceChildren();
+    const matches = filterProfileArgumentChoices(choices, search.value);
+    if (!matches.length) { const empty = document.createElement('p'); empty.className = 'profile-choice-empty'; empty.textContent = 'Ничего не найдено. Попробуйте другое название.'; results.append(empty); return; }
+    const groups = new Map<string, typeof matches>();
+    for (const match of matches) groups.set(match.group, [...(groups.get(match.group) ?? []), match]);
+    let groupIndex = 0; let optionIndex = 0;
+    for (const [groupName, groupChoices] of groups) {
+      const section = document.createElement('section'); section.className = 'profile-choice-group'; section.setAttribute('role', 'group');
+      const groupTitle = document.createElement('h4'); groupTitle.id = `profileChoiceGroup${groupIndex++}`; groupTitle.textContent = groupName; section.setAttribute('aria-labelledby', groupTitle.id); section.append(groupTitle);
+      for (const choice of groupChoices) {
+        const item = document.createElement('button'); item.type = 'button'; item.className = 'profile-choice-option'; item.setAttribute('role', 'option'); item.setAttribute('aria-selected', 'false'); item.tabIndex = optionIndex++ === 0 ? 0 : -1;
+        const label = document.createElement('strong'); label.textContent = choice.label;
+        const syntax = document.createElement('code'); syntax.textContent = choice.value;
+        item.append(label, syntax); item.addEventListener('click', () => { dialog.close(); onSelect(choice.value); }); section.append(item);
+      }
+      results.append(section);
+    }
+  };
+  search.addEventListener('input', drawChoices);
+  search.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const options = [...results.querySelectorAll<HTMLButtonElement>('[role="option"]')]; if (!options.length) return;
+    event.preventDefault(); options[event.key === 'ArrowDown' ? 0 : options.length - 1]?.focus();
+  });
+  results.addEventListener('keydown', (event) => {
+    const option = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[role="option"]') : null; if (!option) return;
+    const options = [...results.querySelectorAll<HTMLButtonElement>('[role="option"]')]; const nextIndex = nextProfileChoiceIndex(options.indexOf(option), event.key, options.length); if (nextIndex === null) return;
+    event.preventDefault(); options.forEach((item, index) => { item.tabIndex = index === nextIndex ? 0 : -1; }); options[nextIndex]?.focus();
+  });
+  drawChoices(); panel.append(heading, search, results); dialog.append(panel);
+  dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
+  document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove(), { once: true }); dialog.showModal(); search.focus();
+}
 function runtimeProfileDraftTarget(id: string): { source: string; args: string[]; managed: boolean; customIndex: number | null } | null {
   const customMatch = /^custom-(\d+)$/.exec(id);
   if (customMatch) {
@@ -554,7 +595,7 @@ function renderRuntimeProfiles() {
     let conditionsHeadingAdded = false; let listsHeadingAdded = false; let stepsHeadingAdded = false;
     for (const [groupName, groupTone, predicate] of groups) {
       const indexes = profile.args.map((arg, index) => predicate(arg) ? index : -1).filter((index) => index >= 0);
-      if (!indexes.length) continue;
+      if (!indexes.length && groupName !== 'Упорядоченные шаги') continue;
       if (!conditionsHeadingAdded && ['TCP-порты', 'UDP-порты', 'Другие фильтры', 'Протоколы'].includes(groupName)) { appendProfileBuilderSectionHeading(builder, 'Когда срабатывает'); conditionsHeadingAdded = true; }
       if (!listsHeadingAdded && groupName === 'Списки доменов и IP') { appendProfileBuilderSectionHeading(builder, 'Для кого'); listsHeadingAdded = true; }
       if (!stepsHeadingAdded && groupName === 'Упорядоченные шаги') { appendProfileBuilderSectionHeading(builder, 'Что делает'); stepsHeadingAdded = true; }
@@ -617,12 +658,24 @@ function renderRuntimeProfiles() {
           const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.actionClick = 'removeRuntimeProfileArgument'; remove.dataset.args = JSON.stringify([profile.id, String(argumentIndex)]); remove.className = 'backup-action'; remove.textContent = '×'; remove.setAttribute('aria-label', `Удалить шаг ${stepIndex + 1}`); remove.dataset.actionTooltip = 'Удалить этот шаг desync'; controls.append(remove);
           row.append(grip, badge, content, controls); section.append(row);
         });
-        const addStep = document.createElement('select'); addStep.className = 'min-h-9 w-full max-w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'; addStep.setAttribute('aria-label', 'Добавить шаг стратегии');
-        const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ добавить шаг'; addStep.append(placeholder);
-        const payloadChoices = runtimeProfileCliCatalog?.payloads.length ? runtimeProfileCliCatalog.payloads.map((payload) => [`--payload=${payload}`, `Тип пакета · ${payload}`] as const) : [['--payload=tls_client_hello', 'Типы пакетов · TLS ClientHello'], ['--payload=quic_initial', 'Типы пакетов · QUIC Initial']] as const;
-        for (const [value, label] of [...payloadChoices, ['--out-range=1', 'Исходящий диапазон'], ['--in-range=1', 'Входящий диапазон']] as const) { const option = document.createElement('option'); option.value = value; option.textContent = label; addStep.append(option); }
-        functions.forEach((name) => { const option = document.createElement('option'); option.value = `--lua-desync=${name}`; option.textContent = `${name} · ${getRussianLuaFunctionDescription(name)}`; addStep.append(option); });
-        addStep.dataset.actionChange = 'appendRuntimeProfileArgument'; addStep.dataset.valueSource = 'value'; section.append(addStep); builder.append(section); continue;
+        const addStrategy = document.createElement('button'); addStrategy.type = 'button'; addStrategy.className = 'profile-builder-add-select w-full rounded-lg border border-cyan-500/40 bg-cyan-950/30 px-3 py-2.5 text-left text-sm font-semibold text-cyan-100 transition hover:border-cyan-300 hover:bg-cyan-900/40'; addStrategy.textContent = '＋ Добавить стратегию';
+        addStrategy.setAttribute('aria-haspopup', 'dialog');
+        addStrategy.addEventListener('click', () => {
+          const choices = runtimeProfileLuaCatalog.length
+            ? runtimeProfileLuaCatalog.map(({ name }) => ({ group: 'Стратегии', value: `--lua-desync=${name}`, label: `${name} · ${getRussianLuaFunctionDescription(name)}` }))
+            : [{ group: 'Стратегии', value: '--lua-desync=fake', label: `fake · ${getRussianLuaFunctionDescription('fake')}` }];
+          openProfileChoiceDialog(choices, 'Выберите стратегию', appendRuntimeProfileArgument);
+        });
+        const target = runtimeProfileDraftTarget(profile.id);
+        const helper = document.createElement('p'); helper.className = 'text-xs leading-5 text-slate-400';
+        helper.textContent = profile.editable
+          ? 'Выберите действие из списка. Оно добавится только в этот профиль NFQWS_ARGS_CUSTOM; параметры можно настроить после добавления.'
+          : target?.source === 'NFQWS_ARGS_QUIC'
+            ? 'Выберите действие. NFQWS_ARGS_QUIC общий для профилей «QUIC по IP» и «QUIC по сайтам»; параметры можно настроить после добавления.'
+            : target?.source === 'NFQWS_ARGS'
+              ? 'Выберите действие. NFQWS_ARGS общий для профилей «HTTP/HTTPS по IP» и «HTTP/HTTPS по сайтам»; параметры можно настроить после добавления.'
+              : 'Выберите действие из списка. Оно добавится в настройки этого профиля; параметры можно настроить после добавления.';
+        section.append(addStrategy, helper); builder.append(section); continue;
       }
       const row = document.createElement('div'); row.className = `profile-builder-argument-group profile-builder-argument-group-${groupTone} flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-2`; row.dataset.profileGroup = groupTone;
       const title = document.createElement('span'); title.className = 'mr-1 text-xs font-semibold text-slate-300'; title.textContent = groupName; row.append(title);
@@ -655,74 +708,20 @@ function renderRuntimeProfiles() {
       }
       builder.append(row);
     }
-    if (!profile.args.length) { const empty = document.createElement('p'); empty.className = 'rounded-lg border border-dashed border-slate-700 p-3 text-xs text-slate-400'; empty.textContent = 'В профиле пока нет аргументов. Добавьте фильтр и хотя бы один шаг desync.'; builder.append(empty); }
+    if (!profile.args.length) { const empty = document.createElement('p'); empty.className = 'rounded-lg border border-dashed border-slate-700 p-3 text-xs text-slate-400'; empty.textContent = 'Профиль пока пустой. Начните с кнопки «Добавить стратегию» или задайте фильтр, для какого трафика она сработает.'; builder.append(empty); }
     const addLabel = document.createElement('div'); addLabel.className = 'mt-1 grid gap-1 text-xs text-slate-400';
-    const addTitle = document.createElement('span'); addTitle.textContent = 'Добавить условие, область или шаг';
+    const addTitle = document.createElement('span'); addTitle.textContent = 'Добавить фильтр или параметр';
     const argumentChoices = profileArgumentChoices(profile.args, profileListInventory, runtimeProfileCliCatalog)
       .filter((choice) => {
         if (profile.editable || !choice.group.startsWith('Для кого ·')) return true;
         return getRuntimeProfileListTarget(profile, choice.value)?.editable === true;
       })
-      .filter((choice) => !runtimeProfileLuaCatalogAvailable || !choice.value.startsWith('--lua-desync='));
+      .filter((choice) => !choice.value.startsWith('--lua-desync='));
     const groupedChoices = new Map<string, Array<{ group: string; value: string; label: string }>>();
     for (const choice of argumentChoices) groupedChoices.set(choice.group, [...(groupedChoices.get(choice.group) ?? []), choice]);
-    for (const functionName of runtimeProfileLuaCatalog.map((item) => item.name)) {
-      const value = `--lua-desync=${functionName}`;
-      groupedChoices.set('Что делает · стратегия', [...(groupedChoices.get('Что делает · стратегия') ?? []), { group: 'Что делает · стратегия', value, label: `Lua-шаг · ${functionName} · ${getRussianLuaFunctionDescription(functionName)}` }]);
-    }
-    const addChoice = document.createElement('button'); addChoice.type = 'button'; addChoice.className = 'profile-builder-add-select mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-left text-sm font-semibold text-slate-100 hover:border-blue-400 hover:bg-slate-800'; addChoice.textContent = '＋ Выбрать параметр';
+    const addChoice = document.createElement('button'); addChoice.type = 'button'; addChoice.className = 'profile-builder-add-select mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-left text-sm font-semibold text-slate-100 hover:border-blue-400 hover:bg-slate-800'; addChoice.textContent = '＋ Выбрать фильтр или параметр';
     addChoice.setAttribute('aria-haspopup', 'dialog');
-    addChoice.addEventListener('click', () => {
-      const dialog = document.createElement('dialog'); dialog.className = 'profile-choice-dialog'; dialog.setAttribute('aria-labelledby', 'profileChoiceTitle');
-      const panel = document.createElement('div'); panel.className = 'profile-choice-panel';
-      const heading = document.createElement('div'); heading.className = 'profile-choice-heading';
-      const title = document.createElement('h3'); title.id = 'profileChoiceTitle'; title.textContent = 'Добавить в профиль';
-      const close = document.createElement('button'); close.type = 'button'; close.className = 'backup-action'; close.textContent = 'Закрыть'; close.addEventListener('click', () => dialog.close()); heading.append(title, close);
-      const search = document.createElement('input'); search.type = 'search'; search.className = 'profile-choice-search'; search.placeholder = 'Поиск по параметру или назначению'; search.setAttribute('aria-label', 'Поиск параметров профиля');
-      const results = document.createElement('div'); results.className = 'profile-choice-results'; results.setAttribute('role', 'listbox'); results.setAttribute('aria-label', 'Доступные параметры и шаги профиля');
-      const drawChoices = () => {
-        results.replaceChildren();
-        const matches = filterProfileArgumentChoices([...groupedChoices.values()].flat(), search.value);
-        if (!matches.length) { const empty = document.createElement('p'); empty.className = 'profile-choice-empty'; empty.textContent = 'Ничего не найдено. Попробуйте другое название или точный параметр nfqws2.'; results.append(empty); return; }
-        const groups = new Map<string, typeof matches>();
-        for (const match of matches) groups.set(match.group, [...(groups.get(match.group) ?? []), match]);
-        let groupIndex = 0; let optionIndex = 0;
-        for (const [groupName, choices] of groups) {
-          const section = document.createElement('section'); section.className = 'profile-choice-group';
-          section.setAttribute('role', 'group');
-          const groupTitle = document.createElement('h4'); groupTitle.id = `profileChoiceGroup${groupIndex++}`; groupTitle.textContent = groupName; section.setAttribute('aria-labelledby', groupTitle.id); section.append(groupTitle);
-          for (const choice of choices) {
-            const item = document.createElement('button'); item.type = 'button'; item.className = 'profile-choice-option'; item.setAttribute('role', 'option');
-            item.setAttribute('aria-selected', 'false'); item.tabIndex = optionIndex++ === 0 ? 0 : -1;
-            const label = document.createElement('strong'); label.textContent = choice.label;
-            const syntax = document.createElement('code'); syntax.textContent = choice.value;
-            item.append(label, syntax); item.addEventListener('click', () => { dialog.close(); appendRuntimeProfileArgument(choice.value); }); section.append(item);
-          }
-          results.append(section);
-        }
-      };
-      search.addEventListener('input', drawChoices);
-      search.addEventListener('keydown', (event) => {
-        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-        const options = [...results.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-        if (!options.length) return;
-        event.preventDefault(); options[event.key === 'ArrowDown' ? 0 : options.length - 1]?.focus();
-      });
-      results.addEventListener('keydown', (event) => {
-        const option = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[role="option"]') : null;
-        if (!option) return;
-        const options = [...results.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-        const nextIndex = nextProfileChoiceIndex(options.indexOf(option), event.key, options.length);
-        if (nextIndex === null) return;
-        event.preventDefault();
-        options.forEach((item, index) => { item.tabIndex = index === nextIndex ? 0 : -1; });
-        options[nextIndex]?.focus();
-      });
-      drawChoices(); panel.append(heading, search, results); dialog.append(panel);
-      dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
-      document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove(), { once: true });
-      dialog.showModal(); search.focus();
-    });
+    addChoice.addEventListener('click', () => openProfileChoiceDialog([...groupedChoices.values()].flat(), 'Добавить фильтр или параметр', appendRuntimeProfileArgument));
     addLabel.append(addTitle, addChoice); builder.append(addLabel); editor.append(builder);
   }
   if (!profile.editable) {
@@ -857,7 +856,7 @@ async function loadProfiles() {
   const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профильные группы nfqws2…';
   try {
     const result = await nfqwsProfiles.list(); runtimeProfilesState = result;
-    try { const catalog = await nfqwsProfiles.catalog(); runtimeProfileLuaCatalog = catalog.functions; runtimeProfileLuaStandardGroups = catalog.standardGroups ?? []; runtimeProfileCliCatalog = catalog.cli; runtimeProfileLuaCatalogAvailable = true; } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileCliCatalog = undefined; runtimeProfileLuaCatalogAvailable = false; }
+    try { const catalog = await nfqwsProfiles.catalog(); runtimeProfileLuaCatalog = catalog.functions; runtimeProfileLuaStandardGroups = catalog.standardGroups ?? []; runtimeProfileCliCatalog = catalog.cli; } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileCliCatalog = undefined; }
     try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
     runtimeProfileManagedDraft = {}; runtimeProfileManagedDirty = false;
@@ -938,6 +937,13 @@ function appendRuntimeProfileArgument(argument: string) {
   }
   const target = runtimeProfileDraftTarget(selectedRuntimeProfileId);
   if (!target) return;
+  if (!target.managed && target.customIndex !== null) {
+    const updated = appendArgumentToCustomProfile(runtimeProfileDraft, target.customIndex, argument);
+    if (!updated) return;
+    runtimeProfileDraft = updated;
+    markRuntimeProfilesDirty(selectedRuntimeProfileId);
+    return;
+  }
   target.args.push(argument); storeRuntimeProfileArgs(selectedRuntimeProfileId, target.args);
 }
 function updateRuntimeProfileStep(id: string, argumentIndex: string, update: (argument: string) => string) {

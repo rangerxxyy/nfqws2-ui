@@ -3,6 +3,12 @@ import type { NfqwsArgumentProfile, NfqwsCliCatalog, NfqwsListSummary, NfqwsLuaF
 export type ProfileArgumentChoice = { group: string; value: string; label: string };
 export type RuntimeProfileConstructorTarget = { source: string; args: string[]; linkedComponents: NfqwsProfileComponent[]; managed: boolean };
 
+/** Returns a new custom-profile draft with one argument added to exactly one --new-delimited profile. */
+export function appendArgumentToCustomProfile(profiles: readonly string[][], profileIndex: number, argument: string): string[][] | null {
+  if (!Number.isInteger(profileIndex) || profileIndex < 0 || profileIndex >= profiles.length || !argument.trim()) return null;
+  return profiles.map((profile, index) => index === profileIndex ? [...profile, argument] : [...profile]);
+}
+
 /** Picks the actual config variable edited by a profile's constructor. Managed profile summaries can contain several shared variables. */
 export function getRuntimeProfileConstructorTarget(profile: NfqwsArgumentProfile): RuntimeProfileConstructorTarget | null {
   if (profile.editable) {

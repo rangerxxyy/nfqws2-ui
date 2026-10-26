@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import type { NfqwsArgumentProfile } from './api';
-import { filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+
+describe('adding strategy arguments to NFQWS_ARGS_CUSTOM profiles', () => {
+  it('adds a strategy only to the selected profile between --new separators', () => {
+    const profiles = [
+      ['--filter-tcp=443', '--lua-desync=fake'],
+      ['--filter-udp=443', '--payload=quic_initial'],
+      ['--filter-tcp=80', '--lua-desync=multisplit:pos=1'],
+    ];
+
+    expect(appendArgumentToCustomProfile(profiles, 1, '--lua-desync=fakedsplit')).toEqual([
+      ['--filter-tcp=443', '--lua-desync=fake'],
+      ['--filter-udp=443', '--payload=quic_initial', '--lua-desync=fakedsplit'],
+      ['--filter-tcp=80', '--lua-desync=multisplit:pos=1'],
+    ]);
+    expect(profiles[0]).toEqual(['--filter-tcp=443', '--lua-desync=fake']);
+  });
+
+  it('does not change any profile when the selected index or strategy is invalid', () => {
+    const profiles = [['--filter-tcp=443'], ['--filter-udp=443']];
+    expect(appendArgumentToCustomProfile(profiles, 2, '--lua-desync=fake')).toBeNull();
+    expect(appendArgumentToCustomProfile(profiles, 0, '')).toBeNull();
+  });
+});
 
 describe('runtime profile constructor targets', () => {
   it('uses each managed profile primary config component while keeping shared scope components separate', () => {
