@@ -2,6 +2,33 @@ import type { NfqwsArgumentProfile, NfqwsCliCatalog, NfqwsListSummary, NfqwsLuaF
 
 export type ProfileArgumentChoice = { group: string; value: string; label: string };
 export type RuntimeProfileConstructorTarget = { source: string; args: string[]; linkedComponents: NfqwsProfileComponent[]; managed: boolean };
+export type RuntimeProfileDisplayPreferences = { names: Record<string, string>; order: string[] };
+
+/** Keeps browser-only labels and order attached to the same custom profiles after one is deleted. */
+export function removeCustomProfileDisplayPreference(preferences: RuntimeProfileDisplayPreferences, deletedIndex: number): RuntimeProfileDisplayPreferences {
+  if (!Number.isInteger(deletedIndex) || deletedIndex < 0) return preferences;
+  const deletedNumber = deletedIndex + 1;
+  const remap = (id: string) => {
+    const match = /^custom-(\d+)$/.exec(id);
+    if (!match) return id;
+    const number = Number(match[1]);
+    if (number === deletedNumber) return null;
+    return number > deletedNumber ? `custom-${number - 1}` : id;
+  };
+  const names: Record<string, string> = {};
+  for (const [id, name] of Object.entries(preferences.names)) {
+    const nextId = remap(id);
+    if (nextId) names[nextId] = name;
+  }
+  const seen = new Set<string>();
+  const order = preferences.order.flatMap((id) => {
+    const nextId = remap(id);
+    if (!nextId || seen.has(nextId)) return [];
+    seen.add(nextId);
+    return [nextId];
+  });
+  return { names, order };
+}
 
 /** Returns a new custom-profile draft with one argument added to exactly one --new-delimited profile. */
 export function appendArgumentToCustomProfile(profiles: readonly string[][], profileIndex: number, argument: string): string[][] | null {

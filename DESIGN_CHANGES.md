@@ -149,8 +149,9 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 
 ## Profile constructor navigation — 2026-10-26
 
-- On wide screens, the profile list, strategy editor, and parameter encyclopedia occupy independent scroll areas. This keeps profile switching and the reference visible while working through long strategy lists; on phones the layout returns to natural page scrolling for touch.
+- The profile selector stays pinned while the profile content scrolls in its own touch-enabled region. The editor keeps the simpler v1.2.3 page layout; only the strategy content receives a viewport-based maximum height. Profile names and summaries wrap instead of being truncated.
 - The profile list now has compact rename and visual reorder controls for every built-in and custom profile. Those display names and list order are stored in this browser only; they do not alter nfqws2 configuration or its processing order.
+- Because custom profile API IDs are positional (`custom-N`), deleting a profile now removes its display preferences and shifts the remaining names and visual order with the surviving profiles.
 - Removed the verbose successful profile/catalog summary from the workspace and the old “order of checking” caption. Load errors remain visible, while the visual-only reorder note is a small amber badge beside “Профили”.
 - Kept the profile list pinned on narrow screens so switching profiles does not require scrolling back to the top. Removed only the built-in “HTTP/HTTPS по IP” constructor entry by its source variable; a user profile with the same display name remains visible. Its shared configuration source remains available through the HTTP/HTTPS by sites editor. Visible profile numbering is recalculated after filtering so list numbers and editor headings stay aligned.
 - Moved list row deletion, import, and export into a compact “Ещё” menu within the primary toolbar. This removes the extra toolbar strip while preserving the actions and gives the list editor more vertical space.
@@ -166,3 +167,7 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 Навигация профилей nfqws2 объединена с разделом «Конфигурация»: в обычной боковой навигации конструктор показан вложенным пунктом, а в упрощённой — второй страницей группы «Конфигурация». Внутренний маршрут `profiles` и API оставлены прежними, чтобы не менять загрузку, редактирование и применение профилей.
 
 Справочник параметров остаётся справа от редактора на широком экране и свёрнут при первом открытии профилей. Нативный раскрываемый заголовок доступен с клавиатуры; выбранная функция и параметр обновляют содержимое справки, а раскрытое состояние сохраняется при перерисовке редактора. На узком экране справочник располагается после редактора.
+
+## Имена профилей после удаления
+
+ID пользовательских профилей в текущем API строится по их позиции (`custom-1`, `custom-2` и т. д.). При удалении позиции меняются, поэтому браузерные имена и визуальная сортировка тоже должны перенумеровываться. Перед удалением конструктор удаляет настройки удалённой позиции и сдвигает последующие ID; изменения не затрагивают конфигурацию nfqws2 и штатные профили.

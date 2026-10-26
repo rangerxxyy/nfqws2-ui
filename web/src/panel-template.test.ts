@@ -16,6 +16,13 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('keeps the full profile selector visible while only the profile editor scrolls', () => {
+    expect(panelSource).toContain("name.className = 'profile-list-name font-medium'");
+    expect(panelStyles).toContain('#tabContent-profiles .profile-list-panel { position:sticky; top:0;');
+    expect(panelStyles).toContain('.profile-strategy-scroll { min-height:12rem; max-height:calc(100dvh - 15rem); overflow-y:auto;');
+    expect(panelStyles).toContain('.profile-list-name,.profile-list-summary { display:block; white-space:normal; overflow-wrap:anywhere;');
+  });
+
   it('opens the full configuration editor first and separates configuration settings', () => {
     expect(template).toContain('id="configTabEditor"');
     expect(template).toContain('aria-pressed="true"');
@@ -57,7 +64,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
   });
 
-  it('keeps the profile list and encyclopedia visible while the strategy editor scrolls independently', () => {
+  it('keeps profile switching fixed while only the profile editor content scrolls', () => {
     expect(template).toContain('id="profileList" class="profile-list-panel');
     expect(template).toContain('id="profileEditor" class="profile-editor-panel');
     expect(panelSource).toContain("main.className = 'profile-editor-main profile-strategy-scroll'");
@@ -72,11 +79,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource.indexOf(".filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')")).toBeLessThan(panelSource.indexOf('.map((profile, index) => ({ ...profile, index: index + 1 }))'));
     expect(panelStyles).toContain('.profile-list-controls');
     expect(panelStyles).toContain('.profile-display-order-note');
-    expect(panelStyles).toContain('.profile-constructor-workspace');
-    expect(panelStyles).toContain('.profile-strategy-scroll { min-height:0; overflow-y:auto;');
+    expect(panelStyles).toContain('.profile-strategy-scroll { min-height:12rem; max-height:calc(100dvh - 15rem); overflow-y:auto;');
     expect(panelStyles).toContain('.profile-reference { position:sticky;');
     expect(panelStyles).toContain('@media (max-width:767px)');
-    expect(panelStyles).toContain('.profile-constructor-workspace { height:auto; min-height:0; }');
+    expect(panelStyles).toContain('#tabContent-profiles .profile-list-panel { position:sticky; top:0;');
+    expect(panelStyles).not.toContain('.profile-list-panel,.profile-editor-panel,#profileEditor,.profile-editor-layout,.profile-strategy-scroll { height:auto; min-height:0; overflow:visible; }');
   });
 
   it('shows the six backend-discovered Lua scripts in a dedicated read-only section', () => {
@@ -592,7 +599,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsProfiles.saveCustom(runtimeProfileDraft');
     expect(template).toContain('id="profileEditor"');
     expect(panelStyles).toContain('#profileEditor { container-type:inline-size; }');
-    expect(panelStyles).toContain('@container (max-width: 700px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); overflow:visible; }');
+    expect(panelStyles).toContain('@container (max-width: 920px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); }');
     expect(template).toContain('id="profileImportDialog"');
     expect(panelSource).toContain('runtimeProfileDraft.push');
     expect(panelSource).not.toContain('moveRuntimeProfileUp');

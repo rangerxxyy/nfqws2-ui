@@ -27,7 +27,7 @@ import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation 
 import { shouldPollLogs } from './log-polling';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, removeCustomProfileDisplayPreference, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -599,8 +599,8 @@ function renderRuntimeProfiles() {
       input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); saveRuntimeProfileDisplayName(profile.id, input.value); } if (event.key === 'Escape') { runtimeProfileRenamingId = ''; renderRuntimeProfiles(); } });
       input.addEventListener('change', () => saveRuntimeProfileDisplayName(profile.id, input.value)); nameWrap.append(input);
     } else {
-      const name = document.createElement('span'); name.className = 'truncate font-medium'; name.textContent = runtimeProfileDisplayName(profile);
-      const summary = document.createElement('span'); summary.className = 'truncate text-[10px] leading-4 text-slate-500'; summary.textContent = summarizeProfileSelection(profile.effectiveArgs ?? profile.args); nameWrap.append(name, summary);
+      const name = document.createElement('span'); name.className = 'profile-list-name font-medium'; name.textContent = runtimeProfileDisplayName(profile);
+      const summary = document.createElement('span'); summary.className = 'profile-list-summary text-[10px] leading-4 text-slate-500'; summary.textContent = summarizeProfileSelection(profile.effectiveArgs ?? profile.args); nameWrap.append(name, summary);
     }
     const warnings = diagnoseProfileLuaArguments(profile.effectiveArgs ?? profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
     const actualIndex = profiles.findIndex((item) => item.id === profile.id);
@@ -1123,6 +1123,8 @@ function removeRuntimeProfileArgument(id: string, argIndex: string) {
 function deleteRuntimeProfile(id: string) {
   const index = Number(id.slice('custom-'.length)) - 1;
   if (!Number.isInteger(index) || !runtimeProfileDraft[index]) return;
+  const preferences = removeCustomProfileDisplayPreference({ names: runtimeProfileDisplayNames, order: runtimeProfileDisplayOrder }, index);
+  runtimeProfileDisplayNames = preferences.names; runtimeProfileDisplayOrder = preferences.order; saveRuntimeProfileDisplayPreferences();
   runtimeProfileDraft.splice(index, 1);
   selectedRuntimeProfileId = runtimeProfileDraft.length ? `custom-${Math.min(index + 1, runtimeProfileDraft.length)}` : '';
   markRuntimeProfilesDirty();
