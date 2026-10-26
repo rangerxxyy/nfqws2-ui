@@ -43,6 +43,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.list-toolbar-button:disabled');
   });
 
+  it('shows the actual nfqws2 argument variable under every profile heading', () => {
+    expect(panelSource).toContain("getRuntimeProfileConstructorTarget(profile)?.source");
+    expect(panelSource).toContain("Пользовательский профиль · ${argumentVariable}");
+    expect(panelSource).toContain("Штатная группа · ${argumentVariable}");
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");

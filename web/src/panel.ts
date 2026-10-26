@@ -599,7 +599,8 @@ function renderRuntimeProfiles() {
   const name = document.createElement('h2'); name.className = 'font-bold text-white'; name.textContent = `#${profile.index} ${profile.name}`;
   const profileWarnings = diagnoseProfileLuaArguments(profile.effectiveArgs ?? profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
   if (profileWarnings.length) { const warningBadge = document.createElement('span'); warningBadge.className = 'ml-2 inline-flex rounded-full bg-amber-500/15 px-2 py-0.5 align-middle text-[10px] font-semibold text-amber-300'; warningBadge.textContent = `${profileWarnings.length} предупреждений`; warningBadge.setAttribute('aria-label', profileWarnings.map((item) => item.message).join('. ')); name.append(warningBadge); }
-  const source = document.createElement('p'); source.className = 'mt-1 text-xs text-slate-400'; source.textContent = `${profile.editable ? 'Пользовательский профиль · NFQWS_ARGS_CUSTOM' : `Штатная группа · ${profile.source}`} · параметры передаются в nfqws2`;
+  const argumentVariable = profile.editable ? 'NFQWS_ARGS_CUSTOM' : getRuntimeProfileConstructorTarget(profile)?.source ?? profile.source;
+  const source = document.createElement('p'); source.className = 'mt-1 text-xs text-slate-400'; source.textContent = `${profile.editable ? `Пользовательский профиль · ${argumentVariable}` : `Штатная группа · ${argumentVariable}`} · параметры передаются в nfqws2`;
   const titleLine = document.createElement('div'); titleLine.className = 'flex flex-wrap items-center gap-2'; titleLine.append(name);
   const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'backup-action'; rename.textContent = '✎'; rename.setAttribute('aria-label', 'Изменить название профиля'); rename.title = 'Изменить название профиля'; rename.addEventListener('click', () => openRuntimeProfileRenameDialog(profile));
   titleLine.append(rename); title.append(titleLine, source); heading.append(title);
