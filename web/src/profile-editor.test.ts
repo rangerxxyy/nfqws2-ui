@@ -33,13 +33,18 @@ describe('profile builder choices', () => {
         { name: 'payload', syntax: '--payload=<type>', description: 'payload', global: false, takesValue: true },
         { name: 'hostlist', syntax: '--hostlist=<file>', description: 'domains', global: false, takesValue: true },
         { name: 'qnum', syntax: '--qnum=<n>', description: 'queue', global: true, takesValue: true },
+        { name: 'new', syntax: '--new[=<name>]', description: 'start profile', global: false, takesValue: false },
+        { name: 'name', syntax: '--name=<name>', description: 'profile name', global: false, takesValue: true },
+        { name: 'skip', syntax: '--skip', description: 'disable profile', global: false, takesValue: false },
         { name: 'debug', syntax: '--debug', description: 'debug mode', global: false, takesValue: false },
       ],
     });
     expect(choices.map((choice) => choice.value)).toEqual(expect.arrayContaining([
-      '--filter-l7=wireguard', '--payload=custom_payload', '--hostlist=', '--debug',
+      '--filter-l7=wireguard', '--payload=custom_payload', '--hostlist=', '--debug', '--skip',
     ]));
     expect(choices.some((choice) => choice.value.startsWith('--qnum'))).toBe(false);
+    expect(choices.some((choice) => choice.value.startsWith('--new'))).toBe(false);
+    expect(choices.some((choice) => choice.value.startsWith('--name='))).toBe(false);
   });
 });
 

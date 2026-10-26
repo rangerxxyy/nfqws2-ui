@@ -103,7 +103,9 @@ export function profileArgumentChoices(args: readonly string[], lists: readonly 
     for (const protocol of cli.l7) definitions.push({ group: 'Когда срабатывает · протокол', value: `--filter-l7=${protocol}`, label: `Протокол · ${protocol}` });
     for (const payload of cli.payloads) definitions.push({ group: 'Что делает · пакеты', value: `--payload=${payload}`, label: `Тип пакета · ${payload}` });
     for (const option of cli.options) {
-      if (option.global || option.name === 'filter-l7' || option.name === 'payload') continue;
+      // --new separates profiles and is rejected inside a profile body; --name
+      // already has a dedicated editor field and must not be duplicated here.
+      if (option.global || ['new', 'name', 'filter-l7', 'payload'].includes(option.name)) continue;
       const value = option.takesValue ? `--${option.name}=` : `--${option.name}`;
       definitions.push({ group: 'Параметры nfqws2 · остальные', value, label: `${option.syntax}${option.description ? ` · ${option.description}` : ''}` });
     }
