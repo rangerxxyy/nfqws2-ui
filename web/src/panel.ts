@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, profileArgumentChoices, profileOrderWarnings, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -563,14 +563,18 @@ function renderRuntimeProfiles() {
             if (hasValue) { const valueInput = document.createElement('input'); valueInput.type = 'text'; valueInput.className = 'min-w-8 max-w-36 bg-transparent text-blue-100 focus:outline-none'; valueInput.value = valueParts.join('='); valueInput.size = Math.min(20, Math.max(3, valueInput.value.length)); valueInput.setAttribute('aria-label', `Значение параметра ${key}`); valueInput.dataset.actionChange = 'setRuntimeProfileStepParameter'; valueInput.dataset.args = JSON.stringify([profile.id, String(argumentIndex), String(parameterIndex), { source: 'value' }]); chip.append(valueInput); }
             const removeParameter = document.createElement('button'); removeParameter.type = 'button'; removeParameter.dataset.actionClick = 'removeRuntimeProfileStepParameter'; removeParameter.dataset.args = JSON.stringify([profile.id, String(argumentIndex), String(parameterIndex)]); removeParameter.className = 'px-0.5 text-slate-400 hover:text-white'; removeParameter.textContent = '×'; removeParameter.setAttribute('aria-label', `Убрать параметр ${key}`); chip.append(removeParameter); parameterList.append(chip);
           });
-          const documentedOptions = getLuaProfileParameterOptions(functionInfo, runtimeProfileLuaStandardGroups);
+          const documentedOptions = getLuaProfileParameterOptions(functionInfo, runtimeProfileLuaStandardGroups, functionName);
           const knownParameterSelect = document.createElement('select'); knownParameterSelect.className = 'min-h-8 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'; knownParameterSelect.setAttribute('aria-label', 'Добавить документированный параметр');
-          const knownPlaceholder = document.createElement('option'); knownPlaceholder.value = ''; knownPlaceholder.textContent = '+ известный параметр'; knownParameterSelect.append(knownPlaceholder);
+          const knownPlaceholder = document.createElement('option'); knownPlaceholder.value = ''; knownPlaceholder.textContent = '+ параметр из каталога'; knownParameterSelect.append(knownPlaceholder);
           documentedOptions.forEach((definition) => { const parsed = parseLuaParameterOption(definition); if (!parsed || parameterParts.some((part) => part.split('=', 1)[0] === parsed.key)) return; const option = document.createElement('option'); option.value = definition; option.textContent = definition; knownParameterSelect.append(option); });
           knownParameterSelect.addEventListener('change', () => { const parsed = parseLuaParameterOption(knownParameterSelect.value); if (parsed) addRuntimeProfileStepParameter(profile.id, String(argumentIndex), parsed.value === null ? parsed.key : `${parsed.key}=${parsed.value}`); });
           const addParameterInput = document.createElement('input'); addParameterInput.type = 'text'; addParameterInput.className = 'min-h-7 min-w-36 max-w-52 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-200'; addParameterInput.placeholder = '+ вручную'; addParameterInput.setAttribute('aria-label', 'Новый параметр шага в формате key=value или флаг');
           const addParameter = document.createElement('button'); addParameter.type = 'button'; addParameter.className = 'backup-action'; addParameter.textContent = '+ параметр'; addParameter.addEventListener('click', () => { const value = addParameterInput.value.trim(); if (value) addRuntimeProfileStepParameter(profile.id, String(argumentIndex), value); });
-          parameterList.append(knownParameterSelect, addParameterInput, addParameter);
+          const parameterPicker = document.createElement('div'); parameterPicker.className = 'profile-parameter-picker'; parameterPicker.append(knownParameterSelect);
+          const manualParameter = document.createElement('details'); manualParameter.className = 'profile-manual-parameter';
+          const manualSummary = document.createElement('summary'); manualSummary.textContent = 'Свой параметр'; manualParameter.append(manualSummary);
+          const manualControls = document.createElement('div'); manualControls.className = 'flex flex-wrap items-center gap-1.5'; manualControls.append(addParameterInput, addParameter); manualParameter.append(manualControls);
+          parameterList.append(parameterPicker, manualParameter);
           content.append(functionSelect, description, parameterList);
           const luaHelp = getLuaProfileHelp(functionInfo, runtimeProfileLuaStandardGroups);
           if (luaHelp && functionInfo && (luaHelp.docs.length || luaHelp.arguments.length || luaHelp.fileArguments.length || luaHelp.standardGroups.length || luaHelp.required.length)) {
@@ -601,6 +605,25 @@ function renderRuntimeProfiles() {
       for (const index of indexes) {
         const argument = profile.args[index]!;
         if (!profile.editable) { const chip = document.createElement('span'); chip.className = 'max-w-full break-all rounded-md bg-slate-800 px-2 py-1 font-mono text-xs text-blue-200'; chip.textContent = argument; row.append(chip); continue; }
+        if (argument.startsWith('--filter-tcp=') || argument.startsWith('--filter-udp=') || argument.startsWith('--filter-l7=') || argument.startsWith('--filter-7=')) {
+          const filterType = argument.startsWith('--filter-tcp=') ? 'tcp' : argument.startsWith('--filter-udp=') ? 'udp' : 'protocol';
+          const filterEditor = document.createElement('div'); filterEditor.className = `profile-filter-editor profile-filter-editor-${filterType} flex min-w-0 flex-wrap items-center gap-1.5`;
+          const filterValues = profileFilterValues(argument);
+          filterValues.forEach((value, valueIndex) => {
+            const chip = document.createElement('span'); chip.className = 'profile-filter-token inline-flex items-center gap-1 rounded-full border px-2 py-1';
+            const token = document.createElement('input'); token.type = 'text'; token.value = value; token.size = Math.min(18, Math.max(3, value.length)); token.className = 'min-w-3 bg-transparent font-mono text-xs focus:outline-none'; token.setAttribute('aria-label', `${groupName}: значение ${value}`);
+            token.addEventListener('change', () => updateRuntimeProfileFilterValue(profile.id, String(index), String(valueIndex), token.value));
+            const removeValue = document.createElement('button'); removeValue.type = 'button'; removeValue.className = 'profile-filter-remove'; removeValue.textContent = '×'; removeValue.setAttribute('aria-label', `Убрать ${value}`); removeValue.addEventListener('click', () => removeRuntimeProfileFilterValue(profile.id, String(index), String(valueIndex)));
+            chip.append(token, removeValue); filterEditor.append(chip);
+          });
+          const addValue = document.createElement('input'); addValue.type = 'text'; addValue.className = 'profile-filter-add-input min-w-24 rounded-md border bg-slate-950 px-2 py-1 font-mono text-xs'; addValue.placeholder = filterType === 'protocol' ? '+ протокол' : '+ порт / диапазон'; addValue.setAttribute('aria-label', `Добавить значение: ${groupName}`);
+          const commitValue = () => { const value = addValue.value.trim(); if (!value) return; if (appendRuntimeProfileFilterValue(profile.id, String(index), value)) addValue.value = ''; };
+          addValue.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); commitValue(); } });
+          const addValueButton = document.createElement('button'); addValueButton.type = 'button'; addValueButton.className = 'profile-filter-add'; addValueButton.textContent = '+'; addValueButton.setAttribute('aria-label', `Добавить значение в ${groupName}`); addValueButton.addEventListener('click', commitValue);
+          filterEditor.append(addValue, addValueButton);
+          const removeArgument = document.createElement('button'); removeArgument.type = 'button'; removeArgument.className = 'profile-filter-remove-argument'; removeArgument.textContent = '×'; removeArgument.setAttribute('aria-label', `Удалить условие ${groupName}`); removeArgument.addEventListener('click', () => removeRuntimeProfileArgument(profile.id, String(index)));
+          row.append(filterEditor, removeArgument); continue;
+        }
         const field = document.createElement('div'); field.className = 'flex min-w-0 items-center gap-1 rounded-md bg-slate-800 p-1';
         const input = document.createElement('input'); input.type = 'text'; input.className = 'min-w-0 max-w-full bg-transparent px-1 font-mono text-xs text-blue-200 focus:outline-none'; input.value = argument; input.setAttribute('aria-label', `Параметр ${groupName}: ${argument}`); input.dataset.actionChange = 'updateRuntimeProfileArgument'; input.dataset.args = JSON.stringify([profile.id, String(index), { source: 'value' }]); input.size = Math.min(48, Math.max(16, argument.length));
         const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.actionClick = 'removeRuntimeProfileArgument'; remove.dataset.args = JSON.stringify([profile.id, String(index)]); remove.className = 'rounded px-1 text-slate-400 hover:bg-slate-700 hover:text-white'; remove.textContent = '×'; remove.setAttribute('aria-label', `Удалить параметр ${argument}`);
@@ -757,6 +780,29 @@ function updateRuntimeProfileArgument(id: string, argumentIndex: string, value: 
   const updated = replaceProfileArgument(args, position, value.trim());
   if (updated[position] === args[position] && value.trim() !== args[position]) return toast('Один параметр должен оставаться единым аргументом без shell-синтаксиса.', 'error');
   runtimeProfileDraft[index - 1] = updated; markRuntimeProfilesDirty();
+}
+function updateRuntimeProfileFilterValue(id: string, argumentIndex: string, valueIndex: string, value: string) {
+  if (!value.trim()) return removeRuntimeProfileFilterValue(id, argumentIndex, valueIndex);
+  const profileIndex = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const args = runtimeProfileDraft[profileIndex]; const current = args?.[position];
+  if (!args || !current) return;
+  const updated = updateProfileFilterValue(current, Number(valueIndex), value);
+  if (!updated) return toast('Значение фильтра должно быть одним элементом без запятых и shell-синтаксиса.', 'error');
+  args[position] = updated; markRuntimeProfilesDirty();
+}
+function removeRuntimeProfileFilterValue(id: string, argumentIndex: string, valueIndex: string) {
+  const profileIndex = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const args = runtimeProfileDraft[profileIndex]; const current = args?.[position];
+  if (!args || !current) return;
+  const updated = removeProfileFilterValue(current, Number(valueIndex));
+  if (updated) args[position] = updated;
+  else args.splice(position, 1);
+  markRuntimeProfilesDirty();
+}
+function appendRuntimeProfileFilterValue(id: string, argumentIndex: string, value: string): boolean {
+  const profileIndex = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const args = runtimeProfileDraft[profileIndex]; const current = args?.[position];
+  if (!args || !current) return false;
+  const updated = appendProfileFilterValue(current, value);
+  if (!updated) { toast('Введите одно значение без запятых и shell-синтаксиса.', 'error'); return false; }
+  args[position] = updated; markRuntimeProfilesDirty(); return true;
 }
 function addRuntimeProfileStepParameter(id: string, argumentIndex: string, parameter: string) {
   const index = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const current = runtimeProfileDraft[index]?.[position];

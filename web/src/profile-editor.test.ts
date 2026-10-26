@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { profileArgumentChoices, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('profile builder choices', () => {
   it('offers editable match conditions, list scopes, and ordered strategy steps', () => {
     const choices = profileArgumentChoices([], [{ id: 'youtube', path: '/opt/etc/nfqws2/lists/youtube.txt', readable: true, writable: true }]);
     expect(choices.map((choice) => choice.value)).toEqual(expect.arrayContaining([
-      '--filter-tcp=443', '--filter-udp=443', '--filter-l7=tls', '--hostlist=/opt/etc/nfqws2/lists/youtube.txt',
+      '--filter-tcp=80', '--filter-tcp=443', '--filter-tcp=8080', '--filter-udp=443', '--filter-l7=tls', '--filter-l7=http', '--filter-l7=quic', '--hostlist=/opt/etc/nfqws2/lists/youtube.txt',
       '--hostlist-exclude-domains=example.com', '--hostlist-domains=example.com', '--ipset-ip=192.0.2.1',
       '--payload=tls_client_hello', '--in-range=1', '--out-range=1', '--lua-desync=fake',
     ]));
@@ -25,11 +25,30 @@ describe('profile builder choices', () => {
   });
 });
 
+describe('profile filter tokens', () => {
+  it('edits and removes comma-separated filter values without changing the option', () => {
+    const argument = '--filter-tcp=80,443,8080';
+    expect(profileFilterValues(argument)).toEqual(['80', '443', '8080']);
+    expect(updateProfileFilterValue(argument, 1, '8443')).toBe('--filter-tcp=80,8443,8080');
+    expect(removeProfileFilterValue(argument, 1)).toBe('--filter-tcp=80,8080');
+    expect(removeProfileFilterValue('--filter-l7=tls', 0)).toBeNull();
+  });
+  it('appends nonempty values and rejects malformed filter arguments', () => {
+    expect(appendProfileFilterValue('--filter-l7=tls', 'http')).toBe('--filter-l7=tls,http');
+    expect(appendProfileFilterValue('--filter-tcp=443', '')).toBeNull();
+    expect(profileFilterValues('--filter-invalid=443')).toEqual([]);
+  });
+});
+
 describe('Lua profile parameter choices', () => {
   it('combines function, file, and standard-group parameters without duplicate keys', () => {
     const functionInfo = { name: 'fake', file: 'zapret.lua', docs: [], arguments: ['blob=<name>', 'repeats=2'], fileArguments: ['detect_host — hostname source'], standardGroups: ['general'], required: ['blob'] };
     const groups = [{ name: 'general', arguments: ['tcp_ack=-1000', 'repeats=4'] }];
-    expect(getLuaProfileParameterOptions(functionInfo, groups)).toEqual(['blob=<name>', 'repeats=2', 'detect_host — hostname source', 'tcp_ack=-1000']);
+    expect(getLuaProfileParameterOptions(functionInfo, groups)).toEqual(['blob=<name>', 'repeats=2', 'detect_host — hostname source', 'tcp_ack=-1000', 'strategy=1 — номер стратегии для circular']);
+  });
+  it('keeps supported parameter choices available for compatibility functions when Lua help is incomplete', () => {
+    const options = getLuaProfileParameterOptions(undefined, [], 'fakedsplit');
+    expect(options).toEqual(expect.arrayContaining(['strategy=1 — номер стратегии для circular', 'altorder=1 — поддерживается nfqws2', 'oob — поддерживается nfqws2', 'oob_data=0x00 — поддерживается nfqws2', 'nofake2 — поддерживается nfqws2']));
   });
 });
 

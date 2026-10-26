@@ -70,10 +70,13 @@ export function profileOrderWarnings(profiles: readonly (readonly string[])[]): 
 /** Returns safe starter values for the full profile rule: match conditions, scope and ordered actions. */
 export function profileArgumentChoices(args: readonly string[], lists: readonly NfqwsListSummary[]): ProfileArgumentChoice[] {
   const definitions: ProfileArgumentChoice[] = [
+    { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=80', label: 'TCP-порты · 80' },
     { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=443', label: 'TCP-порты · 443' },
+    { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=8080', label: 'TCP-порты · 8080' },
     { group: 'Когда срабатывает · транспорт', value: '--filter-udp=443', label: 'UDP-порты · 443' },
     { group: 'Когда срабатывает · протокол', value: '--filter-l7=tls', label: 'TLS' },
     { group: 'Когда срабатывает · протокол', value: '--filter-l7=http', label: 'HTTP' },
+    { group: 'Когда срабатывает · протокол', value: '--filter-l7=quic', label: 'QUIC' },
     { group: 'Для кого · домены', value: '--hostlist-domains=example.com', label: 'Домен · example.com' },
     { group: 'Для кого · домены', value: '--hostlist-exclude-domains=example.com', label: 'Исключить домен · example.com' },
     { group: 'Для кого · IP', value: '--ipset-ip=192.0.2.1', label: 'IP-адрес · 192.0.2.1' },
@@ -101,6 +104,40 @@ export function profileArgumentChoices(args: readonly string[], lists: readonly 
     // only hide an identical starter choice for the other argument kinds.
     return value.startsWith('--lua-desync=') || !args.includes(value);
   });
+}
+
+const PROFILE_FILTER_PREFIX = /^--filter-(?:tcp|udp|l7|7)=/;
+
+/** Returns comma-separated match values for TCP/UDP/L7 filters. */
+export function profileFilterValues(argument: string): string[] {
+  if (!PROFILE_FILTER_PREFIX.test(argument)) return [];
+  return argument.slice(argument.indexOf('=') + 1).split(',').map((value) => value.trim()).filter(Boolean);
+}
+
+function replaceProfileFilterValues(argument: string, values: readonly string[]): string | null {
+  if (!PROFILE_FILTER_PREFIX.test(argument) || values.some((value) => !value || /[,\s\0\r\n'"`$\\;&|]/.test(value))) return null;
+  return `${argument.slice(0, argument.indexOf('=') + 1)}${values.join(',')}`;
+}
+
+export function updateProfileFilterValue(argument: string, index: number, value: string): string | null {
+  const values = profileFilterValues(argument);
+  if (!Number.isInteger(index) || index < 0 || index >= values.length) return null;
+  values[index] = value.trim();
+  return replaceProfileFilterValues(argument, values);
+}
+
+export function removeProfileFilterValue(argument: string, index: number): string | null {
+  const values = profileFilterValues(argument);
+  if (!Number.isInteger(index) || index < 0 || index >= values.length) return null;
+  values.splice(index, 1);
+  return values.length ? replaceProfileFilterValues(argument, values) : null;
+}
+
+export function appendProfileFilterValue(argument: string, value: string): string | null {
+  const values = profileFilterValues(argument);
+  if (!values.length || !value.trim()) return null;
+  values.push(value.trim());
+  return replaceProfileFilterValues(argument, values);
 }
 
 export type ProfileLuaWarning = { argument: string; message: string };
@@ -142,17 +179,20 @@ export function getLuaProfileHelp(
 export function getLuaProfileParameterOptions(
   info: NfqwsLuaFunctionInfo | undefined,
   groups: readonly NfqwsLuaStandardGroup[],
+  selectedFunctionName = info?.name,
 ): string[] {
-  if (!info) return [];
-  const compatible = compatibilityLuaArguments[info.name] ?? {};
+  if (!info && !selectedFunctionName) return [];
+  const functionName = info?.name ?? selectedFunctionName!;
+  const compatible = compatibilityLuaArguments[functionName] ?? {};
   const definitions = [
-    ...info.arguments.filter((definition) => {
+    ...(info?.arguments ?? []).filter((definition) => {
       const option = parseLuaParameterOption(definition);
       return !(option && Object.hasOwn(compatible, option.key) && definition.includes('обнаружен в коде функции'));
     }),
-    ...(info.fileArguments ?? []),
-    ...groups.filter((group) => info.standardGroups.includes(group.name)).flatMap((group) => group.arguments),
-    ...Object.entries(compatibilityLuaArguments[info.name] ?? {}).map(([key, value]) => `${value === null ? key : `${key}=${value}`} — поддерживается nfqws2`),
+    ...(info?.fileArguments ?? []),
+    ...groups.filter((group) => info?.standardGroups.includes(group.name)).flatMap((group) => group.arguments),
+    'strategy=1 — номер стратегии для circular',
+    ...Object.entries(compatible).map(([key, value]) => `${value === null ? key : `${key}=${value}`} — поддерживается nfqws2`),
   ];
   const seen = new Set<string>();
   return definitions.filter((definition) => {

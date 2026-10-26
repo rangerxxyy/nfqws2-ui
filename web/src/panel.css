@@ -1372,3 +1372,17 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 @media (prefers-reduced-motion: reduce) {
   .styled-select-menu, .styled-select-menu[data-closing='true'], #toastWrapper > * { animation: none; }
 }
+
+/* Profile filters are edited as separate chips, matching Zemidala's constructor. */
+.profile-filter-editor-tcp .profile-filter-token { border-color:#38bdf866; background:#082f494d; color:#bae6fd; }
+.profile-filter-editor-udp .profile-filter-token { border-color:#2dd4bf66; background:#042f2e66; color:#99f6e4; }
+.profile-filter-editor-protocol .profile-filter-token { border-color:#a78bfa66; background:#2e106566; color:#ddd6fe; }
+.profile-filter-add-input { border-color:#334155; color:#e2e8f0; transition:border-color .15s ease,box-shadow .15s ease; }
+.profile-filter-add-input:focus { border-color:#38bdf8; outline:none; box-shadow:0 0 0 2px #38bdf833; }
+.profile-filter-remove,.profile-filter-remove-argument { color:#94a3b8; transition:color .15s ease,background .15s ease; }
+.profile-filter-remove:hover,.profile-filter-remove-argument:hover { color:#fca5a5; }
+.profile-filter-add { width:1.8rem; height:1.8rem; border:1px solid #2dd4bf66; border-radius:.5rem; color:#5eead4; font-weight:700; transition:background .15s ease,transform .15s ease; }
+.profile-filter-add:hover { background:#0f766e44; transform:scale(1.04); }
+.profile-manual-parameter { min-width:0; }
+.profile-manual-parameter summary { cursor:pointer; color:#94a3b8; font-size:.72rem; }
+.profile-parameter-picker { width:min(100%,25rem); }
