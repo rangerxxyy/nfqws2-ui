@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { diagnoseProfileLuaArguments, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -310,6 +310,7 @@ let runtimeProfilesState: NfqwsProfilesResponse | null = null;
 let runtimeProfileLuaCatalog: NfqwsLuaFunctionInfo[] = [];
 let runtimeProfileLuaStandardGroups: NfqwsLuaStandardGroup[] = [];
 let runtimeProfileLuaCatalogAvailable = false;
+let draggedRuntimeProfileStep: { profileId: string; index: number } | null = null;
 let runtimeProfileDraft: string[][] = [];
 let profileListInventory: NfqwsListSummary[] = [];
 let selectedRuntimeProfileId = '';
@@ -520,17 +521,19 @@ function renderRuntimeProfiles() {
           const argument = profile.args[argumentIndex] ?? '';
           if (!argument.startsWith('--lua-desync=')) {
             const label = argument.startsWith('--payload=') ? 'Типы пакетов' : argument.startsWith('--out-range=') ? 'Исходящие пакеты' : 'Входящие пакеты';
-            const row = document.createElement('div'); row.className = 'grid gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 sm:grid-cols-[2rem_minmax(0,1fr)_auto] sm:items-center';
+            const row = document.createElement('div'); row.className = 'profile-step-row grid gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 sm:grid-cols-[1rem_2rem_minmax(0,1fr)_auto] sm:items-center';
+            const grip = createProfileStepGrip(profile.id, stepIndex); bindProfileStepDrop(row, profile.id, stepIndex);
             const badge = document.createElement('span'); badge.className = 'grid h-6 w-6 place-items-center rounded-md bg-slate-800 text-xs font-bold text-slate-300'; badge.textContent = label === 'Типы пакетов' ? 'P' : 'R';
             const input = document.createElement('input'); input.type = 'text'; input.className = 'min-w-0 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-blue-200'; input.value = argument; input.setAttribute('aria-label', `${label}, шаг ${stepIndex + 1}`); input.dataset.actionChange = 'updateRuntimeProfileArgument'; input.dataset.args = JSON.stringify([profile.id, String(argumentIndex), { source: 'value' }]);
             const controls = document.createElement('div'); controls.className = 'flex items-center gap-1';
             for (const [direction, text, accessible] of [['up', '↑', 'Переместить шаг выше'], ['down', '↓', 'Переместить шаг ниже']] as const) { const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'moveRuntimeProfileStep'; button.dataset.args = JSON.stringify([profile.id, String(stepIndex), direction]); button.className = 'backup-action'; button.textContent = text; button.setAttribute('aria-label', accessible); button.disabled = direction === 'up' ? stepIndex === 0 : stepIndex === indexes.length - 1; controls.append(button); }
             const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.actionClick = 'removeRuntimeProfileArgument'; remove.dataset.args = JSON.stringify([profile.id, String(argumentIndex)]); remove.className = 'backup-action'; remove.textContent = '×'; remove.setAttribute('aria-label', `Удалить шаг ${stepIndex + 1}`); controls.append(remove);
-            row.append(badge, input, controls); section.append(row); return;
+            row.append(grip, badge, input, controls); section.append(row); return;
           }
           const body = argument.slice('--lua-desync='.length);
           const [functionName = ''] = body.split(':');
-          const row = document.createElement('div'); row.className = 'grid gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 sm:grid-cols-[2rem_minmax(0,1fr)_auto] sm:items-start';
+          const row = document.createElement('div'); row.className = 'profile-step-row grid gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 sm:grid-cols-[1rem_2rem_minmax(0,1fr)_auto] sm:items-start';
+          const grip = createProfileStepGrip(profile.id, stepIndex); bindProfileStepDrop(row, profile.id, stepIndex);
           const badge = document.createElement('span'); badge.className = 'grid h-6 w-6 place-items-center rounded-md bg-blue-500/15 text-xs font-bold text-blue-200'; badge.textContent = String(stepIndex + 1);
           const content = document.createElement('div'); content.className = 'grid min-w-0 gap-1.5';
           const functionSelect = document.createElement('select'); functionSelect.className = 'min-h-8 w-full max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-semibold text-emerald-300';
@@ -563,7 +566,7 @@ function renderRuntimeProfiles() {
             const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'moveRuntimeProfileStep'; button.dataset.args = JSON.stringify([profile.id, String(stepIndex), direction]); button.className = 'backup-action'; button.textContent = label; button.setAttribute('aria-label', accessible); button.dataset.actionTooltip = accessible; button.disabled = direction === 'up' ? stepIndex === 0 : stepIndex === indexes.length - 1; controls.append(button);
           }
           const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.actionClick = 'removeRuntimeProfileArgument'; remove.dataset.args = JSON.stringify([profile.id, String(argumentIndex)]); remove.className = 'backup-action'; remove.textContent = '×'; remove.setAttribute('aria-label', `Удалить шаг ${stepIndex + 1}`); remove.dataset.actionTooltip = 'Удалить этот шаг desync'; controls.append(remove);
-          row.append(badge, content, controls); section.append(row);
+          row.append(grip, badge, content, controls); section.append(row);
         });
         const addStep = document.createElement('select'); addStep.className = 'min-h-8 w-full max-w-xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200'; addStep.setAttribute('aria-label', 'Добавить шаг стратегии');
         const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ добавить шаг'; addStep.append(placeholder);
@@ -691,6 +694,26 @@ function updateRuntimeProfileStep(id: string, argumentIndex: string, update: (ar
   const updated = update(args[position]!);
   if (updated === args[position]) return;
   args[position] = updated; markRuntimeProfilesDirty();
+}
+function createProfileStepGrip(profileId: string, index: number) {
+  const grip = document.createElement('span'); grip.className = 'profile-step-grip'; grip.textContent = '⋮⋮'; grip.draggable = true; grip.setAttribute('aria-hidden', 'true');
+  grip.addEventListener('dragstart', (event) => { draggedRuntimeProfileStep = { profileId, index }; if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(index)); } });
+  grip.addEventListener('dragend', () => { draggedRuntimeProfileStep = null; document.querySelectorAll('.profile-step-row.is-drop-target').forEach((row) => row.classList.remove('is-drop-target')); });
+  return grip;
+}
+function bindProfileStepDrop(row: HTMLElement, profileId: string, targetIndex: number) {
+  row.addEventListener('dragover', (event) => { if (draggedRuntimeProfileStep?.profileId !== profileId) return; event.preventDefault(); row.classList.add('is-drop-target'); });
+  row.addEventListener('dragleave', (event) => { if (!row.contains(event.relatedTarget as Node | null)) row.classList.remove('is-drop-target'); });
+  row.addEventListener('drop', (event) => {
+    event.preventDefault(); row.classList.remove('is-drop-target');
+    if (draggedRuntimeProfileStep?.profileId !== profileId) return;
+    moveRuntimeProfileStepTo(profileId, draggedRuntimeProfileStep.index, targetIndex); draggedRuntimeProfileStep = null;
+  });
+}
+function moveRuntimeProfileStepTo(id: string, from: number, to: number) {
+  const index = Number(id.slice('custom-'.length)) - 1;
+  if (!Number.isInteger(index) || index < 0 || !runtimeProfileDraft[index]) return;
+  runtimeProfileDraft[index] = moveProfileStepTo(runtimeProfileDraft[index]!, from, to); markRuntimeProfilesDirty();
 }
 function renameRuntimeProfile(id: string, name: string) {
   const index = Number(id.slice('custom-'.length)) - 1; const args = runtimeProfileDraft[index];

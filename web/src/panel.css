@@ -1321,6 +1321,11 @@ input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .55; }
 .strategy-multi-domain-result strong { color:#5eead4; font-variant-numeric:tabular-nums; }
 @media (max-width:640px) { .strategy-multi-target-panel { margin-left:0; } .strategy-target-mode-switch { width:100%; } .strategy-target-mode-switch button { flex:1; } }
 
+.profile-step-grip { display:flex; width:1rem; align-items:center; justify-content:center; color:#64748b; cursor:grab; user-select:none; font-size:.8rem; letter-spacing:-.2rem; touch-action:none; }
+.profile-step-grip:active { cursor:grabbing; }
+.profile-step-grip:focus-visible { outline:2px solid var(--accent-border,#60a5fa); outline-offset:2px; border-radius:.2rem; }
+.profile-step-row.is-drop-target { border-color:var(--accent-border,#60a5fa); background-color:color-mix(in srgb,var(--accent-color,#3b82f6) 9%,transparent); }
+
 /* v0.6.0: keep the XKeen-matched Inter typography and shared controls readable. */
 html {
   font-family: 'Inter Variable', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;

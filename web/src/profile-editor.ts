@@ -55,6 +55,22 @@ export function reorderProfileSteps(args: readonly string[], stepIndex: number, 
   return result;
 }
 
+export function moveProfileStepTo(args: readonly string[], fromIndex: number, toIndex: number): string[] {
+  const isOrderedStep = (argument: string) => argument.startsWith('--lua-desync=')
+    || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=');
+  const positions = args.flatMap((argument, index) => isOrderedStep(argument) ? [index] : []);
+  if (![fromIndex, toIndex].every(Number.isInteger) || fromIndex < 0 || toIndex < 0 || fromIndex >= positions.length || toIndex >= positions.length) return [...args];
+  const result = [...args];
+  const direction = fromIndex < toIndex ? 1 : -1;
+  for (let index = fromIndex; index !== toIndex; index += direction) {
+    const positionsNow = result.flatMap((argument, position) => isOrderedStep(argument) ? [position] : []);
+    const from = positionsNow[index]; const to = positionsNow[index + direction];
+    if (from === undefined || to === undefined) return [...args];
+    [result[from], result[to]] = [result[to]!, result[from]!];
+  }
+  return result;
+}
+
 export function replaceDesyncFunction(argument: string, functionName: string): string {
   const prefix = '--lua-desync=';
   if (!argument.startsWith(prefix) || !/^[a-zA-Z0-9_-]+$/.test(functionName)) return argument;

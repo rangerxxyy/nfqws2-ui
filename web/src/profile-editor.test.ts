@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { diagnoseProfileLuaArguments, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 
 describe('reorderProfileSteps', () => {
+  it('moves a dragged step across several ordered steps without shifting unrelated arguments', () => {
+    const args = ['--filter-tcp=443', '--lua-desync=fake', '--new-flag', '--payload=tls_client_hello', '--lua-desync=multisplit:pos=1'];
+    expect(moveProfileStepTo(args, 0, 2)).toEqual(['--filter-tcp=443', '--payload=tls_client_hello', '--new-flag', '--lua-desync=multisplit:pos=1', '--lua-desync=fake']);
+    expect(moveProfileStepTo(args, 2, 1)).toEqual(['--filter-tcp=443', '--lua-desync=fake', '--new-flag', '--lua-desync=multisplit:pos=1', '--payload=tls_client_hello']);
+  });
   it('moves ordered payload and desync steps while leaving filters in place', () => {
     const args = ['--filter-tcp=443', '--lua-desync=fake', '--payload=tls_client_hello', '--lua-desync=multisplit:pos=1'];
 
