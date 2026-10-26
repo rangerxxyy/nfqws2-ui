@@ -1734,15 +1734,20 @@ async fn probe_mode(
 ) -> Result<(Option<u16>, Option<u64>, String, Option<String>), String> {
     match mode {
         TraceProbeMode::PaddedHead => probe_padded_head(host, address, cancel).await,
-        TraceProbeMode::Transfer(path) => {
+        TraceProbeMode::Transfer(path, allow_upload_probe) => {
             let mut attempts = Vec::with_capacity(2);
             let mut expected_bytes = None;
             for _ in 0..2 {
                 if cancel.load(Ordering::Acquire) {
                     return Err("Проверка передачи отменена".into());
                 }
-                let parsed = crate::transfer_diagnostic::probe_transfer_at_path(
-                    host, address, path, false, cancel,
+                let parsed = crate::transfer_diagnostic::probe_transfer_at_path_with_upload_probe(
+                    host,
+                    address,
+                    path,
+                    false,
+                    *allow_upload_probe,
+                    cancel,
                 )
                 .await?;
                 expected_bytes = parsed.expected_bytes.or(expected_bytes);
@@ -1785,7 +1790,7 @@ async fn probe_mode(
 enum TraceProbeMode {
     Http(String),
     PaddedHead,
-    Transfer(String),
+    Transfer(String, bool),
 }
 
 pub async fn run(
@@ -1944,7 +1949,7 @@ pub async fn run_transfer_target(
 ) -> TraceReport {
     run_inner(
         host,
-        TraceProbeMode::Transfer(path),
+        TraceProbeMode::Transfer(path, false),
         Some(address),
         args,
         binary,
@@ -1965,9 +1970,32 @@ pub async fn run_transfer_target_with_baseline(
     baseline_ok: bool,
     cancel: Arc<AtomicBool>,
 ) -> TraceReport {
+    run_transfer_target_with_baseline_and_upload_probe(
+        host,
+        address,
+        path,
+        args,
+        binary,
+        baseline_ok,
+        false,
+        cancel,
+    )
+    .await
+}
+
+pub async fn run_transfer_target_with_baseline_and_upload_probe(
+    host: String,
+    address: Ipv4Addr,
+    path: String,
+    args: Vec<String>,
+    binary: String,
+    baseline_ok: bool,
+    allow_upload_probe: bool,
+    cancel: Arc<AtomicBool>,
+) -> TraceReport {
     run_inner(
         host,
-        TraceProbeMode::Transfer(path),
+        TraceProbeMode::Transfer(path, allow_upload_probe),
         Some(address),
         args,
         binary,

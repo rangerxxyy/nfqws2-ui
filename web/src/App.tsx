@@ -1177,6 +1177,7 @@ export default function App() {
               <button data-action-click={"runFreezeScan"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Запустить пробу</button>
               <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>Остановить</button>
             </div>
+            <label className={"flex items-start gap-2 text-xs text-slate-300"}><input id={"freezeScanUploadProbe"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} /><span><strong>Дополнительно проверить короткие ответы POST-запросом до 64 КБ</strong><small className={"mt-1 block text-slate-400"}>Только для введённых вами доменов: сервер получит тестовое тело и может его обработать. Отказ POST будет отмечен отдельно и сам по себе не доказывает обрыв передачи.</small></span></label>
             <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
             <div id={"freezeScanProgress"} className={"hidden rounded-xl border border-blue-400/25 bg-blue-500/5 p-4"} role={"status"} aria-live={"polite"}>
               <div className={"flex items-center justify-between gap-3"}>

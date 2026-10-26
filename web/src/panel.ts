@@ -3328,7 +3328,7 @@ function renderFreezeScan(operation: FreezeScanOperation) {
   head.append(headerRow); table.append(head);
   const body = document.createElement('tbody'); body.className = 'divide-y divide-slate-800 text-slate-200';
   for (const [resultIndex, result] of operation.results.entries()) {
-    const presentation = freezeRowPresentation({ freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, directOk: result.direct.ok, currentOk: result.current.ok });
+    const presentation = freezeRowPresentation({ freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, directOk: result.direct.ok, currentOk: result.current.ok, directClassification: result.direct.classification, currentClassification: result.current.classification });
     const row = document.createElement('tr'); row.className = `freeze-result-row freeze-result-${presentation.tone} align-top hover:bg-slate-900/50`;
     row.dataset.resultTone = presentation.tone;
     const cells = [
@@ -3408,6 +3408,8 @@ async function startFreezeScan() {
   const input = $('#freezeScanHostsInput');
   if (!(input instanceof HTMLInputElement)) return;
   const extraHosts = input.value.split(',').map((host) => host.trim()).filter(Boolean);
+  const uploadProbe = $('#freezeScanUploadProbe');
+  const probeShortUploads = uploadProbe instanceof HTMLInputElement && uploadProbe.checked;
   if (extraHosts.length > 20) return toast('Можно добавить не более 20 своих доменов.', 'error');
   const results = $('#freezeScanResults');
   results?.replaceChildren();
@@ -3416,7 +3418,7 @@ async function startFreezeScan() {
   const applyButton = $('#applyFreezeStrategyButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   if (results) delete results.dataset.resultsSignature;
   $('#freezeScanSummary')?.classList.add('hidden');
-  try { const operation = await nfqwsDiagnostics.freezeScanStart(extraHosts); localStorage.setItem('nfqws2-ui-freeze-scan', operation.id); await pollFreezeScan(operation.id); }
+  try { const operation = await nfqwsDiagnostics.freezeScanStart(extraHosts, probeShortUploads); localStorage.setItem('nfqws2-ui-freeze-scan', operation.id); await pollFreezeScan(operation.id); }
   catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить проверку сетей', 'error'); }
 }
 

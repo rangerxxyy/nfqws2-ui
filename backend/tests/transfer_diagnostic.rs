@@ -1,7 +1,8 @@
 use nfqws2_ui::transfer_diagnostic::{
     TransferAttempt, TransferClass, assemble_curl_args, assemble_curl_args_for_path,
-    classify_transfer, parse_curl_attempt, should_probe_boundary_stall, should_probe_upload_stall,
-    successful_http_response, upload_stall_confirmed,
+    classify_transfer, parse_curl_attempt, should_probe_boundary_stall,
+    should_probe_short_upload_for_target, should_probe_upload_stall, successful_http_response,
+    upload_stall_confirmed,
 };
 use std::net::IpAddr;
 
@@ -199,6 +200,40 @@ fn upload_stall_probe_is_limited_to_known_static_download_endpoints() {
     assert!(!should_probe_upload_stall("proof.ovh.net", "/"));
     assert!(!should_probe_upload_stall("proof.ovh.net", "/api/action"));
     assert!(should_probe_upload_stall("proof.ovh.net", "/files/1Mb.dat"));
+}
+
+#[test]
+fn user_host_upload_probe_requires_explicit_opt_in_and_user_target() {
+    assert!(!should_probe_short_upload_for_target(
+        "dns.quad9.net",
+        "/",
+        true,
+        false
+    ));
+    assert!(!should_probe_short_upload_for_target(
+        "dns.quad9.net",
+        "/",
+        false,
+        true
+    ));
+    assert!(should_probe_short_upload_for_target(
+        "dns.quad9.net",
+        "/",
+        true,
+        true
+    ));
+    assert!(should_probe_short_upload_for_target(
+        "proof.ovh.net",
+        "/files/1Mb.dat",
+        false,
+        false
+    ));
+    assert!(!should_probe_short_upload_for_target(
+        "proof.ovh.net",
+        "/",
+        true,
+        false
+    ));
 }
 
 #[test]

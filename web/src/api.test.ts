@@ -75,11 +75,11 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'running', stage: 'baseline', current: 'Hetzner' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ ...operation, state: 'stopping', stage: 'cleanup' }), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
-    const started = await nfqwsDiagnostics.freezeScanStart(['example.com']);
+    const started = await nfqwsDiagnostics.freezeScanStart(['example.com'], true);
     expect(await nfqwsDiagnostics.freezeScanStatus(started.id)).toMatchObject({ state: 'running', current: 'Hetzner' });
     expect(await nfqwsDiagnostics.freezeScanCancel(started.id)).toMatchObject({ state: 'stopping' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/freeze-scan');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ extraHosts: ['example.com'] });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ extraHosts: ['example.com'], probeShortUploads: true });
     expect(fetchMock.mock.calls[1]?.[0]).toBe(`/api/nfqws2/diagnostics/freeze-scan/operations/${started.id}`);
     expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/nfqws2/diagnostics/freeze-scan/operations/${started.id}/cancel`);
   });

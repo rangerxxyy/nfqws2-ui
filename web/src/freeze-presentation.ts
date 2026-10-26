@@ -1,4 +1,4 @@
-export type FreezeRowFacts = { freezeDetected: boolean; foundStrategy: { reusedFrom?: string | null } | null; directOk: boolean; currentOk: boolean };
+export type FreezeRowFacts = { freezeDetected: boolean; foundStrategy: { reusedFrom?: string | null } | null; directOk: boolean; currentOk: boolean; directClassification?: string; currentClassification?: string };
 export type FreezeRowTone = 'error' | 'success' | 'warning' | 'neutral';
 
 export function freezeMeasurementDetails(direct: string, current: string): string {
@@ -8,6 +8,7 @@ export function freezeMeasurementDetails(direct: string, current: string): strin
 export function freezeRowPresentation(facts: FreezeRowFacts): { tone: FreezeRowTone; label: string } {
   if (facts.foundStrategy?.reusedFrom) return { tone: 'warning', label: 'Совпадение в той же AS' };
   if (facts.foundStrategy) return { tone: 'success', label: 'Стратегия найдена' };
+  if (facts.directClassification === 'PossibleUploadStall' || facts.currentClassification === 'PossibleUploadStall') return { tone: 'warning', label: 'POST не завершился' };
   if (facts.freezeDetected) return { tone: 'error', label: 'Возможный обрыв' };
   if (facts.directOk && facts.currentOk) return { tone: 'success', label: 'Ответ получен' };
   return { tone: 'neutral', label: 'Результат не подтверждён' };

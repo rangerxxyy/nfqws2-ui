@@ -584,6 +584,8 @@ fn update_freeze_scan_progress(
 struct FreezeScanRequest {
     #[serde(default)]
     extra_hosts: Vec<String>,
+    #[serde(default)]
+    probe_short_uploads: bool,
 }
 
 const MAX_SITE_TRACE_STATE_BYTES: usize = 512 * 1024;
@@ -8192,8 +8194,10 @@ async fn start_freeze_scan(
         let scan_args = active_args;
         let scan_functions = functions;
         let scan_blobs = blobs;
+        let probe_short_uploads = request.probe_short_uploads;
         let result = freeze_diagnostic::scan_network_baselines(
             &request.extra_hosts,
+            probe_short_uploads,
             cancel.clone(),
             scan_args,
             binary,
@@ -11487,6 +11491,17 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn freeze_scan_upload_probe_is_opt_in_and_backward_compatible() {
+        let disabled: super::FreezeScanRequest =
+            serde_json::from_str(r#"{"extraHosts":["example.com"]}"#).unwrap();
+        assert!(!disabled.probe_short_uploads);
+        let enabled: super::FreezeScanRequest =
+            serde_json::from_str(r#"{"extraHosts":["example.com"],"probeShortUploads":true}"#)
+                .unwrap();
+        assert!(enabled.probe_short_uploads);
+    }
+
     use super::*;
 
     #[test]

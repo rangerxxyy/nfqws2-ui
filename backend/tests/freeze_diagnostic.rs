@@ -189,13 +189,10 @@ fn timeout_is_possible_not_proven_and_still_triggers_candidate_search() {
             assert!(!is_freeze_classification(inconclusive));
         }
     }
-    for confirmed_signal in [
-        "PossibleFreeze",
-        "PossibleBoundaryStall",
-        "PossibleUploadStall",
-    ] {
+    for confirmed_signal in ["PossibleFreeze", "PossibleBoundaryStall"] {
         assert!(is_freeze_classification(confirmed_signal));
     }
+    assert!(!is_freeze_classification("PossibleUploadStall"));
 }
 
 #[test]

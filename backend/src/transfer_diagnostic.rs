@@ -37,6 +37,15 @@ pub fn should_probe_upload_stall(host: &str, request_path: &str) -> bool {
     })
 }
 
+pub fn should_probe_short_upload_for_target(
+    host: &str,
+    request_path: &str,
+    user_host: bool,
+    explicitly_enabled: bool,
+) -> bool {
+    should_probe_upload_stall(host, request_path) || (user_host && explicitly_enabled)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTransferAttempt {
     pub attempt: TransferAttempt,
@@ -366,7 +375,12 @@ impl Drop for ScratchDir {
     }
 }
 
-async fn curl_attempt(host: &str, ip: Ipv4Addr, request_path: &str) -> ParsedTransferAttempt {
+async fn curl_attempt(
+    host: &str,
+    ip: Ipv4Addr,
+    request_path: &str,
+    allow_user_upload_probe: bool,
+) -> ParsedTransferAttempt {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -433,8 +447,12 @@ async fn curl_attempt(host: &str, ip: Ipv4Addr, request_path: &str) -> ParsedTra
         &header_bytes,
         started.elapsed().as_millis() as u64,
     );
-    if should_probe_upload_stall(host, request_path)
-        && parsed.attempt.transport_error.is_none()
+    if should_probe_short_upload_for_target(
+        host,
+        request_path,
+        allow_user_upload_probe,
+        allow_user_upload_probe,
+    ) && parsed.attempt.transport_error.is_none()
         && parsed.attempt.bytes_received < SMALL_RESPONSE_BYTES
         && parsed
             .attempt
@@ -574,6 +592,18 @@ pub async fn probe_transfer_at_path(
     direct: bool,
     cancel: &AtomicBool,
 ) -> Result<ParsedTransferAttempt, String> {
+    probe_transfer_at_path_with_upload_probe(host, address, request_path, direct, false, cancel)
+        .await
+}
+
+pub async fn probe_transfer_at_path_with_upload_probe(
+    host: &str,
+    address: Ipv4Addr,
+    request_path: &str,
+    direct: bool,
+    allow_user_upload_probe: bool,
+    cancel: &AtomicBool,
+) -> Result<ParsedTransferAttempt, String> {
     if cancel.load(Ordering::Acquire) || !public_ip(IpAddr::V4(address)) {
         return Err("Проверка отменена или адрес не является публичным".into());
     }
@@ -586,7 +616,7 @@ pub async fn probe_transfer_at_path(
     {
         return Err("Путь проверки должен быть безопасным относительным URL-путём".into());
     }
-    let probe = curl_attempt(&host, address, request_path);
+    let probe = curl_attempt(&host, address, request_path, allow_user_upload_probe);
     let attempt = if direct {
         bypass_probe(address, 443, ProbeTransport::Tcp, probe).await?
     } else {

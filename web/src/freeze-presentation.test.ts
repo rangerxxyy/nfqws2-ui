@@ -18,6 +18,11 @@ describe('freeze scan row presentation', () => {
     expect(freezeRowPresentation({ freezeDetected: false, foundStrategy: null, directOk: false, currentOk: true }).tone).toBe('neutral');
   });
 
+  it('reports an incomplete POST separately from a 16 KB transfer interruption', () => {
+    expect(freezeRowPresentation({ freezeDetected: false, foundStrategy: null, directOk: true, currentOk: true, directClassification: 'PossibleUploadStall', currentClassification: 'Complete' }))
+      .toEqual({ tone: 'warning', label: 'POST не завершился' });
+  });
+
   it('allows applying only a confirmed strategy from an explicit user-host check', () => {
     expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(true);
     expect(freezeCanApplyToHost({ state: 'running', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(true);

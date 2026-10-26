@@ -408,13 +408,10 @@ pub fn network_has_freeze(attempts: &[TransferAttempt], expected_bytes: Option<u
 }
 
 /// A successful connection or a timeout before any HTTP response does not
-/// establish a 16–20 KB transfer stall. Only an observed stall after response
-/// data (or the bounded upload-stall probe) is actionable evidence.
+/// establish a 16–20 KB transfer stall. Upload-probe timeouts are surfaced
+/// separately because an endpoint may simply reject POST requests.
 pub fn is_freeze_classification(classification: &str) -> bool {
-    matches!(
-        classification,
-        "PossibleFreeze" | "PossibleBoundaryStall" | "PossibleUploadStall"
-    )
+    matches!(classification, "PossibleFreeze" | "PossibleBoundaryStall")
 }
 
 /// A transfer timeout is a possible freeze signal that should receive a
@@ -616,6 +613,7 @@ mod route_classification_tests {
         );
         assert_eq!(classification, "PossibleBoundaryStall");
         assert!(super::is_freeze_classification(classification));
+        assert!(!super::is_possible_freeze_signal("PossibleUploadStall"));
         assert_eq!(
             classify_current_route(
                 Some("TimeoutBeforeBody"),
@@ -933,6 +931,7 @@ async fn measure_target(
     target: &FreezeTarget,
     address: Ipv4Addr,
     direct: bool,
+    allow_upload_probe: bool,
     cancel: &AtomicBool,
 ) -> Result<FreezeMeasurement, String> {
     if target.kind == FreezeTargetKind::PinnedAddress {
@@ -949,11 +948,12 @@ async fn measure_target(
     let mut attempts = Vec::with_capacity(2);
     let mut expected_bytes = None;
     for _ in 0..2 {
-        let parsed = crate::transfer_diagnostic::probe_transfer_at_path(
+        let parsed = crate::transfer_diagnostic::probe_transfer_at_path_with_upload_probe(
             &target.host,
             address,
             &target.path,
             direct,
+            allow_upload_probe,
             cancel,
         )
         .await?;
@@ -997,6 +997,7 @@ async fn direct_tcp_reachable(address: Ipv4Addr, port: u16) -> bool {
 #[allow(clippy::too_many_arguments)]
 pub async fn scan_network_baselines(
     extra_hosts: &[String],
+    probe_short_uploads: bool,
     cancel: Arc<AtomicBool>,
     active_args: Vec<String>,
     binary: String,
@@ -1082,7 +1083,8 @@ pub async fn scan_network_baselines(
         progress(index, total, &target.label, &results);
         let asn_hint = target.asn_hint;
         let asn_task = tokio::spawn(async move { ripe_asn(address, asn_hint).await });
-        let direct = match measure_target(target, address, true, &cancel).await {
+        let allow_upload_probe = probe_short_uploads && target.kind == FreezeTargetKind::UserHost;
+        let direct = match measure_target(target, address, true, allow_upload_probe, &cancel).await {
             Ok(direct) => direct,
             Err(_) if cancel.load(Ordering::Acquire) => {
                 return Ok(FreezeScanOutcome { results, done: baseline_done, total, limited });
@@ -1122,13 +1124,14 @@ pub async fn scan_network_baselines(
             )
             .await
         } else {
-            crate::site_trace::run_transfer_target_with_baseline(
+            crate::site_trace::run_transfer_target_with_baseline_and_upload_probe(
                 target.host.clone(),
                 address,
                 target.path.clone(),
                 active_args.clone(),
                 binary.clone(),
                 direct.ok,
+                allow_upload_probe,
                 cancel.clone(),
             )
             .await
