@@ -223,6 +223,14 @@ describe('desync step editing', () => {
     expect(getLuaProfileParameterOptions(catalog[0], [])).toContain('repeats=2 — поддерживается nfqws2');
     expect(diagnoseProfileLuaArguments(['--lua-desync=fake:blob=fake_default_quic:repeats=6'], catalog)).toEqual([]);
   });
+  it('accepts the documented fakeddisorder position when older Lua comments omit it', () => {
+    const catalog = [{ name: 'fakeddisorder', file: 'zapret-auto.lua', docs: [], arguments: ['host=<str>'], fileArguments: [], standardGroups: [], required: [] }];
+    expect(getLuaProfileParameterOptions(catalog[0], [])).toContain('pos=midsld — поддерживается nfqws2');
+    expect(diagnoseProfileLuaArguments(['--lua-desync=fakeddisorder:pos=midsld'], catalog)).toEqual([]);
+    expect(diagnoseProfileLuaArguments(['--lua-desync=fakeddisorder:misspelled=1'], catalog)).toEqual([
+      { argument: '--lua-desync=fakeddisorder:misspelled=1', message: 'Неизвестный параметр «misspelled»' },
+    ]);
+  });
   it('keeps compatibility options scoped to functions and continues flagging misspellings', () => {
     const catalog = [
       { name: 'fakedsplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos=<marker>'], fileArguments: [], standardGroups: [], required: [] },

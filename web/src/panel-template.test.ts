@@ -569,6 +569,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('delete_snapshot_api');
     expect(panelSource).toContain('nfqwsProfiles.saveCustom(runtimeProfileDraft');
     expect(template).toContain('id="profileEditor"');
+    expect(panelStyles).toContain('#profileEditor { container-type:inline-size; }');
+    expect(panelStyles).toContain('@container (max-width: 920px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); }');
     expect(template).toContain('id="profileImportDialog"');
     expect(panelSource).toContain('runtimeProfileDraft.push');
     expect(panelSource).toContain('moveRuntimeProfileUp');

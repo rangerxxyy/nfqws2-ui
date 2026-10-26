@@ -1388,6 +1388,7 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 .profile-parameter-picker { width:min(100%,25rem); min-width:min(100%,20rem); flex:1 1 25rem; }
 @media (max-width:640px) { .profile-parameter-picker { min-width:100%; } }
 
+#profileEditor { container-type:inline-size; }
 .profile-editor-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(16rem,23rem); align-items:start; gap:1rem; }
 .profile-editor-main { min-width:0; }
 .profile-reference { position:sticky; top:1rem; max-height:calc(100vh - 2rem); overflow:auto; border:1px solid #263244; border-radius:.65rem; background:linear-gradient(155deg,#111a29,#0b111b); padding:.85rem; color:#cbd5e1; }
@@ -1413,3 +1414,5 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 .profile-choice-option code { color:#94a3b8; font-size:.68rem; overflow-wrap:anywhere; }
 .profile-choice-empty { padding:1.25rem .5rem; color:#94a3b8; font-size:.8rem; text-align:center; }
 @media (max-width:820px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); } .profile-reference { position:static; max-height:none; order:-1; } }
+/* The fixed sidebar reduces the editor width before the viewport reaches the mobile breakpoint. */
+@container (max-width: 920px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); } .profile-reference { position:static; max-height:none; order:-1; } }

@@ -178,7 +178,7 @@ export type LuaProfileHelp = {
 const compatibilityLuaArguments: Record<string, Readonly<Record<string, string | null>>> = {
   fake: { repeats: '2' },
   fakedsplit: { altorder: '1', nofake1: null, nofake2: null, nofake3: null, nofake4: null, oob: null, oob_data: '0x00' },
-  fakeddisorder: { altorder: '1', nofake1: null, nofake2: null, nofake3: null, nofake4: null, oob: null, oob_data: '0x00' },
+  fakeddisorder: { pos: 'midsld', altorder: '1', nofake1: null, nofake2: null, nofake3: null, nofake4: null, oob: null, oob_data: '0x00' },
   hostfakesplit: { altorder: '1', nofake1: null, nofake2: null, oob: null, oob_data: '0x00' },
 };
 
@@ -271,6 +271,7 @@ const luaArgumentDescriptionsRu: Readonly<Record<string, string>> = {
   ip_autottl: 'автоматически подобрать TTL для поддельного IP-пакета',
   midhost: 'указать имя сайта для подмены в середине запроса',
   nld: 'количество повторов стратегии без ответа',
+  pos: 'позиция или список позиций изменения/разделения пакета',
   nofake1: 'не отправлять поддельный пакет первого типа',
   nofake2: 'не отправлять поддельный пакет второго типа',
   nofake3: 'не отправлять поддельный пакет третьего типа',
@@ -278,7 +279,6 @@ const luaArgumentDescriptionsRu: Readonly<Record<string, string>> = {
   oob: 'передать байт вне основного потока TCP',
   oob_data: 'значение байта, передаваемого вне основного потока TCP',
   pattern: 'шаблон содержимого поддельного пакета',
-  pos: 'позиции разделения или изменения запроса',
   repeats: 'число повторов указанного действия, обычно отправки фейка',
   retrans: 'число повторных передач до переключения стратегии',
   seqovl: 'перекрыть часть номера последовательности',
