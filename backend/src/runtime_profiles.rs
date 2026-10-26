@@ -213,8 +213,8 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                 for body_line in lines.iter().skip(index + 1).take(4096) {
                     let trimmed_body_line = body_line.trim();
                     if body_line.len() == body_line.trim_start().len()
-                        && trimmed_body_line.starts_with("function ")
-                        && trimmed_body_line.contains("(ctx, desync)")
+                        && (trimmed_body_line.starts_with("function ")
+                            || trimmed_body_line.starts_with("local function "))
                     {
                         break;
                     }
@@ -598,6 +598,30 @@ mod tests {
                 "missing Lua key {key}"
             );
         }
+    }
+
+    #[test]
+    fn lua_catalog_does_not_leak_helper_parameters_into_the_previous_function() {
+        let source = "function first(ctx, desync)\n  local a = desync.arg.first_key\nend\nfunction helper()\n  local b = desync.arg.helper_key\nend\nfunction second(ctx, desync)\n  local c = desync.arg.second_key\nend\n";
+        let catalog = parse_lua_catalog("custom.lua", source);
+        assert!(
+            catalog[0]
+                .arguments
+                .iter()
+                .any(|item| item.starts_with("first_key"))
+        );
+        assert!(
+            !catalog[0]
+                .arguments
+                .iter()
+                .any(|item| item.starts_with("helper_key"))
+        );
+        assert!(
+            catalog[1]
+                .arguments
+                .iter()
+                .any(|item| item.starts_with("second_key"))
+        );
     }
 
     #[test]
