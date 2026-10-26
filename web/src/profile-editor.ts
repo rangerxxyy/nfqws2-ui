@@ -535,6 +535,11 @@ export function moveProfileStepTo(args: readonly string[], fromIndex: number, to
   return result;
 }
 
+export function profileStrategyNumbers(args: readonly string[]): Array<number | null> {
+  let number = 0;
+  return args.map((argument) => argument.startsWith('--lua-desync=') ? ++number : null);
+}
+
 export function replaceDesyncFunction(argument: string, functionName: string): string {
   const prefix = '--lua-desync=';
   if (!argument.startsWith(prefix) || !/^[a-zA-Z0-9_-]+$/.test(functionName)) return argument;

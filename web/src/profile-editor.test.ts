@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NfqwsArgumentProfile } from './api';
-import { appendArgumentToCustomProfile, appendProfileProtocol, appendProfileUdpFilter, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, prepareVisibleRuntimeProfiles, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, appendProfileProtocol, appendProfileUdpFilter, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, profileStrategyNumbers, parseLuaParameterOption, prepareVisibleRuntimeProfiles, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('adding strategy arguments to NFQWS_ARGS_CUSTOM profiles', () => {
   it('adds a strategy only to the selected profile between --new separators', () => {
@@ -266,6 +266,18 @@ describe('profile order warnings', () => {
 });
 
 describe('reorderProfileSteps', () => {
+  it('numbers only lua-desync strategies in configuration order', () => {
+    const args = [
+      '--payload=tls_client_hello',
+      '--lua-desync=circular:fails=2',
+      '--out-range=1',
+      '--lua-desync=hostfakesplit:strategy=2',
+    ];
+    expect(profileStrategyNumbers(args)).toEqual([null, 1, null, 2]);
+    const strategies = ['--lua-desync=circular', '--lua-desync=hostfakesplit'];
+    expect(profileStrategyNumbers(moveProfileStepTo(strategies, 0, 1))).toEqual([1, 2]);
+  });
+
   it('moves a dragged step across several ordered steps without shifting unrelated arguments', () => {
     const args = ['--filter-tcp=443', '--lua-desync=fake', '--new-flag', '--payload=tls_client_hello', '--lua-desync=multisplit:pos=1'];
     expect(moveProfileStepTo(args, 0, 2)).toEqual(['--filter-tcp=443', '--payload=tls_client_hello', '--new-flag', '--lua-desync=multisplit:pos=1', '--lua-desync=fake']);

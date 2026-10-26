@@ -43,6 +43,34 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.runtime-profile-mode-toggle::before');
   });
 
+  it('renders profile parameter chips with separate key, value, and remove styles', () => {
+    expect(panelSource).toContain("chip.className = 'profile-parameter-chip'");
+    expect(panelSource).toContain("keyLabel.className = 'profile-parameter-key'");
+    expect(panelSource).toContain('keyLabel.textContent = hasValue ? key : parameter');
+    expect(panelSource).not.toContain('`${key}=`');
+    expect(panelSource).toContain("valueInput.className = 'profile-parameter-value'");
+    expect(panelSource).toContain("removeParameter.className = 'profile-parameter-remove'");
+    expect(panelStyles).toContain('.profile-parameter-key');
+    expect(panelStyles).toContain('.profile-parameter-value');
+    expect(panelStyles).toContain('.profile-parameter-chip');
+    expect(panelStyles).toContain('background:linear-gradient(105deg,#211b30 0%,#1c2234 48%,#172734 100%)');
+    expect(panelStyles).toContain('background:linear-gradient(100deg,#26304844,#203c4a55)');
+  });
+
+  it('keeps strategy rows and long parameter chips within a responsive grid', () => {
+    expect(panelSource).toContain("content.className = 'profile-step-content'");
+    expect(panelSource).toContain("parameterList.className = 'profile-step-parameters'");
+    expect(panelSource).toContain("controls.className = 'profile-step-controls'");
+    expect(panelStyles).toContain('.profile-step-row { display:grid;');
+    expect(panelStyles).toContain('.profile-step-parameters { display:flex;');
+    expect(panelSource).toContain("row.classList.add('profile-builder-filter-group')");
+    expect(panelStyles).toContain('.profile-builder-filter-group { display:grid; grid-template-columns:minmax(5rem,auto) minmax(0,1fr) auto;');
+    expect(panelStyles).toContain('.profile-filter-remove-argument { flex:0 0 auto; align-self:center; }');
+    expect(panelStyles).toContain('.profile-filter-add-input { width:9.5rem; max-width:100%; flex:0 1 9.5rem;');
+    expect(panelStyles).toContain('overflow-wrap:anywhere');
+    expect(panelStyles).toContain('@media (max-width:640px)');
+  });
+
   it('uses shared UI button states in the list toolbar', () => {
     expect(template).toContain('list-toolbar-button list-toolbar-button-secondary');
     expect(template).toContain('list-toolbar-button list-toolbar-button-primary');
@@ -695,7 +723,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsProfiles.saveCustom(runtimeProfileDraft');
     expect(template).toContain('id="profileEditor"');
     expect(panelStyles).toContain('#profileEditor { container-type:inline-size; }');
-    expect(panelStyles).toContain('@container (max-width: 920px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); }');
+    expect(panelStyles).toContain('@container (max-width:640px) { .profile-step-row { grid-template-columns:1rem 1.75rem minmax(0,1fr);');
     expect(template).toContain('id="profileImportDialog"');
     expect(panelSource).toContain('runtimeProfileDraft.push');
     expect(panelSource).toContain('moveRuntimeProfileUp');
@@ -1195,14 +1223,26 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('Перебор стратегий QUIC пока не поддерживается');
   });
 
-  it('keeps the Russian profile reference on the right and collapsed until requested', () => {
-    expect(panelSource).toContain("reference.className = 'profile-reference'");
-    expect(panelSource).toContain("referenceSummary.textContent = 'Справочник параметров профиля'");
-    expect(panelSource).toContain('let runtimeProfileReferenceExpanded = false');
-    expect(panelSource).toContain('let referenceExpanded = runtimeProfileReferenceExpanded');
-    expect(panelSource).toContain('referenceDetails.open = referenceExpanded');
-    expect(panelSource).toContain("referenceDetails.addEventListener('toggle'");
-    expect(panelStyles).toContain('.profile-editor-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(16rem,23rem)');
+  it('omits the profile reference panel to keep the strategy editor compact', () => {
+    expect(panelSource).not.toContain("referenceSummary.textContent = 'Справочник параметров профиля'");
+    expect(panelSource).not.toContain("reference.className = 'profile-reference'");
+    expect(panelSource).not.toContain('runtimeProfileReferenceExpanded');
+    expect(panelStyles).not.toContain('.profile-reference {');
+  });
+
+  it('allows dragging a strategy tile while keeping its controls interactive', () => {
+    expect(panelSource).toContain("row.draggable = true");
+    expect(panelSource).toContain("target.closest('input,select,button,textarea,summary,a,[contenteditable=\"true\"]')");
+    expect(panelSource).toContain("row.classList.add('is-dragging')");
+    expect(panelStyles).toContain('.profile-step-row.is-dragging');
+    expect(panelStyles).toContain('transition:transform .18s ease,opacity .18s ease');
+  });
+
+  it('labels strategy tiles by lua-desync order, excluding payload and range rows', () => {
+    expect(panelSource).toContain('const strategyNumbers = profileStrategyNumbers(profile.args)');
+    expect(panelSource).toContain('const strategyNumber = strategyNumbers[argumentIndex] ?? 0');
+    expect(panelSource).toContain('`Стратегия ${strategyNumber}`');
+    expect(panelSource).not.toContain('badge.textContent = String(stepIndex + 1)');
   });
 
   it('has no duplicate action attributes and every template action is wired', () => {
