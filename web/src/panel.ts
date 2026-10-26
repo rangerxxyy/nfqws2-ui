@@ -620,6 +620,7 @@ function markRuntimeProfilesDirty(id?: string, redraw = true) {
 function renderRuntimeProfiles() {
   const list = $('#profileList'); const editor = $('#profileEditor');
   if (!list || !editor || !runtimeProfilesState) return;
+  const previousEditorMode = editor.querySelector<HTMLElement>('#runtimeProfileModeToggle')?.dataset.mode as 'builder' | 'text' | undefined;
   const profiles = visibleRuntimeProfiles().map((profile) => ({ ...profile, name: profile.editable ? profile.name : runtimeProfileLabelOverrides()[profile.id] ?? profile.name }));
   const orderWarnings = profileOrderWarnings(profiles.map((profile) => profile.effectiveArgs ?? profile.args));
   if (!profiles.some((profile) => profile.id === selectedRuntimeProfileId)) selectedRuntimeProfileId = profiles[0]?.id ?? '';
@@ -654,39 +655,37 @@ function renderRuntimeProfiles() {
   const titleLine = document.createElement('div'); titleLine.className = 'flex flex-wrap items-center gap-2'; titleLine.append(name);
   const rename = document.createElement('button'); rename.type = 'button'; rename.className = 'backup-action'; rename.textContent = '✎'; rename.setAttribute('aria-label', 'Изменить название профиля'); rename.title = 'Изменить название профиля'; rename.addEventListener('click', () => openRuntimeProfileRenameDialog(profile));
   titleLine.append(rename); title.append(titleLine, source); heading.append(title);
+  const headerControls = document.createElement('div'); headerControls.className = 'flex flex-wrap items-center gap-2';
+  if (profile.hasConstructor) {
+    const modeButtons = document.createElement('div'); modeButtons.id = 'runtimeProfileModeToggle'; modeButtons.className = 'runtime-profile-mode-toggle';
+    modeButtons.dataset.mode = previousEditorMode ?? runtimeProfileEditorMode;
+    for (const [mode, label] of [['builder', 'Конструктор'], ['text', 'Текст']] as const) {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'setRuntimeProfileMode'; button.dataset.args = JSON.stringify([mode]); button.dataset.modeChoice = mode; button.setAttribute('aria-pressed', String(runtimeProfileEditorMode === mode)); button.className = 'runtime-profile-mode-option'; button.textContent = label; modeButtons.append(button);
+    }
+    headerControls.append(modeButtons);
+    if (previousEditorMode && previousEditorMode !== runtimeProfileEditorMode) {
+      requestAnimationFrame(() => { if (document.contains(modeButtons)) modeButtons.dataset.mode = runtimeProfileEditorMode; });
+    }
+  }
   if (profile.editable) {
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-1';
     for (const [action, label, accessible] of [['shareRuntimeProfile', 'Для чата', 'Скопировать профиль для отправки в чат'], ['copyRuntimeProfile', 'Копия', 'Создать копию профиля'], ['moveRuntimeProfileUp', '↑', 'Переместить профиль выше'], ['moveRuntimeProfileDown', '↓', 'Переместить профиль ниже'], ['deleteRuntimeProfile', 'Удалить', 'Удалить профиль из черновика']] as const) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = action; button.dataset.args = JSON.stringify([profile.id]); button.className = 'backup-action'; button.textContent = label; button.setAttribute('aria-label', accessible); if (action === 'copyRuntimeProfile') button.dataset.actionTooltip = accessible; actions.append(button);
     }
-    heading.append(actions);
+    headerControls.append(actions);
   } else {
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap items-center gap-1.5';
     const copy = document.createElement('button'); copy.type = 'button'; copy.dataset.actionClick = 'copyRuntimeProfile'; copy.dataset.args = JSON.stringify([profile.id]); copy.dataset.actionTooltip = 'Скопировать в пользовательские профили для редактирования'; copy.className = 'backup-action'; copy.textContent = 'Копия';
     const share = document.createElement('button'); share.type = 'button'; share.dataset.actionClick = 'shareRuntimeProfile'; share.dataset.args = JSON.stringify([profile.id]); share.dataset.actionTooltip = 'Скопировать профиль вместе с подписью версии nfqws2'; share.className = 'backup-action'; share.textContent = 'Для чата';
-    actions.append(share, copy); heading.append(actions);
+    actions.append(share, copy); headerControls.append(actions);
   }
+  heading.append(headerControls);
   editor.append(heading);
   const profileOrderIssues = orderWarnings[profiles.findIndex((item) => item.id === profile.id)] ?? [];
   for (const message of profileOrderIssues) { const notice = document.createElement('p'); notice.className = 'mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs leading-5 text-amber-200'; notice.textContent = message; editor.append(notice); }
-  if (profile.hasConstructor) {
-    const modeBar = document.createElement('div'); modeBar.className = 'mt-3 flex flex-wrap items-center justify-between gap-2';
-    const modeTitle = document.createElement('strong'); modeTitle.className = 'text-xs text-slate-300'; modeTitle.textContent = 'Редактор профиля'; modeBar.append(modeTitle);
-    const modeButtons = document.createElement('div'); modeButtons.className = 'flex gap-1 rounded-lg border border-slate-700 p-1';
-    for (const [mode, label] of [['builder', 'Конструктор'], ['text', 'Текст']] as const) {
-      const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'setRuntimeProfileMode'; button.dataset.args = JSON.stringify([mode]); button.setAttribute('aria-pressed', String(runtimeProfileEditorMode === mode));
-      button.className = `rounded-md px-2.5 py-1 text-xs ${runtimeProfileEditorMode === mode ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`; button.textContent = label; modeButtons.append(button);
-    }
-    modeBar.append(modeButtons); editor.append(modeBar);
-  }
   if (profile.hasConstructor && runtimeProfileEditorMode === 'builder') {
     const builder = document.createElement('div'); builder.className = 'mt-2 grid gap-2';
-    if (profile.editable) {
-      const nameField = document.createElement('label'); nameField.className = 'grid gap-1 text-xs font-semibold text-slate-300'; nameField.textContent = 'Имя профиля';
-      const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.maxLength = 32; nameInput.autocomplete = 'off'; nameInput.spellcheck = false; nameInput.className = 'min-h-9 w-full max-w-sm rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100'; nameInput.value = profile.args.find((arg) => arg.startsWith('--name='))?.slice('--name='.length) ?? '';
-      nameInput.placeholder = profile.name; nameInput.setAttribute('aria-label', 'Имя пользовательского профиля'); nameInput.dataset.actionChange = 'renameRuntimeProfile'; nameInput.dataset.args = JSON.stringify([profile.id, { source: 'value' }]);
-      const nameHelp = document.createElement('span'); nameHelp.className = 'font-normal text-slate-500'; nameHelp.textContent = 'Буквы, цифры, точка, дефис или подчёркивание · до 32 символов'; nameField.append(nameInput, nameHelp); builder.append(nameField);
-    } else {
+    if (!profile.editable) {
       const target = runtimeProfilesState?.profiles.find((item) => item.id === profile.id);
       const source = target && getRuntimeProfileConstructorTarget(target)?.source;
       const shared = source === 'NFQWS_ARGS_QUIC' ? 'Эта переменная общая для «QUIC по IP» и «QUIC по сайтам».' : source === 'NFQWS_ARGS' ? 'Эта переменная общая для «HTTP/HTTPS по IP» и «HTTP/HTTPS по сайтам».' : null;
@@ -1893,20 +1892,25 @@ function updateQuickParameters(content: string, networkInterfaces: string[] = []
   const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
   if (interfaceSelect instanceof HTMLSelectElement) {
     const configured = configAssignmentValue(content, 'ISP_INTERFACE');
-    interfaceSelect.replaceChildren(new Option('Выберите обнаруженный интерфейс', '', !configured, false));
+    interfaceSelect.replaceChildren(new Option(networkInterfaces.length ? 'Выберите интерфейс провайдера' : 'Сетевые интерфейсы не обнаружены', '', !configured, false));
     for (const name of [...new Set(networkInterfaces)].sort()) interfaceSelect.add(new Option(name, name));
     if (configured && !networkInterfaces.includes(configured)) {
       interfaceSelect.add(new Option(`${configured} (настроен, но не обнаружен)`, configured, true, true));
     } else {
       interfaceSelect.value = configured;
     }
-    interfaceSelect.disabled = networkInterfaces.length === 0;
-    interfaceSelect.title = networkInterfaces.length ? 'Варианты получены из /sys/class/net на устройстве' : 'Backend не обнаружил сетевые интерфейсы';
-    interfaceSelect.classList.toggle('hidden', networkInterfaces.length === 0);
+    interfaceSelect.add(new Option('Указать имя вручную…', '__manual__'));
+    interfaceSelect.disabled = false;
+    interfaceSelect.title = networkInterfaces.length ? 'Сетевые интерфейсы устройства и ручной ввод' : 'Автоопределение недоступно; имя можно указать вручную';
+    interfaceSelect.classList.remove('hidden');
     const manualInterface = $('#ispInterfaceManualInput');
-    manualInterface?.classList.toggle('hidden', networkInterfaces.length > 0);
+    const manualOpen = interfaceSelect.dataset.manualOpen === 'true';
+    manualInterface?.classList.toggle('hidden', !manualOpen);
     const discoveryHint = $('#ispInterfaceDiscoveryHint');
-    discoveryHint?.classList.toggle('hidden', networkInterfaces.length > 0);
+    discoveryHint?.classList.toggle('hidden', !manualOpen);
+    if (discoveryHint) discoveryHint.textContent = networkInterfaces.length
+      ? 'Если нужного интерфейса нет в списке, укажите его имя вручную.'
+      : 'Интерфейсы не обнаружены; введите имя вручную.';
     if (manualInterface instanceof HTMLInputElement) manualInterface.value = configured;
   }
   all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-key]').forEach((select) => {
@@ -1933,6 +1937,24 @@ async function updateConfigVariable(key: string, value: string) {
   const editor = $('#nfqwsConfTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return;
   if (key === 'ISP_INTERFACE') {
+    const interfaceSelect = $('#ispInterfaceSelect');
+    const manualInterface = $('#ispInterfaceManualInput');
+    const discoveryHint = $('#ispInterfaceDiscoveryHint');
+    if (value === '__manual__') {
+      if (interfaceSelect instanceof HTMLSelectElement) interfaceSelect.dataset.manualOpen = 'true';
+      manualInterface?.classList.remove('hidden');
+      discoveryHint?.classList.remove('hidden');
+      if (manualInterface instanceof HTMLInputElement) {
+        manualInterface.value = configAssignmentValue(editor.value, 'ISP_INTERFACE');
+        manualInterface.focus();
+      }
+      return;
+    }
+    if (interfaceSelect instanceof HTMLSelectElement && [...interfaceSelect.options].some((option) => option.value === value && value !== '__manual__')) {
+      interfaceSelect.dataset.manualOpen = 'false';
+      manualInterface?.classList.add('hidden');
+      discoveryHint?.classList.add('hidden');
+    }
     value = value.trim();
     if (!isValidNetworkInterfaceName(value)) {
       toast('Имя интерфейса должно содержать 1–15 латинских букв, цифр или символов . _ @ + -.', 'error');
@@ -2311,11 +2333,12 @@ function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
     button.dataset.actionClick = 'selectListFile';
     button.dataset.args = JSON.stringify([id]);
     button.dataset.customListTab = 'true';
+    button.dataset.actionTooltip = `Пользовательский список: ${summary.path}`;
+    button.dataset.actionTooltipDelayMs = '3000';
     button.className = 'list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap';
-    button.title = `${listDisplayName(id)} — ${summary.path}`;
+    button.setAttribute('aria-label', `${listDisplayName(id)} — ${id}`);
     const label = document.createElement('span'); label.className = 'list-file-tab-caption';
-    const description = document.createElement('span'); description.textContent = 'Пользовательский список';
-    const filename = document.createElement('code'); filename.textContent = id; label.append(description, filename);
+    const filename = document.createElement('code'); filename.textContent = id; label.append(filename);
     button.append(label);
     const remove = document.createElement('button');
     remove.type = 'button';

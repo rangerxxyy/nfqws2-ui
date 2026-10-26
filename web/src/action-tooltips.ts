@@ -1,5 +1,9 @@
 const TOOLTIP_CLASS = 'action-tooltip';
 export const DEFAULT_ACTION_TOOLTIP_DELAY_MS = 2000;
+export function actionTooltipDelayMs(button: Pick<HTMLButtonElement, 'dataset'>, fallback = DEFAULT_ACTION_TOOLTIP_DELAY_MS): number {
+  const delay = Number(button.dataset.actionTooltipDelayMs);
+  return Number.isInteger(delay) && delay >= 0 && delay <= 10000 ? delay : fallback;
+}
 export function scheduleDelayedTooltip(callback: () => void, delayMs = DEFAULT_ACTION_TOOLTIP_DELAY_MS): () => void {
   const timer = globalThis.setTimeout(callback, delayMs);
   return () => globalThis.clearTimeout(timer);
@@ -99,7 +103,7 @@ export function installActionTooltips(root: Document = document, delayMs = DEFAU
       tooltip.style.top = `${top}px`;
       active.setAttribute('aria-describedby', tooltip.id);
       cancelDelay = null;
-    }, delayMs);
+    }, actionTooltipDelayMs(button, delayMs));
   };
   root.querySelectorAll('button, .side-nav-btn').forEach(prepare);
   const observer = new MutationObserver((records) => {

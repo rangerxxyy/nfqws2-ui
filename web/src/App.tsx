@@ -521,19 +521,8 @@ export default function App() {
                   {"\n                "}
                   <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
                     {"\n                  "}
-                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
-                      {"\n                    "}
-                      <label htmlFor={"ispInterfaceSelect"}>
-                        {"ISP_INTERFACE"}
-                      </label>
-                      {"\n                    "}
-                      <span className={"text-emerald-400"}>
-                        {"WAN"}
-                      </span>
-                      {"\n                  "}
-                    </div>
-                    {"\n                  "}
-                    <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <label htmlFor={"ispInterfaceSelect"} className={"sr-only"}>{"Интерфейс провайдера (ISP_INTERFACE)"}</label>
+                    <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       <option value={""}>{"Backend ещё не обнаружил сетевые интерфейсы"}</option>
                     </select>
                     <input id={"ispInterfaceManualInput"} type={"text"} inputMode={"text"} autoComplete={"off"} maxLength={15} aria-label={"Имя сетевого интерфейса"} placeholder={"например eth0 или ppp0"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 hidden w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs font-bold text-white focus:border-blue-500 focus:outline-none"} />
@@ -750,53 +739,53 @@ export default function App() {
             {"\n          "}
             <div id={"listFileTabs"} className={"flex items-center overflow-x-auto bg-[#080d18] border-b border-slate-800 px-2"}>
               {"\n            \n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["user.list"])} id={"listTab-user.list"} className={"list-file-tab active flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-bold text-white border-b-2 border-sky-400 bg-slate-800/40 transition-all whitespace-nowrap"}>
+              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["user.list"])} data-action-tooltip={"Домены, добавленные вручную для обхода."} data-action-tooltip-delay-ms={"3000"} aria-label={"user.list — Пользовательские домены"} id={"listTab-user.list"} className={"list-file-tab active flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-bold text-white border-b-2 border-sky-400 bg-slate-800/40 transition-all whitespace-nowrap"}>
                 {"\n              "}
                 <svg className={"w-4 h-4 text-slate-200"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span className={"list-file-tab-caption"}><span>Пользовательские домены</span><code>user.list</code></span>
+                <span className={"list-file-tab-caption"}><code>user.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["exclude.list"])} id={"listTab-exclude.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
+              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["exclude.list"])} data-action-tooltip={"Домены, которые исключены из обхода."} data-action-tooltip-delay-ms={"3000"} aria-label={"exclude.list — Исключённые домены"} id={"listTab-exclude.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
                 {"\n              "}
                 <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span className={"list-file-tab-caption"}><span>Исключённые домены</span><code>exclude.list</code></span>
+                <span className={"list-file-tab-caption"}><code>exclude.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["auto.list"])} id={"listTab-auto.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
+              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["auto.list"])} data-action-tooltip={"Домены, которые nfqws2 добавил автоматически."} data-action-tooltip-delay-ms={"3000"} aria-label={"auto.list — Домены для автообучения"} id={"listTab-auto.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
                 {"\n              "}
                 <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span className={"list-file-tab-caption"}><span>Домены для автообучения</span><code>auto.list</code></span>
+                <span className={"list-file-tab-caption"}><code>auto.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["ipset.list"])} id={"listTab-ipset.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
+              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["ipset.list"])} data-action-tooltip={"IP-адреса и подсети, к которым применяются правила."} data-action-tooltip-delay-ms={"3000"} aria-label={"ipset.list — IP-адреса"} id={"listTab-ipset.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
                 {"\n              "}
                 <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span className={"list-file-tab-caption"}><span>IP-адреса</span><code>ipset.list</code></span>
+                <span className={"list-file-tab-caption"}><code>ipset.list</code></span>
                 {"\n            "}
               </button>
               {"\n\n            "}
-              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["ipset_exclude.list"])} id={"listTab-ipset_exclude.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
+              <button data-action-click={"selectListFile"} data-args={JSON.stringify(["ipset_exclude.list"])} data-action-tooltip={"IP-адреса и подсети, исключённые из правил."} data-action-tooltip-delay-ms={"3000"} aria-label={"ipset_exclude.list — Исключённые IP-адреса"} id={"listTab-ipset_exclude.list"} className={"list-file-tab flex items-center gap-2.5 px-5 py-3.5 text-sm font-mono font-medium text-slate-400 hover:text-slate-200 border-b-2 border-transparent transition-all whitespace-nowrap"}>
                 {"\n              "}
                 <svg className={"w-4 h-4 text-slate-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}>
                   <path strokeLinecap={"round"} strokeLinejoin={"round"} strokeWidth={"2"} d={"M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"}></path>
                 </svg>
                 {"\n              "}
-                <span className={"list-file-tab-caption"}><span>Исключённые IP-адреса</span><code>ipset_exclude.list</code></span>
+                <span className={"list-file-tab-caption"}><code>ipset_exclude.list</code></span>
                 {"\n            "}
               </button>
               <div id={"customListTabs"} className={"flex items-center"}></div>

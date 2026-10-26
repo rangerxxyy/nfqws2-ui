@@ -23,15 +23,24 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toMatch(/\b(?:window\.)?prompt\s*\(/);
   });
 
-  it('shows full list labels together with their filenames', () => {
-    expect(template).toContain('Пользовательские домены');
-    expect(template).toContain('Исключённые домены');
-    expect(template).toContain('Домены для автообучения');
-    expect(template).toContain('IP-адреса');
-    expect(template).toContain('Исключённые IP-адреса');
-    expect(panelSource).toContain('Пользовательский список');
+  it('keeps list tabs compact and offers a delayed explanation', () => {
+    for (const filename of ['user.list', 'exclude.list', 'auto.list', 'ipset.list', 'ipset_exclude.list']) {
+      expect(template).toContain(`<code>${filename}</code>`);
+    }
+    expect(template).not.toContain('Пользовательские домены</span>');
+    expect(template).toContain('data-action-tooltip-delay-ms="3000"');
+    expect(panelSource).toContain('Пользовательский список: ${summary.path}');
+    expect(panelSource).toContain("button.dataset.actionTooltipDelayMs = '3000'");
     expect(panelStyles).toContain('.list-file-tab-caption');
     expect(panelStyles).toContain('overflow-wrap:anywhere');
+  });
+
+  it('keeps profile rename in the heading and moves the constructor mode switch to it', () => {
+    expect(panelSource).toContain("openRuntimeProfileRenameDialog(profile)");
+    expect(panelSource).toContain("id = 'runtimeProfileModeToggle'");
+    expect(panelSource).not.toContain("modeTitle.textContent = 'Редактор профиля'");
+    expect(panelSource).not.toContain("nameField.textContent = 'Имя профиля'");
+    expect(panelStyles).toContain('.runtime-profile-mode-toggle::before');
   });
 
   it('uses shared UI button states in the list toolbar', () => {
@@ -129,10 +138,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toContain('navigator.clipboard.writeText(editor.value)');
   });
 
-  it('offers a validated manual ISP interface field when discovery returns none', () => {
+  it('uses one ISP interface selector and reveals manual entry only on request', () => {
     expect(template).toContain('id="ispInterfaceManualInput"');
-    expect(panelSource).toContain("interfaceSelect.classList.toggle('hidden', networkInterfaces.length === 0)");
-    expect(panelSource).toContain("manualInterface?.classList.toggle('hidden', networkInterfaces.length > 0)");
+    expect(panelSource).toContain("interfaceSelect.classList.remove('hidden')");
+    expect(panelSource).toContain("new Option('Указать имя вручную…', '__manual__')");
+    expect(panelSource).toContain("manualInterface?.classList.toggle('hidden', !manualOpen)");
+    expect(panelSource).toContain("if (value === '__manual__')");
+    expect(template).not.toContain('text-slate-400">WAN</span>');
     expect(panelSource).toContain('isValidNetworkInterfaceName(value)');
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
   });

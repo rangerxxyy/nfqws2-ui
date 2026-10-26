@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_ACTION_TOOLTIP_DELAY_MS, fallbackTooltipText, scheduleDelayedTooltip, shouldShowTooltipForFocus } from './action-tooltips';
+import { actionTooltipDelayMs, DEFAULT_ACTION_TOOLTIP_DELAY_MS, fallbackTooltipText, scheduleDelayedTooltip, shouldShowTooltipForFocus } from './action-tooltips';
 
 describe('delayed action tooltip timer', () => {
   afterEach(() => vi.useRealTimers());
@@ -22,6 +22,13 @@ describe('delayed action tooltip timer', () => {
     scheduleDelayedTooltip(show);
     vi.advanceTimersByTime(3000);
     expect(show).toHaveBeenCalledOnce();
+  });
+
+  it('uses a per-control delay when one is set', () => {
+    const listTab = { dataset: { actionTooltipDelayMs: '3000' } } as unknown as HTMLButtonElement;
+    const invalid = { dataset: { actionTooltipDelayMs: '-1' } } as unknown as HTMLButtonElement;
+    expect(actionTooltipDelayMs(listTab)).toBe(3000);
+    expect(actionTooltipDelayMs(invalid)).toBe(DEFAULT_ACTION_TOOLTIP_DELAY_MS);
   });
 
   it('describes navigation and action controls even without a native title', () => {

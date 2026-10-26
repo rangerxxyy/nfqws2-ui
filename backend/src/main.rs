@@ -4154,28 +4154,30 @@ fn resolve_runtime_list_references(config: &Path, args: &[String]) -> Vec<(PathB
 }
 
 fn diagnostic_list_candidates(config: &Path, args: &[String]) -> Vec<(String, PathBuf, bool)> {
-    let mut candidates = LIST_IDS
-        .iter()
-        .filter_map(|id| {
-            list_file_path(config, id)
-                .map(|path| ((*id).to_string(), path, id.starts_with("ipset")))
-        })
-        .collect::<Vec<_>>();
     let Some(root) = config
         .canonicalize()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf))
     else {
-        return candidates;
+        return Vec::new();
     };
+    // A site's diagnosis must reflect rules used by the running nfqws2
+    // process. Files merely present in `lists/` may belong to another tool
+    // and must not create a false profile match.
+    let standard_paths = LIST_IDS
+        .iter()
+        .filter_map(|id| list_file_path(config, id).map(|path| (path, (*id).to_string())))
+        .collect::<HashMap<_, _>>();
+    let mut candidates = Vec::new();
     for (path, is_ipset) in resolve_runtime_list_references(config, args) {
         if candidates.iter().any(|(_, existing, _)| existing == &path) {
             continue;
         }
-        let label = path
-            .strip_prefix(&root)
-            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_else(|_| "активный список".into());
+        let label = standard_paths.get(&path).cloned().unwrap_or_else(|| {
+            path.strip_prefix(&root)
+                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| "активный список".into())
+        });
         candidates.push((label, path, is_ipset));
     }
     candidates
@@ -4564,7 +4566,9 @@ async fn diagnose_site(
     let mut unreadable = Vec::new();
     if let Some(config) = config_path_for_state(&state) {
         let active_args = active_process_arguments().unwrap_or_default();
-        for (id, path, is_ipset) in diagnostic_list_candidates(&config, &active_args) {
+        let candidates = diagnostic_list_candidates(&config, &active_args);
+        let no_active_lists = candidates.is_empty();
+        for (id, path, is_ipset) in candidates {
             let mut bytes = Vec::new();
             let read = match tokio::fs::File::open(&path).await {
                 Ok(file) => file
@@ -4602,7 +4606,9 @@ async fn diagnose_site(
             },
             detail: format!(
                 "{}{}",
-                if matches.is_empty() {
+                if no_active_lists {
+                    "В nfqws2 нет подключённых списков для сверки".into()
+                } else if matches.is_empty() {
                     "Совпадений в прочитанных списках нет".into()
                 } else {
                     matches.join("; ")
@@ -16033,6 +16039,29 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn diagnostic_list_candidates_skip_standard_lists_not_used_by_nfqws2() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        let inactive = lists.join("user.list");
+        let active = lists.join("custom-domains.list");
+        std::fs::write(&config, "").unwrap();
+        std::fs::write(&inactive, "unrelated.example\n").unwrap();
+        std::fs::write(&active, "target.example\n").unwrap();
+        let args = [
+            "nfqws2".to_owned(),
+            "--hostlist=lists/custom-domains.list".to_owned(),
+        ];
+
+        let candidates = diagnostic_list_candidates(&config, &args);
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].0, "lists/custom-domains.list");
+        assert_eq!(candidates[0].1, active.canonicalize().unwrap());
     }
 
     #[test]
