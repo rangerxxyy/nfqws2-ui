@@ -220,6 +220,10 @@ export function parseLuaParameterOption(definition: string): LuaParameterOption 
   const token = display.split(/[\s—]/, 1)[0] ?? '';
   const remainder = display.slice(token.length).trimStart();
   if (remainder && !/^[-—:]/.test(remainder)) return null;
+  // Lua help uses key[=value] for options whose value is optional. Keep the
+  // key usable as a flag by default (for example, tcp_md5[=hex] -> tcp_md5).
+  const optionalValue = /^([a-z][a-z0-9_]*)\[=([^\]]+)\]$/.exec(token);
+  if (optionalValue) return { key: optionalValue[1]!, value: null, display };
   const separator = token.indexOf('=');
   const key = (separator < 0 ? token : token.slice(0, separator)).replace(/\[[^\]]*\]$/, '');
   if (!/^[a-z][a-z0-9_]*$/.test(key)) return null;

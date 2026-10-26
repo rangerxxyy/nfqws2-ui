@@ -152,6 +152,7 @@ describe('desync step editing', () => {
   it('turns documented Lua parameter entries into editable flag or key-value options', () => {
     expect(parseLuaParameterOption('tcp_ack=-1000 — acknowledgement offset')).toEqual({ key: 'tcp_ack', value: '-1000', display: 'tcp_ack=-1000 — acknowledgement offset' });
     expect(parseLuaParameterOption('blob=<name> — select a blob')).toEqual({ key: 'blob', value: '', display: 'blob=<name> — select a blob' });
+    expect(parseLuaParameterOption('tcp_md5[=hex] — optional MD5 data')).toEqual({ key: 'tcp_md5', value: null, display: 'tcp_md5[=hex] — optional MD5 data' });
     expect(parseLuaParameterOption('bad key')).toBeNull();
   });
   it('offers nfqws2 compatibility parameters when older Lua comments omit them', () => {
@@ -175,6 +176,14 @@ describe('desync step editing', () => {
     expect(diagnoseProfileLuaArguments(['--lua-desync=multisplit:pos=1:repeats=2:tcp_ack=-1:typo=3:strategy=2'], catalog, groups)).toEqual([
       { argument: '--lua-desync=multisplit:pos=1:repeats=2:tcp_ack=-1:typo=3:strategy=2', message: 'Неизвестный параметр «typo»' },
     ]);
+  });
+
+  it('accepts optional-value parameters from standard Lua groups without a false unknown warning', () => {
+    const catalog = [{ name: 'hostfakesplit', file: 'zapret-antidpi.lua', docs: [], arguments: [], fileArguments: [], standardGroups: ['fooling'], required: [] }];
+    const groups = [{ name: 'fooling', arguments: ['tcp_md5[=hex] — add MD5 header with optional data'] }];
+
+    expect(getLuaProfileParameterOptions(catalog[0], groups)).toContain('tcp_md5[=hex] — add MD5 header with optional data');
+    expect(diagnoseProfileLuaArguments(['--lua-desync=hostfakesplit:tcp_md5'], catalog, groups)).toEqual([]);
   });
 
   it('accepts nfqws2 desync options that are not fully described by the installed Lua comments', () => {
