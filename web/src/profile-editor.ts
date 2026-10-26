@@ -176,6 +176,7 @@ export type LuaProfileHelp = {
 // Some shipped Lua files document only a subset of options supported by the
 // nfqws2 runtime. These known options remain function-scoped in the editor.
 const compatibilityLuaArguments: Record<string, Readonly<Record<string, string | null>>> = {
+  fake: { repeats: '2' },
   fakedsplit: { altorder: '1', nofake1: null, nofake2: null, nofake3: null, nofake4: null, oob: null, oob_data: '0x00' },
   fakeddisorder: { altorder: '1', nofake1: null, nofake2: null, nofake3: null, nofake4: null, oob: null, oob_data: '0x00' },
   hostfakesplit: { altorder: '1', nofake1: null, nofake2: null, oob: null, oob_data: '0x00' },
@@ -278,7 +279,7 @@ const luaArgumentDescriptionsRu: Readonly<Record<string, string>> = {
   oob_data: 'значение байта, передаваемого вне основного потока TCP',
   pattern: 'шаблон содержимого поддельного пакета',
   pos: 'позиции разделения или изменения запроса',
-  repeats: 'число повторных отправок',
+  repeats: 'число повторов указанного действия, обычно отправки фейка',
   retrans: 'число повторных передач до переключения стратегии',
   seqovl: 'перекрыть часть номера последовательности',
   seqovl_pattern: 'шаблон данных для перекрытия',

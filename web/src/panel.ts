@@ -560,7 +560,7 @@ function renderRuntimeProfiles() {
             const [key, ...valueParts] = parameter.split('='); const hasValue = parameter.includes('=');
             const chip = document.createElement('span'); chip.className = 'inline-flex max-w-full items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-1.5 py-1 font-mono text-xs';
             const keyLabel = document.createElement('span'); keyLabel.className = 'text-fuchsia-300'; keyLabel.textContent = hasValue ? `${key}=` : parameter; chip.append(keyLabel);
-            if (hasValue) { const valueInput = document.createElement('input'); valueInput.type = 'text'; valueInput.className = 'min-w-8 max-w-36 bg-transparent text-blue-100 focus:outline-none'; valueInput.value = valueParts.join('='); valueInput.size = Math.min(20, Math.max(3, valueInput.value.length)); valueInput.setAttribute('aria-label', `Значение параметра ${key}`); valueInput.dataset.actionChange = 'setRuntimeProfileStepParameter'; valueInput.dataset.args = JSON.stringify([profile.id, String(argumentIndex), String(parameterIndex), { source: 'value' }]); chip.append(valueInput); }
+            if (hasValue) { const valueInput = document.createElement('input'); valueInput.type = 'text'; valueInput.className = 'min-w-8 max-w-36 bg-transparent text-blue-100 focus:outline-none'; valueInput.value = valueParts.join('='); valueInput.size = Math.min(20, Math.max(3, valueInput.value.length)); valueInput.setAttribute('aria-label', `Значение параметра ${key}`); valueInput.dataset.luaArgumentKey = key; valueInput.dataset.actionChange = 'setRuntimeProfileStepParameter'; valueInput.dataset.args = JSON.stringify([profile.id, String(argumentIndex), String(parameterIndex), { source: 'value' }]); chip.append(valueInput); }
             const removeParameter = document.createElement('button'); removeParameter.type = 'button'; removeParameter.dataset.actionClick = 'removeRuntimeProfileStepParameter'; removeParameter.dataset.args = JSON.stringify([profile.id, String(argumentIndex), String(parameterIndex)]); removeParameter.className = 'px-0.5 text-slate-400 hover:text-white'; removeParameter.textContent = '×'; removeParameter.setAttribute('aria-label', `Убрать параметр ${key}`); chip.append(removeParameter); parameterList.append(chip);
           });
           const documentedOptions = getLuaProfileParameterOptions(functionInfo, runtimeProfileLuaStandardGroups, functionName);
@@ -724,7 +724,7 @@ function renderRuntimeProfiles() {
     const row = target.closest<HTMLElement>('.profile-step-desync');
     const select = row?.querySelector<HTMLSelectElement>('.profile-function-select');
     if (!select) return;
-    const parameter = target.closest('.profile-step-desync') && target instanceof HTMLInputElement ? target.getAttribute('aria-label')?.replace(/^Параметр\s+/, '') : undefined;
+    const parameter = target.dataset.luaArgumentKey;
     renderReference(select.value, parameter);
   });
   if (headingElement) editor.replaceChildren(headingElement);

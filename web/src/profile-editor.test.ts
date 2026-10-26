@@ -218,6 +218,11 @@ describe('desync step editing', () => {
       '--lua-desync=hostfakesplit:nofake2:altorder=1',
     ], catalog)).toEqual([]);
   });
+  it('accepts repeats for fake when the installed Lua catalog omits the documented nfqws2 option', () => {
+    const catalog = [{ name: 'fake', file: 'zapret-auto.lua', docs: [], arguments: ['blob=<name>'], fileArguments: [], standardGroups: [], required: [] }];
+    expect(getLuaProfileParameterOptions(catalog[0], [])).toContain('repeats=2 — поддерживается nfqws2');
+    expect(diagnoseProfileLuaArguments(['--lua-desync=fake:blob=fake_default_quic:repeats=6'], catalog)).toEqual([]);
+  });
   it('keeps compatibility options scoped to functions and continues flagging misspellings', () => {
     const catalog = [
       { name: 'fakedsplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos=<marker>'], fileArguments: [], standardGroups: [], required: [] },
