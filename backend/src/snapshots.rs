@@ -53,6 +53,8 @@ impl Default for SnapshotRemoteSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotSettings {
+    #[serde(default = "default_true")]
+    pub auto_enabled: bool,
     #[serde(default = "default_max_count")]
     pub max_count: usize,
     #[serde(default = "default_max_days")]
@@ -71,6 +73,7 @@ fn default_max_days() -> u64 {
 impl Default for SnapshotSettings {
     fn default() -> Self {
         Self {
+            auto_enabled: true,
             max_count: 50,
             max_days: 30,
             remote: SnapshotRemoteSettings::default(),
@@ -766,6 +769,9 @@ pub fn validate_archive(archive_bytes: &[u8]) -> Result<(), String> {
 }
 
 pub fn is_due_daily(data_dir: &Path) -> bool {
+    if !load_settings(data_dir).auto_enabled {
+        return false;
+    }
     let Ok(output) = std::process::Command::new("date")
         .arg("+%Y-%m-%d %H:%M")
         .output()
@@ -911,6 +917,26 @@ mod manual_operations_tests {
             remote: false,
             pinned: false,
         }
+    }
+
+    #[test]
+    fn automatic_snapshot_setting_is_enabled_for_legacy_data_and_can_be_disabled() {
+        let dir = tempdir().unwrap();
+        assert!(load_settings(dir.path()).auto_enabled);
+        fs::create_dir_all(snapshot_dir(dir.path())).unwrap();
+        fs::write(
+            settings_path(dir.path()),
+            br#"{"maxCount":20,"maxDays":14,"remote":{}}"#,
+        )
+        .unwrap();
+        assert!(load_settings(dir.path()).auto_enabled);
+        let settings = SnapshotSettings {
+            auto_enabled: false,
+            ..SnapshotSettings::default()
+        };
+        save_settings(dir.path(), &settings).unwrap();
+        assert!(!load_settings(dir.path()).auto_enabled);
+        assert!(!is_due_daily(dir.path()));
     }
 
     #[test]

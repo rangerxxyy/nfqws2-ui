@@ -303,6 +303,19 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/backups/nfqws2.conf.123.000000001.bak/restore');
   });
 
+  it('persists automatic snapshot enablement separately from manual snapshot actions', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await nfqwsSnapshots.saveSettings({
+      autoEnabled: false,
+      maxCount: 50,
+      maxDays: 30,
+      remote: { enabled: false, host: '', port: 22, user: '', dir: '', keepLocal: 5 },
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/snapshots/settings');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ autoEnabled: false });
+  });
+
   it('loads runtime profiles and applies only the custom profile argument groups', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response('{"profiles":[{"id":"custom-1","index":1,"name":"Свой профиль 1","source":"NFQWS_ARGS_CUSTOM","editable":true,"args":["--filter-tcp=443"],"filters":["--filter-tcp=443"],"protocols":[],"payloads":[],"lists":[],"steps":[]}],"customArgs":"--filter-tcp=443","revision":"rev"}', { status: 200 }))

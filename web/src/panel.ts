@@ -24,6 +24,7 @@ import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
 import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation } from './notifications';
+import { shouldPollLogs } from './log-polling';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
 import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
@@ -305,6 +306,8 @@ function showRoute(route: Route) {
 let snapshotOverview: SnapshotOverview | null = null;
 let logPollingTimer: number | null = null;
 let currentLogSource: LogSource = 'nfqws2-ui';
+let logRequestPending = false;
+let logRequestGeneration = 0;
 let currentLogContent = '';
 let pendingConfirmation: (() => Promise<void>) | null = null;
 let pendingConfirmationCancel: (() => void) | null = null;
@@ -327,6 +330,11 @@ function renderBackups(data: SnapshotOverview) {
   snapshotOverview = data;
   setText('#snapshotCount', `${data.localCount} ${pluralize(data.localCount, 'снимок', 'снимка', 'снимков')} · ${formatBytes(data.totalBytes)}`);
   setText('#snapshotDirectory', data.directory);
+  setValue('#snapshotAutoEnabled', String(data.settings.autoEnabled), true);
+  const automaticSnapshots = $<HTMLInputElement>('#snapshotAutoEnabled'); if (automaticSnapshots) automaticSnapshots.disabled = false;
+  setText('#backupStatus', data.settings.autoEnabled
+    ? 'Автокопии включены: перед изменениями в панели и ежедневно в 04:05.'
+    : 'Автокопии выключены. Восстановление снимка всё ещё создаёт страховочную копию.');
   setText('#snapshotRemoteStatus', !data.remote.tool ? 'На роутере нет SSH-клиента' : data.remote.error ? `Ошибка отправки: ${data.remote.error}` : data.remote.on ? `Включено · на NAS ${data.remote.stored} · ждут отправки ${data.remote.pending}` : 'Отправка выключена — снимки хранятся на роутере');
   setValue('#snapshotDays', String(data.settings.maxDays)); setValue('#snapshotMaxCount', String(data.settings.maxCount));
   setValue('#snapshotRemoteEnabled', String(data.settings.remote.enabled), true); setValue('#snapshotRemoteHost', data.settings.remote.host); setValue('#snapshotRemotePort', String(data.settings.remote.port)); setValue('#snapshotRemoteUser', data.settings.remote.user); setValue('#snapshotRemoteDir', data.settings.remote.dir); setValue('#snapshotRemoteKeep', String(data.settings.remote.keepLocal));
@@ -341,10 +349,11 @@ function renderBackups(data: SnapshotOverview) {
   for (const item of data.items) {
     const row = document.createElement('article'); row.className = 'backup-row';
     const details = document.createElement('div'); details.className = 'min-w-0';
-    const title = document.createElement('strong'); title.className = 'block text-sm text-white'; title.textContent = `${snapshotReason(item.reason)}${item.pinned ? ' · закреплён' : ''}`;
-    const date = document.createElement('span'); date.className = 'mt-1 block text-xs text-slate-400'; date.textContent = new Date(item.ts * 1000).toLocaleString();
-    const note = document.createElement('span'); note.className = 'mt-1 block break-words text-xs text-slate-500'; note.textContent = item.note || `${item.local && item.remote ? 'Роутер и NAS' : item.local ? 'На роутере' : 'На NAS'} · ${formatBytes(item.size)}`;
-    details.append(title, date, note);
+    const title = document.createElement('strong'); title.className = 'block text-xs font-semibold text-white'; title.textContent = `${snapshotReason(item.reason)}${item.pinned ? ' · закреплён' : ''}`;
+    const date = document.createElement('span'); date.className = 'text-[11px] text-slate-400'; date.textContent = new Date(item.ts * 1000).toLocaleString();
+    const note = document.createElement('span'); note.className = 'ml-2 break-words text-[11px] text-slate-500'; note.textContent = item.note || `${item.local && item.remote ? 'Роутер и NAS' : item.local ? 'На роутере' : 'На NAS'} · ${formatBytes(item.size)}`;
+    const meta = document.createElement('div'); meta.className = 'mt-0.5'; meta.append(date, note);
+    details.append(title, meta);
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-2';
     const download = document.createElement('a'); download.className = 'backup-action'; download.href = `/api/snapshots/${encodeURIComponent(item.id)}/archive`; download.textContent = 'Скачать';
     const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'backup-action'; restore.dataset.actionClick = 'restoreSnapshot'; restore.dataset.args = JSON.stringify([item.id]); restore.textContent = 'Восстановить';
@@ -356,7 +365,7 @@ function renderBackups(data: SnapshotOverview) {
 }
 async function loadBackups() {
   const label = $('#backupStatus'); if (label) label.textContent = 'Загружаем список снимков с роутера…';
-  try { renderBackups(await nfqwsSnapshots.get()); if (label) label.textContent = 'Автоснимки создаются перед изменениями через панель и ежедневно в 04:05.'; }
+  try { renderBackups(await nfqwsSnapshots.get()); }
   catch (error) { if (label) label.textContent = error instanceof Error ? `Не удалось загрузить снимки: ${error.message}` : 'Не удалось загрузить резервные копии.'; }
 }
 function setValue(selector: string, value: string, checked = false) { const element = $(selector); if (element instanceof HTMLInputElement) { if (checked) element.checked = value === 'true'; else element.value = value; } }
@@ -384,12 +393,20 @@ async function restoreSnapshotFile(input: HTMLInputElement) {
 function readSnapshotSettings() {
   const current = snapshotOverview?.settings; if (!current) throw new Error('Сначала загрузите настройки снимков.');
   const number = (selector: string, fallback: number) => Number.parseInt(($<HTMLInputElement>(selector)?.value ?? ''), 10) || fallback;
-  return { ...current, maxDays: number('#snapshotDays', current.maxDays), maxCount: number('#snapshotMaxCount', current.maxCount), remote: { ...current.remote, enabled: ($<HTMLInputElement>('#snapshotRemoteEnabled')?.checked ?? false), host: $<HTMLInputElement>('#snapshotRemoteHost')?.value.trim() ?? '', port: number('#snapshotRemotePort', current.remote.port), user: $<HTMLInputElement>('#snapshotRemoteUser')?.value.trim() ?? '', dir: $<HTMLInputElement>('#snapshotRemoteDir')?.value.trim() ?? '', keepLocal: number('#snapshotRemoteKeep', current.remote.keepLocal) } };
+  return { ...current, autoEnabled: ($<HTMLInputElement>('#snapshotAutoEnabled')?.checked ?? current.autoEnabled), maxDays: number('#snapshotDays', current.maxDays), maxCount: number('#snapshotMaxCount', current.maxCount), remote: { ...current.remote, enabled: ($<HTMLInputElement>('#snapshotRemoteEnabled')?.checked ?? false), host: $<HTMLInputElement>('#snapshotRemoteHost')?.value.trim() ?? '', port: number('#snapshotRemotePort', current.remote.port), user: $<HTMLInputElement>('#snapshotRemoteUser')?.value.trim() ?? '', dir: $<HTMLInputElement>('#snapshotRemoteDir')?.value.trim() ?? '', keepLocal: number('#snapshotRemoteKeep', current.remote.keepLocal) } };
 }
 async function saveSnapshotSettings(remoteOnly = false) {
   const settings = readSnapshotSettings();
   if (remoteOnly && snapshotOverview) { settings.maxDays = snapshotOverview.settings.maxDays; settings.maxCount = snapshotOverview.settings.maxCount; }
   await nfqwsSnapshots.saveSettings(settings); toast('Настройки резервных копий сохранены.'); await loadBackups();
+}
+async function toggleAutomaticSnapshots(enabled: boolean) {
+  const input = $<HTMLInputElement>('#snapshotAutoEnabled');
+  try { await saveSnapshotSettings(); }
+  catch (error) {
+    if (input && snapshotOverview) input.checked = snapshotOverview.settings.autoEnabled;
+    toast(error instanceof Error ? error.message : `Не удалось ${enabled ? 'включить' : 'выключить'} автокопии.`, 'error');
+  }
 }
 async function runSnapshotRemote(action: 'test' | 'push' | 'key') {
   try {
@@ -1113,16 +1130,37 @@ function renderChangeHistory(query = '') {
   setText('#changeHistoryStatus', `${visible.length} событий · история построена по изменениям хэшей файлов в снимках.`);
 }
 async function loadLogs() {
-  const status = $('#logsStatus'); if (status) status.textContent = `Загружаем журнал ${currentLogSource}…`;
-  try { const result = await nfqwsLogs.get(currentLogSource); currentLogContent = result.content; renderLogs(); if (status) status.textContent = `Получен хвост журнала ${currentLogSource} · ${result.content.split(/\r?\n/).filter(Boolean).length} строк.`; }
-  catch (error) { currentLogContent = error instanceof Error ? error.message : 'Не удалось загрузить журнал.'; renderLogs(); if (status) status.textContent = 'Источник журнала недоступен.'; }
+  if (logRequestPending) return;
+  logRequestPending = true;
+  const generation = ++logRequestGeneration;
+  const source = currentLogSource;
+  const status = $('#logsStatus'); if (status) status.textContent = `Загружаем журнал ${source}…`;
+  try {
+    const result = await nfqwsLogs.get(source);
+    if (generation !== logRequestGeneration || source !== currentLogSource) return;
+    currentLogContent = result.content; renderLogs();
+    if (status) status.textContent = `Получен хвост журнала ${source} · ${result.content.split(/\r?\n/).filter(Boolean).length} строк.`;
+  } catch (error) {
+    if (generation !== logRequestGeneration || source !== currentLogSource) return;
+    currentLogContent = error instanceof Error ? error.message : 'Не удалось загрузить журнал.'; renderLogs();
+    if (status) status.textContent = 'Источник журнала недоступен.';
+  } finally {
+    if (generation === logRequestGeneration) logRequestPending = false;
+  }
 }
 function renderLogs() {
   const output = $('#logsOutput'); if (!(output instanceof HTMLPreElement)) return;
   const query = ($<HTMLInputElement>('#logsSearch')?.value ?? '').trim().toLocaleLowerCase();
   output.textContent = currentLogContent.split(/\r?\n/).filter((line) => !query || line.toLocaleLowerCase().includes(query)).join('\n') || 'Совпадений нет.';
 }
-function startLogPolling() { stopLogPolling(); logPollingTimer = window.setInterval(() => { if (!document.getElementById('tabContent-logs')?.classList.contains('hidden')) void loadLogs(); }, 5000); }
+function startLogPolling() {
+  stopLogPolling();
+  logPollingTimer = window.setInterval(() => {
+    const sectionVisible = document.visibilityState === 'visible' && !document.getElementById('tabContent-logs')?.classList.contains('hidden');
+    const autoRefresh = $<HTMLInputElement>('#logsAutoRefresh')?.checked ?? true;
+    if (shouldPollLogs(sectionVisible, autoRefresh, logRequestPending)) void loadLogs();
+  }, 5000);
+}
 function stopLogPolling() { if (logPollingTimer !== null) window.clearInterval(logPollingTimer); logPollingTimer = null; }
 function downloadLogs() {
   const url = URL.createObjectURL(new Blob([currentLogContent], { type: 'text/plain;charset=utf-8' }));
@@ -3663,12 +3701,14 @@ function bindPrototypeActions() {
     filterChangeHistory: () => renderChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
     refreshLogs: () => void loadLogs(),
     filterLogs: () => renderLogs(),
-    changeLogSource: (source: LogSource) => { currentLogSource = source === 'nfqws2' ? 'nfqws2' : 'nfqws2-ui'; void loadLogs(); },
+    changeLogSource: (source: LogSource) => { currentLogSource = source === 'nfqws2' ? 'nfqws2' : 'nfqws2-ui'; logRequestPending = false; void loadLogs(); },
+    toggleLogAutoRefresh: (enabled: boolean) => { setText('#logsAutoRefreshStatus', enabled ? 'Автообновление каждые 5 секунд' : 'Автообновление приостановлено'); },
     downloadLogs: () => downloadLogs(),
     clearLogs: () => clearLogs(),
     cancelOperationConfirmation: () => closeDangerousConfirmation(),
     confirmOperationConfirmation: () => void confirmDangerousOperation(),
     saveSnapshotRetention: () => void saveSnapshotSettings().catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить срок хранения.', 'error')),
+    toggleAutomaticSnapshots: (enabled: boolean) => void toggleAutomaticSnapshots(enabled),
     saveSnapshotRemote: () => void saveSnapshotSettings(true).catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить настройки NAS.', 'error')),
     testSnapshotRemote: () => void runSnapshotRemote('test'),
     pushSnapshotRemote: () => void runSnapshotRemote('push'),

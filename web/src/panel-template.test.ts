@@ -593,7 +593,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('.put(save_runtime_profiles)');
     expect(backendSource).toContain('NFQWS_ARGS_CUSTOM');
     expect(backendSource).toContain('"/api/change-history"');
-    expect(panelSource).toContain('nfqwsLogs.get(currentLogSource)');
+    expect(panelSource).toContain('nfqwsLogs.get(source)');
+    expect(panelSource).toContain('shouldPollLogs(sectionVisible, autoRefresh, logRequestPending)');
+    expect(template).toContain('id="logsAutoRefresh"');
+    expect(template).toContain('id="snapshotAutoEnabled"');
+    expect(template).toContain('toggleAutomaticSnapshots');
+    expect(template).toContain('Автоматически создавать копии');
     expect(template).toContain('id="operationConfirmModal"');
     expect(panelSource).toContain('requestDangerousConfirmation');
   });

@@ -220,8 +220,8 @@
     .backup-field { display:grid; grid-template-columns:9.5rem minmax(0,1fr); align-items:center; gap:.5rem .75rem; color:#cbd5e1; font-size:.875rem; }
     .backup-field small { grid-column:2; color:#94a3b8; font-size:.75rem; }
     .backup-field input[type=checkbox] { accent-color:#3b82f6; }
-    .backup-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.8rem; border:1px solid #263247; border-radius:.75rem; background:#0c121d; padding:.8rem; }
-    .backup-action { display:inline-flex; align-items:center; justify-content:center; border:1px solid #334155; border-radius:.55rem; background:#111827; color:#dbeafe; padding:.45rem .65rem; font-size:.75rem; font-weight:600; cursor:pointer; }
+    .backup-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.55rem; border:1px solid #263247; border-radius:.6rem; background:#0c121d; padding:.5rem .6rem; }
+    .backup-action { display:inline-flex; align-items:center; justify-content:center; border:1px solid #334155; border-radius:.5rem; background:#111827; color:#dbeafe; padding:.34rem .5rem; font-size:.6875rem; line-height:1rem; font-weight:600; cursor:pointer; }
     .backup-action:hover { background:#1e293b; border-color:#475569; }
     .backup-action:disabled { opacity:.45; cursor:not-allowed; }
     [data-layout="compact"] #diagnosticNavGroup { display:none !important; }

@@ -3882,6 +3882,9 @@ async fn create_ui_change_snapshot(
     note: &str,
     sync_remote: bool,
 ) -> Result<(), String> {
+    if !snapshots::load_settings(&state.data_dir).auto_enabled {
+        return Ok(());
+    }
     let Some(config) = config_path_for_state(state) else {
         return Ok(());
     };
@@ -9468,7 +9471,9 @@ async fn backup_and_write_named(
             .filter(|path| path.is_file())
             .or_else(|| config_path("nfqws2.conf"))
     };
-    if let Some(config) = snapshot_config {
+    if let Some(config) =
+        snapshot_config.filter(|_| snapshots::load_settings(data_dir).auto_enabled)
+    {
         snapshots::create_snapshot(data_dir, &config, "перед изменением", backup_name, false)
             .map_err(|message| {
                 format!("Не удалось сохранить полный снимок перед изменением: {message}")
@@ -10167,11 +10172,6 @@ async fn update_snapshot_settings(
 ) -> Response {
     if let Err(message) = validate_snapshot_remote_settings(&settings.remote) {
         return error(StatusCode::BAD_REQUEST, message);
-    }
-    if let Err(message) =
-        create_ui_change_snapshot(&state, "перед изменением хранения снимков", false).await
-    {
-        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
     }
     match snapshots::save_settings(&state.data_dir, &settings) {
         Ok(()) => {
