@@ -2,16 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName } from './profile-editor';
 
 describe('reorderProfileSteps', () => {
-  it('moves a desync step while leaving filters and payload arguments in place', () => {
+  it('moves ordered payload and desync steps while leaving filters in place', () => {
     const args = ['--filter-tcp=443', '--lua-desync=fake', '--payload=tls_client_hello', '--lua-desync=multisplit:pos=1'];
 
     expect(reorderProfileSteps(args, 0, 1)).toEqual([
       '--filter-tcp=443',
-      '--lua-desync=multisplit:pos=1',
       '--payload=tls_client_hello',
       '--lua-desync=fake',
+      '--lua-desync=multisplit:pos=1',
     ]);
     expect(args[1]).toBe('--lua-desync=fake');
+  });
+
+  it('keeps packet ranges in the same ordered sequence as payload and Lua steps', () => {
+    expect(reorderProfileSteps(['--filter-tcp=443', '--payload=tls_client_hello', '--out-range=1', '--lua-desync=fake'], 1, 1))
+      .toEqual(['--filter-tcp=443', '--payload=tls_client_hello', '--lua-desync=fake', '--out-range=1']);
   });
 
   it('keeps the order unchanged when the requested step has no neighbour', () => {

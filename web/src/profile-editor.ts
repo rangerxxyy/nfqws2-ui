@@ -1,6 +1,10 @@
-/** Reorders only Lua desync steps while retaining every other argument's position. */
+/** Reorders ordered payload/range/desync steps while retaining filter argument positions. */
 export function reorderProfileSteps(args: readonly string[], stepIndex: number, direction: -1 | 1): string[] {
-  const positions = args.flatMap((argument, index) => argument.startsWith('--lua-desync=') ? [index] : []);
+  const isOrderedStep = (argument: string) => argument.startsWith('--lua-desync=')
+    || argument.startsWith('--payload=')
+    || argument.startsWith('--in-range=')
+    || argument.startsWith('--out-range=');
+  const positions = args.flatMap((argument, index) => isOrderedStep(argument) ? [index] : []);
   const targetStepIndex = stepIndex + direction;
   if (stepIndex < 0 || targetStepIndex < 0 || stepIndex >= positions.length || targetStepIndex >= positions.length) return [...args];
 

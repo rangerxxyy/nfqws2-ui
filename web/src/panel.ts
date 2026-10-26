@@ -404,14 +404,18 @@ function profileFromArgs(index: number, args: string[], editable: boolean): Nfqw
   return {
     id: editable ? `custom-${index}` : `draft-managed-${index}`, index, name, source, editable, args,
     filters: args.filter((argument) => argument.startsWith('--filter-')),
-    protocols: args.filter((argument) => argument.startsWith('--payload=') || argument.startsWith('--filter-7=')),
+    protocols: args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
     lists: args.filter((argument) => argument.startsWith('--hostlist') || argument.startsWith('--ipset') || argument.startsWith('--autohostlist')),
-    steps: args.filter((argument) => argument.startsWith('--lua-desync=')),
+    steps: args.filter((argument) => argument.startsWith('--lua-desync=') || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=')),
   };
 }
 function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
   if (!runtimeProfilesState) return [];
-  const managed = runtimeProfilesState.profiles.filter((profile) => !profile.editable);
+  const managed = runtimeProfilesState.profiles.filter((profile) => !profile.editable).map((profile) => ({
+    ...profile,
+    protocols: profile.args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
+    steps: profile.args.filter((argument) => argument.startsWith('--lua-desync=') || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=')),
+  }));
   const custom = runtimeProfileDraft.map((args, index) => profileFromArgs(index + 1, args, true));
   return [...custom, ...managed].map((profile, index) => ({ ...profile, index: index + 1 }));
 }
@@ -463,7 +467,7 @@ function renderRuntimeProfiles() {
     actions.append(copy, lock); heading.append(actions);
   }
   editor.append(heading);
-  const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы и payload', profile.protocols], ['Списки', profile.lists], ['Шаги desync', profile.steps]];
+  const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы', profile.protocols], ['Списки', profile.lists], ['Упорядоченные шаги', profile.steps]];
   for (const [label, values] of sections) {
     const row = document.createElement('div'); row.className = 'grid gap-1 border-b border-slate-800/80 py-2 sm:grid-cols-[10rem_minmax(0,1fr)]';
     const key = document.createElement('strong'); key.className = 'text-xs text-slate-300'; key.textContent = label;
@@ -489,16 +493,16 @@ function renderRuntimeProfiles() {
       ['TCP-порты', (arg) => arg.startsWith('--filter-tcp=')],
       ['UDP-порты', (arg) => arg.startsWith('--filter-udp=')],
       ['Другие фильтры', (arg) => arg.startsWith('--filter-') && !arg.startsWith('--filter-tcp=') && !arg.startsWith('--filter-udp=')],
-      ['Протоколы и payload', (arg) => arg.startsWith('--payload=')],
+      ['Протоколы', (arg) => arg.startsWith('--filter-l7=') || arg.startsWith('--filter-7=')],
       ['Списки доменов и IP', (arg) => arg.startsWith('--hostlist') || arg.startsWith('--ipset') || arg.startsWith('--autohostlist')],
-      ['Упорядоченные шаги', (arg) => arg.startsWith('--lua-desync=')],
-      ['Другие параметры', (arg) => !arg.startsWith('--filter-') && !arg.startsWith('--payload=') && !arg.startsWith('--hostlist') && !arg.startsWith('--ipset') && !arg.startsWith('--autohostlist') && !arg.startsWith('--lua-desync=') && !arg.startsWith('--name=')],
+      ['Упорядоченные шаги', (arg) => arg.startsWith('--lua-desync=') || arg.startsWith('--payload=') || arg.startsWith('--in-range=') || arg.startsWith('--out-range=')],
+      ['Другие параметры', (arg) => !arg.startsWith('--filter-') && !arg.startsWith('--filter-7=') && !arg.startsWith('--payload=') && !arg.startsWith('--in-range=') && !arg.startsWith('--out-range=') && !arg.startsWith('--hostlist') && !arg.startsWith('--ipset') && !arg.startsWith('--autohostlist') && !arg.startsWith('--lua-desync=') && !arg.startsWith('--name=')],
     ];
     let conditionsHeadingAdded = false; let listsHeadingAdded = false; let stepsHeadingAdded = false;
     for (const [groupName, predicate] of groups) {
       const indexes = profile.args.map((arg, index) => predicate(arg) ? index : -1).filter((index) => index >= 0);
       if (!indexes.length) continue;
-      if (!conditionsHeadingAdded && ['TCP-порты', 'UDP-порты', 'Другие фильтры', 'Протоколы и payload'].includes(groupName)) { appendProfileBuilderSectionHeading(builder, 'Когда срабатывает'); conditionsHeadingAdded = true; }
+      if (!conditionsHeadingAdded && ['TCP-порты', 'UDP-порты', 'Другие фильтры', 'Протоколы'].includes(groupName)) { appendProfileBuilderSectionHeading(builder, 'Когда срабатывает'); conditionsHeadingAdded = true; }
       if (!listsHeadingAdded && groupName === 'Списки доменов и IP') { appendProfileBuilderSectionHeading(builder, 'Для кого'); listsHeadingAdded = true; }
       if (!stepsHeadingAdded && groupName === 'Упорядоченные шаги') { appendProfileBuilderSectionHeading(builder, 'Что делает'); stepsHeadingAdded = true; }
       if (groupName === 'Упорядоченные шаги') {
@@ -518,6 +522,16 @@ function renderRuntimeProfiles() {
         };
         indexes.forEach((argumentIndex, stepIndex) => {
           const argument = profile.args[argumentIndex] ?? '';
+          if (!argument.startsWith('--lua-desync=')) {
+            const label = argument.startsWith('--payload=') ? 'Типы пакетов' : argument.startsWith('--out-range=') ? 'Исходящие пакеты' : 'Входящие пакеты';
+            const row = document.createElement('div'); row.className = 'grid gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 sm:grid-cols-[2rem_minmax(0,1fr)_auto] sm:items-center';
+            const badge = document.createElement('span'); badge.className = 'grid h-6 w-6 place-items-center rounded-md bg-slate-800 text-xs font-bold text-slate-300'; badge.textContent = label === 'Типы пакетов' ? 'P' : 'R';
+            const input = document.createElement('input'); input.type = 'text'; input.className = 'min-w-0 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-blue-200'; input.value = argument; input.setAttribute('aria-label', `${label}, шаг ${stepIndex + 1}`); input.dataset.actionChange = 'updateRuntimeProfileArgument'; input.dataset.args = JSON.stringify([profile.id, String(argumentIndex), { source: 'value' }]);
+            const controls = document.createElement('div'); controls.className = 'flex items-center gap-1';
+            for (const [direction, text, accessible] of [['up', '↑', 'Переместить шаг выше'], ['down', '↓', 'Переместить шаг ниже']] as const) { const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'moveRuntimeProfileStep'; button.dataset.args = JSON.stringify([profile.id, String(stepIndex), direction]); button.className = 'backup-action'; button.textContent = text; button.setAttribute('aria-label', accessible); button.disabled = direction === 'up' ? stepIndex === 0 : stepIndex === indexes.length - 1; controls.append(button); }
+            const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.actionClick = 'removeRuntimeProfileArgument'; remove.dataset.args = JSON.stringify([profile.id, String(argumentIndex)]); remove.className = 'backup-action'; remove.textContent = '×'; remove.setAttribute('aria-label', `Удалить шаг ${stepIndex + 1}`); controls.append(remove);
+            row.append(badge, input, controls); section.append(row); return;
+          }
           const body = argument.slice('--lua-desync='.length);
           const [functionName = '', ...parameterParts] = body.split(':');
           const row = document.createElement('div'); row.className = 'grid gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 sm:grid-cols-[2rem_minmax(0,1fr)_auto] sm:items-start';
@@ -539,6 +553,7 @@ function renderRuntimeProfiles() {
         });
         const addStep = document.createElement('select'); addStep.className = 'min-h-8 w-full max-w-xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200'; addStep.setAttribute('aria-label', 'Добавить шаг стратегии');
         const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ добавить шаг'; addStep.append(placeholder);
+        for (const [value, label] of [['--payload=tls_client_hello', 'Типы пакетов · TLS ClientHello'], ['--payload=quic_initial', 'Типы пакетов · QUIC Initial'], ['--out-range=1', 'Исходящий диапазон'], ['--in-range=1', 'Входящий диапазон']] as const) { const option = document.createElement('option'); option.value = value; option.textContent = label; addStep.append(option); }
         functions.filter((name) => !indexes.some((index) => profile.args[index]?.startsWith(`--lua-desync=${name}`))).forEach((name) => { const option = document.createElement('option'); option.value = `--lua-desync=${name}`; option.textContent = `${name}${descriptions[name] ? ` · ${descriptions[name]}` : ''}`; addStep.append(option); });
         addStep.dataset.actionChange = 'appendRuntimeProfileArgument'; addStep.dataset.valueSource = 'value'; section.append(addStep); builder.append(section); continue;
       }
@@ -558,7 +573,7 @@ function renderRuntimeProfiles() {
     const addLabel = document.createElement('label'); addLabel.className = 'mt-1 block text-xs text-slate-400'; addLabel.textContent = 'Добавить параметр';
     const select = document.createElement('select'); select.dataset.actionChange = 'appendRuntimeProfileArgument'; select.dataset.valueSource = 'value'; select.className = 'mt-1 w-full max-w-xl rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100';
     const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ выбрать параметр'; select.append(placeholder);
-    for (const [value, label] of [['--filter-tcp=443', 'TCP-порты · 443'], ['--filter-udp=443', 'UDP-порты · 443'], ['--payload=tls_client_hello', 'TLS ClientHello'], ['--payload=quic_initial', 'QUIC Initial'], ['--hostlist-domains=example.com', 'Домен · example.com'], ['--lua-desync=fake', 'Шаг desync · fake']] as const) {
+    for (const [value, label] of [['--filter-tcp=443', 'TCP-порты · 443'], ['--filter-udp=443', 'UDP-порты · 443'], ['--filter-l7=tls', 'Протокол · TLS'], ['--payload=tls_client_hello', 'Тип пакета · TLS ClientHello'], ['--payload=quic_initial', 'Тип пакета · QUIC Initial'], ['--out-range=1', 'Исходящие пакеты · диапазон'], ['--in-range=1', 'Входящие пакеты · диапазон'], ['--hostlist-domains=example.com', 'Домен · example.com'], ['--lua-desync=fake', 'Шаг desync · fake']] as const) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option);
     }
     for (const file of profileListInventory) {
