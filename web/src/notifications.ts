@@ -2,6 +2,12 @@ export type ToastTone = 'success' | 'error';
 export type LifecycleEvent = 'start' | 'stop' | 'restart' | 'panel-update' | 'core-update';
 export const TOAST_DEDUPLICATION_WINDOW_MS = 5500;
 
+export function toastCardsToDismiss<T extends { removing: boolean }>(cards: readonly T[], maxVisible = 4): T[] {
+  const activeCards = cards.filter((card) => !card.removing);
+  const overflowCount = Math.max(0, activeCards.length - Math.max(0, maxVisible) + 1);
+  return activeCards.slice(0, overflowCount);
+}
+
 export function lifecycleMessage(event: LifecycleEvent, version?: string): string {
   const base = {
     start: 'nfqws2 запущен',

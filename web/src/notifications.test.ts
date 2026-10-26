@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { canShowToast, lifecycleMessage } from './notifications';
+import { canShowToast, lifecycleMessage, toastCardsToDismiss } from './notifications';
+
+describe('toast stack overflow', () => {
+  it('removes only the oldest active toast cards and respects the visible-card limit', () => {
+    const cards = [{ id: 'oldest', removing: false }, { id: 'progress', removing: false }, { id: 'newer', removing: false }, { id: 'fading', removing: true }];
+    expect(toastCardsToDismiss(cards, 3)).toEqual([{ id: 'oldest', removing: false }]);
+    expect(toastCardsToDismiss(cards.slice(1), 3)).toEqual([]);
+  });
+});
 
 describe('lifecycle notifications', () => {
   it('uses clear names for service and updater events', () => {

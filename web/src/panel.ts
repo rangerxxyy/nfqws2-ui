@@ -23,7 +23,7 @@ import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
 import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
-import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
+import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
 import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
@@ -141,7 +141,9 @@ function toast(message: string, type: 'success' | 'error' = 'success') {
   const title = document.createElement('strong'); title.textContent = presentation.title;
   const detail = document.createElement('span'); detail.textContent = message;
   copy.append(title, detail); item.append(icon, copy);
-  while (host.children.length >= 4) host.firstElementChild?.remove();
+  const toastCards = [...host.querySelectorAll<HTMLElement>(':scope > .toast-card')];
+  toastCardsToDismiss(toastCards.map((element) => ({ element, removing: element.dataset.removing === 'true' })))
+    .forEach(({ element }) => dismissToast(element));
   host.append(item);
   window.setTimeout(() => dismissToast(item), 5200);
 }
