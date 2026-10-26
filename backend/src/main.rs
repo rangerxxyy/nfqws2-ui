@@ -9670,12 +9670,109 @@ async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NfqwsCliOption {
+    name: String,
+    syntax: String,
+    description: String,
+    global: bool,
+    takes_value: bool,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NfqwsCliCatalog {
+    options: Vec<NfqwsCliOption>,
+    l7: Vec<String>,
+    payloads: Vec<String>,
+}
+
+fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
+    let mut catalog = NfqwsCliCatalog::default();
+    let mut section = "GLOBAL".to_owned();
+    for line in help.lines() {
+        let trimmed = line.trim();
+        if trimmed.ends_with(':')
+            && trimmed
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase() || ch == ' ' || ch == '-' || ch == ':')
+        {
+            section = trimmed.trim_end_matches(':').to_owned();
+            continue;
+        }
+        let Some(option) = line.trim_start().strip_prefix("--") else {
+            continue;
+        };
+        let name_end = option
+            .find(|ch: char| !(ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-'))
+            .unwrap_or(option.len());
+        if name_end == 0 {
+            continue;
+        }
+        let name = &option[..name_end];
+        let rest = &option[name_end..];
+        let syntax_end = rest
+            .find(|ch: char| ch.is_ascii_whitespace() || ch == ';')
+            .unwrap_or(rest.len());
+        let suffix = &rest[..syntax_end];
+        let description = rest[syntax_end..]
+            .trim()
+            .trim_start_matches(';')
+            .trim()
+            .to_owned();
+        let takes_value = !suffix.is_empty() && !suffix.starts_with('[');
+        if let Some(values) = description
+            .rsplit_once(':')
+            .map(|(_, values)| values.trim())
+        {
+            let values = values
+                .split_ascii_whitespace()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if name == "filter-l7" {
+                catalog.l7 = values;
+            } else if name == "payload" {
+                catalog.payloads = values;
+            }
+        }
+        catalog.options.push(NfqwsCliOption {
+            name: name.to_owned(),
+            syntax: format!("--{name}{suffix}"),
+            global: matches!(section.as_str(), "GLOBAL" | "DESYNC ENGINE INIT")
+                || description.contains("global parameter"),
+            description,
+            takes_value,
+        });
+    }
+    catalog
+}
+
 async fn get_profile_lua_catalog() -> Response {
     let Some(paths) = discover_system_paths() else {
         return error(StatusCode::NOT_FOUND, "Установка nfqws2 не обнаружена");
     };
+    let cli_catalog = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::process::Command::new(&paths.binary)
+            .arg("--help")
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    {
+        Ok(Ok(output)) => parse_nfqws_cli_catalog(&format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )),
+        _ => NfqwsCliCatalog::default(),
+    };
     let Ok(entries) = std::fs::read_dir(&paths.lua_dir) else {
-        return Json(serde_json::json!({ "functions": [], "standardGroups": [] })).into_response();
+        return Json(
+            serde_json::json!({ "functions": [], "standardGroups": [], "cli": cli_catalog }),
+        )
+        .into_response();
     };
     let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
@@ -9744,7 +9841,7 @@ async fn get_profile_lua_catalog() -> Response {
             catalog.entry(function.name.clone()).or_insert(function);
         }
     }
-    Json(serde_json::json!({ "functions": catalog.into_values().collect::<Vec<_>>(), "standardGroups": standard_groups.into_values().collect::<Vec<_>>() })).into_response()
+    Json(serde_json::json!({ "functions": catalog.into_values().collect::<Vec<_>>(), "standardGroups": standard_groups.into_values().collect::<Vec<_>>(), "cli": cli_catalog })).into_response()
 }
 
 fn build_runtime_profiles_config(
@@ -11176,6 +11273,43 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nfqws_help_catalog_parses_runtime_protocols_payloads_and_argument_scope() {
+        let catalog = parse_nfqws_cli_catalog(
+            "GLOBAL:\n  --daemon\n  --qnum=<n>\nFILTERS:\n  --filter-l7=<proto> ; supported: tls http quic\n  --payload=<type> ; available payloads: tls_client_hello quic_initial http_req\n  --hostlist=<file> ; read domains\n",
+        );
+        assert_eq!(catalog.l7, ["tls", "http", "quic"]);
+        assert_eq!(
+            catalog.payloads,
+            ["tls_client_hello", "quic_initial", "http_req"]
+        );
+        assert!(
+            catalog
+                .options
+                .iter()
+                .find(|option| option.name == "qnum")
+                .unwrap()
+                .global
+        );
+        assert!(
+            !catalog
+                .options
+                .iter()
+                .find(|option| option.name == "hostlist")
+                .unwrap()
+                .global
+        );
+        assert!(
+            catalog
+                .options
+                .iter()
+                .find(|option| option.name == "daemon")
+                .unwrap()
+                .takes_value
+                == false
+        );
+    }
 
     #[test]
     fn log_path_resolution_rejects_symlinked_candidates() {

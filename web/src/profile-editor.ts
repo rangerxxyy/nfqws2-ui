@@ -1,4 +1,4 @@
-import type { NfqwsListSummary, NfqwsLuaFunctionInfo, NfqwsLuaStandardGroup } from './api';
+import type { NfqwsCliCatalog, NfqwsListSummary, NfqwsLuaFunctionInfo, NfqwsLuaStandardGroup } from './api';
 
 export type ProfileArgumentChoice = { group: string; value: string; label: string };
 
@@ -68,7 +68,7 @@ export function profileOrderWarnings(profiles: readonly (readonly string[])[]): 
 }
 
 /** Returns safe starter values for the full profile rule: match conditions, scope and ordered actions. */
-export function profileArgumentChoices(args: readonly string[], lists: readonly NfqwsListSummary[]): ProfileArgumentChoice[] {
+export function profileArgumentChoices(args: readonly string[], lists: readonly NfqwsListSummary[], cli?: NfqwsCliCatalog): ProfileArgumentChoice[] {
   const definitions: ProfileArgumentChoice[] = [
     { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=80', label: 'TCP-порты · 80' },
     { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=443', label: 'TCP-порты · 443' },
@@ -97,6 +97,15 @@ export function profileArgumentChoices(args: readonly string[], lists: readonly 
       definitions.push({ group: 'Для кого · домены', value: `--hostlist=${path}`, label: `Список доменов · ${label}` });
       definitions.push({ group: 'Для кого · домены', value: `--hostlist-exclude=${path}`, label: `Исключить список · ${label}` });
       if (/auto/i.test(label) || /auto/i.test(path)) definitions.push({ group: 'Для кого · домены', value: `--hostlist-auto=${path}`, label: `Автосписок доменов · ${label}` });
+    }
+  }
+  if (cli) {
+    for (const protocol of cli.l7) definitions.push({ group: 'Когда срабатывает · протокол', value: `--filter-l7=${protocol}`, label: `Протокол · ${protocol}` });
+    for (const payload of cli.payloads) definitions.push({ group: 'Что делает · пакеты', value: `--payload=${payload}`, label: `Тип пакета · ${payload}` });
+    for (const option of cli.options) {
+      if (option.global || option.name === 'filter-l7' || option.name === 'payload') continue;
+      const value = option.takesValue ? `--${option.name}=` : `--${option.name}`;
+      definitions.push({ group: 'Параметры nfqws2 · остальные', value, label: `${option.syntax}${option.description ? ` · ${option.description}` : ''}` });
     }
   }
   return definitions.filter(({ value }) => {

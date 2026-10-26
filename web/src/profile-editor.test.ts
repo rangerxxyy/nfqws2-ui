@@ -23,6 +23,24 @@ describe('profile builder choices', () => {
     expect(absent.some((choice) => choice.value.startsWith('--hostlist-auto='))).toBe(false);
     expect(installed.some((choice) => choice.value === '--hostlist-auto=/etc/nfqws2/lists/auto.list')).toBe(true);
   });
+
+  it('adds every non-global runtime nfqws2 option and discovered protocol and payload values', () => {
+    const choices = profileArgumentChoices([], [], {
+      l7: ['tls', 'http', 'quic', 'wireguard'],
+      payloads: ['tls_client_hello', 'http_req', 'custom_payload'],
+      options: [
+        { name: 'filter-l7', syntax: '--filter-l7=<proto>', description: 'protocol', global: false, takesValue: true },
+        { name: 'payload', syntax: '--payload=<type>', description: 'payload', global: false, takesValue: true },
+        { name: 'hostlist', syntax: '--hostlist=<file>', description: 'domains', global: false, takesValue: true },
+        { name: 'qnum', syntax: '--qnum=<n>', description: 'queue', global: true, takesValue: true },
+        { name: 'debug', syntax: '--debug', description: 'debug mode', global: false, takesValue: false },
+      ],
+    });
+    expect(choices.map((choice) => choice.value)).toEqual(expect.arrayContaining([
+      '--filter-l7=wireguard', '--payload=custom_payload', '--hostlist=', '--debug',
+    ]));
+    expect(choices.some((choice) => choice.value.startsWith('--qnum'))).toBe(false);
+  });
 });
 
 describe('profile filter tokens', () => {

@@ -11,7 +11,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -309,6 +309,7 @@ let changeHistoryCache: ChangeHistoryEntry[] = [];
 let runtimeProfilesState: NfqwsProfilesResponse | null = null;
 let runtimeProfileLuaCatalog: NfqwsLuaFunctionInfo[] = [];
 let runtimeProfileLuaStandardGroups: NfqwsLuaStandardGroup[] = [];
+let runtimeProfileCliCatalog: NfqwsLuaCatalogResponse['cli'] | undefined;
 let runtimeProfileLuaCatalogAvailable = false;
 let draggedRuntimeProfileStep: { profileId: string; index: number } | null = null;
 let runtimeProfileDraft: string[][] = [];
@@ -597,7 +598,8 @@ function renderRuntimeProfiles() {
         });
         const addStep = document.createElement('select'); addStep.className = 'min-h-9 w-full max-w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'; addStep.setAttribute('aria-label', 'Добавить шаг стратегии');
         const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ добавить шаг'; addStep.append(placeholder);
-        for (const [value, label] of [['--payload=tls_client_hello', 'Типы пакетов · TLS ClientHello'], ['--payload=quic_initial', 'Типы пакетов · QUIC Initial'], ['--out-range=1', 'Исходящий диапазон'], ['--in-range=1', 'Входящий диапазон']] as const) { const option = document.createElement('option'); option.value = value; option.textContent = label; addStep.append(option); }
+        const payloadChoices = runtimeProfileCliCatalog?.payloads.length ? runtimeProfileCliCatalog.payloads.map((payload) => [`--payload=${payload}`, `Тип пакета · ${payload}`] as const) : [['--payload=tls_client_hello', 'Типы пакетов · TLS ClientHello'], ['--payload=quic_initial', 'Типы пакетов · QUIC Initial']] as const;
+        for (const [value, label] of [...payloadChoices, ['--out-range=1', 'Исходящий диапазон'], ['--in-range=1', 'Входящий диапазон']] as const) { const option = document.createElement('option'); option.value = value; option.textContent = label; addStep.append(option); }
         functions.forEach((name) => { const option = document.createElement('option'); option.value = `--lua-desync=${name}`; const info = runtimeProfileLuaCatalog.find((item) => item.name === name); option.textContent = `${name}${info?.docs[0] ? ` · ${info.docs[0]}` : ''}`; addStep.append(option); });
         addStep.dataset.actionChange = 'appendRuntimeProfileArgument'; addStep.dataset.valueSource = 'value'; section.append(addStep); builder.append(section); continue;
       }
@@ -637,7 +639,7 @@ function renderRuntimeProfiles() {
     const select = document.createElement('select'); select.dataset.actionChange = 'appendRuntimeProfileArgument'; select.dataset.valueSource = 'value'; select.className = 'profile-builder-add-select mt-1 w-full max-w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100';
     const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ выбрать, что добавить'; select.append(placeholder);
     const groupedChoices = new Map<string, HTMLOptGroupElement>();
-    const argumentChoices = profileArgumentChoices(profile.args, profileListInventory)
+    const argumentChoices = profileArgumentChoices(profile.args, profileListInventory, runtimeProfileCliCatalog)
       .filter((choice) => !runtimeProfileLuaCatalogAvailable || !choice.value.startsWith('--lua-desync='));
     for (const choice of argumentChoices) {
       let group = groupedChoices.get(choice.group);
@@ -677,7 +679,7 @@ async function loadProfiles() {
   const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профильные группы nfqws2…';
   try {
     const result = await nfqwsProfiles.list(); runtimeProfilesState = result;
-    try { const catalog = await nfqwsProfiles.catalog(); runtimeProfileLuaCatalog = catalog.functions; runtimeProfileLuaStandardGroups = catalog.standardGroups ?? []; runtimeProfileLuaCatalogAvailable = true; } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileLuaCatalogAvailable = false; }
+    try { const catalog = await nfqwsProfiles.catalog(); runtimeProfileLuaCatalog = catalog.functions; runtimeProfileLuaStandardGroups = catalog.standardGroups ?? []; runtimeProfileCliCatalog = catalog.cli; runtimeProfileLuaCatalogAvailable = true; } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileCliCatalog = undefined; runtimeProfileLuaCatalogAvailable = false; }
     try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
     runtimeProfilesDirty = false; renderRuntimeProfiles();
