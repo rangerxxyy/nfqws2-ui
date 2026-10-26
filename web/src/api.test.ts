@@ -328,6 +328,14 @@ describe('API client used by the source-based panel', () => {
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('DELETE');
   });
 
+  it('loads profile function help from the installed Lua catalog endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"functions":[{"name":"multisplit","file":"zapret-auto.lua","docs":["Split a TLS record."],"arguments":["pos — positions"],"required":["pos"]}]}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const catalog = await nfqwsProfiles.catalog();
+    expect(catalog.functions[0]?.required).toEqual(['pos']);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/profiles/catalog');
+  });
+
   it('applies a config through the transactional endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       '{"config":{"file":"/opt/etc/nfqws2/nfqws2.conf","content":"NFQWS_ARGS=--filter-tcp=443\\n","revision":"new"},"message":"Started and verified"}',

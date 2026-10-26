@@ -3,6 +3,104 @@
 use crate::config_document::ConfigDocument;
 use serde::Serialize;
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LuaFunctionInfo {
+    pub name: String,
+    pub file: String,
+    pub docs: Vec<String>,
+    pub arguments: Vec<String>,
+    pub required: Vec<String>,
+}
+
+/// Extract function help from installed nfqws2 Lua comment blocks. This keeps
+/// the editor catalog tied to the actual scripts shipped on the router.
+pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut result = Vec::new();
+    let mut docs = Vec::<String>::new();
+    let mut in_block_comment = false;
+    for (index, raw) in lines.iter().enumerate() {
+        let line = raw.trim();
+        if line.starts_with("--[[") {
+            in_block_comment = true;
+            docs.clear();
+            let inline = line.trim_start_matches("--[[").trim();
+            if !inline.is_empty() && !inline.ends_with("]]") {
+                docs.push(inline.to_string());
+            }
+            continue;
+        }
+        if in_block_comment {
+            if line.starts_with("]]") {
+                in_block_comment = false;
+                continue;
+            }
+            docs.push(line.to_string());
+            continue;
+        }
+        if let Some(doc) = line.strip_prefix("-- ") {
+            docs.push(doc.to_string());
+            continue;
+        }
+        if let Some(signature) = line.strip_prefix("function ") {
+            if let Some((name, signature)) = signature.split_once('(')
+                && signature.starts_with("ctx, desync)")
+                && !name.is_empty()
+                && name.len() <= 48
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte.is_ascii_digit())
+            {
+                let mut arguments = Vec::new();
+                let mut required = Vec::new();
+                let mut function_docs = Vec::new();
+                for doc in &docs {
+                    if let Some(value) = doc.strip_prefix("arg:") {
+                        arguments.push(value.trim().to_string());
+                    } else if !doc.trim().is_empty() && !doc.starts_with("standard args:") {
+                        function_docs.push(doc.trim().to_string());
+                    }
+                }
+                for body_line in lines.iter().skip(index + 1).take(4096) {
+                    if body_line.trim() == "end" {
+                        break;
+                    }
+                    for marker in ["'", "\""] {
+                        let needle = format!("{marker} arg required");
+                        let mut rest = *body_line;
+                        while let Some(position) = rest.find(&needle) {
+                            let before = &rest[..position];
+                            if let Some(start) = before.rfind(marker) {
+                                let argument = &before[start + 1..];
+                                if !argument.is_empty()
+                                    && argument
+                                        .bytes()
+                                        .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+                                {
+                                    required.push(argument.to_string());
+                                }
+                            }
+                            rest = &rest[position + needle.len()..];
+                        }
+                    }
+                }
+                required.sort();
+                required.dedup();
+                result.push(LuaFunctionInfo {
+                    name: name.to_string(),
+                    file: file.to_string(),
+                    docs: function_docs,
+                    arguments,
+                    required,
+                });
+            }
+        }
+        docs.clear();
+    }
+    result
+}
+
 const ARG_GROUPS: [&str; 6] = [
     "NFQWS_ARGS_CUSTOM",
     "NFQWS_ARGS_UDP",
@@ -255,7 +353,24 @@ pub fn from_config(source: &str, revision: &str) -> Result<RuntimeProfilesRespon
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_custom_profile_args, from_config, split_custom_profile_args};
+    use super::{
+        encode_custom_profile_args, from_config, parse_lua_catalog, split_custom_profile_args,
+    };
+
+    #[test]
+    fn lua_catalog_extracts_help_declared_arguments_and_required_keys() {
+        let source = "--[[\nSplit a TLS record.\narg: pos — split positions\narg: fooling — fooling mode\n]]\nfunction multisplit(ctx, desync)\n  check_and_die(desync, 'pos' arg required)\nend\n";
+        let catalog = parse_lua_catalog("zapret-auto.lua", source);
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].name, "multisplit");
+        assert_eq!(catalog[0].file, "zapret-auto.lua");
+        assert_eq!(catalog[0].docs, ["Split a TLS record."]);
+        assert_eq!(
+            catalog[0].arguments,
+            ["pos — split positions", "fooling — fooling mode"]
+        );
+        assert_eq!(catalog[0].required, ["pos"]);
+    }
 
     #[test]
     fn splits_custom_runtime_profiles_at_new_and_keeps_ordered_arguments() {

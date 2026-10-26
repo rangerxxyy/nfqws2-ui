@@ -1,3 +1,28 @@
+import type { NfqwsLuaFunctionInfo } from './api';
+
+export type ProfileLuaWarning = { argument: string; message: string };
+
+/** Reports only issues that can be proven from the installed Lua catalog. */
+export function diagnoseProfileLuaArguments(args: readonly string[], catalog: readonly NfqwsLuaFunctionInfo[]): ProfileLuaWarning[] {
+  if (!catalog.length) return [];
+  const known = new Map(catalog.map((item) => [item.name, item]));
+  const warnings: ProfileLuaWarning[] = [];
+  for (const argument of args) {
+    if (!argument.startsWith('--lua-desync=')) continue;
+    const [name = '', ...parameters] = argument.slice('--lua-desync='.length).split(':');
+    const info = known.get(name);
+    if (!info) {
+      warnings.push({ argument, message: `Функция ${name || '(пустое имя)'} отсутствует в установленных Lua-скриптах` });
+      continue;
+    }
+    const supplied = new Set(parameters.map((value) => value.split('=', 1)[0]));
+    for (const required of info.required) {
+      if (!supplied.has(required)) warnings.push({ argument, message: `Для ${name} не указан обязательный параметр ${required}` });
+    }
+  }
+  return warnings;
+}
+
 /** Reorders ordered payload/range/desync steps while retaining filter argument positions. */
 export function reorderProfileSteps(args: readonly string[], stepIndex: number, direction: -1 | 1): string[] {
   const isOrderedStep = (argument: string) => argument.startsWith('--lua-desync=')

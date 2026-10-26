@@ -72,6 +72,8 @@ export type SnapshotSettings = { maxCount: number; maxDays: number; remote: Snap
 export type SnapshotOverview = { items: SnapshotItem[]; settings: SnapshotSettings; directory: string; totalBytes: number; localCount: number; remote: { tool: string | null; publicKey: string; on: boolean; pending: number; stored: number; lastOk: number | null; error: string | null; setupCommand: string } };
 export type NfqwsArgumentProfile = { id: string; index: number; name: string; source: string; editable: boolean; args: string[]; filters: string[]; protocols: string[]; lists: string[]; steps: string[] };
 export type NfqwsProfilesResponse = { profiles: NfqwsArgumentProfile[]; customArgs: string; revision: string; limitation: string | null };
+export type NfqwsLuaFunctionInfo = { name: string; file: string; docs: string[]; arguments: string[]; required: string[] };
+export type NfqwsLuaCatalogResponse = { functions: NfqwsLuaFunctionInfo[] };
 export type ChangeHistoryEntry = { id: string; ts: number; version: string | null; reason: string; note: string; changedFiles: string[] };
 export type LogSource = 'nfqws2-ui' | 'nfqws2';
 export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean };
@@ -168,6 +170,7 @@ export const nfqwsSnapshots = {
 
 export const nfqwsProfiles = {
   list: () => api<NfqwsProfilesResponse>('/api/profiles'),
+  catalog: () => api<NfqwsLuaCatalogResponse>('/api/profiles/catalog'),
   saveCustom: (profiles: string[][], revision: string) => api<{ config: ConfigResponse; message: string }>('/api/profiles', { method: 'PUT', body: JSON.stringify({ profiles, revision }) }),
 };
 

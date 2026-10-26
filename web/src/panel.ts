@@ -11,7 +11,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaFunctionInfo, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -307,6 +307,7 @@ let pendingConfirmation: (() => Promise<void>) | null = null;
 let pendingConfirmationCancel: (() => void) | null = null;
 let changeHistoryCache: ChangeHistoryEntry[] = [];
 let runtimeProfilesState: NfqwsProfilesResponse | null = null;
+let runtimeProfileLuaCatalog: NfqwsLuaFunctionInfo[] = [];
 let runtimeProfileDraft: string[][] = [];
 let profileListInventory: NfqwsListSummary[] = [];
 let selectedRuntimeProfileId = '';
@@ -441,7 +442,8 @@ function renderRuntimeProfiles() {
     button.className = `flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${profile.id === selectedRuntimeProfileId ? 'bg-blue-500/20 text-blue-200' : 'text-slate-300 hover:bg-slate-800'}`;
     const num = document.createElement('span'); num.className = 'grid h-5 w-5 shrink-0 place-items-center rounded-full border border-emerald-400 text-[11px] font-bold text-emerald-300'; num.textContent = String(profile.index);
     const name = document.createElement('span'); name.className = 'min-w-0 flex-1 truncate'; name.textContent = profile.name;
-    const badge = document.createElement('span'); badge.className = 'text-xs text-slate-500'; badge.textContent = profile.editable ? '•' : '🔒'; badge.setAttribute('aria-label', profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
+    const warnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog);
+    const badge = document.createElement('span'); badge.className = warnings.length ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : 'text-xs text-slate-500'; badge.textContent = warnings.length ? String(warnings.length) : profile.editable ? '•' : '🔒'; badge.setAttribute('aria-label', warnings.length ? `Предупреждений профиля: ${warnings.length}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
     button.append(num, name, badge); list.append(button);
   }
   editor.replaceChildren();
@@ -452,6 +454,8 @@ function renderRuntimeProfiles() {
   const heading = document.createElement('div'); heading.className = 'flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3';
   const title = document.createElement('div');
   const name = document.createElement('h2'); name.className = 'font-bold text-white'; name.textContent = `#${profile.index} ${profile.name}`;
+  const profileWarnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog);
+  if (profileWarnings.length) { const warningBadge = document.createElement('span'); warningBadge.className = 'ml-2 inline-flex rounded-full bg-amber-500/15 px-2 py-0.5 align-middle text-[10px] font-semibold text-amber-300'; warningBadge.textContent = `${profileWarnings.length} предупреждений`; warningBadge.setAttribute('aria-label', profileWarnings.map((item) => item.message).join('. ')); name.append(warningBadge); }
   const source = document.createElement('p'); source.className = 'mt-1 text-xs text-slate-400'; source.textContent = `${profile.editable ? 'Пользовательский профиль · NFQWS_ARGS_CUSTOM' : `Штатная группа · ${profile.source}`} · параметры передаются в nfqws2`;
   title.append(name, source); heading.append(title);
   if (profile.editable) {
@@ -509,18 +513,7 @@ function renderRuntimeProfiles() {
       if (groupName === 'Упорядоченные шаги') {
         const section = document.createElement('div'); section.className = 'grid gap-2 rounded-lg border border-slate-800 bg-slate-950/30 p-2';
         const heading = document.createElement('p'); heading.className = 'text-xs text-slate-400'; heading.textContent = 'Шаги выполняются сверху вниз; их порядок влияет на обработку пакетов.'; section.append(heading);
-        const functions = ['fake', 'fakedsplit', 'fakeddisorder', 'multisplit', 'multidisorder', 'hostfakesplit', 'disorder', 'synack', 'circular'];
-        const descriptions: Record<string, string> = {
-          fake: 'Отправляет поддельный начальный пакет перед настоящим запросом.',
-          fakedsplit: 'Разбивает поддельный пакет по указанным позициям.',
-          fakeddisorder: 'Отправляет части поддельного пакета в другом порядке.',
-          multisplit: 'Разделяет настоящий пакет на несколько частей.',
-          multidisorder: 'Разделяет пакет и меняет порядок частей.',
-          hostfakesplit: 'Подменяет имя сайта в поддельном ClientHello и разделяет пакет.',
-          disorder: 'Меняет порядок отправки частей настоящего пакета.',
-          synack: 'Использует ответ SYN-ACK как поддельный пакет.',
-          circular: 'Перебирает номера стратегий после неудачных попыток.',
-        };
+        const functions = runtimeProfileLuaCatalog.map((item) => item.name);
         indexes.forEach((argumentIndex, stepIndex) => {
           const argument = profile.args[argumentIndex] ?? '';
           if (!argument.startsWith('--lua-desync=')) {
@@ -541,9 +534,12 @@ function renderRuntimeProfiles() {
           const functionSelect = document.createElement('select'); functionSelect.className = 'min-h-8 w-full max-w-xs rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-semibold text-emerald-300';
           functionSelect.dataset.actionChange = 'setRuntimeProfileStepFunction'; functionSelect.dataset.args = JSON.stringify([profile.id, String(argumentIndex), { source: 'value' }]); functionSelect.dataset.actionTooltip = 'Выберите Lua-функцию шага; доступность проверит nfqws2 при применении.';
           [...new Set([...functions, functionName])].sort().forEach((name) => { const option = document.createElement('option'); option.value = name; option.textContent = name; option.selected = name === functionName; functionSelect.append(option); });
-          const description = document.createElement('span'); description.className = 'text-xs leading-5 text-slate-400'; description.textContent = descriptions[functionName] ?? 'Параметры шага будут проверены установленным nfqws2 при применении.';
+          const functionInfo = runtimeProfileLuaCatalog.find((item) => item.name === functionName);
+          const description = document.createElement('span'); description.className = 'text-xs leading-5 text-slate-400'; description.textContent = functionInfo?.docs.join(' ') || (functionInfo ? `Lua-функция из ${functionInfo.file}.` : 'Этой функции нет в каталоге установленных Lua-скриптов. При применении nfqws2 проверит её доступность.');
           const parameterList = document.createElement('div'); parameterList.className = 'flex min-w-0 flex-wrap items-center gap-1';
           const parameterParts = splitDesyncParameters(argument);
+          if (functionInfo?.arguments.length) { const help = document.createElement('span'); help.className = 'text-[11px] leading-4 text-slate-500'; help.textContent = `Аргументы: ${functionInfo.arguments.join(' · ')}`; content.append(help); }
+          diagnoseProfileLuaArguments([argument], runtimeProfileLuaCatalog).forEach((item) => { const warning = document.createElement('span'); warning.className = 'rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200'; warning.textContent = item.message; content.append(warning); });
           parameterParts.forEach((parameter, parameterIndex) => {
             const [key, ...valueParts] = parameter.split('='); const hasValue = parameter.includes('=');
             const chip = document.createElement('span'); chip.className = 'inline-flex max-w-full items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-1.5 py-1 font-mono text-xs';
@@ -565,7 +561,7 @@ function renderRuntimeProfiles() {
         const addStep = document.createElement('select'); addStep.className = 'min-h-8 w-full max-w-xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-slate-200'; addStep.setAttribute('aria-label', 'Добавить шаг стратегии');
         const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ добавить шаг'; addStep.append(placeholder);
         for (const [value, label] of [['--payload=tls_client_hello', 'Типы пакетов · TLS ClientHello'], ['--payload=quic_initial', 'Типы пакетов · QUIC Initial'], ['--out-range=1', 'Исходящий диапазон'], ['--in-range=1', 'Входящий диапазон']] as const) { const option = document.createElement('option'); option.value = value; option.textContent = label; addStep.append(option); }
-        functions.filter((name) => !indexes.some((index) => profile.args[index]?.startsWith(`--lua-desync=${name}`))).forEach((name) => { const option = document.createElement('option'); option.value = `--lua-desync=${name}`; option.textContent = `${name}${descriptions[name] ? ` · ${descriptions[name]}` : ''}`; addStep.append(option); });
+        functions.filter((name) => !indexes.some((index) => profile.args[index]?.startsWith(`--lua-desync=${name}`))).forEach((name) => { const option = document.createElement('option'); option.value = `--lua-desync=${name}`; const info = runtimeProfileLuaCatalog.find((item) => item.name === name); option.textContent = `${name}${info?.docs[0] ? ` · ${info.docs[0]}` : ''}`; addStep.append(option); });
         addStep.dataset.actionChange = 'appendRuntimeProfileArgument'; addStep.dataset.valueSource = 'value'; section.append(addStep); builder.append(section); continue;
       }
       const row = document.createElement('div'); row.className = 'flex flex-wrap items-center gap-1.5 rounded-lg border border-dashed border-slate-700 bg-slate-950/40 p-2';
@@ -617,6 +613,7 @@ async function loadProfiles() {
   const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профильные группы nfqws2…';
   try {
     const result = await nfqwsProfiles.list(); runtimeProfilesState = result;
+    try { runtimeProfileLuaCatalog = (await nfqwsProfiles.catalog()).functions; } catch { runtimeProfileLuaCatalog = []; }
     try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
     runtimeProfilesDirty = false; renderRuntimeProfiles();

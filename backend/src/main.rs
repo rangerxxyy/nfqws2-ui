@@ -9619,6 +9619,68 @@ async fn get_profiles(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+async fn get_profile_lua_catalog() -> Response {
+    let Some(paths) = discover_system_paths() else {
+        return error(StatusCode::NOT_FOUND, "Установка nfqws2 не обнаружена");
+    };
+    let Ok(entries) = std::fs::read_dir(&paths.lua_dir) else {
+        return Json(serde_json::json!({ "functions": [] })).into_response();
+    };
+    let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry.file_name());
+    let mut catalog = std::collections::BTreeMap::new();
+    let mut total_bytes = 0usize;
+    for entry in entries {
+        if !entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
+            continue;
+        }
+        let path = entry.path();
+        let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if extension != "lua" && extension != "gz" {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if bytes.len() > 4 * 1024 * 1024
+            || total_bytes.saturating_add(bytes.len()) > 16 * 1024 * 1024
+        {
+            continue;
+        }
+        total_bytes += bytes.len();
+        let decoded = if extension == "gz" {
+            let mut output = Vec::new();
+            if flate2::read::GzDecoder::new(bytes.as_slice())
+                .take((4 * 1024 * 1024 + 1) as u64)
+                .read_to_end(&mut output)
+                .is_err()
+                || output.len() > 4 * 1024 * 1024
+            {
+                continue;
+            }
+            output
+        } else {
+            bytes
+        };
+        let file = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .trim_end_matches(".gz")
+            .to_string();
+        for function in nfqws2_ui::runtime_profiles::parse_lua_catalog(
+            &file,
+            &String::from_utf8_lossy(&decoded),
+        ) {
+            catalog.entry(function.name.clone()).or_insert(function);
+        }
+    }
+    Json(serde_json::json!({ "functions": catalog.into_values().collect::<Vec<_>>() }))
+        .into_response()
+}
+
 fn build_runtime_profiles_config(
     original: &str,
     request: RuntimeProfilesWrite,
@@ -10842,6 +10904,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             "/api/profiles",
             get(get_profiles).put(save_runtime_profiles),
         )
+        .route("/api/profiles/catalog", get(get_profile_lua_catalog))
         .route(
             "/api/snapshots/settings",
             axum::routing::put(update_snapshot_settings),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 
 describe('reorderProfileSteps', () => {
   it('moves ordered payload and desync steps while leaving filters in place', () => {
@@ -27,6 +27,17 @@ describe('reorderProfileSteps', () => {
 });
 
 describe('desync step editing', () => {
+  it('reports missing required Lua arguments and unavailable functions from the installed catalog', () => {
+    const catalog = [{ name: 'multisplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos — split positions'], required: ['pos'] }];
+    expect(diagnoseProfileLuaArguments(['--lua-desync=multisplit', '--lua-desync=ghost', '--lua-desync=multisplit:pos=1'], catalog)).toEqual([
+      { argument: '--lua-desync=multisplit', message: 'Для multisplit не указан обязательный параметр pos' },
+      { argument: '--lua-desync=ghost', message: 'Функция ghost отсутствует в установленных Lua-скриптах' },
+    ]);
+  });
+
+  it('does not guess warnings when the installed Lua catalog could not be loaded', () => {
+    expect(diagnoseProfileLuaArguments(['--lua-desync=unknown'], [])).toEqual([]);
+  });
   it('changes a step function without losing its parameters', () => {
     expect(replaceDesyncFunction('--lua-desync=fake:blob=tls_clienthello:tcp_md5', 'multisplit'))
       .toBe('--lua-desync=multisplit:blob=tls_clienthello:tcp_md5');
