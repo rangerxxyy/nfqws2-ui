@@ -1793,6 +1793,12 @@ enum TraceProbeMode {
     Transfer(String, bool),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TransferBaselineOptions {
+    pub baseline_ok: bool,
+    pub allow_upload_probe: bool,
+}
+
 pub async fn run(
     host: String,
     proto: &str,
@@ -1976,8 +1982,10 @@ pub async fn run_transfer_target_with_baseline(
         path,
         args,
         binary,
-        baseline_ok,
-        false,
+        TransferBaselineOptions {
+            baseline_ok,
+            allow_upload_probe: false,
+        },
         cancel,
     )
     .await
@@ -1989,19 +1997,18 @@ pub async fn run_transfer_target_with_baseline_and_upload_probe(
     path: String,
     args: Vec<String>,
     binary: String,
-    baseline_ok: bool,
-    allow_upload_probe: bool,
+    options: TransferBaselineOptions,
     cancel: Arc<AtomicBool>,
 ) -> TraceReport {
     run_inner(
         host,
-        TraceProbeMode::Transfer(path, allow_upload_probe),
+        TraceProbeMode::Transfer(path, options.allow_upload_probe),
         Some(address),
         args,
         binary,
         cancel,
         TraceRunContext {
-            known_baseline: Some(baseline_ok),
+            known_baseline: Some(options.baseline_ok),
             progress: None,
             candidate_repeats: 1,
         },

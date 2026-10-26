@@ -1130,8 +1130,10 @@ pub async fn scan_network_baselines(
                 target.path.clone(),
                 active_args.clone(),
                 binary.clone(),
-                direct.ok,
-                allow_upload_probe,
+                crate::site_trace::TransferBaselineOptions {
+                    baseline_ok: direct.ok,
+                    allow_upload_probe,
+                },
                 cancel.clone(),
             )
             .await
