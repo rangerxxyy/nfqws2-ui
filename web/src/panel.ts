@@ -27,7 +27,7 @@ import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation 
 import { shouldPollLogs } from './log-polling';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -454,7 +454,9 @@ function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
     };
   });
   const custom = runtimeProfileDraft.map((args, index) => profileFromArgs(index + 1, args, true));
-  return [...custom, ...managed].map((profile, index) => ({ ...profile, index: index + 1 }));
+  return [...custom, ...managed]
+    .filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')
+    .map((profile, index) => ({ ...profile, name: profile.source === 'NFQWS_ARGS_QUIC_IPSET' ? 'QUIC' : profile.name, index: index + 1 }));
 }
 function appendProfileBuilderSectionHeading(parent: HTMLElement, text: string) {
   const tone = text === 'Когда срабатывает' ? 'profile-builder-heading-condition' : text === 'Для кого' ? 'profile-builder-heading-scope' : 'profile-builder-heading-action';
@@ -537,15 +539,15 @@ function renderRuntimeProfiles() {
   const orderWarnings = profileOrderWarnings(profiles.map((profile) => profile.effectiveArgs ?? profile.args));
   if (!profiles.some((profile) => profile.id === selectedRuntimeProfileId)) selectedRuntimeProfileId = profiles[0]?.id ?? '';
   list.replaceChildren();
-  const sideHeading = document.createElement('p'); sideHeading.className = 'px-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400'; sideHeading.textContent = 'Профили · порядок проверки'; list.append(sideHeading);
+  const sideHeading = document.createElement('p'); sideHeading.className = 'px-2 pb-1 text-[10px] font-bold text-slate-400'; sideHeading.textContent = 'Профили'; list.append(sideHeading);
   for (const [profileIndex, profile] of profiles.entries()) {
     const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'selectRuntimeProfile'; button.dataset.args = JSON.stringify([profile.id]);
     button.setAttribute('aria-current', profile.id === selectedRuntimeProfileId ? 'true' : 'false');
     button.className = `flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${profile.id === selectedRuntimeProfileId ? 'bg-blue-500/20 text-blue-200' : 'text-slate-300 hover:bg-slate-800'}`;
     const num = document.createElement('span'); num.className = 'mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-emerald-400 text-[11px] font-bold text-emerald-300'; num.textContent = String(profile.index);
-    const nameWrap = document.createElement('span'); nameWrap.className = 'grid min-w-0 flex-1 gap-0.5';
+    const nameWrap = document.createElement('span'); nameWrap.className = 'grid min-w-0 flex-1';
     const name = document.createElement('span'); name.className = 'truncate font-medium'; name.textContent = profile.name;
-    const summary = document.createElement('span'); summary.className = 'truncate text-[10px] leading-4 text-slate-500'; summary.textContent = summarizeProfileSelection(profile.effectiveArgs ?? profile.args); nameWrap.append(name, summary);
+    nameWrap.append(name);
     const warnings = diagnoseProfileLuaArguments(profile.effectiveArgs ?? profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
     const ruleWarnings = orderWarnings[profileIndex] ?? [];
     const warningCount = warnings.length + ruleWarnings.length;

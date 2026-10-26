@@ -16,6 +16,13 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('keeps toast notifications below confirmation dialogs', () => {
+    const toastClass = template.match(/id="toastWrapper" class="([^"]+)"/)?.[1] ?? '';
+    const dialogClass = template.match(/id="updateModalBackdrop" class="([^"]+)"/)?.[1] ?? '';
+    expect(toastClass.split(' ')).toContain('z-[40]');
+    expect(dialogClass.split(' ')).toContain('z-50');
+  });
+
   it('opens the full configuration editor first and separates configuration settings', () => {
     expect(template).toContain('id="configTabEditor"');
     expect(template).toContain('aria-pressed="true"');
@@ -46,6 +53,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("name.className = 'truncate font-medium'");
     expect(panelSource).toContain('moveRuntimeProfileUp');
     expect(panelSource).not.toContain('runtimeProfileDisplayNames');
+    expect(panelSource).toContain("sideHeading.textContent = 'Профили'");
+    expect(panelSource).toContain("sideHeading.className = 'px-2 pb-1 text-[10px] font-bold text-slate-400'");
+    expect(panelSource).not.toContain('summarizeProfileSelection(profile.effectiveArgs');
+    expect(panelSource).not.toContain('nameWrap.append(name, summary)');
+    expect(panelSource).toContain("profile.source !== 'NFQWS_ARGS_IPSET'");
+    expect(panelSource).toContain("profile.source === 'NFQWS_ARGS_QUIC_IPSET' ? 'QUIC' : profile.name");
     expect(panelStyles).toContain('#profileList button > span:nth-child(2) > span { display:block; overflow:visible; text-overflow:clip; white-space:normal; overflow-wrap:anywhere;');
   });
 

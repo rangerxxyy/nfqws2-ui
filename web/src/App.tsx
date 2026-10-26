@@ -1466,7 +1466,7 @@ export default function App() {
     </div>
 {"\n\n  "}
 {"\n  "}
-    <div id={"toastWrapper"} className={"fixed bottom-24 right-5 z-50 space-y-2.5 pointer-events-none"}></div>
+    <div id={"toastWrapper"} className={"fixed bottom-24 right-5 z-[40] space-y-2.5 pointer-events-none"}></div>
     <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] space-y-2.5 pointer-events-none"}></div>
     <div id={"configClearModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"configClearTitle"}>
