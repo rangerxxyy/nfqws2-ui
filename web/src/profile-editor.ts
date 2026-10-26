@@ -34,6 +34,11 @@ export function getRuntimeProfileSharedComponentNote(source: string): string | n
   return null;
 }
 
+export function getRuntimeProfileComponentArgs(args: readonly string[]): { lists: string[]; other: string[] } {
+  const isList = (argument: string) => argument.startsWith('--ipset') || argument.startsWith('--hostlist') || argument.startsWith('--autohostlist');
+  return { lists: args.filter(isList), other: args.filter((argument) => !isList(argument)) };
+}
+
 /** Filters the runtime-backed profile argument catalog by visible label, syntax, or group. */
 export function filterProfileArgumentChoices(
   choices: readonly ProfileArgumentChoice[],

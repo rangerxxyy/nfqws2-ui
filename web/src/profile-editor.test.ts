@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NfqwsArgumentProfile } from './api';
-import { filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('runtime profile constructor targets', () => {
   it('uses each managed profile primary config component while keeping shared scope components separate', () => {
@@ -54,6 +54,15 @@ describe('runtime profile constructor targets', () => {
     expect(getRuntimeProfileSharedComponentNote('NFQWS_EXTRA_ARGS')).toContain('QUIC по сайтам');
     expect(getRuntimeProfileSharedComponentNote('NFQWS_EXTRA_ARGS')).toContain('HTTP/HTTPS по сайтам');
     expect(getRuntimeProfileSharedComponentNote('NFQWS_ARGS_UDP')).toBeNull();
+  });
+
+  it('separates linked list selectors from any other managed component arguments', () => {
+    expect(getRuntimeProfileComponentArgs([
+      '--ipset=lists/ipset.list', '--hostlist=lists/user.list', '--lua-desync=fake', '--hostlist-exclude=lists/exclude.list',
+    ])).toEqual({
+      lists: ['--ipset=lists/ipset.list', '--hostlist=lists/user.list', '--hostlist-exclude=lists/exclude.list'],
+      other: ['--lua-desync=fake'],
+    });
   });
 });
 

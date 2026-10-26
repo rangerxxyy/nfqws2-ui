@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -732,19 +732,56 @@ function renderRuntimeProfiles() {
       const intro = document.createElement('p'); intro.className = 'mt-3 text-xs leading-5 text-slate-400'; intro.textContent = runtimeProfileEditorMode === 'text' ? 'Текстовый режим показывает исходные переменные профиля. Общие переменные могут менять сразу несколько профилей.' : 'Связанные списки и дополнительные настройки. Они могут использоваться несколькими профилями.'; editor.append(intro);
       const componentEditors = document.createElement('div'); componentEditors.className = 'grid gap-3';
       for (const component of editorComponents) {
-        const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = component.source;
-        const textarea = document.createElement('textarea'); textarea.rows = Math.max(3, Math.min(10, component.args.length + 1)); textarea.spellcheck = false;
-        textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
-        textarea.readOnly = !component.editable;
-        if (!component.editable) textarea.classList.add('text-slate-400');
-        textarea.value = (runtimeProfileManagedDraft[component.source] ?? component.args).join('\n');
-        textarea.setAttribute('aria-label', `Настройка ${component.source}`);
-        if (component.editable) textarea.addEventListener('input', () => {
-          runtimeProfileManagedDraft[component.source] = textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
-          runtimeProfileManagedDirty = true;
-          const status = $('#profileStatus'); if (status) status.textContent = `Изменена ${component.source}. Применение проверит конфигурацию и перезапустит nfqws2 с откатом при ошибке.`;
-        });
-        label.append(textarea); componentEditors.append(label);
+        const componentArgs = runtimeProfileManagedDraft[component.source] ?? component.args;
+        const splitArgs = getRuntimeProfileComponentArgs(componentArgs);
+        const canEditListComponent = runtimeProfileEditorMode === 'builder'
+          && component.editable
+          && ['NFQWS_ARGS_IPSET', 'NFQWS_EXTRA_ARGS'].includes(component.source)
+          && splitArgs.other.length === 0;
+        if (canEditListComponent) {
+          const section = document.createElement('section'); section.className = 'grid gap-2 rounded-lg border border-slate-800 bg-slate-950/40 p-3';
+          const title = document.createElement('h4'); title.className = 'text-xs font-semibold text-slate-200';
+          title.textContent = component.source === 'NFQWS_ARGS_IPSET' ? 'IP-списки' : 'Списки сайтов'; section.append(title);
+          if (splitArgs.lists.length) {
+            splitArgs.lists.forEach((argument, index) => {
+              const row = document.createElement('div'); row.className = 'flex min-w-0 items-center gap-2';
+              const input = document.createElement('input'); input.type = 'text'; input.value = argument; input.className = 'min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 font-mono text-xs text-blue-200'; input.setAttribute('aria-label', `${title.textContent}: ${argument}`);
+              input.addEventListener('change', () => {
+                const updated = input.value.trim();
+                if (!updated || /\s/.test(updated)) { input.value = argument; toast('Одна строка списка должна быть одним аргументом nfqws2.', 'error'); return; }
+                const next = [...(runtimeProfileManagedDraft[component.source] ?? component.args)];
+                const currentIndex = next.indexOf(argument, index);
+                if (currentIndex >= 0) next[currentIndex] = updated;
+                runtimeProfileManagedDraft[component.source] = next; markRuntimeProfilesDirty(profile.id);
+              });
+              const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'backup-action'; remove.textContent = 'Удалить'; remove.setAttribute('aria-label', `Удалить список ${argument}`);
+              remove.addEventListener('click', () => {
+                const next = [...(runtimeProfileManagedDraft[component.source] ?? component.args)];
+                const currentIndex = next.indexOf(argument, index);
+                if (currentIndex >= 0) next.splice(currentIndex, 1);
+                runtimeProfileManagedDraft[component.source] = next; markRuntimeProfilesDirty(profile.id);
+              });
+              row.append(input, remove); section.append(row);
+            });
+          } else {
+            const empty = document.createElement('p'); empty.className = 'text-xs leading-5 text-slate-400'; empty.textContent = 'Списки пока не добавлены. Используйте «Выбрать параметр» ниже, чтобы подключить список.'; section.append(empty);
+          }
+          componentEditors.append(section);
+        } else {
+          const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = component.source;
+          const textarea = document.createElement('textarea'); textarea.rows = Math.max(3, Math.min(10, componentArgs.length + 1)); textarea.spellcheck = false;
+          textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
+          textarea.readOnly = !component.editable;
+          if (!component.editable) textarea.classList.add('text-slate-400');
+          textarea.value = componentArgs.join('\n');
+          textarea.setAttribute('aria-label', `Настройка ${component.source}`);
+          if (component.editable) textarea.addEventListener('input', () => {
+            runtimeProfileManagedDraft[component.source] = textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean);
+            runtimeProfileManagedDirty = true;
+            const status = $('#profileStatus'); if (status) status.textContent = `Изменена ${component.source}. Применение проверит конфигурацию и перезапустит nfqws2 с откатом при ошибке.`;
+          });
+          label.append(textarea); componentEditors.append(label);
+        }
         const sharedNote = getRuntimeProfileSharedComponentNote(component.source);
         if (component.note || sharedNote) { const note = document.createElement('p'); note.className = 'mt-1 text-xs leading-5 text-slate-400'; note.textContent = [component.note, sharedNote].filter(Boolean).join(' '); componentEditors.append(note); }
       }
