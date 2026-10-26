@@ -487,12 +487,6 @@ function renderRuntimeProfiles() {
   editor.append(heading);
   const profileOrderIssues = orderWarnings[profiles.findIndex((item) => item.id === profile.id)] ?? [];
   for (const message of profileOrderIssues) { const notice = document.createElement('p'); notice.className = 'mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs leading-5 text-amber-200'; notice.textContent = message; editor.append(notice); }
-  const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы', profile.protocols], ['Типы пакетов', profile.payloads], ['Списки', profile.lists], ['Упорядоченные шаги', profile.steps]];
-  for (const [label, values] of sections) {
-    const row = document.createElement('div'); row.className = 'grid gap-1 border-b border-slate-800/80 py-2 sm:grid-cols-[10rem_minmax(0,1fr)]';
-    const key = document.createElement('strong'); key.className = 'text-xs text-slate-300'; key.textContent = label;
-    const value = document.createElement('span'); value.className = 'break-words font-mono text-xs leading-5 text-slate-200'; value.textContent = values.length ? values.join('  ·  ') : '—'; row.append(key, value); editor.append(row);
-  }
   if (profile.editable) {
     const modeBar = document.createElement('div'); modeBar.className = 'mt-3 flex flex-wrap items-center justify-between gap-2';
     const modeTitle = document.createElement('strong'); modeTitle.className = 'text-xs text-slate-300'; modeTitle.textContent = 'Редактор профиля'; modeBar.append(modeTitle);
