@@ -308,6 +308,7 @@ let pendingConfirmationCancel: (() => void) | null = null;
 let changeHistoryCache: ChangeHistoryEntry[] = [];
 let runtimeProfilesState: NfqwsProfilesResponse | null = null;
 let runtimeProfileDraft: string[][] = [];
+let profileListInventory: NfqwsListSummary[] = [];
 let selectedRuntimeProfileId = '';
 let runtimeProfilesDirty = false;
 let runtimeProfileEditorMode: 'builder' | 'text' = 'builder';
@@ -557,8 +558,12 @@ function renderRuntimeProfiles() {
     const addLabel = document.createElement('label'); addLabel.className = 'mt-1 block text-xs text-slate-400'; addLabel.textContent = 'Добавить параметр';
     const select = document.createElement('select'); select.dataset.actionChange = 'appendRuntimeProfileArgument'; select.dataset.valueSource = 'value'; select.className = 'mt-1 w-full max-w-xl rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100';
     const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '+ выбрать параметр'; select.append(placeholder);
-    for (const [value, label] of [['--filter-tcp=443', 'TCP-порты'], ['--filter-udp=443', 'UDP-порты'], ['--payload=tls_client_hello', 'TLS ClientHello'], ['--payload=quic_initial', 'QUIC Initial'], ['--hostlist=lists/user.list', 'Список доменов'], ['--hostlist-domains=example.com', 'Домены'], ['--ipset=lists/ipset.list', 'Список IP'], ['--lua-desync=fake', 'Шаг desync']] as const) {
+    for (const [value, label] of [['--filter-tcp=443', 'TCP-порты · 443'], ['--filter-udp=443', 'UDP-порты · 443'], ['--payload=tls_client_hello', 'TLS ClientHello'], ['--payload=quic_initial', 'QUIC Initial'], ['--hostlist-domains=example.com', 'Домен · example.com'], ['--lua-desync=fake', 'Шаг desync · fake']] as const) {
       const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option);
+    }
+    for (const file of profileListInventory) {
+      const hostlist = document.createElement('option'); hostlist.value = `--hostlist=${file.path}`; hostlist.textContent = `Доменный список · ${file.id}`; select.append(hostlist);
+      if (/ipset/i.test(file.id)) { const ipset = document.createElement('option'); ipset.value = `--ipset=${file.path}`; ipset.textContent = `IP-список · ${file.id}`; select.append(ipset); }
     }
     addLabel.append(select); builder.append(addLabel); editor.append(builder);
   }
@@ -586,6 +591,7 @@ async function loadProfiles() {
   const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профильные группы nfqws2…';
   try {
     const result = await nfqwsProfiles.list(); runtimeProfilesState = result;
+    try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
     runtimeProfilesDirty = false; renderRuntimeProfiles();
     if (label) label.textContent = `${result.profiles.length} профилей в порядке nfqws2 · пользовательских ${runtimeProfileDraft.length} · штатные защищены от изменения`;
