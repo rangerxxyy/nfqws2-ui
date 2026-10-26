@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { profileArgumentChoices, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { profileArgumentChoices, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 
 describe('profile builder choices', () => {
   it('offers editable match conditions, list scopes, and ordered strategy steps', () => {
@@ -34,6 +34,24 @@ describe('profile selection summary', () => {
   it('describes an unfiltered profile without implying that it is disabled', () => {
     expect(summarizeProfileSelection(['--lua-desync=fake'])).toBe('весь трафик · без списков');
     expect(summarizeProfileSelection(['--hostlist-exclude=lists/excluded.list'])).toBe('весь трафик · все, кроме исключений');
+  });
+});
+
+describe('profile order warnings', () => {
+  it('warns when an earlier unscoped rule overlaps a later profile', () => {
+    expect(profileOrderWarnings([
+      ['--filter-tcp=80,443', '--lua-desync=fake'],
+      ['--filter-tcp=443', '--filter-l7=tls', '--lua-desync=split'],
+    ])).toEqual([[], ['Трафик может быть обработан профилем #1 раньше этого профиля.']]);
+  });
+
+  it('does not warn for disjoint ports or an earlier profile scoped to a host list', () => {
+    expect(profileOrderWarnings([['--filter-tcp=80'], ['--filter-tcp=443']])).toEqual([[], []]);
+    expect(profileOrderWarnings([['--hostlist=lists/video.list', '--filter-tcp=443'], ['--filter-tcp=443']])).toEqual([[], []]);
+  });
+
+  it('does not treat an omitted transport as unrestricted when another transport filter is set', () => {
+    expect(profileOrderWarnings([['--filter-tcp=80'], ['--filter-udp=443']])).toEqual([[], []]);
   });
 });
 

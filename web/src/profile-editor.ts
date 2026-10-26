@@ -19,6 +19,54 @@ export function summarizeProfileSelection(args: readonly string[]): string {
   return parts.join(' · ');
 }
 
+type PortRange = readonly [number, number];
+
+function profilePortRanges(args: readonly string[], protocol: 'tcp' | 'udp'): PortRange[] {
+  const values = args.filter((argument) => argument.startsWith(`--filter-${protocol}=`)).map((argument) => argument.slice(`--filter-${protocol}=`.length));
+  const hasAnyTransportFilter = args.some((argument) => argument.startsWith('--filter-tcp=') || argument.startsWith('--filter-udp='));
+  if (!values.length) return hasAnyTransportFilter ? [] : [[1, 65535]];
+  const ranges: PortRange[] = [];
+  for (const value of values.flatMap((item) => item.split(','))) {
+    if (value === '*') { ranges.push([1, 65535]); continue; }
+    const match = /^(\d+)(?:-(\d+))?$/.exec(value);
+    if (!match) return [[1, 65535]];
+    const first = Number(match[1]); const last = Number(match[2] ?? match[1]);
+    if (first < 1 || last > 65535 || first > last) return [[1, 65535]];
+    ranges.push([first, last]);
+  }
+  return ranges;
+}
+
+function profilePortsOverlap(first: readonly string[], second: readonly string[], protocol: 'tcp' | 'udp'): boolean {
+  return profilePortRanges(first, protocol).some(([start, end]) => profilePortRanges(second, protocol)
+    .some(([otherStart, otherEnd]) => start <= otherEnd && otherStart <= end));
+}
+
+function profileProtocolsOverlap(first: readonly string[], second: readonly string[]): boolean {
+  const firstFilter = first.find((argument) => argument.startsWith('--filter-l7=') || argument.startsWith('--filter-7='));
+  const secondFilter = second.find((argument) => argument.startsWith('--filter-l7=') || argument.startsWith('--filter-7='));
+  if (!firstFilter || !secondFilter) return true;
+  const firstProtocols = firstFilter.slice(firstFilter.indexOf('=') + 1).split(',');
+  return secondFilter.slice(secondFilter.indexOf('=') + 1).split(',').some((protocol) => firstProtocols.includes(protocol));
+}
+
+/** Mirrors the reference's conservative first-match warning for unscoped earlier profiles. */
+export function profileOrderWarnings(profiles: readonly (readonly string[])[]): string[][] {
+  return profiles.map((args, index) => {
+    for (let previous = 0; previous < index; previous += 1) {
+      const earlier = profiles[previous] ?? [];
+      const earlierHasListScope = earlier.some((argument) => argument.startsWith('--hostlist=')
+        || argument.startsWith('--hostlist-domains=') || argument.startsWith('--hostlist-auto=')
+        || argument.startsWith('--ipset=') || argument.startsWith('--ipset-ip='));
+      if (earlierHasListScope || !profileProtocolsOverlap(earlier, args)) continue;
+      if (profilePortsOverlap(earlier, args, 'tcp') || profilePortsOverlap(earlier, args, 'udp')) {
+        return [`Трафик может быть обработан профилем #${previous + 1} раньше этого профиля.`];
+      }
+    }
+    return [];
+  });
+}
+
 /** Returns safe starter values for the full profile rule: match conditions, scope and ordered actions. */
 export function profileArgumentChoices(args: readonly string[], lists: readonly NfqwsListSummary[]): ProfileArgumentChoice[] {
   const definitions: ProfileArgumentChoice[] = [

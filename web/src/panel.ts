@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, profileArgumentChoices, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { diagnoseProfileLuaArguments, getLuaProfileHelp, moveProfileStepTo, parseLuaParameterOption, profileArgumentChoices, profileOrderWarnings, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -436,10 +436,11 @@ function renderRuntimeProfiles() {
   const list = $('#profileList'); const editor = $('#profileEditor');
   if (!list || !editor || !runtimeProfilesState) return;
   const profiles = visibleRuntimeProfiles();
+  const orderWarnings = profileOrderWarnings(profiles.map((profile) => profile.args));
   if (!profiles.some((profile) => profile.id === selectedRuntimeProfileId)) selectedRuntimeProfileId = profiles[0]?.id ?? '';
   list.replaceChildren();
   const sideHeading = document.createElement('p'); sideHeading.className = 'px-2 pb-1 text-[11px] font-bold uppercase tracking-wide text-slate-400'; sideHeading.textContent = 'Профили · порядок проверки'; list.append(sideHeading);
-  for (const profile of profiles) {
+  for (const [profileIndex, profile] of profiles.entries()) {
     const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'selectRuntimeProfile'; button.dataset.args = JSON.stringify([profile.id]);
     button.setAttribute('aria-current', profile.id === selectedRuntimeProfileId ? 'true' : 'false');
     button.className = `flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${profile.id === selectedRuntimeProfileId ? 'bg-blue-500/20 text-blue-200' : 'text-slate-300 hover:bg-slate-800'}`;
@@ -448,7 +449,9 @@ function renderRuntimeProfiles() {
     const name = document.createElement('span'); name.className = 'truncate font-medium'; name.textContent = profile.name;
     const summary = document.createElement('span'); summary.className = 'truncate text-[10px] leading-4 text-slate-500'; summary.textContent = summarizeProfileSelection(profile.args); nameWrap.append(name, summary);
     const warnings = diagnoseProfileLuaArguments(profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
-    const badge = document.createElement('span'); badge.className = warnings.length ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : 'text-xs text-slate-500'; badge.textContent = warnings.length ? String(warnings.length) : profile.editable ? '•' : '🔒'; badge.setAttribute('aria-label', warnings.length ? `Предупреждений профиля: ${warnings.length}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
+    const ruleWarnings = orderWarnings[profileIndex] ?? [];
+    const warningCount = warnings.length + ruleWarnings.length;
+    const badge = document.createElement('span'); badge.className = warningCount ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : 'text-xs text-slate-500'; badge.textContent = warningCount ? String(warningCount) : profile.editable ? 'Свой' : '🔒'; badge.setAttribute('aria-label', warningCount ? `Предупреждений профиля: ${[...warnings.map((item) => item.message), ...ruleWarnings].join('. ')}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль, только просмотр');
     button.append(num, nameWrap, badge); list.append(button);
   }
   editor.replaceChildren();
@@ -477,6 +480,8 @@ function renderRuntimeProfiles() {
     actions.append(share, copy, lock); heading.append(actions);
   }
   editor.append(heading);
+  const profileOrderIssues = orderWarnings[profiles.findIndex((item) => item.id === profile.id)] ?? [];
+  for (const message of profileOrderIssues) { const notice = document.createElement('p'); notice.className = 'mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-xs leading-5 text-amber-200'; notice.textContent = message; editor.append(notice); }
   const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы', profile.protocols], ['Списки', profile.lists], ['Упорядоченные шаги', profile.steps]];
   for (const [label, values] of sections) {
     const row = document.createElement('div'); row.className = 'grid gap-1 border-b border-slate-800/80 py-2 sm:grid-cols-[10rem_minmax(0,1fr)]';
