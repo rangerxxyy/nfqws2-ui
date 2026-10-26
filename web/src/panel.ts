@@ -22,7 +22,7 @@ import { serviceControlPresentation } from './service-control';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
-import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { diagnosisQueueMarker, diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation } from './notifications';
 import { shouldPollLogs } from './log-polling';
 import { shouldFollowLogTail } from './log-scroll';
@@ -2408,17 +2408,8 @@ async function runSiteDiagnosis() {
   const toastHost = $('#toastWrapper');
   const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
   await waitForDiagnosisAnimation();
-  let liveStageIndex = 0;
-  renderDiagnosisQueue(container, stages, liveStageIndex);
-  const stageTimer = window.setInterval(() => {
-    const nextIndex = nextDiagnosisQueueIndex(liveStageIndex, stages.length);
-    if (nextIndex === null) { window.clearInterval(stageTimer); return; }
-    liveStageIndex = nextIndex;
-    renderDiagnosisQueue(container, stages, liveStageIndex);
-  }, 760);
   try {
     const report = await nfqwsDiagnostics.site(input.value);
-    window.clearInterval(stageTimer);
     const resultRows = diagnosisRows(report);
     const stages = resultRows.map(({ id, label }) => ({ id, label }));
     for (let index = 0; index < stages.length; index += 1) {
@@ -2431,7 +2422,6 @@ async function runSiteDiagnosis() {
     closeProgress();
     toast(`Проверка ${report.host} завершена: ${report.summary}`);
   } catch (error) {
-    window.clearInterval(stageTimer);
     container.replaceChildren(); const message = error instanceof Error ? error.message : 'Не удалось выполнить проверку сайта';
     const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); closeProgress(); toast(message, 'error');
   } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить'; }

@@ -701,7 +701,8 @@ describe('TSX panel with optional server-side authentication', () => {
   it('shows the diagnosis checklist before its request and replays results in order', () => {
     expect(panelSource).toContain('const stages = SITE_DIAGNOSIS_STAGES.map');
     expect(panelSource).toContain('renderDiagnosisQueue(container, stages, -1)');
-    expect(panelSource).toContain('const stageTimer = window.setInterval');
+    const diagnosisRequest = panelSource.slice(panelSource.indexOf('async function runSiteDiagnosis()'), panelSource.indexOf('function renderTraceReport('));
+    expect(diagnosisRequest).not.toContain('setInterval');
     expect(panelSource).toContain('for (let index = 0; index < stages.length; index += 1)');
     expect(panelSource).toContain('await waitForDiagnosisAnimation()');
     expect(panelSource).toContain('Подтверждённые результаты появятся после ответа');

@@ -15,12 +15,9 @@ export function diagnosisQueueMarker(state: 'complete' | 'active' | 'pending', r
 }
 
 export function diagnosisQueueState(index: number, activeIndex: number, resultsReceived = true): 'complete' | 'active' | 'pending' {
-  if (!resultsReceived) return index === activeIndex ? 'active' : 'pending';
+  // The current backend returns one complete report, not per-stage progress.
+  // Keep the queue neutral until those real results arrive.
+  if (!resultsReceived) return 'pending';
   if (index < activeIndex) return 'complete';
   return index === activeIndex ? 'active' : 'pending';
-}
-
-export function nextDiagnosisQueueIndex(currentIndex: number, stageCount: number): number | null {
-  if (currentIndex < 0 || stageCount < 1 || currentIndex >= stageCount - 1) return null;
-  return currentIndex + 1;
 }
