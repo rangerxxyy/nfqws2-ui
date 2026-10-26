@@ -338,7 +338,10 @@ fn describe_profile(
         if arg.starts_with("--filter-") && filters.len() < 32 {
             filters.push(arg.clone());
         }
-        if (arg.starts_with("--payload=") || arg.starts_with("--filter-7=")) && protocols.len() < 32
+        if (arg.starts_with("--payload=")
+            || arg.starts_with("--filter-7=")
+            || arg.starts_with("--filter-l7="))
+            && protocols.len() < 32
         {
             protocols.push(arg.clone());
         }
@@ -349,7 +352,12 @@ fn describe_profile(
         {
             lists.push(arg.clone());
         }
-        if arg.starts_with("--lua-desync=") && steps.len() < 64 {
+        if (arg.starts_with("--lua-desync=")
+            || arg.starts_with("--payload=")
+            || arg.starts_with("--in-range=")
+            || arg.starts_with("--out-range="))
+            && steps.len() < 64
+        {
             steps.push(arg.clone());
         }
     }
@@ -567,6 +575,30 @@ mod tests {
         assert_eq!(response.profiles[1].filters, ["--filter-tcp=443"]);
         assert_eq!(response.profiles[1].steps, ["--lua-desync=fake"]);
         assert!(response.custom_args.contains("--new=video"));
+    }
+
+    #[test]
+    fn profile_summary_includes_l7_filters_and_ordered_range_steps() {
+        let response = from_config(
+            "NFQWS_ARGS_CUSTOM=\"--filter-l7=tls --payload=tls_client_hello --out-range=<n2 --lua-desync=fake --in-range=2\"\n",
+            "rev",
+        )
+        .unwrap();
+        let profile = &response.profiles[0];
+
+        assert_eq!(
+            profile.protocols,
+            ["--filter-l7=tls", "--payload=tls_client_hello"]
+        );
+        assert_eq!(
+            profile.steps,
+            [
+                "--payload=tls_client_hello",
+                "--out-range=<n2",
+                "--lua-desync=fake",
+                "--in-range=2"
+            ]
+        );
     }
 
     #[test]
