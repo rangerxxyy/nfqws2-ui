@@ -9691,7 +9691,9 @@ struct NfqwsCliCatalog {
 fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
     let mut catalog = NfqwsCliCatalog::default();
     let mut section = "GLOBAL".to_owned();
-    for line in help.lines() {
+    let mut logical_options = Vec::<(String, String)>::new();
+    for raw_line in help.lines() {
+        let line = strip_terminal_controls(raw_line);
         let trimmed = line.trim();
         if trimmed.ends_with(':')
             && trimmed
@@ -9701,7 +9703,22 @@ fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
             section = trimmed.trim_end_matches(':').to_owned();
             continue;
         }
-        let Some(option) = line.trim_start().strip_prefix("--") else {
+        if trimmed.starts_with("--") {
+            logical_options.push((trimmed.to_owned(), section.clone()));
+            continue;
+        }
+        // Some nfqws2 builds wrap help descriptions at the terminal width.
+        // Join continuation lines so value lists (notably --payload/--filter-l7)
+        // are complete even when the command inherits a narrow terminal.
+        if !trimmed.is_empty() {
+            if let Some((previous, _)) = logical_options.last_mut() {
+                previous.push(' ');
+                previous.push_str(trimmed);
+            }
+        }
+    }
+    for (line, section) in logical_options {
+        let Some(option) = line.strip_prefix("--") else {
             continue;
         };
         let name_end = option
@@ -9746,6 +9763,29 @@ fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
         });
     }
     catalog
+}
+
+fn strip_terminal_controls(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.next_if_eq(&'[').is_some() {
+                for code in chars.by_ref() {
+                    if ('@'..='~').contains(&code) {
+                        break;
+                    }
+                }
+            } else {
+                let _ = chars.next();
+            }
+        } else if ch == '\t' {
+            output.push(' ');
+        } else if !ch.is_control() {
+            output.push(ch);
+        }
+    }
+    output
 }
 
 async fn get_profile_lua_catalog() -> Response {
@@ -11277,12 +11317,64 @@ mod tests {
     #[test]
     fn nfqws_help_catalog_parses_runtime_protocols_payloads_and_argument_scope() {
         let catalog = parse_nfqws_cli_catalog(
-            "GLOBAL:\n  --daemon\n  --qnum=<n>\nFILTERS:\n  --filter-l7=<proto> ; supported: tls http quic\n  --payload=<type> ; available payloads: tls_client_hello quic_initial http_req\n  --hostlist=<file> ; read domains\n",
+            "GLOBAL:\n  --daemon\n  --qnum=<n>\nMULTI-STRATEGY:\n  --filter-l7=proto[,proto] ; L6-L7 protocol filter : all unknown known http tls dtls quic wireguard dht discord stun xmpp dns mtproto bt utp_bt\nLUA PACKET PASS MODE:\n  --payload=type[,type] ; set payload types following LUA functions should process : all unknown empty known ipv4 ipv6 icmp http_req http_reply tls_client_hello tls_server_hello dtls_client_hello dtls_server_hello quic_initial wireguard_initiation wireguard_response wireguard_cookie wireguard_keepalive wireguard_data dht discord_ip_discovery stun xmpp_stream xmpp_starttls xmpp_proceed xmpp_features dns_query dns_response mtproto_initial bt_handshake utp_bt_handshake\n  --hostlist=<file> ; read domains\n",
         );
-        assert_eq!(catalog.l7, ["tls", "http", "quic"]);
+        assert_eq!(
+            catalog.l7,
+            [
+                "all",
+                "unknown",
+                "known",
+                "http",
+                "tls",
+                "dtls",
+                "quic",
+                "wireguard",
+                "dht",
+                "discord",
+                "stun",
+                "xmpp",
+                "dns",
+                "mtproto",
+                "bt",
+                "utp_bt"
+            ]
+        );
         assert_eq!(
             catalog.payloads,
-            ["tls_client_hello", "quic_initial", "http_req"]
+            [
+                "all",
+                "unknown",
+                "empty",
+                "known",
+                "ipv4",
+                "ipv6",
+                "icmp",
+                "http_req",
+                "http_reply",
+                "tls_client_hello",
+                "tls_server_hello",
+                "dtls_client_hello",
+                "dtls_server_hello",
+                "quic_initial",
+                "wireguard_initiation",
+                "wireguard_response",
+                "wireguard_cookie",
+                "wireguard_keepalive",
+                "wireguard_data",
+                "dht",
+                "discord_ip_discovery",
+                "stun",
+                "xmpp_stream",
+                "xmpp_starttls",
+                "xmpp_proceed",
+                "xmpp_features",
+                "dns_query",
+                "dns_response",
+                "mtproto_initial",
+                "bt_handshake",
+                "utp_bt_handshake"
+            ]
         );
         assert!(
             catalog

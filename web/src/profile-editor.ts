@@ -108,10 +108,11 @@ export function profileArgumentChoices(args: readonly string[], lists: readonly 
       definitions.push({ group: 'Параметры nfqws2 · остальные', value, label: `${option.syntax}${option.description ? ` · ${option.description}` : ''}` });
     }
   }
-  return definitions.filter(({ value }) => {
+  return definitions.filter(({ value }, index) => {
     // Repeated Lua steps are meaningful (for example, different desync stages);
     // only hide an identical starter choice for the other argument kinds.
-    return value.startsWith('--lua-desync=') || !args.includes(value);
+    const firstChoiceForValue = definitions.findIndex((choice) => choice.value === value) === index;
+    return firstChoiceForValue && (value.startsWith('--lua-desync=') || !args.includes(value));
   });
 }
 
