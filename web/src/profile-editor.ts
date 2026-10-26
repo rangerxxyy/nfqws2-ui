@@ -113,6 +113,14 @@ export type LuaProfileHelp = {
   required: string[];
 };
 
+// Some shipped Lua files document only a subset of options supported by the
+// nfqws2 runtime. These known options remain function-scoped in the editor.
+const compatibilityLuaArguments: Record<string, Readonly<Record<string, string | null>>> = {
+  fakedsplit: { altorder: '1', nofake1: null, nofake2: null, nofake3: null, nofake4: null, oob: null, oob_data: '0x00' },
+  fakeddisorder: { altorder: '1', nofake1: null, nofake2: null, nofake3: null, nofake4: null, oob: null, oob_data: '0x00' },
+  hostfakesplit: { altorder: '1', nofake1: null, nofake2: null, oob: null, oob_data: '0x00' },
+};
+
 export function getLuaProfileHelp(
   info: NfqwsLuaFunctionInfo | undefined,
   groups: readonly NfqwsLuaStandardGroup[],
@@ -140,6 +148,7 @@ export function getLuaProfileParameterOptions(
     ...info.arguments,
     ...(info.fileArguments ?? []),
     ...groups.filter((group) => info.standardGroups.includes(group.name)).flatMap((group) => group.arguments),
+    ...Object.entries(compatibilityLuaArguments[info.name] ?? {}).map(([key, value]) => `${value === null ? key : `${key}=${value}`} — поддерживается nfqws2`),
   ];
   const seen = new Set<string>();
   return definitions.filter((definition) => {
@@ -170,6 +179,9 @@ export function diagnoseProfileLuaArguments(
   groups: readonly NfqwsLuaStandardGroup[] = [],
 ): ProfileLuaWarning[] {
   if (!catalog.length) return [];
+  // Older bundled Lua help comments omit arguments that are accepted by the
+  // nfqws2 desync implementations. Keep this compatibility list narrow and
+  // function-scoped so real misspellings still produce a warning.
   const known = new Map(catalog.map((item) => [item.name, item]));
   const knownSomewhere = new Set(['strategy', 'final', 'cond', 'cond_neg']);
   for (const item of catalog) {
@@ -184,6 +196,7 @@ export function diagnoseProfileLuaArguments(
       if (parsed) knownSomewhere.add(parsed.key);
     }
   }
+  for (const options of Object.values(compatibilityLuaArguments)) for (const key of Object.keys(options)) knownSomewhere.add(key);
   const warnings: ProfileLuaWarning[] = [];
   for (const argument of args) {
     if (!argument.startsWith('--lua-desync=')) continue;
@@ -199,6 +212,7 @@ export function diagnoseProfileLuaArguments(
     }
     const allowed = new Set(['strategy', 'final', 'cond', 'cond_neg', ...(info.fileArguments ?? [])
       .map(parseLuaParameterOption).filter((item) => item !== null).map((item) => item.key)]);
+    for (const key of Object.keys(compatibilityLuaArguments[name] ?? {})) allowed.add(key);
     for (const definition of info.arguments) {
       const parsed = parseLuaParameterOption(definition);
       if (parsed) allowed.add(parsed.key);

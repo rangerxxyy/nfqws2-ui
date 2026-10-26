@@ -330,5 +330,15 @@ export function refreshStyledSelect(select: HTMLSelectElement): void {
 }
 
 export function installStyledSelects(root: ParentNode = document): void {
+  // Dynamic editors replace their controls on each render. Drop detached
+  // menus and observers so repeated profile edits do not retain stale state.
+  for (const state of activeStates) {
+    if (state.select.isConnected) continue;
+    state.observer.disconnect();
+    if (state.searchTimer !== null) window.clearTimeout(state.searchTimer);
+    if (state.menuClosingTimer !== null) window.clearTimeout(state.menuClosingTimer);
+    state.menu.remove();
+    activeStates.delete(state);
+  }
   root.querySelectorAll<HTMLSelectElement>('select').forEach(installOne);
 }

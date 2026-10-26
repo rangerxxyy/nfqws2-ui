@@ -112,6 +112,13 @@ describe('desync step editing', () => {
     expect(parseLuaParameterOption('blob=<name> — select a blob')).toEqual({ key: 'blob', value: '', display: 'blob=<name> — select a blob' });
     expect(parseLuaParameterOption('bad key')).toBeNull();
   });
+  it('offers nfqws2 compatibility parameters when older Lua comments omit them', () => {
+    const info = { name: 'fakedsplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos=<marker>'], fileArguments: [], standardGroups: [], required: [] };
+    expect(getLuaProfileParameterOptions(info, [])).toEqual(expect.arrayContaining([
+      'altorder=1 — поддерживается nfqws2', 'oob — поддерживается nfqws2',
+      'oob_data=0x00 — поддерживается nfqws2', 'nofake2 — поддерживается nfqws2',
+    ]));
+  });
   it('reports missing required Lua arguments and unavailable functions from the installed catalog', () => {
     const catalog = [{ name: 'multisplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos — split positions'], standardGroups: ['general'], required: ['pos'] }];
     expect(diagnoseProfileLuaArguments(['--lua-desync=multisplit', '--lua-desync=ghost', '--lua-desync=multisplit:pos=1'], catalog)).toEqual([
@@ -125,6 +132,27 @@ describe('desync step editing', () => {
 
     expect(diagnoseProfileLuaArguments(['--lua-desync=multisplit:pos=1:repeats=2:tcp_ack=-1:typo=3:strategy=2'], catalog, groups)).toEqual([
       { argument: '--lua-desync=multisplit:pos=1:repeats=2:tcp_ack=-1:typo=3:strategy=2', message: 'Неизвестный параметр «typo»' },
+    ]);
+  });
+
+  it('accepts nfqws2 desync options that are not fully described by the installed Lua comments', () => {
+    const catalog = [
+      { name: 'fakedsplit', file: 'zapret-auto.lua', docs: [], arguments: ['host=<name>'], fileArguments: [], standardGroups: [], required: [] },
+      { name: 'hostfakesplit', file: 'zapret-auto.lua', docs: [], arguments: ['host=<name>'], fileArguments: [], standardGroups: [], required: [] },
+    ];
+    expect(diagnoseProfileLuaArguments([
+      '--lua-desync=fakedsplit:oob:oob_data=0x00:altorder=1',
+      '--lua-desync=hostfakesplit:nofake2:altorder=1',
+    ], catalog)).toEqual([]);
+  });
+  it('keeps compatibility options scoped to functions and continues flagging misspellings', () => {
+    const catalog = [
+      { name: 'fakedsplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos=<marker>'], fileArguments: [], standardGroups: [], required: [] },
+      { name: 'multisplit', file: 'zapret-auto.lua', docs: [], arguments: ['pos=<marker>'], fileArguments: [], standardGroups: [], required: [] },
+    ];
+    expect(diagnoseProfileLuaArguments(['--lua-desync=fakedsplit:typo=1', '--lua-desync=multisplit:nofake2'], catalog)).toEqual([
+      { argument: '--lua-desync=fakedsplit:typo=1', message: 'Неизвестный параметр «typo»' },
+      { argument: '--lua-desync=multisplit:nofake2', message: 'Параметр «nofake2» не описан для функции multisplit' },
     ]);
   });
 
