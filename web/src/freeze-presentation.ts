@@ -1,11 +1,15 @@
 export type FreezeRowFacts = { freezeDetected: boolean; foundStrategy: { reusedFrom?: string | null } | null; directOk: boolean; currentOk: boolean };
 export type FreezeRowTone = 'error' | 'success' | 'warning' | 'neutral';
 
+export function freezeMeasurementDetails(direct: string, current: string): string {
+  return `Напрямую: ${direct}\nЧерез nfqws2: ${current}`;
+}
+
 export function freezeRowPresentation(facts: FreezeRowFacts): { tone: FreezeRowTone; label: string } {
   if (facts.foundStrategy?.reusedFrom) return { tone: 'warning', label: 'Совпадение в той же AS' };
   if (facts.foundStrategy) return { tone: 'success', label: 'Стратегия найдена' };
   if (facts.freezeDetected) return { tone: 'error', label: 'Возможный обрыв' };
-  if (facts.directOk && facts.currentOk) return { tone: 'success', label: 'Обрыв не обнаружен' };
+  if (facts.directOk && facts.currentOk) return { tone: 'success', label: 'Ответ получен' };
   return { tone: 'neutral', label: 'Результат не подтверждён' };
 }
 

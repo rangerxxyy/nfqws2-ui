@@ -371,7 +371,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("operation.stage === 'strategy_search'");
     expect(panelSource).toContain('freezeProgressPresentation(operation)');
     expect(panelSource).toContain("status.classList.toggle('hidden', !active)");
-    expect(panelSource).toContain('Подробности проверки');
+    expect(panelSource).toContain('Замеры и детали');
     expect(panelSource).toContain('result.address ??');
     expect(template).toContain('id="freezeApplyPreviewPanel"');
     expect(panelSource).toContain('freezeStrategyPreview');
@@ -602,6 +602,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("if (profile.hasConstructor && runtimeProfileEditorMode === 'builder')");
     expect(panelSource).toContain('getRuntimeProfileConstructorTarget(profile)');
     expect(panelSource).toContain('getRuntimeProfileListTarget(profile, choice.value)');
+    expect(panelSource).toContain('profileProtocolChoices(runtimeProfileCliCatalog?.l7 ?? [], profile.args)');
+    expect(panelSource).toContain("'+ добавить фильтр UDP-порты'");
+    expect(panelSource).toContain('appendProfileUdpFilter(target?.args ?? profile.args, port.value)');
     expect(panelSource).toContain("else if (runtimeProfileEditorMode === 'text')");
     expect(panelSource).toContain('const components = profile.components ?? []');
     expect(panelSource).toContain('saveSettings(runtimeProfileManagedDraft');

@@ -228,6 +228,40 @@ export function appendProfileFilterValue(argument: string, value: string): strin
   return replaceProfileFilterValues(argument, values);
 }
 
+/** Lists supported L7 filters from nfqws2's catalog, excluding protocols already selected. */
+export function profileProtocolChoices(catalog: readonly string[], args: readonly string[]): string[] {
+  const selected = new Set(args
+    .filter((argument) => argument.startsWith('--filter-l7=') || argument.startsWith('--filter-7='))
+    .flatMap(profileFilterValues)
+    .map((value) => value.toLocaleLowerCase()));
+  return [...new Set(catalog.filter((value) => value.trim()).map((value) => value.trim()))]
+    .filter((value) => !selected.has(value.toLocaleLowerCase()));
+}
+
+/** Adds a catalog protocol without creating a duplicate L7 filter value. */
+export function appendProfileProtocol(args: readonly string[], protocol: string): string[] | null {
+  const value = protocol.trim();
+  if (!replaceProfileFilterValues('--filter-l7=', [value])) return null;
+  const updated = [...args];
+  const existingIndex = updated.findIndex((argument) => argument.startsWith('--filter-l7=') || argument.startsWith('--filter-7='));
+  if (existingIndex < 0) return [...updated, `--filter-l7=${value}`];
+  const values = profileFilterValues(updated[existingIndex]!);
+  if (values.some((item) => item.toLocaleLowerCase() === value.toLocaleLowerCase())) return updated;
+  const replacement = replaceProfileFilterValues(updated[existingIndex]!, [...values, value]);
+  if (!replacement) return null;
+  updated[existingIndex] = replacement;
+  return updated;
+}
+
+/** Adds a single UDP port or range after validating its numeric bounds. */
+export function appendProfileUdpFilter(args: readonly string[], value: string): string[] | null {
+  const match = /^(\d{1,5})(?:-(\d{1,5}))?$/.exec(value.trim());
+  if (!match || args.some((argument) => argument.startsWith('--filter-udp='))) return null;
+  const start = Number(match[1]); const end = Number(match[2] ?? match[1]);
+  if (start < 1 || end > 65535 || start > end) return null;
+  return [...args, `--filter-udp=${value.trim()}`];
+}
+
 export type ProfileLuaWarning = { argument: string; message: string };
 export type LuaParameterOption = { key: string; value: string | null; display: string };
 export type LuaProfileHelp = {

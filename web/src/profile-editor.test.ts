@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NfqwsArgumentProfile } from './api';
-import { appendArgumentToCustomProfile, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, prepareVisibleRuntimeProfiles, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, appendProfileProtocol, appendProfileUdpFilter, filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRuntimeProfileComponentArgs, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, prepareVisibleRuntimeProfiles, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('adding strategy arguments to NFQWS_ARGS_CUSTOM profiles', () => {
   it('adds a strategy only to the selected profile between --new separators', () => {
@@ -188,6 +188,26 @@ describe('profile builder choices', () => {
 });
 
 describe('profile filter tokens', () => {
+  it('offers only protocol catalog values not already selected by the profile', () => {
+    expect(profileProtocolChoices(['tls', 'http', 'quic', 'wireguard'], ['--filter-l7=tls,quic', '--filter-7=wireguard']))
+      .toEqual(['http']);
+  });
+
+  it('adds a catalog protocol to the existing filter or creates the first filter', () => {
+    expect(appendProfileProtocol(['--filter-tcp=443', '--filter-l7=tls'], 'http'))
+      .toEqual(['--filter-tcp=443', '--filter-l7=tls,http']);
+    expect(appendProfileProtocol(['--filter-tcp=443'], 'quic'))
+      .toEqual(['--filter-tcp=443', '--filter-l7=quic']);
+    expect(appendProfileProtocol(['--filter-l7=tls'], 'tls')).toEqual(['--filter-l7=tls']);
+  });
+
+  it('adds a validated UDP port or range only when one is not already present', () => {
+    expect(appendProfileUdpFilter(['--filter-tcp=443'], '5353')).toEqual(['--filter-tcp=443', '--filter-udp=5353']);
+    expect(appendProfileUdpFilter(['--filter-tcp=443'], '5000-5010')).toEqual(['--filter-tcp=443', '--filter-udp=5000-5010']);
+    expect(appendProfileUdpFilter(['--filter-tcp=443'], '70000')).toBeNull();
+    expect(appendProfileUdpFilter(['--filter-udp=53'], '443')).toBeNull();
+  });
+
   it('edits and removes comma-separated filter values without changing the option', () => {
     const argument = '--filter-tcp=80,443,8080';
     expect(profileFilterValues(argument)).toEqual(['80', '443', '8080']);

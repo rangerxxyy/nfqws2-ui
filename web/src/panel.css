@@ -983,8 +983,7 @@ html.list-editor-fullscreen-open { overflow:hidden; }
   font-weight: 650;
 }
 #tabContent-diagnostic16k .freeze-result-details[open] { color: #cbd5e1; }
-#tabContent-diagnostic16k .freeze-scan-table td:nth-child(3),
-#tabContent-diagnostic16k .freeze-scan-table td:nth-child(4) { max-width: 15rem; }
+#tabContent-diagnostic16k .freeze-scan-table td:last-child { min-width: 13rem; }
 #tabContent-diagnostic16k .freeze-scan-table td:first-child,
 #tabContent-diagnostic16k .freeze-scan-table td:nth-child(2) {
   font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;

@@ -2,7 +2,7 @@ import { diagnosisRows } from './diagnosis-layout';
 import { parseCustomStrategies } from './custom-strategy-input';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
-import { freezeCanApplyToHost, freezeRowPresentation } from './freeze-presentation';
+import { freezeCanApplyToHost, freezeMeasurementDetails, freezeRowPresentation } from './freeze-presentation';
 import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
@@ -28,7 +28,7 @@ import { shouldPollLogs } from './log-polling';
 import { shouldFollowLogTail } from './log-scroll';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendArgumentToCustomProfile, appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileProtocol, appendProfileUdpFilter, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -615,6 +615,42 @@ function renderRuntimeProfiles() {
     let conditionsHeadingAdded = false; let listsHeadingAdded = false; let stepsHeadingAdded = false;
     for (const [groupName, groupTone, predicate] of groups) {
       const indexes = profile.args.map((arg, index) => predicate(arg) ? index : -1).filter((index) => index >= 0);
+      if (!indexes.length && groupName === 'UDP-порты' && profile.hasConstructor) {
+        if (!conditionsHeadingAdded) { appendProfileBuilderSectionHeading(builder, 'Когда срабатывает'); conditionsHeadingAdded = true; }
+        const row = document.createElement('div'); row.className = 'profile-filter-empty-row flex flex-wrap items-center gap-2 px-1 py-1';
+        const label = document.createElement('span'); label.className = 'w-28 text-xs text-slate-400'; label.textContent = 'UDP-порты';
+        const addUdp = document.createElement('button'); addUdp.type = 'button'; addUdp.className = 'profile-filter-add'; addUdp.textContent = '+ добавить фильтр UDP-порты';
+        addUdp.addEventListener('click', () => {
+          const port = document.createElement('input'); port.type = 'text'; port.inputMode = 'numeric'; port.className = 'profile-filter-add-input min-w-36 rounded-md border bg-slate-950 px-2 py-1 font-mono text-xs'; port.placeholder = '443 или 5000-5010'; port.setAttribute('aria-label', 'UDP-порт или диапазон');
+          const commit = () => {
+            const target = runtimeProfileDraftTarget(profile.id);
+            const updated = appendProfileUdpFilter(target?.args ?? profile.args, port.value);
+            if (!updated) { toast('Введите UDP-порт от 1 до 65535 или корректный диапазон.', 'error'); port.focus(); return; }
+            if (target) storeRuntimeProfileArgs(profile.id, updated);
+          };
+          port.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); commit(); } });
+          const confirm = document.createElement('button'); confirm.type = 'button'; confirm.className = 'profile-filter-add'; confirm.textContent = 'Добавить'; confirm.addEventListener('click', commit);
+          row.replaceChildren(label, port, confirm); port.focus();
+        });
+        row.append(label, addUdp); builder.append(row); continue;
+      }
+      if (!indexes.length && groupName === 'Протоколы' && profile.hasConstructor) {
+        if (!conditionsHeadingAdded) { appendProfileBuilderSectionHeading(builder, 'Когда срабатывает'); conditionsHeadingAdded = true; }
+        const row = document.createElement('div'); row.className = 'profile-filter-empty-row flex flex-wrap items-center gap-2 px-1 py-1';
+        const label = document.createElement('span'); label.className = 'w-28 text-xs text-slate-400'; label.textContent = 'Протоколы';
+        const select = document.createElement('select'); select.className = 'profile-protocol-select min-h-8 min-w-40 max-w-64 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'; select.setAttribute('aria-label', 'Добавить протокол'); select.dataset.menuMinWidth = '220';
+        const choices = profileProtocolChoices(runtimeProfileCliCatalog?.l7 ?? [], profile.args);
+        const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = choices.length ? '+ протокол' : 'Каталог протоколов недоступен'; select.append(placeholder);
+        for (const protocol of choices) { const option = document.createElement('option'); option.value = protocol; option.textContent = protocol; select.append(option); }
+        select.disabled = choices.length === 0;
+        select.addEventListener('change', () => {
+          if (!select.value) return;
+          const target = runtimeProfileDraftTarget(profile.id);
+          const updated = appendProfileProtocol(target?.args ?? profile.args, select.value);
+          if (updated && target) storeRuntimeProfileArgs(profile.id, updated);
+        });
+        row.append(label, select); builder.append(row); continue;
+      }
       if (!indexes.length && groupName !== 'Упорядоченные шаги') continue;
       if (!conditionsHeadingAdded && ['TCP-порты', 'UDP-порты', 'Другие фильтры', 'Протоколы'].includes(groupName)) { appendProfileBuilderSectionHeading(builder, 'Когда срабатывает'); conditionsHeadingAdded = true; }
       if (!listsHeadingAdded && groupName === 'Списки доменов и IP') { appendProfileBuilderSectionHeading(builder, 'Для кого'); listsHeadingAdded = true; }
@@ -713,11 +749,25 @@ function renderRuntimeProfiles() {
             const removeValue = document.createElement('button'); removeValue.type = 'button'; removeValue.className = 'profile-filter-remove'; removeValue.textContent = '×'; removeValue.setAttribute('aria-label', `Убрать ${value}`); removeValue.addEventListener('click', () => removeRuntimeProfileFilterValue(profile.id, String(index), String(valueIndex)));
             chip.append(token, removeValue); filterEditor.append(chip);
           });
-          const addValue = document.createElement('input'); addValue.type = 'text'; addValue.className = 'profile-filter-add-input min-w-24 rounded-md border bg-slate-950 px-2 py-1 font-mono text-xs'; addValue.placeholder = filterType === 'protocol' ? '+ протокол' : '+ порт / диапазон'; addValue.setAttribute('aria-label', `Добавить значение: ${groupName}`);
-          const commitValue = () => { const value = addValue.value.trim(); if (!value) return; if (appendRuntimeProfileFilterValue(profile.id, String(index), value)) addValue.value = ''; };
-          addValue.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); commitValue(); } });
-          const addValueButton = document.createElement('button'); addValueButton.type = 'button'; addValueButton.className = 'profile-filter-add'; addValueButton.textContent = '+'; addValueButton.setAttribute('aria-label', `Добавить значение в ${groupName}`); addValueButton.addEventListener('click', commitValue);
-          filterEditor.append(addValue, addValueButton);
+          if (filterType === 'protocol') {
+            const addProtocol = document.createElement('select'); addProtocol.className = 'profile-protocol-select min-h-8 min-w-36 max-w-56 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'; addProtocol.setAttribute('aria-label', 'Добавить протокол'); addProtocol.dataset.menuMinWidth = '220';
+            const choices = profileProtocolChoices(runtimeProfileCliCatalog?.l7 ?? [], profile.args);
+            const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = choices.length ? '+ протокол' : 'Все протоколы выбраны'; addProtocol.append(placeholder);
+            for (const protocol of choices) { const option = document.createElement('option'); option.value = protocol; option.textContent = protocol; addProtocol.append(option); }
+            addProtocol.disabled = choices.length === 0;
+            addProtocol.addEventListener('change', () => {
+              if (!addProtocol.value) return;
+              if (!filterValues.length) updateRuntimeProfileArgument(profile.id, String(index), `${argument.slice(0, argument.indexOf('=') + 1)}${addProtocol.value}`);
+              else appendRuntimeProfileFilterValue(profile.id, String(index), addProtocol.value);
+            });
+            filterEditor.append(addProtocol);
+          } else {
+            const addValue = document.createElement('input'); addValue.type = 'text'; addValue.className = 'profile-filter-add-input min-w-24 rounded-md border bg-slate-950 px-2 py-1 font-mono text-xs'; addValue.placeholder = '+ порт / диапазон'; addValue.setAttribute('aria-label', `Добавить значение: ${groupName}`);
+            const commitValue = () => { const value = addValue.value.trim(); if (!value) return; if (appendRuntimeProfileFilterValue(profile.id, String(index), value)) addValue.value = ''; };
+            addValue.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); commitValue(); } });
+            const addValueButton = document.createElement('button'); addValueButton.type = 'button'; addValueButton.className = 'profile-filter-add'; addValueButton.textContent = '+'; addValueButton.setAttribute('aria-label', `Добавить значение в ${groupName}`); addValueButton.addEventListener('click', commitValue);
+            filterEditor.append(addValue, addValueButton);
+          }
           const removeArgument = document.createElement('button'); removeArgument.type = 'button'; removeArgument.className = 'profile-filter-remove-argument'; removeArgument.textContent = '×'; removeArgument.setAttribute('aria-label', `Удалить условие ${groupName}`); removeArgument.addEventListener('click', () => removeRuntimeProfileArgument(profile.id, String(index)));
           row.append(filterEditor, removeArgument); continue;
         }
@@ -3270,10 +3320,10 @@ function renderFreezeScan(operation: FreezeScanOperation) {
   container.replaceChildren();
   if (!operation.results.length) { container.classList.add('hidden'); return; }
   container.classList.remove('hidden');
-  const table = document.createElement('table'); table.className = 'freeze-scan-table min-w-[760px] w-full text-left text-sm';
+  const table = document.createElement('table'); table.className = 'freeze-scan-table w-full text-left text-sm';
   const head = document.createElement('thead'); head.className = 'bg-slate-900/80 text-xs uppercase text-slate-300';
   const headerRow = document.createElement('tr');
-  const labels = ['Сеть / имя проверки', 'Проверенный IP / ASN', 'Напрямую', 'Текущий маршрут', 'Итог'];
+  const labels = ['Сеть', 'Проверенный IP / ASN', 'Результат'];
   for (const title of labels) { const cell = document.createElement('th'); cell.className = 'px-3 py-3 font-bold'; cell.textContent = title; headerRow.append(cell); }
   head.append(headerRow); table.append(head);
   const body = document.createElement('tbody'); body.className = 'divide-y divide-slate-800 text-slate-200';
@@ -3284,31 +3334,27 @@ function renderFreezeScan(operation: FreezeScanOperation) {
     const cells = [
       freezeRowIdentity(result),
       `${result.address ?? 'адрес не найден'}\n${result.asn.state === 'verified' ? `AS${result.asn.asn} · подтверждён` : result.asn.state === 'changed' ? `ASN изменился: ожидался AS${result.asn.expected}, сейчас AS${result.asn.actual}` : 'ASN не подтверждён'}`,
-      freezeMeasurementLabel(result.direct),
-      freezeMeasurementLabel(result.current),
-      result.foundStrategy ? `${freezeRowDetails(result).summary}${result.foundStrategy.reusedFrom ? ` · ASN совпадает с ${result.foundStrategy.reusedFrom}` : ''}` : result.freezeDetected ? 'Проверки показывают возможный обрыв' : result.direct.ok && result.current.ok ? 'Обрыв не обнаружен' : 'Результат не подтверждён',
+      '',
     ];
     cells.forEach((value, index) => {
       const cell = document.createElement('td'); cell.dataset.label = labels[index];
-      cell.className = `whitespace-pre-line px-3 py-2.5 leading-snug ${index === 4 ? 'freeze-result-summary font-bold' : 'font-semibold text-white'}`;
-      if (index === 4) {
+      cell.className = `whitespace-pre-line px-3 py-2.5 leading-snug ${index === 2 ? 'freeze-result-summary font-bold' : 'font-semibold text-white'}`;
+      if (index === 2) {
         const badge = document.createElement('span');
-        badge.className = 'freeze-result-badge mb-1 inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-bold';
+        badge.className = 'freeze-result-badge inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-bold';
         badge.textContent = presentation.label;
         badge.setAttribute('role', 'status');
-        const detail = document.createElement('span');
-        detail.className = 'block whitespace-pre-line';
-        detail.textContent = value;
         const facts = freezeRowDetails(result);
-        cell.append(badge, detail);
-        if (facts.details) {
+        cell.append(badge);
+        if (facts.details || result.direct || result.current) {
           const disclosure = document.createElement('details');
-          disclosure.className = 'freeze-result-details mt-1 text-xs font-medium';
+          disclosure.className = 'freeze-result-details mt-1.5 text-xs font-medium';
           const summary = document.createElement('summary');
-          summary.textContent = 'Подробности проверки';
+          summary.textContent = 'Замеры и детали';
           const content = document.createElement('span');
           content.className = 'mt-1 block whitespace-pre-line';
-          content.textContent = facts.details;
+          const measurements = freezeMeasurementDetails(freezeMeasurementLabel(result.direct), freezeMeasurementLabel(result.current));
+          content.textContent = [measurements, facts.details].filter(Boolean).join('\n');
           disclosure.append(summary, content);
           cell.append(disclosure);
         }
@@ -3316,7 +3362,7 @@ function renderFreezeScan(operation: FreezeScanOperation) {
         cell.textContent = value;
       }
       const applyKey = `${operation.id}:${resultIndex}`;
-      if (index === 4 && !freezeStrategyApplyDone.has(applyKey) && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
+      if (index === 2 && !freezeStrategyApplyDone.has(applyKey) && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'mt-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-100 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300';

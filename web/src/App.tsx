@@ -1167,7 +1167,7 @@ export default function App() {
           <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
             <div>
               <h2 className={"text-lg font-bold text-white"}>Обрыв на 16 КБ</h2>
-              <p className={"mt-1 text-sm font-semibold leading-relaxed text-slate-200"}>Один последовательный тест проверяет ваши сайты и опорные сети напрямую, затем через изолированный тест nfqws2. Для подтверждённых зависаний панель подбирает fake-SNI и проверяет найденный вариант три раза. Основная служба и трафик домашних устройств не меняются.</p>
+              <p className={"mt-1 text-sm leading-relaxed text-slate-300"}>Сравниваем передачу напрямую и через nfqws2. Результаты замеров и объяснение проверки скрыты до нажатия «Замеры и детали».</p>
             </div>
             <div className={"flex flex-col sm:flex-row sm:items-end gap-3"}>
               <label htmlFor={"freezeScanHostsInput"} className={"min-w-0 flex-1 space-y-2 text-sm font-semibold text-slate-200"}>
@@ -1200,7 +1200,7 @@ export default function App() {
               <p className={"text-xs font-medium text-slate-300"}>Профиль ограничен этим доменом. Перед применением проверьте diff; будет создана резервная копия, затем nfqws2 перезапустится.</p>
               <button id={"applyFreezeStrategyButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>Применить и перезапустить</button>
             </section>
-            <p className={"text-xs font-semibold leading-relaxed text-slate-300"}>Проверки идут по очереди с ограничением времени. Причина сбоя отмечается как возможный обрыв, а не как доказательство DPI. Результаты и прогресс сохраняются при перезагрузке страницы.</p>
+            <p className={"text-xs leading-relaxed text-slate-400"}>Проверки идут по очереди. Возможный сетевой обрыв не доказывает блокировку DPI; служба nfqws2 и домашний трафик не меняются.</p>
           </div>
         </section>
         <section id={"tabContent-configCheck"} className={"hidden view-animate space-y-4"}>
