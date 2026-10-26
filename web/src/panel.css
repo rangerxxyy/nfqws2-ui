@@ -30,20 +30,21 @@
   }
 }
 
-    /* Кастомные скроллбары */
+    /* Custom scrollbars follow the active accent in WebKit and Firefox. */
+    :root { scrollbar-width:thin; scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track); }
     ::-webkit-scrollbar {
       width: 7px;
       height: 7px;
     }
     ::-webkit-scrollbar-track {
-      background: #060a12;
+      background: var(--scrollbar-track, #060a12);
     }
     ::-webkit-scrollbar-thumb {
-      background: #1e293b;
+      background: var(--scrollbar-thumb, #1e293b);
       border-radius: 4px;
     }
     ::-webkit-scrollbar-thumb:hover {
-      background: #334155;
+      background: var(--scrollbar-thumb-hover, #334155);
     }
 
     /* Пульсация зеленого индикатора статуса */
@@ -241,6 +242,7 @@
     [data-accent="amber"] { --accent-color:#f59e0b; --accent-strong:#d97706; --accent-soft:#b45309; --accent-border:#fbbf24; }
     [data-accent="rose"] { --accent-color:#f43f5e; --accent-strong:#e11d48; --accent-soft:#be123c; --accent-border:#fb7185; }
     [data-accent="violet"] { --accent-color:#a855f7; --accent-strong:#9333ea; --accent-soft:#7e22ce; --accent-border:#c084fc; }
+    [data-accent] { --scrollbar-track:#060a12; --scrollbar-thumb:color-mix(in srgb,var(--accent-color) 38%,#1e293b); --scrollbar-thumb-hover:var(--accent-color); }
     [data-accent] .side-nav-btn.active { color:var(--accent-border) !important; border-color:color-mix(in srgb,var(--accent-color) 45%,transparent) !important; background:linear-gradient(90deg,color-mix(in srgb,var(--accent-color) 16%,transparent),color-mix(in srgb,var(--accent-color) 2%,transparent)) !important; }
     [data-accent] .version-pill:hover { border-color:var(--accent-border) !important; }
     [data-accent] [class*="text-blue-"], [data-accent] [class*="text-sky-"] { color:var(--accent-border) !important; }
@@ -384,8 +386,8 @@
     [data-theme="light"] [class*="border-purple-500/30"] { border-color:#93c5fd !important; }
     [data-theme="light"] .conf-token-flag { color:#1d4ed8 !important; }
     [data-theme="light"] .conf-token-number { color:#a21caf !important; }
-    [data-theme="light"] ::-webkit-scrollbar-track { background:#e2e8f0; }
-    [data-theme="light"] ::-webkit-scrollbar-thumb { background:#94a3b8; }
+    [data-theme="light"] { --scrollbar-track:#e2e8f0; --scrollbar-thumb:color-mix(in srgb,var(--accent-color) 30%,#cbd5e1); --scrollbar-thumb-hover:color-mix(in srgb,var(--accent-color) 65%,#64748b); }
+    [data-theme="neon"] { --scrollbar-track:#100c19; --scrollbar-thumb:color-mix(in srgb,var(--accent-color) 42%,#49315f); --scrollbar-thumb-hover:var(--accent-color); }
 
     @media (prefers-reduced-motion: reduce) {
       .status-radar,
@@ -1380,8 +1382,6 @@ input[type="checkbox"]:disabled { cursor: not-allowed; opacity: .55; }
 .profile-step-range { border-left:2px solid #fbbf24 !important; }
 .profile-step-range .profile-step-number { border-color:#fbbf24; background:#33270d; color:#fde68a; }
 .profile-step-desync { border-left:2px solid hsl(var(--profile-step-hue,166) 70% 55%) !important; }
-.profile-step-desync .profile-function-select { color:hsl(var(--profile-step-hue,166) 75% 72%); border-color:hsl(var(--profile-step-hue,166) 45% 35%); }
-.profile-step-desync .profile-function-select:focus-visible { outline:2px solid hsl(var(--profile-step-hue,166) 75% 65%); outline-offset:1px; }
 .profile-builder-step-list { min-width:0; gap:.65rem; padding:.65rem; }
 .profile-step-row { display:grid; min-width:0; grid-template-columns:1rem 2rem minmax(0,1fr) auto; align-items:start; gap:.6rem; border-radius:.65rem; padding:.65rem !important; font-size:.84rem; line-height:1.5; transition:transform .18s ease,opacity .18s ease,border-color .16s ease,background-color .16s ease,box-shadow .16s ease; }
 .profile-step-row input,.profile-step-row select,.profile-step-row button,.profile-step-row textarea,.profile-step-row summary { cursor:auto; }

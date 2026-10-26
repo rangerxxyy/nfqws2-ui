@@ -767,7 +767,7 @@ function renderRuntimeProfiles() {
           const grip = createProfileStepGrip(); bindProfileStepDrop(row, profile.id, stepIndex);
           const badge = document.createElement('span'); badge.className = 'profile-step-number grid h-6 w-6 place-items-center rounded-full border text-xs font-bold'; badge.textContent = String(strategyNumber); badge.setAttribute('aria-label', `Стратегия ${strategyNumber}`); badge.title = `Стратегия ${strategyNumber}`;
           const content = document.createElement('div'); content.className = 'profile-step-content';
-          const functionSelect = document.createElement('select'); functionSelect.dataset.nativeSelect = 'true'; functionSelect.className = 'profile-function-select min-h-9 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm font-semibold';
+          const functionSelect = document.createElement('select'); functionSelect.className = 'profile-function-select min-h-8 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'; functionSelect.dataset.menuMinWidth = '360';
           functionSelect.dataset.actionTooltip = `Стратегия ${strategyNumber}. Выберите Lua-функцию шага; доступность проверит nfqws2 при применении.`;
           functionSelect.addEventListener('change', () => updateRuntimeProfileStep(profile.id, String(argumentIndex), (current) => replaceDesyncFunction(current, functionSelect.value)));
           [...new Set([...functions, functionName])].sort().forEach((name) => { const option = document.createElement('option'); option.value = name; option.textContent = name; option.selected = name === functionName; functionSelect.append(option); });
@@ -3670,6 +3670,7 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
 async function installSelectedRelease() {
   if (!selectedReleaseTag || updatePolling) return;
   const tag = selectedReleaseTag;
+  let reloading = false;
   updatePolling = true;
   renderReleases();
   const progress = $('#updateInstallProgressBox');
@@ -3687,15 +3688,17 @@ async function installSelectedRelease() {
       try { current = await nfqwsUpdates.status(operation.id); }
       catch { await new Promise((resolve) => window.setTimeout(resolve, 1000)); }
     }
-    if (current.state === 'success') schedulePanelRefreshAfterUpdate(lifecycleMessage(core ? 'core-update' : 'panel-update', tag));
+    if (current.state === 'success') { reloading = true; schedulePanelRefreshAfterUpdate(lifecycleMessage(core ? 'core-update' : 'panel-update', tag)); }
     else if (current.state === 'rolled_back') toast(current.message || 'Обновление не прошло проверку; восстановлена предыдущая версия.', 'error');
     else if (current.state === 'failed') toast(current.message || 'Не удалось установить обновление.', 'error');
     else toast('Статус обновления пока не получен. Проверьте панель через несколько секунд.', 'error');
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось запустить обновление.', 'error');
   } finally {
-    updatePolling = false;
-    renderReleases();
+    if (!reloading) {
+      updatePolling = false;
+      renderReleases();
+    }
   }
 }
 

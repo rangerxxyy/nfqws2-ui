@@ -858,6 +858,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('input[type="checkbox"]::before {');
   });
 
+  it('colors scrollbars from the selected accent while preserving light-theme contrast', () => {
+    expect(panelStyles).toContain('scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track)');
+    expect(panelStyles).toContain('--scrollbar-thumb:color-mix(in srgb,var(--accent-color) 38%,#1e293b)');
+    expect(panelStyles).toContain('[data-theme="light"] { --scrollbar-track:#e2e8f0;');
+    expect(panelStyles).toContain('[data-theme="neon"] { --scrollbar-track:#100c19;');
+    expect(panelStyles).toContain('--scrollbar-thumb:color-mix(in srgb,var(--accent-color) 42%,#49315f)');
+    expect(panelStyles).toMatch(/::-webkit-scrollbar-thumb:hover\s*\{\s*background:\s*var\(--scrollbar-thumb-hover/);
+    expect(panelStyles).not.toContain('[data-theme="light"] ::-webkit-scrollbar-thumb { background:#94a3b8; }');
+  });
+
   it('uses the full appearance card as a keyboard-accessible radio label', () => {
     expect(appSource).toContain('<label className={"appearance-choice"}><input type={"radio"} name={"appearanceTheme"}');
     expect(appSource).toContain('name={"appearanceLayout"} value={value}');
@@ -1262,11 +1272,24 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('transition:transform .18s ease,opacity .18s ease');
   });
 
-  it('replaces the selected Lua function directly when the strategy function picker changes', () => {
-    expect(panelSource).toContain("functionSelect.dataset.nativeSelect = 'true'");
+  it('uses the shared styled popup for Lua functions and replaces the function on selection', () => {
+    expect(panelSource).not.toContain("functionSelect.dataset.nativeSelect = 'true'");
     expect(panelSource).toContain("functionSelect.addEventListener('change'");
     expect(panelSource).toContain('replaceDesyncFunction(current, functionSelect.value)');
+    expect(panelSource).toContain('installStyledSelects(editor)');
+    expect(panelSource).toContain("functionSelect.dataset.menuMinWidth = '360'");
+    expect(panelSource).toContain("functionSelect.className = 'profile-function-select min-h-8 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'");
+    expect(panelStyles).not.toContain('.profile-step-desync .profile-function-select { color:hsl(');
     expect(panelSource).not.toContain("functionSelect.dataset.actionChange = 'setRuntimeProfileStepFunction'");
+  });
+
+  it('keeps update controls locked after success until the panel reloads', () => {
+    const updateFlow = panelSource.slice(panelSource.indexOf('async function installSelectedRelease()'), panelSource.indexOf('\nfunction updateStrategyMode('));
+    expect(updateFlow).toContain('let reloading = false');
+    expect(updateFlow).toContain('reloading = true; schedulePanelRefreshAfterUpdate');
+    expect(updateFlow).toContain('if (!reloading)');
+    expect(updateFlow).toContain('updatePolling = false');
+    expect(panelSource).toContain('install.disabled = !selectedReleaseTag || updatePolling');
   });
 
   it('keeps drag feedback out of the cursor and hides the grip on narrow touch layouts', () => {

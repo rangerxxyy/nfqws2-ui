@@ -22,28 +22,6 @@ pub struct LuaStandardGroup {
     pub arguments: Vec<String>,
 }
 
-fn lua_argument_key_after_reference(value: &str) -> Option<(&str, usize)> {
-    let (candidate, consumed) = if let Some(rest) = value.strip_prefix('.') {
-        let length = rest
-            .bytes()
-            .take_while(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
-            .count();
-        (rest.get(..length)?, length + 1)
-    } else if let Some(rest) = value.strip_prefix("['") {
-        let length = rest.find("']")?;
-        (rest.get(..length)?, length + 4)
-    } else {
-        let rest = value.strip_prefix("[\"")?;
-        let length = rest.find("\"]")?;
-        (rest.get(..length)?, length + 4)
-    };
-    (!candidate.is_empty()
-        && candidate
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
-    .then_some((candidate, consumed))
-}
-
 pub fn parse_lua_standard_args(source: &str) -> Vec<LuaStandardGroup> {
     let mut groups = std::collections::BTreeMap::<String, Vec<String>>::new();
     let mut in_block = false;
@@ -112,6 +90,179 @@ pub fn parse_lua_standard_args(source: &str) -> Vec<LuaStandardGroup> {
         .into_iter()
         .map(|(name, arguments)| LuaStandardGroup { name, arguments })
         .collect()
+}
+
+fn lua_long_bracket_end(source: &str, start: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if bytes.get(start) != Some(&b'[') {
+        return None;
+    }
+    let mut cursor = start + 1;
+    while bytes.get(cursor) == Some(&b'=') {
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'[') {
+        return None;
+    }
+    let closing = format!("]{}]", "=".repeat(cursor - start - 1));
+    source[cursor + 1..]
+        .find(&closing)
+        .map(|offset| cursor + 1 + offset + closing.len())
+        .or(Some(source.len()))
+}
+
+fn lua_quoted_string_end(source: &str, start: usize) -> usize {
+    let bytes = source.as_bytes();
+    let quote = bytes[start];
+    let mut cursor = start + 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'\\' {
+            cursor = (cursor + 2).min(bytes.len());
+        } else if bytes[cursor] == quote {
+            return cursor + 1;
+        } else {
+            cursor += 1;
+        }
+    }
+    bytes.len()
+}
+
+fn lua_code_without_comments(source: &str) -> String {
+    let mut bytes = source.as_bytes().to_vec();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if bytes.get(cursor) == Some(&b'\'') || bytes.get(cursor) == Some(&b'"') {
+            cursor = lua_quoted_string_end(source, cursor);
+            continue;
+        }
+        if bytes.get(cursor..cursor + 2) == Some(b"--") {
+            let end = lua_long_bracket_end(source, cursor + 2).unwrap_or_else(|| {
+                source[cursor..]
+                    .find('\n')
+                    .map_or(bytes.len(), |offset| cursor + offset)
+            });
+            bytes[cursor..end].iter_mut().for_each(|byte| {
+                if *byte != b'\n' && *byte != b'\r' {
+                    *byte = b' ';
+                }
+            });
+            cursor = end;
+            continue;
+        }
+        if bytes[cursor] == b'['
+            && let Some(end) = lua_long_bracket_end(source, cursor)
+        {
+            bytes[cursor..end].iter_mut().for_each(|byte| {
+                if *byte != b'\n' && *byte != b'\r' {
+                    *byte = b' ';
+                }
+            });
+            cursor = end;
+            continue;
+        }
+        cursor += 1;
+    }
+    String::from_utf8(bytes).expect("Lua comment removal preserves UTF-8")
+}
+
+fn skip_lua_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
+    while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+        cursor += 1;
+    }
+    cursor
+}
+
+fn lua_identifier_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if !bytes
+        .get(start)
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+    {
+        return None;
+    }
+    let mut cursor = start + 1;
+    while bytes
+        .get(cursor)
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+    {
+        cursor += 1;
+    }
+    Some(cursor)
+}
+
+fn push_lua_argument_key(keys: &mut Vec<String>, key: &str) {
+    if key.is_empty()
+        || !key
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        || keys.iter().any(|existing| existing == key)
+    {
+        return;
+    }
+    keys.push(key.to_string());
+}
+
+fn lua_desync_argument_keys(source: &str) -> Vec<String> {
+    let bytes = source.as_bytes();
+    let mut cursor = 0;
+    let mut keys = Vec::new();
+    while cursor < bytes.len() {
+        if bytes.get(cursor..cursor + 2) == Some(b"--") {
+            if let Some(end) = lua_long_bracket_end(source, cursor + 2) {
+                cursor = end;
+            } else {
+                cursor = source[cursor..]
+                    .find('\n')
+                    .map_or(bytes.len(), |offset| cursor + offset + 1);
+            }
+            continue;
+        }
+        if bytes[cursor] == b'\'' || bytes[cursor] == b'"' {
+            cursor = lua_quoted_string_end(source, cursor);
+            continue;
+        }
+        if bytes[cursor] == b'['
+            && let Some(end) = lua_long_bracket_end(source, cursor)
+        {
+            cursor = end;
+            continue;
+        }
+        let Some(identifier_end) = lua_identifier_end(bytes, cursor) else {
+            cursor += 1;
+            continue;
+        };
+        if &source[cursor..identifier_end] == "desync" {
+            let mut access = skip_lua_whitespace(bytes, identifier_end);
+            if bytes.get(access) == Some(&b'.') {
+                access = skip_lua_whitespace(bytes, access + 1);
+                if let Some(arg_end) = lua_identifier_end(bytes, access)
+                    && &source[access..arg_end] == "arg"
+                {
+                    access = skip_lua_whitespace(bytes, arg_end);
+                    if bytes.get(access) == Some(&b'.') {
+                        access = skip_lua_whitespace(bytes, access + 1);
+                        if let Some(key_end) = lua_identifier_end(bytes, access) {
+                            push_lua_argument_key(&mut keys, &source[access..key_end]);
+                        }
+                    } else if bytes.get(access) == Some(&b'[') {
+                        access = skip_lua_whitespace(bytes, access + 1);
+                        if matches!(bytes.get(access), Some(b'\'' | b'"')) {
+                            let quote = bytes[access];
+                            if let Some(key_end) = lua_identifier_end(bytes, access + 1)
+                                && bytes.get(key_end) == Some(&quote)
+                            {
+                                let after_quote = skip_lua_whitespace(bytes, key_end + 1);
+                                if bytes.get(after_quote) == Some(&b']') {
+                                    push_lua_argument_key(&mut keys, &source[access + 1..key_end]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cursor = identifier_end;
+    }
+    keys
 }
 
 /// Extract function help from installed nfqws2 Lua comment blocks. This keeps
@@ -183,6 +334,7 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
             let mut required = Vec::new();
             let mut function_docs = Vec::new();
             let mut standard_groups = Vec::new();
+            let mut function_body = String::new();
             for doc in &docs {
                 if let Some(value) = doc
                     .strip_prefix("arg")
@@ -216,26 +368,13 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                 {
                     break;
                 }
-                let mut rest = *body_line;
-                while let Some(position) = rest.find("desync.arg") {
-                    rest = &rest[position + "desync.arg".len()..];
-                    let Some((key, consumed)) = lua_argument_key_after_reference(rest) else {
-                        continue;
-                    };
-                    let already_documented = arguments.iter().any(|argument| {
-                        argument
-                            .split([' ', '—', ':', '='])
-                            .next()
-                            .is_some_and(|documented| documented == key)
-                    });
-                    if !already_documented {
-                        arguments.push(format!("{key} — обнаружен в коде функции"));
-                    }
-                    rest = &rest[consumed..];
-                }
+                function_body.push_str(body_line);
+                function_body.push('\n');
+            }
+            for body_line in lua_code_without_comments(&function_body).lines() {
                 for marker in ["'", "\""] {
                     let needle = format!("{marker} arg required");
-                    let mut rest = *body_line;
+                    let mut rest = body_line;
                     while let Some(position) = rest.find(&needle) {
                         let before = &rest[..position];
                         if let Some(start) = before.rfind(marker) {
@@ -250,6 +389,17 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
                         }
                         rest = &rest[position + needle.len()..];
                     }
+                }
+            }
+            for key in lua_desync_argument_keys(&function_body) {
+                let already_documented = arguments.iter().any(|argument| {
+                    argument
+                        .split([' ', '—', ':', '='])
+                        .next()
+                        .is_some_and(|documented| documented == key)
+                });
+                if !already_documented {
+                    arguments.push(format!("{key} — обнаружен в коде функции"));
                 }
             }
             required.sort();
@@ -621,6 +771,36 @@ mod tests {
                 "missing inferred Lua argument {key}"
             );
         }
+    }
+
+    #[test]
+    fn lua_catalog_ignores_desync_arguments_in_comments_and_strings() {
+        let source = "function custom(ctx, desync)\n  -- desync.arg.line_ghost\n  -- 'required_ghost' arg required\n  --[[ desync.arg.block_ghost; 'block_required_ghost' arg required ]]\n  local example = [=[desync.arg.long_string_ghost]=]\n  local message = 'desync.arg.short_string_ghost'\n  local actual = desync.arg.real_key\n  local bracket = desync.arg['bracket_key']\n  if not desync.arg.must then error(\"'must' arg required\") end\nend\n";
+        let catalog = parse_lua_catalog("custom.lua", source);
+        let arguments = &catalog[0].arguments;
+        assert_eq!(
+            arguments.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "real_key — обнаружен в коде функции",
+                "bracket_key — обнаружен в коде функции",
+                "must — обнаружен в коде функции",
+            ]
+        );
+        for key in ["real_key", "bracket_key"] {
+            assert!(arguments.iter().any(|argument| argument.starts_with(key)));
+        }
+        for key in [
+            "line_ghost",
+            "block_ghost",
+            "long_string_ghost",
+            "short_string_ghost",
+        ] {
+            assert!(
+                !arguments.iter().any(|argument| argument.starts_with(key)),
+                "comment or string key {key} must not be inferred as supported"
+            );
+        }
+        assert_eq!(catalog[0].required, ["must"]);
     }
 
     #[test]
