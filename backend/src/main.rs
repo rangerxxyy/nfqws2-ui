@@ -4768,20 +4768,36 @@ async fn monitor_sites(Json(request): Json<MonitoringRequest>) -> Response {
         Ok(hosts) => hosts,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
+    match run_bounded_monitor_checks(hosts, check_monitoring_host).await {
+        Ok(results) => Json(results).into_response(),
+        Err(join_error) => error(StatusCode::INTERNAL_SERVER_ERROR, join_error.to_string()),
+    }
+}
+
+const MAX_CONCURRENT_MONITOR_HOSTS: usize = 3;
+
+async fn run_bounded_monitor_checks<F, Fut>(
+    hosts: Vec<String>,
+    check: F,
+) -> Result<Vec<MonitoringHostResult>, tokio::task::JoinError>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = MonitoringHostResult> + Send + 'static,
+{
+    let mut hosts = hosts.into_iter();
     let mut tasks = tokio::task::JoinSet::new();
-    for host in hosts {
-        tasks.spawn(check_monitoring_host(host));
+    for _ in 0..MAX_CONCURRENT_MONITOR_HOSTS {
+        let Some(host) = hosts.next() else { break };
+        tasks.spawn(check(host));
     }
     let mut results = Vec::new();
     while let Some(result) = tasks.join_next().await {
-        match result {
-            Ok(report) => results.push(report),
-            Err(join_error) => {
-                return error(StatusCode::INTERNAL_SERVER_ERROR, join_error.to_string());
-            }
+        results.push(result?);
+        if let Some(host) = hosts.next() {
+            tasks.spawn(check(host));
         }
     }
-    Json(results).into_response()
+    Ok(results)
 }
 
 fn monitoring_store_path(data_dir: &Path) -> PathBuf {
@@ -5346,14 +5362,9 @@ async fn check_saved_sites(
     if sites.is_empty() {
         return Ok(Vec::new());
     }
-    let mut tasks = tokio::task::JoinSet::new();
-    for host in sites {
-        tasks.spawn(check_monitoring_host(host));
-    }
-    let mut reports = Vec::new();
-    while let Some(result) = tasks.join_next().await {
-        reports.push(result.map_err(|e| e.to_string())?);
-    }
+    let reports = run_bounded_monitor_checks(sites, check_monitoring_host)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut updated = load_monitoring_store(data_dir).await?;
     record_monitoring_completion(&mut updated, only_hosts.is_none(), now_unix_seconds());
     let mut notification_messages = Vec::new();
@@ -11530,6 +11541,54 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn monitoring_checks_are_bounded_to_three_concurrent_hosts() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let results = super::run_bounded_monitor_checks(
+            (0..10)
+                .map(|index| format!("site-{index}.example"))
+                .collect(),
+            {
+                let active = active.clone();
+                let peak = peak.clone();
+                move |host| {
+                    let active = active.clone();
+                    let peak = peak.clone();
+                    async move {
+                        let running = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(running, Ordering::SeqCst);
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        super::MonitoringHostResult {
+                            host,
+                            summary: "ok".into(),
+                            current: super::MonitoringStep {
+                                id: "current",
+                                status: "ok",
+                                detail: "ok".into(),
+                                duration_ms: Some(1),
+                                http_code: Some(200),
+                            },
+                            steps: Vec::new(),
+                        }
+                    }
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(results.len(), 10);
+        assert!(peak.load(Ordering::SeqCst) <= 3);
+        assert!(peak.load(Ordering::SeqCst) > 1);
+    }
+
     #[test]
     fn freeze_scan_upload_probe_is_opt_in_and_backward_compatible() {
         let disabled: super::FreezeScanRequest =

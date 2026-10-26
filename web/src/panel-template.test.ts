@@ -73,6 +73,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('keeps strategy rows and long parameter chips within a responsive grid', () => {
+    const stepContentRule = panelStyles.match(/\.profile-step-content \{([^}]*)\}/)?.[1] ?? '';
     expect(panelSource).toContain("content.className = 'profile-step-content'");
     expect(panelSource).toContain("parameterList.className = 'profile-step-parameters'");
     expect(panelSource).toContain("controls.className = 'profile-step-controls'");
@@ -84,6 +85,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.profile-filter-add-input { width:9.5rem; max-width:100%; flex:0 1 9.5rem;');
     expect(panelStyles).toContain('overflow-wrap:anywhere');
     expect(panelStyles).toContain('@media (max-width:640px)');
+    expect(stepContentRule).toMatch(/min-width:\s*0/);
+    expect(panelStyles).toMatch(/@container \(max-width:640px\)\s*\{\s*\.profile-step-grip \{ display:none; \}\s*\.profile-step-row \{ display:flex; flex-wrap:wrap;/);
+    expect(panelStyles).toMatch(/\.profile-step-content \{[^}]*flex:1 1 0;/);
+    expect(panelStyles).toMatch(/\.profile-step-row > input \{[^}]*flex:1 1 12rem;/);
+    expect(panelStyles).toMatch(/\.profile-step-controls \{[^}]*flex:0 0 100%;/);
   });
 
   it('uses shared UI button states in the list toolbar', () => {
@@ -741,7 +747,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsProfiles.saveCustom(runtimeProfileDraft');
     expect(template).toContain('id="profileEditor"');
     expect(panelStyles).toContain('#profileEditor { container-type:inline-size; }');
-    expect(panelStyles).toContain('@container (max-width:640px) { .profile-step-grip { display:none; } .profile-step-row { grid-template-columns:1.75rem minmax(0,1fr);');
+    expect(panelStyles).toMatch(/@container \(max-width:640px\)\s*\{\s*\.profile-step-grip \{ display:none; \}\s*\.profile-step-row \{ display:flex; flex-wrap:wrap;/);
     expect(template).toContain('id="profileImportDialog"');
     expect(panelSource).toContain('runtimeProfileDraft.push');
     expect(panelSource).toContain('moveRuntimeProfileUp');
@@ -1279,7 +1285,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('installStyledSelects(editor)');
     expect(panelSource).toContain("functionSelect.dataset.menuMinWidth = '360'");
     expect(panelSource).toContain("functionSelect.className = 'profile-function-select min-h-8 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm text-slate-200'");
-    expect(panelStyles).not.toContain('.profile-step-desync .profile-function-select { color:hsl(');
+    expect(styledSelectSource).toContain("trigger.dataset.profileFunctionPicker = 'true'");
+    expect(panelStyles).toContain('.profile-step-desync .styled-select-trigger[data-profile-function-picker="true"]');
     expect(panelSource).not.toContain("functionSelect.dataset.actionChange = 'setRuntimeProfileStepFunction'");
   });
 
@@ -1300,7 +1307,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(rowRule).not.toMatch(/cursor:\s*grab/);
     expect(rowActiveRule).not.toMatch(/cursor:\s*grabbing/);
     expect(gripRule).not.toMatch(/cursor:\s*grab|touch-action:\s*none/);
-    expect(panelStyles).toContain('@media (max-width:640px) { .profile-step-grip { display:none; } .profile-step-row { grid-template-columns:1.75rem minmax(0,1fr);');
+    expect(panelStyles).toMatch(/@media \(max-width:640px\)\s*\{\s*\.profile-step-grip \{ display:none; \}\s*\.profile-step-row \{ display:flex; flex-wrap:wrap;/);
     expect(panelStyles).toContain('.profile-step-grip { display:none; }');
   });
 

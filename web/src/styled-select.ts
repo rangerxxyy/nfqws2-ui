@@ -39,6 +39,14 @@ export function shouldCloseStyledSelectOnFocusOut(isOpen: boolean, focusRemainsI
   return isOpen && !focusRemainsInControl && !pointerSelectionPending;
 }
 
+export function shouldPreventStyledSelectPointerFocus(pointerType: string): boolean {
+  return pointerType === 'mouse' || pointerType === 'pen';
+}
+
+export function shouldResetStyledSelectPointerSelection(activePointerId: number | null, eventPointerId: number): boolean {
+  return activePointerId !== null && activePointerId === eventPointerId;
+}
+
 type StyledSelectState = {
   select: HTMLSelectElement;
   wrapper: HTMLDivElement;
@@ -47,6 +55,7 @@ type StyledSelectState = {
   activeIndex: number;
   open: boolean;
   pointerSelectionPending: boolean;
+  pointerSelectionPointerId: number | null;
   search: string;
   searchTimer: number | null;
   menuClosingTimer: number | null;
@@ -120,6 +129,7 @@ function chooseOption(state: StyledSelectState, index: number) {
   const option = state.select.options.item(index);
   if (!option || option.disabled || state.select.disabled) return;
   state.pointerSelectionPending = false;
+  state.pointerSelectionPointerId = null;
   const changed = state.select.value !== option.value;
   state.select.value = option.value;
   closeMenu(state);
@@ -220,6 +230,7 @@ function installOne(select: HTMLSelectElement) {
   trigger.setAttribute('role', 'combobox');
   trigger.setAttribute('aria-haspopup', 'listbox');
   trigger.setAttribute('aria-expanded', 'false');
+  if (select.classList.contains('profile-function-select')) trigger.dataset.profileFunctionPicker = 'true';
   const menu = document.createElement('div');
   menu.className = 'styled-select-menu';
   menu.id = `${trigger.id}-listbox`;
@@ -260,7 +271,7 @@ function installOne(select: HTMLSelectElement) {
   const chevron = wrapper.nextElementSibling;
   if (chevron instanceof SVGElement && chevron.classList.contains('trace-protocol-chevron')) chevron.setAttribute('hidden', '');
 
-  const state: StyledSelectState = { select, wrapper, trigger, menu, activeIndex: select.selectedIndex, open: false, pointerSelectionPending: false, search: '', searchTimer: null, menuClosingTimer: null, observer: new MutationObserver(() => refreshState(state)) };
+  const state: StyledSelectState = { select, wrapper, trigger, menu, activeIndex: select.selectedIndex, open: false, pointerSelectionPending: false, pointerSelectionPointerId: null, search: '', searchTimer: null, menuClosingTimer: null, observer: new MutationObserver(() => refreshState(state)) };
   states.set(select, state);
   activeStates.add(state);
   state.observer.observe(select, { attributes: true, childList: true, subtree: true, characterData: true, attributeFilter: ['disabled', 'label', 'value', 'selected'] });
@@ -295,12 +306,11 @@ function installOne(select: HTMLSelectElement) {
     const target = event.target;
     if (!(target instanceof Element) || !target.closest('.styled-select-option')) return;
     state.pointerSelectionPending = true;
-    // Menu options are non-focusable; suppress the browser's default focus move
-    // so the trigger does not close the menu before the option's click fires.
-    event.preventDefault();
+    state.pointerSelectionPointerId = event.pointerId;
+    // Mouse/pen defaults move focus away from the trigger before click. Touch
+    // keeps its native gesture so the menu remains scrollable on narrow screens.
+    if (shouldPreventStyledSelectPointerFocus(event.pointerType)) event.preventDefault();
   });
-  menu.addEventListener('pointerup', () => { state.pointerSelectionPending = false; });
-  menu.addEventListener('pointercancel', () => { state.pointerSelectionPending = false; });
   trigger.addEventListener('keydown', (event) => {
     const models = optionModels(select);
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -337,6 +347,15 @@ function installOne(select: HTMLSelectElement) {
     }
   });
   if (!outsideHandlerInstalled) {
+    const finishPointerSelection = (event: PointerEvent) => {
+      for (const current of activeStates) {
+        if (!shouldResetStyledSelectPointerSelection(current.pointerSelectionPointerId, event.pointerId)) continue;
+        current.pointerSelectionPending = false;
+        current.pointerSelectionPointerId = null;
+      }
+    };
+    document.addEventListener('pointerup', finishPointerSelection);
+    document.addEventListener('pointercancel', finishPointerSelection);
     document.addEventListener('pointerdown', (event) => {
       const target = event.target;
       for (const current of activeStates) {

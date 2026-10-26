@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findEnabledOptionByPrefix, nextEnabledOption, shouldCloseStyledSelectOnFocusOut, styledSelectMenuMaxHeight, styledSelectMenuSide, styledSelectMenuWidth, type StyledOption } from './styled-select';
+import { findEnabledOptionByPrefix, nextEnabledOption, shouldCloseStyledSelectOnFocusOut, shouldPreventStyledSelectPointerFocus, shouldResetStyledSelectPointerSelection, styledSelectMenuMaxHeight, styledSelectMenuSide, styledSelectMenuWidth, type StyledOption } from './styled-select';
 
 const options: StyledOption[] = [
   { value: '', label: 'Выберите', disabled: true },
@@ -49,5 +49,17 @@ describe('styled select navigation helpers', () => {
   it('keeps the menu open while a pointer selection is being completed', () => {
     expect(shouldCloseStyledSelectOnFocusOut(true, false, true)).toBe(false);
     expect(shouldCloseStyledSelectOnFocusOut(true, false, false)).toBe(true);
+  });
+
+  it('suppresses focus movement only for mouse and pen selection', () => {
+    expect(shouldPreventStyledSelectPointerFocus('mouse')).toBe(true);
+    expect(shouldPreventStyledSelectPointerFocus('pen')).toBe(true);
+    expect(shouldPreventStyledSelectPointerFocus('touch')).toBe(false);
+  });
+
+  it('resets pending pointer selection only for the pointer that started it', () => {
+    expect(shouldResetStyledSelectPointerSelection(7, 7)).toBe(true);
+    expect(shouldResetStyledSelectPointerSelection(7, 8)).toBe(false);
+    expect(shouldResetStyledSelectPointerSelection(null, 7)).toBe(false);
   });
 });
