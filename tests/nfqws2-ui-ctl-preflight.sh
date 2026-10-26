@@ -16,6 +16,10 @@ if sh "$SCRIPT" update v1.2.3.4 --check >/dev/null 2>&1; then
 	echo 'panel command accepted an invalid semantic version' >&2
 	exit 1
 fi
+if ! sh "$SCRIPT" update v1.3.5-r1 --check | grep -Fq 'Последняя:   1.3.5-r1'; then
+	echo 'panel command did not recognize a revision release' >&2
+	exit 1
+fi
 if sh "$SCRIPT" unknown >/dev/null 2>&1; then
 	echo 'panel command accepted an unknown action' >&2
 	exit 1

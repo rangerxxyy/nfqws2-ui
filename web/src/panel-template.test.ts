@@ -1247,10 +1247,19 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('allows dragging a strategy tile while keeping its controls interactive', () => {
     expect(panelSource).toContain("row.draggable = true");
+    expect(panelSource).toContain("row.addEventListener('pointerdown'");
+    expect(panelSource).toContain('profileStepDragAllowed = !(event.target instanceof Element && event.target.closest(');
+    expect(panelSource).toContain('if (!profileStepDragAllowed || (target instanceof HTMLElement');
     expect(panelSource).toContain("target.closest('input,select,button,textarea,summary,a,[contenteditable=\"true\"]')");
     expect(panelSource).toContain("row.classList.add('is-dragging')");
     expect(panelStyles).toContain('.profile-step-row.is-dragging');
     expect(panelStyles).toContain('transition:transform .18s ease,opacity .18s ease');
+  });
+
+  it('replaces the selected Lua function directly when the strategy function picker changes', () => {
+    expect(panelSource).toContain("functionSelect.addEventListener('change'");
+    expect(panelSource).toContain('replaceDesyncFunction(current, functionSelect.value)');
+    expect(panelSource).not.toContain("functionSelect.dataset.actionChange = 'setRuntimeProfileStepFunction'");
   });
 
   it('keeps drag feedback out of the cursor and hides the grip on narrow touch layouts', () => {

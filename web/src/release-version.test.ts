@@ -15,7 +15,7 @@ describe('release metadata', () => {
   it('keeps Rust, web, lockfile, and release notes on the same version', () => {
     const lockedVersion = backendLock.match(/name = "nfqws2-ui"\s+version = "([^"]+)"/)?.[1];
 
-    expect(backendVersion).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(backendVersion).toMatch(/^\d+\.\d+\.\d+(?:-r[1-9]\d*)?$/);
     expect(frontendManifest.version).toBe(backendVersion);
     expect(lockedVersion).toBe(backendVersion);
     expect(releaseNotes).toMatch(new RegExp(`^# v${backendVersion.replaceAll('.', '\\.')}\\b`, 'm'));
@@ -27,7 +27,7 @@ describe('release metadata', () => {
   });
 
   it('keeps the newest release first in the changelog', () => {
-    const changelogVersions = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+)\]/gm)].map((match) => match[1]);
+    const changelogVersions = [...changelog.matchAll(/^## \[(\d+\.\d+\.\d+(?:-r[1-9]\d*)?)\]/gm)].map((match) => match[1]);
     expect(changelogVersions[0]).toBe(frontendManifest.version);
     expect(changelogVersions.length).toBeGreaterThan(1);
     expect(new Set(changelogVersions).size).toBe(changelogVersions.length);

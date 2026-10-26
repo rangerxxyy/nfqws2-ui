@@ -3,7 +3,7 @@
 set -eu
 TAG=${1:-}
 ID=${2:-}
-printf '%s\n' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' || { echo 'invalid release tag' >&2; exit 2; }
+printf '%s\n' "$TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-r[1-9][0-9]*)?$' || { echo 'invalid release tag' >&2; exit 2; }
 case "$ID" in *[!0-9a-fA-F]*|'') echo 'invalid operation id' >&2; exit 2 ;; esac
 [ "${#ID}" -eq 32 ] || { echo 'invalid operation id' >&2; exit 2; }
 ROOT=/opt/share/nfqws2-ui

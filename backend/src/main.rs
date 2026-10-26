@@ -2787,6 +2787,24 @@ fn valid_release_tag(tag: &str) -> bool {
         })
 }
 
+fn valid_panel_release_tag(tag: &str) -> bool {
+    let Some(version) = tag.strip_prefix('v') else {
+        return false;
+    };
+    let base = version.split_once("-r").map_or(version, |(base, _)| base);
+    if !valid_release_tag(&format!("v{base}")) {
+        return false;
+    }
+    match version.split_once("-r") {
+        None => true,
+        Some((_, revision)) => {
+            !revision.is_empty()
+                && !revision.starts_with('0')
+                && revision.bytes().all(|byte| byte.is_ascii_digit())
+        }
+    }
+}
+
 fn eligible_panel_releases(json: &str) -> Result<Vec<PanelRelease>, String> {
     if json.len() > MAX_RELEASE_RESPONSE_BYTES {
         return Err("Ответ GitHub Releases превышает лимит 1 МБ".into());
@@ -2796,7 +2814,7 @@ fn eligible_panel_releases(json: &str) -> Result<Vec<PanelRelease>, String> {
     Ok(records
         .into_iter()
         .filter_map(|release| {
-            if release.draft || release.prerelease || !valid_release_tag(&release.tag_name) {
+            if release.draft || release.prerelease || !valid_panel_release_tag(&release.tag_name) {
                 return None;
             }
             let asset = format!(
@@ -2825,13 +2843,20 @@ fn eligible_panel_releases(json: &str) -> Result<Vec<PanelRelease>, String> {
         .collect())
 }
 
-fn numeric_release_version(version: &str) -> Option<(u64, u64, u64)> {
+fn numeric_release_version(version: &str) -> Option<(u64, u64, u64, u64)> {
     let version = version.strip_prefix('v').unwrap_or(version);
+    let (version, revision) = match version.split_once("-r") {
+        Some((version, revision)) => (version, revision.parse().ok()?),
+        None => (version, 0),
+    };
     let mut parts = version.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     let patch = parts.next()?.parse().ok()?;
-    parts.next().is_none().then_some((major, minor, patch))
+    parts
+        .next()
+        .is_none()
+        .then_some((major, minor, patch, revision))
 }
 
 fn ui_update_status(
@@ -3247,7 +3272,7 @@ async fn post_update_install(
     State(state): State<Arc<AppState>>,
     Json(request): Json<UpdateInstallRequest>,
 ) -> Response {
-    if !valid_release_tag(&request.tag) {
+    if !valid_panel_release_tag(&request.tag) {
         return error(StatusCode::BAD_REQUEST, "Недопустимый тег релиза");
     }
     let _guard = state.update_lock.lock().await;
@@ -12877,6 +12902,31 @@ mod tests {
     }
 
     #[test]
+    fn panel_revision_release_is_available_after_its_base_version() {
+        let releases = vec![
+            PanelRelease {
+                tag: "v1.3.5".into(),
+                published_at: None,
+                notes: String::new(),
+            },
+            PanelRelease {
+                tag: "v1.3.5-r1".into(),
+                published_at: None,
+                notes: String::new(),
+            },
+        ];
+
+        let update = ui_update_status("1.3.5", &releases, 123);
+        assert_eq!(update.latest_version.as_deref(), Some("v1.3.5-r1"));
+        assert!(update.update_available);
+        assert!(!ui_update_status("1.3.5-r1", &releases, 456).update_available);
+        assert!(valid_panel_release_tag("v1.3.5-r1"));
+        assert!(!valid_release_tag("v1.3.5-r1"));
+        assert!(!valid_panel_release_tag("v1.3.5-r0"));
+        assert!(!valid_panel_release_tag("v1.3.5-r01"));
+    }
+
+    #[test]
     fn github_release_requests_try_entware_wget_before_path_wget() {
         assert_eq!(github_wget_candidates(), ["/opt/bin/wget", "wget"]);
     }
@@ -13659,15 +13709,17 @@ mod tests {
     fn release_catalog_keeps_only_stable_releases_with_package_and_checksum() {
         let data = serde_json::json!([
             {"tag_name":"v1.2.3","published_at":"2026-10-22T00:00:00Z","body":"<script>alert(1)</script>","draft":false,"prerelease":false,"assets":[{"name":"nfqws2-ui-v1.2.3-aarch64-unknown-linux-musl.tar.gz"},{"name":"nfqws2-ui-v1.2.3-aarch64-unknown-linux-musl.tar.gz.sha256"}]},
+            {"tag_name":"v1.2.3-r1","published_at":"2026-10-23T00:00:00Z","body":"patch revision","draft":false,"prerelease":false,"assets":[{"name":"nfqws2-ui-v1.2.3-r1-aarch64-unknown-linux-musl.tar.gz"},{"name":"nfqws2-ui-v1.2.3-r1-aarch64-unknown-linux-musl.tar.gz.sha256"}]},
             {"tag_name":"v1.2.4-rc1","draft":false,"prerelease":true,"assets":[{"name":"nfqws2-ui-v1.2.4-rc1-aarch64-unknown-linux-musl.tar.gz"},{"name":"nfqws2-ui-v1.2.4-rc1-aarch64-unknown-linux-musl.tar.gz.sha256"}]},
             {"tag_name":"v1.2.2","draft":false,"prerelease":false,"assets":[{"name":"nfqws2-ui-v1.2.2-aarch64-unknown-linux-musl.tar.gz"}]}
         ]);
 
         let releases = eligible_panel_releases(&data.to_string()).unwrap();
 
-        assert_eq!(releases.len(), 1);
+        assert_eq!(releases.len(), 2);
         assert_eq!(releases[0].tag, "v1.2.3");
         assert_eq!(releases[0].notes, "<script>alert(1)</script>");
+        assert_eq!(releases[1].tag, "v1.2.3-r1");
     }
 
     #[test]

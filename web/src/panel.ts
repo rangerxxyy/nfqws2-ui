@@ -767,7 +767,8 @@ function renderRuntimeProfiles() {
           const badge = document.createElement('span'); badge.className = 'profile-step-number grid h-6 w-6 place-items-center rounded-full border text-xs font-bold'; badge.textContent = String(strategyNumber); badge.setAttribute('aria-label', `Стратегия ${strategyNumber}`); badge.title = `Стратегия ${strategyNumber}`;
           const content = document.createElement('div'); content.className = 'profile-step-content';
           const functionSelect = document.createElement('select'); functionSelect.className = 'profile-function-select min-h-9 w-full max-w-2xl rounded-md border border-slate-700 bg-slate-950 px-2 py-1 text-sm font-semibold';
-          functionSelect.dataset.actionChange = 'setRuntimeProfileStepFunction'; functionSelect.dataset.args = JSON.stringify([profile.id, String(argumentIndex), { source: 'value' }]); functionSelect.dataset.actionTooltip = `Стратегия ${strategyNumber}. Выберите Lua-функцию шага; доступность проверит nfqws2 при применении.`;
+          functionSelect.dataset.actionTooltip = `Стратегия ${strategyNumber}. Выберите Lua-функцию шага; доступность проверит nfqws2 при применении.`;
+          functionSelect.addEventListener('change', () => updateRuntimeProfileStep(profile.id, String(argumentIndex), (current) => replaceDesyncFunction(current, functionSelect.value)));
           [...new Set([...functions, functionName])].sort().forEach((name) => { const option = document.createElement('option'); option.value = name; option.textContent = name; option.selected = name === functionName; functionSelect.append(option); });
           const functionInfo = runtimeProfileLuaCatalog.find((item) => item.name === functionName);
           const description = document.createElement('span'); description.className = 'text-xs leading-5 text-slate-400'; description.textContent = getRussianLuaFunctionDescription(functionName);
@@ -1082,9 +1083,13 @@ function createProfileStepGrip() {
 }
 function bindProfileStepDrop(row: HTMLElement, profileId: string, targetIndex: number) {
   row.draggable = true;
+  let profileStepDragAllowed = false;
+  row.addEventListener('pointerdown', (event) => {
+    profileStepDragAllowed = !(event.target instanceof Element && event.target.closest('input,select,button,textarea,summary,a,[contenteditable="true"]'));
+  });
   row.addEventListener('dragstart', (event) => {
     const target = event.target;
-    if (target instanceof HTMLElement && target.closest('input,select,button,textarea,summary,a,[contenteditable="true"]')) { event.preventDefault(); return; }
+    if (!profileStepDragAllowed || (target instanceof HTMLElement && target.closest('input,select,button,textarea,summary,a,[contenteditable="true"]'))) { event.preventDefault(); return; }
     draggedRuntimeProfileStep = { profileId, index: targetIndex };
     row.classList.add('is-dragging');
     if (event.dataTransfer) { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', `${profileId}:${targetIndex}`); event.dataTransfer.setDragImage(row, Math.min(40, row.clientWidth / 4), Math.min(32, row.clientHeight / 4)); }
@@ -3859,7 +3864,6 @@ function bindPrototypeActions() {
     selectRuntimeProfile: (id: string) => selectRuntimeProfile(id),
     setRuntimeProfileMode: (mode: string) => setRuntimeProfileMode(mode),
     appendRuntimeProfileArgument: (argument: string) => appendRuntimeProfileArgument(argument),
-    setRuntimeProfileStepFunction: (id: string, index: string, functionName: string) => updateRuntimeProfileStep(id, index, (argument) => replaceDesyncFunction(argument, functionName)),
     setRuntimeProfileStepParameters: (id: string, index: string, parameters: string) => updateRuntimeProfileStep(id, index, (argument) => replaceDesyncParameters(argument, parameters)),
     setRuntimeProfileStepParameter: (id: string, index: string, parameterIndex: string, value: string) => updateRuntimeProfileStepParameter(id, index, parameterIndex, value),
     removeRuntimeProfileStepParameter: (id: string, index: string, parameterIndex: string) => removeRuntimeProfileStepParameter(id, index, parameterIndex),
