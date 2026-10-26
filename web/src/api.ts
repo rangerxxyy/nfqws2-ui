@@ -181,6 +181,7 @@ export const nfqwsChangeHistory = {
 
 export const nfqwsLogs = {
   get: (source: LogSource, tail = 1000) => api<{ content: string }>(`/api/logs?source=${encodeURIComponent(source)}&tail=${tail}`),
+  clear: (source: LogSource) => api<{ cleared: boolean }>('/api/logs/clear', { method: 'POST', body: JSON.stringify({ source }) }),
 };
 
 export const nfqwsAppearance = {

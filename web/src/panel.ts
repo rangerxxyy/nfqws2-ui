@@ -836,6 +836,13 @@ function downloadLogs() {
   const url = URL.createObjectURL(new Blob([currentLogContent], { type: 'text/plain;charset=utf-8' }));
   const link = document.createElement('a'); link.href = url; link.download = `${currentLogSource}.log`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+function clearLogs() {
+  const sourceName = currentLogSource === 'nfqws2-ui' ? 'nfqws2-UI' : 'nfqws2';
+  requestDangerousConfirmation(`Очистить журнал ${sourceName}?`, 'Файл журнала будет обнулён. Служба продолжит писать новые записи; конфигурация и работа nfqws2 не изменятся.', async () => {
+    try { await nfqwsLogs.clear(currentLogSource); toast(`Журнал ${sourceName} очищен.`); await loadLogs(); }
+    catch (error) { toast(error instanceof Error ? error.message : `Не удалось очистить журнал ${sourceName}.`, 'error'); }
+  });
+}
 function syncAppearanceControls() {
   all<HTMLInputElement>('input[name="appearanceTheme"]').forEach((input) => { input.checked = input.value === appearanceSettings.theme; });
   all<HTMLInputElement>('input[name="appearanceLayout"]').forEach((input) => { input.checked = input.value === appearanceSettings.layout; });
@@ -3367,6 +3374,7 @@ function bindPrototypeActions() {
     filterLogs: () => renderLogs(),
     changeLogSource: (source: LogSource) => { currentLogSource = source === 'nfqws2' ? 'nfqws2' : 'nfqws2-ui'; void loadLogs(); },
     downloadLogs: () => downloadLogs(),
+    clearLogs: () => clearLogs(),
     cancelOperationConfirmation: () => closeDangerousConfirmation(),
     confirmOperationConfirmation: () => void confirmDangerousOperation(),
     saveSnapshotRetention: () => void saveSnapshotSettings().catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить срок хранения.', 'error')),

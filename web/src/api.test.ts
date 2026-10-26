@@ -309,23 +309,27 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response('{"config":{"file":"/opt/etc/nfqws2/nfqws2.conf","content":"NFQWS_ARGS_CUSTOM=\\\"--filter-tcp=80\\\"\\n","revision":"next"},"message":"Профили применены"}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"deleted":true}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"items":[{"id":"snap-1","ts":2,"version":"1.1.0","reason":"apply","note":"","changedFiles":["nfqws2.conf"]}]}', { status: 200 }))
-      .mockResolvedValueOnce(new Response('{"content":"line"}', { status: 200 }));
+      .mockResolvedValueOnce(new Response('{"content":"line"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"cleared":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
     const listed = await nfqwsProfiles.list();
     const saved = await nfqwsProfiles.saveCustom([['--filter-tcp=80']], listed.revision);
     await nfqwsSnapshots.delete('snap-1');
     const history = await nfqwsChangeHistory.list();
     await nfqwsLogs.get('nfqws2-ui', 20);
+    await nfqwsLogs.clear('nfqws2-ui');
     expect(listed.profiles[0]?.editable).toBe(true);
     expect(saved.message).toBe('Профили применены');
     expect(history.items[0]?.version).toBe('1.1.0');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      '/api/profiles', '/api/profiles', '/api/snapshots/snap-1', '/api/change-history', '/api/logs?source=nfqws2-ui&tail=20',
+      '/api/profiles', '/api/profiles', '/api/snapshots/snap-1', '/api/change-history', '/api/logs?source=nfqws2-ui&tail=20', '/api/logs/clear',
     ]);
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBeUndefined();
     expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe('PUT');
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ profiles: [['--filter-tcp=80']], revision: 'rev' });
     expect((fetchMock.mock.calls[2]?.[1] as RequestInit).method).toBe('DELETE');
+    expect((fetchMock.mock.calls[5]?.[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((fetchMock.mock.calls[5]?.[1] as RequestInit).body))).toEqual({ source: 'nfqws2-ui' });
   });
 
   it('loads profile function help from the installed Lua catalog endpoint', async () => {

@@ -2592,6 +2592,11 @@ struct LogsResponse {
 }
 
 #[derive(Deserialize)]
+struct LogClearRequest {
+    source: String,
+}
+
+#[derive(Deserialize)]
 struct UpdateInstallRequest {
     tag: String,
 }
@@ -10744,64 +10749,67 @@ fn configured_log_path(config_text: &str, config_file: &Path) -> Option<PathBuf>
     })
 }
 
-async fn get_logs(State(state): State<Arc<AppState>>, Query(query): Query<LogsQuery>) -> Response {
-    let path = match query.source.as_str() {
-        "nfqws2-ui" => PathBuf::from("/opt/var/log/nfqws2-ui.log"),
-        "nfqws2" => {
-            let config = config_path_for_state(&state);
-            let config_text = config
-                .as_deref()
-                .and_then(|path| std::fs::read_to_string(path).ok());
-            let discovered = discover_system_paths();
-            let log_dir = discovered
-                .as_ref()
-                .map(|paths| paths.log_dir.clone())
-                .or_else(|| {
-                    config
-                        .as_deref()?
-                        .ancestors()
-                        .nth(3)
-                        .map(|root| root.join("var/log"))
-                });
-            let Some(log_dir) = log_dir else {
-                return Json(LogsResponse {
-                    content: "Каталог журналов nfqws2 не обнаружен".into(),
-                })
-                .into_response();
-            };
-            let mut candidates = Vec::new();
-            if let (Some(text), Some(config_path)) = (config_text.as_deref(), config.as_deref())
-                && let Some(path) = configured_log_path(text, config_path)
-            {
-                candidates.push(path);
-            }
-            candidates.extend(
-                ["nfqws2.log", "nfqws.log", "nfqws2-debug.log"].map(|name| log_dir.join(name)),
-            );
-            let canonical_log_dir = log_dir.canonicalize().ok();
-            let Some(path) = candidates.into_iter().find(|candidate| {
-                candidate.is_file()
-                    && candidate.canonicalize().ok().is_some_and(|canonical| {
-                        canonical_log_dir
-                            .as_ref()
-                            .is_some_and(|root| canonical.starts_with(root))
-                    })
-            }) else {
-                return Json(LogsResponse {
-                    content: "Журнал nfqws2 не найден".into(),
-                })
-                .into_response();
-            };
-            path
-        }
-        _ => return error(StatusCode::BAD_REQUEST, "Неизвестный источник журнала"),
-    };
-    if !path.is_file() {
-        return Json(LogsResponse {
-            content: format!("Журнал {} не найден", query.source),
-        })
-        .into_response();
+fn resolve_log_path(state: &AppState, source: &str) -> Result<PathBuf, String> {
+    if !["nfqws2-ui", "nfqws2"].contains(&source) {
+        return Err("Неизвестный источник журнала".into());
     }
+    let config = config_path_for_state(state);
+    let config_text = config
+        .as_deref()
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    let discovered = discover_system_paths();
+    let log_dir = discovered
+        .as_ref()
+        .map(|paths| paths.log_dir.clone())
+        .or_else(|| {
+            config
+                .as_deref()?
+                .ancestors()
+                .nth(3)
+                .map(|root| root.join("var/log"))
+        })
+        .ok_or_else(|| "Каталог журналов nfqws2 не обнаружен".to_owned())?;
+    let mut candidates = Vec::new();
+    if source == "nfqws2-ui" {
+        candidates.push(log_dir.join("nfqws2-ui.log"));
+    } else {
+        if let (Some(text), Some(config_path)) = (config_text.as_deref(), config.as_deref())
+            && let Some(path) = configured_log_path(text, config_path)
+        {
+            candidates.push(path);
+        }
+        candidates
+            .extend(["nfqws2.log", "nfqws.log", "nfqws2-debug.log"].map(|name| log_dir.join(name)));
+    }
+    let canonical_log_dir = log_dir
+        .canonicalize()
+        .map_err(|_| "Каталог журналов не найден".to_owned())?;
+    candidates
+        .into_iter()
+        .find_map(|candidate| safe_log_candidate(&canonical_log_dir, &candidate))
+        .ok_or_else(|| format!("Журнал {source} не найден"))
+}
+
+fn safe_log_candidate(log_dir: &Path, candidate: &Path) -> Option<PathBuf> {
+    let metadata = std::fs::symlink_metadata(candidate).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return None;
+    }
+    let canonical_root = log_dir.canonicalize().ok()?;
+    let canonical_candidate = candidate.canonicalize().ok()?;
+    canonical_candidate
+        .starts_with(canonical_root)
+        .then_some(canonical_candidate)
+}
+
+async fn get_logs(State(state): State<Arc<AppState>>, Query(query): Query<LogsQuery>) -> Response {
+    let path = match resolve_log_path(&state, &query.source) {
+        Ok(path) => path,
+        Err(message) if message == "Неизвестный источник журнала" => {
+            return error(StatusCode::BAD_REQUEST, message);
+        }
+        Err(message) => return Json(LogsResponse { content: message }).into_response(),
+    };
     let bytes = match read_bounded_tail(&path, MAX_LOG_BYTES).await {
         Ok(bytes) => bytes,
         Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
@@ -10822,6 +10830,43 @@ async fn get_logs(State(state): State<Arc<AppState>>, Query(query): Query<LogsQu
             .join("\n");
     }
     Json(LogsResponse { content }).into_response()
+}
+
+async fn clear_log(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<LogClearRequest>,
+) -> Response {
+    let path = match resolve_log_path(&state, &request.source) {
+        Ok(path) => path,
+        Err(message) if message == "Неизвестный источник журнала" => {
+            return error(StatusCode::BAD_REQUEST, message);
+        }
+        Err(message) => return error(StatusCode::NOT_FOUND, message),
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        }
+        let file = options.open(&path).map_err(|error| error.to_string())?;
+        if !file
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .is_file()
+        {
+            return Err("Источник журнала не является обычным файлом".to_owned());
+        }
+        Ok::<(), String>(())
+    })
+    .await;
+    match result {
+        Ok(Ok(())) => Json(serde_json::json!({ "cleared": true })).into_response(),
+        Ok(Err(message)) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        Err(join_error) => error(StatusCode::INTERNAL_SERVER_ERROR, join_error.to_string()),
+    }
 }
 
 async fn bind_port() -> Result<(TcpListener, u16), String> {
@@ -11006,6 +11051,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             axum::routing::delete(delete_snapshot_api),
         )
         .route("/api/logs", get(get_logs))
+        .route("/api/logs/clear", post(clear_log))
         .route("/api/updates/releases", get(get_github_releases))
         .route("/api/updates/status", get(get_ui_update_status))
         .route("/api/updates/install", post(post_update_install))
@@ -11130,6 +11176,26 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_path_resolution_rejects_symlinked_candidates() {
+        let root = tempfile::tempdir().unwrap();
+        let log_dir = root.path().join("log");
+        std::fs::create_dir(&log_dir).unwrap();
+        let actual = log_dir.join("actual.log");
+        std::fs::write(&actual, "log\n").unwrap();
+        assert_eq!(
+            safe_log_candidate(&log_dir, &actual),
+            Some(actual.canonicalize().unwrap())
+        );
+
+        #[cfg(unix)]
+        {
+            let alias = log_dir.join("nfqws2-ui.log");
+            std::os::unix::fs::symlink(&actual, &alias).unwrap();
+            assert_eq!(safe_log_candidate(&log_dir, &alias), None);
+        }
+    }
 
     #[test]
     fn runtime_profile_dry_run_arguments_accept_udp_only_configurations() {
