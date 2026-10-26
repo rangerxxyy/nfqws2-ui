@@ -13,6 +13,17 @@ export function filterProfileArgumentChoices(
     `${group} ${label} ${value}`.toLocaleLowerCase().includes(needle));
 }
 
+/** Returns the next option index for listbox keyboard navigation, or null for an unrelated key. */
+export function nextProfileChoiceIndex(currentIndex: number, key: string, optionCount: number): number | null {
+  if (optionCount <= 0) return null;
+  const current = Number.isInteger(currentIndex) && currentIndex >= 0 && currentIndex < optionCount ? currentIndex : -1;
+  if (key === 'Home') return 0;
+  if (key === 'End') return optionCount - 1;
+  if (key === 'ArrowDown') return current < 0 ? 0 : (current + 1) % optionCount;
+  if (key === 'ArrowUp') return current < 0 ? optionCount - 1 : (current - 1 + optionCount) % optionCount;
+  return null;
+}
+
 export function summarizeProfileSelection(args: readonly string[]): string {
   const parts: string[] = [];
   for (const argument of args) {

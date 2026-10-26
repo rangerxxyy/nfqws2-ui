@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { filterProfileArgumentChoices, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { filterProfileArgumentChoices, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('profile builder choices', () => {
+  it('moves through a long choice list with arrows and jumps to its ends', () => {
+    expect(nextProfileChoiceIndex(-1, 'ArrowDown', 3)).toBe(0);
+    expect(nextProfileChoiceIndex(-1, 'ArrowUp', 3)).toBe(2);
+    expect(nextProfileChoiceIndex(2, 'ArrowDown', 3)).toBe(0);
+    expect(nextProfileChoiceIndex(0, 'ArrowUp', 3)).toBe(2);
+    expect(nextProfileChoiceIndex(1, 'Home', 3)).toBe(0);
+    expect(nextProfileChoiceIndex(1, 'End', 3)).toBe(2);
+    expect(nextProfileChoiceIndex(1, 'Enter', 3)).toBeNull();
+    expect(nextProfileChoiceIndex(-1, 'ArrowDown', 0)).toBeNull();
+  });
+
   it('searches parameter choices by label, group, or nfqws2 argument syntax', () => {
     const choices = [
       { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=', label: '--filter-tcp=<ports> · TCP-порты' },

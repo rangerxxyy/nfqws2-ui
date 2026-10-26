@@ -578,6 +578,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("['builder', 'Конструктор']");
     expect(panelSource).toContain("['text', 'Текст']");
     expect(panelSource).toContain('appendRuntimeProfileArgument');
+    expect(panelSource).toContain("results.setAttribute('role', 'listbox')");
+    expect(panelSource).toContain("section.setAttribute('role', 'group')");
+    expect(panelSource).toContain('nextProfileChoiceIndex(options.indexOf(option), event.key, options.length)');
     expect(panelSource).toContain('removeRuntimeProfileArgument');
     expect(backendSource).toContain('.put(save_runtime_profiles)');
     expect(backendSource).toContain('NFQWS_ARGS_CUSTOM');

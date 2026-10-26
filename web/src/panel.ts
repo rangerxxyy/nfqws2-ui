@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -642,18 +642,21 @@ function renderRuntimeProfiles() {
       const title = document.createElement('h3'); title.id = 'profileChoiceTitle'; title.textContent = 'Добавить в профиль';
       const close = document.createElement('button'); close.type = 'button'; close.className = 'backup-action'; close.textContent = 'Закрыть'; close.addEventListener('click', () => dialog.close()); heading.append(title, close);
       const search = document.createElement('input'); search.type = 'search'; search.className = 'profile-choice-search'; search.placeholder = 'Поиск по параметру или назначению'; search.setAttribute('aria-label', 'Поиск параметров профиля');
-      const results = document.createElement('div'); results.className = 'profile-choice-results'; results.setAttribute('role', 'listbox');
+      const results = document.createElement('div'); results.className = 'profile-choice-results'; results.setAttribute('role', 'listbox'); results.setAttribute('aria-label', 'Доступные параметры и шаги профиля');
       const drawChoices = () => {
         results.replaceChildren();
         const matches = filterProfileArgumentChoices([...groupedChoices.values()].flat(), search.value);
         if (!matches.length) { const empty = document.createElement('p'); empty.className = 'profile-choice-empty'; empty.textContent = 'Ничего не найдено. Попробуйте другое название или точный параметр nfqws2.'; results.append(empty); return; }
         const groups = new Map<string, typeof matches>();
         for (const match of matches) groups.set(match.group, [...(groups.get(match.group) ?? []), match]);
+        let groupIndex = 0; let optionIndex = 0;
         for (const [groupName, choices] of groups) {
           const section = document.createElement('section'); section.className = 'profile-choice-group';
-          const groupTitle = document.createElement('h4'); groupTitle.textContent = groupName; section.append(groupTitle);
+          section.setAttribute('role', 'group');
+          const groupTitle = document.createElement('h4'); groupTitle.id = `profileChoiceGroup${groupIndex++}`; groupTitle.textContent = groupName; section.setAttribute('aria-labelledby', groupTitle.id); section.append(groupTitle);
           for (const choice of choices) {
             const item = document.createElement('button'); item.type = 'button'; item.className = 'profile-choice-option'; item.setAttribute('role', 'option');
+            item.setAttribute('aria-selected', 'false'); item.tabIndex = optionIndex++ === 0 ? 0 : -1;
             const label = document.createElement('strong'); label.textContent = choice.label;
             const syntax = document.createElement('code'); syntax.textContent = choice.value;
             item.append(label, syntax); item.addEventListener('click', () => { dialog.close(); appendRuntimeProfileArgument(choice.value); }); section.append(item);
@@ -661,7 +664,24 @@ function renderRuntimeProfiles() {
           results.append(section);
         }
       };
-      search.addEventListener('input', drawChoices); drawChoices(); panel.append(heading, search, results); dialog.append(panel);
+      search.addEventListener('input', drawChoices);
+      search.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        const options = [...results.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+        if (!options.length) return;
+        event.preventDefault(); options[event.key === 'ArrowDown' ? 0 : options.length - 1]?.focus();
+      });
+      results.addEventListener('keydown', (event) => {
+        const option = event.target instanceof Element ? event.target.closest<HTMLButtonElement>('[role="option"]') : null;
+        if (!option) return;
+        const options = [...results.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+        const nextIndex = nextProfileChoiceIndex(options.indexOf(option), event.key, options.length);
+        if (nextIndex === null) return;
+        event.preventDefault();
+        options.forEach((item, index) => { item.tabIndex = index === nextIndex ? 0 : -1; });
+        options[nextIndex]?.focus();
+      });
+      drawChoices(); panel.append(heading, search, results); dialog.append(panel);
       dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
       document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove(), { once: true });
       dialog.showModal(); search.focus();
