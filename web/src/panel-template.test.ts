@@ -67,8 +67,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("sideHeadingLabel.textContent = 'Профили'");
     expect(panelSource).toContain("displayOrderNote.textContent = 'Визуально'");
     expect(panelSource).toContain("label.className = 'sr-only'");
-    expect(panelSource).toContain(".filter((profile) => profile.name !== 'HTTP/HTTPS по IP')");
-    expect(panelSource.indexOf(".filter((profile) => profile.name !== 'HTTP/HTTPS по IP')")).toBeLessThan(panelSource.indexOf('.map((profile, index) => ({ ...profile, index: index + 1 }))'));
+    expect(panelSource).toContain(".filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')");
+    expect(panelSource).not.toContain(".filter((profile) => profile.name !== 'HTTP/HTTPS по IP')");
+    expect(panelSource.indexOf(".filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')")).toBeLessThan(panelSource.indexOf('.map((profile, index) => ({ ...profile, index: index + 1 }))'));
     expect(panelStyles).toContain('.profile-list-controls');
     expect(panelStyles).toContain('.profile-display-order-note');
     expect(panelStyles).toContain('.profile-constructor-workspace');

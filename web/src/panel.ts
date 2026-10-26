@@ -496,7 +496,7 @@ function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
   });
   const custom = runtimeProfileDraft.map((args, index) => profileFromArgs(index + 1, args, true));
   return [...custom, ...managed]
-    .filter((profile) => profile.name !== 'HTTP/HTTPS по IP')
+    .filter((profile) => profile.source !== 'NFQWS_ARGS_IPSET')
     .map((profile, index) => ({ ...profile, index: index + 1 }));
 }
 function appendProfileBuilderSectionHeading(parent: HTMLElement, text: string) {
