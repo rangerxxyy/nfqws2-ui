@@ -4,6 +4,9 @@ ID=00112233445566778899aabbccddeeff
 grep -Fq 'CORE_INIT=/opt/etc/init.d/S51nfqws2' scripts/update-release.sh || { echo 'panel updater does not target the nfqws2 service' >&2; exit 1; }
 grep -Fq "\"\$CORE_INIT\" restart" scripts/update-release.sh || { echo 'panel updater does not restart nfqws2' >&2; exit 1; }
 grep -Fq "\"\$CORE_INIT\" status" scripts/update-release.sh || { echo 'panel updater does not verify nfqws2 after restart' >&2; exit 1; }
+for script in scripts/install.sh scripts/update-release.sh scripts/update-core-release.sh; do
+	grep -Fq 'if [ -x /opt/bin/wget ]; then WGET=/opt/bin/wget' "$script" || { echo "$script does not prefer Entware wget" >&2; exit 1; }
+done
 if sh scripts/update-release.sh latest "$ID" >/dev/null 2>&1; then
 	echo 'panel updater accepted an invalid release tag' >&2
 	exit 1

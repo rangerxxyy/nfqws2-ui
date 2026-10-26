@@ -6,6 +6,7 @@ ROOT=/opt/share/nfqws2-ui
 APP=$ROOT/current
 PORT_FILE=/opt/var/run/nfqws2-ui.port
 REPO_API=https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases/latest
+if [ -x /opt/bin/wget ]; then WGET=/opt/bin/wget; else WGET=$(command -v wget 2>/dev/null || true); fi
 
 fail() { printf 'nfqws2-ui-ctl: %s\n' "$*" >&2; exit 1; }
 usage() {
@@ -28,8 +29,8 @@ installed_version() {
 	"$APP/bin/nfqws2-ui" --version 2>/dev/null | sed -n 's/^nfqws2-ui //p' | head -n 1
 }
 latest_version() {
-	command -v wget >/dev/null 2>&1 || fail 'не найден wget'
-	wget -q -T 15 -O - "$REPO_API" 2>/dev/null |
+	[ -n "$WGET" ] || fail 'не найден wget'
+	"$WGET" -q -T 15 -O - "$REPO_API" 2>/dev/null |
 		sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' | head -n 1
 }
 valid_version() {
@@ -77,7 +78,7 @@ case "$cmd" in
 		port=1002
 		[ ! -r "$PORT_FILE" ] || port=$(cat "$PORT_FILE")
 		case "$port" in ''|*[!0-9]*) port=1002 ;; esac
-		if command -v wget >/dev/null 2>&1 && wget -q -T 2 -O - "http://127.0.0.1:$port/api/health" 2>/dev/null | grep -q '"ok":true'; then
+		if [ -n "$WGET" ] && "$WGET" -q -T 2 -O - "http://127.0.0.1:$port/api/health" 2>/dev/null | grep -q '"ok":true'; then
 			printf 'Панель: HTTP отвечает на 127.0.0.1:%s\n' "$port"
 		else printf 'Панель: HTTP-проверка не пройдена на 127.0.0.1:%s\n' "$port"; fi
 		;;

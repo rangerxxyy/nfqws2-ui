@@ -55,15 +55,16 @@ on_abort() {
 trap cleanup EXIT
 trap on_abort HUP INT TERM
 [ "$(id -u)" = 0 ] || { set_state failed 'Root privileges are required.'; exit 1; }
-command -v wget >/dev/null 2>&1 || { set_state failed 'wget is not installed.'; exit 1; }
+if [ -x /opt/bin/wget ]; then WGET=/opt/bin/wget; else WGET=$(command -v wget 2>/dev/null || true); fi
+[ -n "$WGET" ] || { set_state failed 'wget is not installed.'; exit 1; }
 command -v tar >/dev/null 2>&1 || { set_state failed 'tar is not installed.'; exit 1; }
 command -v sha256sum >/dev/null 2>&1 || { set_state failed 'sha256sum is not installed.'; exit 1; }
 mkdir -p "$ROOT/releases" "$DATA" "$TMP" || { set_state failed 'Could not create update directories.'; exit 1; }
 chmod 700 "$DATA"
 [ -x "$CORE_INIT" ] || { set_state failed 'nfqws2 service script is missing; panel update cancelled.'; exit 1; }
 set_state downloading "Downloading release $TAG from GitHub."
-wget -q -O "$TMP/$ASSET" "$BASE/$ASSET" || { set_state failed 'Could not download the release archive.'; exit 1; }
-wget -q -O "$TMP/$ASSET.sha256" "$BASE/$ASSET.sha256" || { set_state failed 'Could not download the SHA-256 file.'; exit 1; }
+"$WGET" -q -O "$TMP/$ASSET" "$BASE/$ASSET" || { set_state failed 'Could not download the release archive.'; exit 1; }
+"$WGET" -q -O "$TMP/$ASSET.sha256" "$BASE/$ASSET.sha256" || { set_state failed 'Could not download the SHA-256 file.'; exit 1; }
 set_state verifying 'Checking SHA-256 and archive contents.'
 EXPECTED=$(awk 'NR == 1 { print $1 }' "$TMP/$ASSET.sha256")
 case "$EXPECTED" in ''|*[!0-9a-fA-F]*) set_state failed 'Invalid SHA-256 file.'; exit 1 ;; esac
@@ -98,7 +99,7 @@ PORT=1002
 case "$PORT" in ''|*[!0-9]*) PORT=1002 ;; esac
 tries=0
 while [ "$tries" -lt 20 ]; do
-	if wget -q -O "$TMP/health" "http://127.0.0.1:$PORT/api/health" && grep -q '"ok":true' "$TMP/health"; then
+	if "$WGET" -q -O "$TMP/health" "http://127.0.0.1:$PORT/api/health" && grep -q '"ok":true' "$TMP/health"; then
 		break
 	fi
 	tries=$((tries + 1))

@@ -2,6 +2,9 @@
 set -eu
 
 SCRIPT=scripts/nfqws2-ui-ctl
+grep -Fq 'if [ -x /opt/bin/wget ]; then WGET=/opt/bin/wget' "$SCRIPT"
+# shellcheck disable=SC2016
+grep -Fq '"$WGET" -q -T 2 -O - "http://127.0.0.1:$port/api/health"' "$SCRIPT"
 HELP=$(sh "$SCRIPT" help)
 printf '%s\n' "$HELP" | grep -Fq 'nfqws2-ui-ctl update --check'
 printf '%s\n' "$HELP" | grep -Fq 'nfqws2-ui-ctl status'

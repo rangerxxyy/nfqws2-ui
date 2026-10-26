@@ -1,5 +1,10 @@
 # v0.6.0 visual audit
 
+## v1.2.1 — загрузки и проверка службы
+
+- Скрипты панели выбирают `/opt/bin/wget`, если он установлен, прежде чем искать `wget` в `PATH`. На роутерах BusyBox `wget` может первым разрешаться в `PATH` и аварийно завершаться; явный путь к Entware-клиенту сохраняет загрузку релизов и локальную HTTP-проверку доступности панели.
+- Установщик, обновление панели, обновление nfqws2 и команда `status` используют единый выбор клиента загрузки.
+
 ## Reference and existing UI
 
 The XKeen UI source uses the variable Inter family for interface text and JetBrains Mono for code. This panel already packages both fonts and uses them in its Tailwind sans/mono stacks, so the audit keeps the same local font files and does not add a network font request. The panel also already has a shared keyboard accessible select, visible focus rings, light-theme select colors, panel transitions, and a reduced-motion mode.

@@ -92,7 +92,8 @@ trap abort HUP INT TERM
 
 case "$VERSION" in ''|*@VERSION@*|*[!A-Za-z0-9._+-]*) fail 'invalid release version embedded in install.sh' ;; esac
 [ "$(id -u)" = 0 ] || fail 'run as root'
-[ -x /opt/bin/wget ] || command -v wget >/dev/null 2>&1 || fail 'wget is required'
+if [ -x /opt/bin/wget ]; then WGET=/opt/bin/wget; else WGET=$(command -v wget 2>/dev/null || true); fi
+[ -n "$WGET" ] || fail 'wget is required'
 command -v tar >/dev/null 2>&1 || fail 'tar is required'
 if ! command -v sha256sum >/dev/null 2>&1; then
 	fail 'sha256sum is required; install it first with: opkg update && opkg install coreutils-sha256sum'
@@ -102,7 +103,6 @@ case "$ARCH" in aarch64|arm64) ;; *) fail "unsupported architecture: $ARCH (rele
 
 mkdir -p "$TMP" "$ROOT/releases" "$DATA" "$RUN" /opt/var/log
 chmod 700 "$DATA" "$RUN"
-WGET=$(command -v wget)
 download_and_verify_release_archive "$BASE" "$ASSET" "$SHA_ASSET" "$TMP" || fail "$DR_DOWNLOAD_ERROR"
 
 # Reject absolute/traversal tar names before extracting.

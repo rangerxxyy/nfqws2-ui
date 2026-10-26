@@ -20,14 +20,15 @@ set_state() { state=$1; shift; printf '%s\n%s\n' "$state" "$*" > "$DATA/$ID.stat
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 [ "$(id -u)" = 0 ] || { set_state failed 'Must run as root.'; exit 1; }
-if ! command -v wget >/dev/null 2>&1 || ! command -v sha256sum >/dev/null 2>&1 || [ ! -x /opt/bin/opkg ]; then
+if [ -x /opt/bin/wget ]; then WGET=/opt/bin/wget; else WGET=$(command -v wget 2>/dev/null || true); fi
+if [ -z "$WGET" ] || ! command -v sha256sum >/dev/null 2>&1 || [ ! -x /opt/bin/opkg ]; then
 	set_state failed 'wget, sha256sum, or Entware opkg is missing.'
 	exit 1
 fi
 mkdir -p "$TMP" "$DATA"; chmod 700 "$DATA"
 set_state downloading "Downloading nfqws2 $TAG and rollback package $OLD_TAG."
-wget -q -T 30 -O "$TMP/$ASSET" "$BASE/$TAG/$ASSET" || { set_state failed 'Could not download selected nfqws2 package.'; exit 1; }
-wget -q -T 30 -O "$TMP/$OLD_ASSET" "$BASE/$OLD_TAG/$OLD_ASSET" || { set_state failed 'Could not download rollback package; update cancelled.'; exit 1; }
+"$WGET" -q -T 30 -O "$TMP/$ASSET" "$BASE/$TAG/$ASSET" || { set_state failed 'Could not download selected nfqws2 package.'; exit 1; }
+"$WGET" -q -T 30 -O "$TMP/$OLD_ASSET" "$BASE/$OLD_TAG/$OLD_ASSET" || { set_state failed 'Could not download rollback package; update cancelled.'; exit 1; }
 set_state verifying 'Verifying GitHub SHA-256 package digests.'
 [ "$(sha256sum "$TMP/$ASSET" | awk '{print $1}')" = "$HASH" ] || { set_state failed 'Selected package SHA-256 mismatch.'; exit 1; }
 [ "$(sha256sum "$TMP/$OLD_ASSET" | awk '{print $1}')" = "$OLD_HASH" ] || { set_state failed 'Rollback package SHA-256 mismatch.'; exit 1; }
