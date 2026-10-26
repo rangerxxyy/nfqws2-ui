@@ -313,6 +313,56 @@ let logRequestGeneration = 0;
 let currentLogContent = '';
 let pendingConfirmation: (() => Promise<void>) | null = null;
 let pendingConfirmationCancel: (() => void) | null = null;
+const appModalReturnFocus = new WeakMap<HTMLElement, HTMLElement | null>();
+function openAppModal(root: HTMLElement, focusSelector?: string) {
+  if (!root.dataset.modalOpen) appModalReturnFocus.set(root, document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  root.dataset.modalOpen = 'true'; root.setAttribute('aria-hidden', 'false');
+  root.classList.remove('hidden'); root.classList.add('flex');
+  const dialog = root.querySelector<HTMLElement>('[aria-modal="true"]');
+  const focusTarget = (focusSelector ? root.querySelector<HTMLElement>(focusSelector) : null)
+    ?? dialog?.querySelector<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),[tabindex="0"]')
+    ?? dialog;
+  focusTarget?.focus();
+}
+function closeAppModal(root: HTMLElement | null) {
+  if (!root) return;
+  root.dataset.modalOpen = 'false'; root.setAttribute('aria-hidden', 'true');
+  root.classList.add('hidden'); root.classList.remove('flex');
+  const previous = appModalReturnFocus.get(root); appModalReturnFocus.delete(root);
+  if (previous?.isConnected) previous.focus();
+}
+function closeAppModalRoot(root: HTMLElement) {
+  switch (root.id) {
+    case 'configClearModal': setConfigClearModal(false); break;
+    case 'listClearModal': setListClearModal(false); break;
+    case 'strategyHistoryClearModal': setStrategyPickHistoryClearModal(false); break;
+    case 'customListDeleteModal': closeCustomListDeleteModal(); break;
+    case 'operationConfirmModal': closeDangerousConfirmation(); break;
+    case 'profileImportDialog': cancelProfileImport(); break;
+    case 'updateModalBackdrop': closeUpdateModal(); break;
+    case 'diffModalBackdrop': closeAppModal(root); break;
+  }
+}
+function trapAppModalFocus(event: KeyboardEvent) {
+  const dialog = [...document.querySelectorAll<HTMLElement>('[aria-modal="true"]')].find((item) => {
+    const root = item.closest<HTMLElement>('[data-app-modal-root]');
+    return Boolean(root?.dataset.modalOpen === 'true');
+  });
+  const root = dialog?.closest<HTMLElement>('[data-app-modal-root]');
+  if (!dialog || !root) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeAppModalRoot(root); return; }
+  if (event.key !== 'Tab') return;
+  const focusable = [...dialog.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],[tabindex]:not([tabindex="-1"])')].filter((item) => item.getClientRects().length > 0);
+  const first = focusable[0]; const last = focusable.at(-1);
+  if (!first || !last) { event.preventDefault(); dialog.focus(); return; }
+  if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+}
+function closeAppModalOnBackdrop(event: MouseEvent) {
+  if (!(event.target instanceof HTMLElement) || !event.target.hasAttribute('data-app-modal-root')) return;
+  const root = event.target;
+  if (root?.dataset.modalOpen === 'true') closeAppModalRoot(root);
+}
 let changeHistoryCache: ChangeHistoryEntry[] = [];
 let runtimeProfilesState: NfqwsProfilesResponse | null = null;
 let runtimeProfileLuaCatalog: NfqwsLuaFunctionInfo[] = [];
@@ -1017,10 +1067,10 @@ async function shareRuntimeProfile(id: string) {
 function pasteRuntimeProfile() {
   const modal = $('#profileImportDialog'); const input = $<HTMLTextAreaElement>('#profileImportInput');
   if (input) input.value = '';
-  modal?.classList.remove('hidden'); modal?.classList.add('flex'); input?.focus();
+  if (modal) openAppModal(modal, '#profileImportInput');
 }
 function cancelProfileImport() {
-  const modal = $('#profileImportDialog'); modal?.classList.add('hidden'); modal?.classList.remove('flex');
+  closeAppModal($('#profileImportDialog'));
 }
 function acceptProfileImport() {
   const raw = $<HTMLTextAreaElement>('#profileImportInput')?.value ?? '';
@@ -1201,12 +1251,13 @@ async function saveRuntimeProfiles() {
 function requestDangerousConfirmation(title: string, message: string, action: () => Promise<void>, onCancel: () => void = () => undefined) {
   setText('#operationConfirmTitle', title); setText('#operationConfirmMessage', message); pendingConfirmation = action;
   pendingConfirmationCancel = onCancel;
-  const modal = $('#operationConfirmModal'); modal?.classList.remove('hidden'); modal?.classList.add('flex');
+  const modal = $('#operationConfirmModal'); if (modal) openAppModal(modal, '[data-action-click="cancelOperationConfirmation"]');
 }
+function closeUpdateModal() { closeAppModal($('#updateModalBackdrop')); }
 function closeDangerousConfirmation(confirmed = false) {
   const onCancel = pendingConfirmationCancel; pendingConfirmation = null; pendingConfirmationCancel = null;
   if (!confirmed) onCancel?.();
-  const modal = $('#operationConfirmModal'); modal?.classList.add('hidden'); modal?.classList.remove('flex');
+  closeAppModal($('#operationConfirmModal'));
 }
 async function confirmDangerousOperation() {
   const action = pendingConfirmation; closeDangerousConfirmation(true); if (action) await action();
@@ -1656,9 +1707,7 @@ function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
 function setConfigClearModal(open: boolean) {
   const modal = $('#configClearModal');
   if (!modal) return;
-  modal.classList.toggle('hidden', !open);
-  modal.classList.toggle('flex', open);
-  if (open) modal.querySelector<HTMLButtonElement>('[data-action-click="cancelClearConfig"]')?.focus();
+  if (open) openAppModal(modal, '[data-action-click="cancelClearConfig"]'); else closeAppModal(modal);
 }
 function confirmClearConfig() {
   const editor = $('#nfqwsConfTextarea');
@@ -1672,9 +1721,7 @@ function confirmClearConfig() {
 function setListClearModal(open: boolean) {
   const modal = $('#listClearModal');
   if (!modal) return;
-  modal.classList.toggle('hidden', !open);
-  modal.classList.toggle('flex', open);
-  if (open) modal.querySelector<HTMLButtonElement>('[data-action-click="cancelClearListDraft"]')?.focus();
+  if (open) openAppModal(modal, '[data-action-click="cancelClearListDraft"]'); else closeAppModal(modal);
 }
 function confirmClearListDraft() {
   const editor = $('#listEditorTextarea');
@@ -2087,24 +2134,28 @@ async function saveConfigAndApply() {
   const binaryCheckNote = validation.checks.installedBinary === 'not_run'
     ? 'Проверка установленным бинарником не выполнялась.'
     : 'Проверка установленным бинарником выполнена.';
-  if ((warnings.length || validation.checks.installedBinary === 'not_run') && !window.confirm([
-    'Backend проверил только безопасно разбираемый синтаксис и известные ограничения init-скрипта.',
-    ...warnings.map((item) => `${item.line ? `Строка ${item.line}: ` : ''}${item.message}`),
-    binaryCheckNote,
-    'Продолжить запись и перезапуск?'
-  ].join('\n\n'))) {
-    setBusy(false);
+  const applyValidatedConfig = async () => {
+    if (editor.value !== draft || !config) { setBusy(false); return toast('Черновик изменился во время подтверждения. Проверьте конфигурацию повторно.', 'error'); }
+    setRestartInProgress(true);
+    try {
+      const result = await nfqwsApply.apply(draft, config.revision);
+      config = result.config;
+      setRestartInProgress(false);
+      await fetchStatus();
+      toast(lifecycleMessage('restart'));
+    } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
+    finally { setRestartInProgress(false); setBusy(false); }
+  };
+  if (warnings.length || validation.checks.installedBinary === 'not_run') {
+    requestDangerousConfirmation('Проверка конфигурации', [
+      'Backend проверил только безопасно разбираемый синтаксис и известные ограничения init-скрипта.',
+      ...warnings.map((item) => `${item.line ? `Строка ${item.line}: ` : ''}${item.message}`),
+      binaryCheckNote,
+      'Продолжить запись и перезапуск?'
+    ].join('\n\n'), applyValidatedConfig, () => setBusy(false));
     return;
   }
-  setRestartInProgress(true);
-  try {
-    const result = await nfqwsApply.apply(draft, config.revision);
-    config = result.config;
-    setRestartInProgress(false);
-    await fetchStatus();
-    toast(lifecycleMessage('restart'));
-  } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
-  finally { setRestartInProgress(false); setBusy(false); }
+  await applyValidatedConfig();
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart') {
   if (busy) return;
@@ -2288,13 +2339,10 @@ function requestDeleteCustomList(id: string) {
   if (!modal || !name || !(confirm instanceof HTMLButtonElement)) return;
   name.textContent = id;
   confirm.dataset.args = JSON.stringify([id]);
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
+  openAppModal(modal, '#confirmCustomListDelete');
 }
 function closeCustomListDeleteModal() {
-  const modal = $('#customListDeleteModal');
-  modal?.classList.add('hidden');
-  modal?.classList.remove('flex');
+  closeAppModal($('#customListDeleteModal'));
 }
 async function deleteCustomList(id: string) {
   const standardIds = new Set(['user.list', 'auto.list', 'exclude.list', 'ipset.list', 'ipset_exclude.list']);
@@ -2760,19 +2808,18 @@ function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
 }
 
 async function applyForeignConfig(operationId: string, index: number, name: string, button: HTMLButtonElement) {
-  if (!window.confirm(`Заменить текущую конфигурацию на «${name}» и перезапустить nfqws2?`)) return;
-  button.disabled = true;
-  button.textContent = 'Применение…';
-  try {
-    const result = await nfqwsDiagnostics.foreignConfigApply(operationId, index);
-    config = result.config;
-    await loadConfig();
-    toast('Конфигурация применена и nfqws2 перезапущен.', 'success');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : 'Не удалось применить конфигурацию.', 'error');
-    button.disabled = false;
-    button.textContent = 'Применить конфигурацию';
-  }
+  requestDangerousConfirmation('Заменить текущую конфигурацию?', `Конфигурация «${name}» будет сохранена и nfqws2 перезапустится.`, async () => {
+    button.disabled = true; button.textContent = 'Применение…';
+    try {
+      const result = await nfqwsDiagnostics.foreignConfigApply(operationId, index);
+      config = result.config;
+      await loadConfig();
+      toast('Конфигурация применена и nfqws2 перезапущен.', 'success');
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Не удалось применить конфигурацию.', 'error');
+      button.disabled = false; button.textContent = 'Применить конфигурацию';
+    }
+  });
 }
 
 async function pollForeignConfigCheck(id: string) {
@@ -3068,27 +3115,28 @@ async function applyStrategyPick(source: string, operationId: string, candidateI
   const applyScope = source === 'strategyPick'
     ? 'Добавить подтверждённую стратегию как Strategy #1 в NFQWS_ARGS и сдвинуть прежние номера вниз? Это повлияет на все сайты; NFQWS_BASE_ARGS не меняется.'
     : `Добавить профиль только для ${$(summaryId)?.textContent?.split(' · ')[0] ?? 'проверенного домена'}?`;
-  if (!window.confirm(`${applyScope}\n\nnfqws2 перезапустится. Будет создана резервная копия; при ошибке проверки конфигурация откатится.`)) return;
-  const button = $(buttonId);
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Применение…'; }
-  let wasApplied = false;
-  try {
-    const applied = await nfqwsDiagnostics.applyStrategy(source, operationId, Number(candidateIndex), expectedRevision);
-    wasApplied = true;
-    activeStrategyPreview = null;
-    try { await loadConfig(); }
-    catch { toast('Стратегия применена, но страницу конфигурации не удалось обновить. Перезагрузите панель.', 'error'); return; }
-    toast(source === 'strategyPick'
-      ? `${applied.message} Стратегия добавлена как Strategy #1; прежние номера сдвинуты. Резервная копия сохранена.`
-      : `${applied.message} Доменный профиль добавлен; резервная копия сохранена.`, 'success');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : 'Не удалось применить профиль.', 'error');
-  } finally {
-    if (button instanceof HTMLButtonElement) {
-      button.disabled = wasApplied;
-      button.textContent = wasApplied ? 'Стратегия применена' : activeStrategyPreview?.panel === 'freeze' ? 'Применить и перезапустить' : 'Применить стратегию и перезапустить';
+  requestDangerousConfirmation('Применить стратегию?', `${applyScope}\n\nnfqws2 перезапустится. Будет создана резервная копия; при ошибке проверки конфигурация откатится.`, async () => {
+    const button = $(buttonId);
+    if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Применение…'; }
+    let wasApplied = false;
+    try {
+      const applied = await nfqwsDiagnostics.applyStrategy(source, operationId, Number(candidateIndex), expectedRevision);
+      wasApplied = true;
+      activeStrategyPreview = null;
+      try { await loadConfig(); }
+      catch { toast('Стратегия применена, но страницу конфигурации не удалось обновить. Перезагрузите панель.', 'error'); return; }
+      toast(source === 'strategyPick'
+        ? `${applied.message} Стратегия добавлена как Strategy #1; прежние номера сдвинуты. Резервная копия сохранена.`
+        : `${applied.message} Доменный профиль добавлен; резервная копия сохранена.`, 'success');
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Не удалось применить профиль.', 'error');
+    } finally {
+      if (button instanceof HTMLButtonElement) {
+        button.disabled = wasApplied;
+        button.textContent = wasApplied ? 'Стратегия применена' : activeStrategyPreview?.panel === 'freeze' ? 'Применить и перезапустить' : 'Применить стратегию и перезапустить';
+      }
     }
-  }
+  });
 }
 
 async function loadStrategyPickHistory() {
@@ -3135,9 +3183,7 @@ async function loadStrategyPickHistory() {
 function setStrategyPickHistoryClearModal(open: boolean) {
   const modal = $('#strategyHistoryClearModal');
   if (!modal) return;
-  modal.classList.toggle('hidden', !open);
-  modal.classList.toggle('flex', open);
-  if (open) modal.querySelector<HTMLButtonElement>('[data-action-click="cancelClearStrategyPickHistory"]')?.focus();
+  if (open) openAppModal(modal, '[data-action-click="cancelClearStrategyPickHistory"]'); else closeAppModal(modal);
 }
 
 async function clearStrategyPickHistory() {
@@ -3568,7 +3614,7 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
   expandedReleaseTag = null;
   const modal = $('#updateModalBackdrop');
   if (!modal) return;
-  modal.classList.remove('hidden'); modal.classList.add('flex');
+  openAppModal(modal, '[data-action-click="closeUpdateModal"]');
   const list = $('#updateVersionsList');
   if (list) list.textContent = 'Загружаю версии из GitHub Releases…';
   try {
@@ -3785,7 +3831,7 @@ function bindPrototypeActions() {
       body.append(row);
     }
     if (!body.childElementCount) { const row = document.createElement('div'); row.className = 'text-slate-400'; row.textContent = 'Изменений нет'; body.append(row); }
-    modal.classList.remove('hidden'); modal.classList.add('flex');
+    openAppModal(modal, '[data-action-click="closeDiffModal"]');
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
@@ -3930,9 +3976,10 @@ function bindPrototypeActions() {
     toggleWordWrapConf: (enabled: boolean) => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) { editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre'; syncConfigHighlight(editor); } },
     toggleConfigOutline: () => toggleConfigOutline(),
     scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); editor.scrollTop = editor.value.slice(0, offset).split('\n').length * 23; },
-    toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) { modal.classList.add('hidden'); modal.classList.remove('flex'); } else showDiff(); },
+    toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) closeAppModal(modal); else showDiff(); },
     resetDefaultConf: () => void loadConfig(),
-    closeUpdateModal: () => { const modal = $('#updateModalBackdrop'); modal?.classList.add('hidden'); modal?.classList.remove('flex'); },
+    closeUpdateModal: () => closeUpdateModal(),
+    closeDiffModal: () => closeAppModal($('#diffModalBackdrop')),
     openUpdateModal: (target: 'ui' | 'core') => void openUpdatePicker(target),
     retryUpdateList: () => void openUpdatePicker(updateTarget),
     openLatestUiUpdate: (tag: string) => { uiUpdateNoticeOpenedTag = tag; hideUiUpdateNotice(); void openUpdatePicker('ui'); },
@@ -4060,10 +4107,11 @@ function boot() {
     editor.dispatchEvent(new Event('input', { bubbles: true }));
   });
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Tab') { trapAppModalFocus(event); return; }
+    if (event.key === 'Escape' && document.querySelector('[data-app-modal-root][data-modal-open="true"]')) { trapAppModalFocus(event); return; }
     if (event.key === 'Escape' && $('#listEditorPanel.list-editor-fullscreen')) toggleListEditorFullscreen();
-    if (event.key === 'Escape' && !$('#profileImportDialog')?.classList.contains('hidden')) cancelProfileImport();
-    if (event.key === 'Escape' && !$('#operationConfirmModal')?.classList.contains('hidden')) closeDangerousConfirmation();
   });
+  document.addEventListener('click', closeAppModalOnBackdrop);
   $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigScroll, { passive: true });
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();

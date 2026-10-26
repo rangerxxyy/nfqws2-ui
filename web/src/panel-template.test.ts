@@ -66,6 +66,14 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('code,kbd,pre,samp,.font-mono');
   });
 
+  it('uses UI confirmations instead of browser dialogs and traps modal focus', () => {
+    expect(panelSource).not.toMatch(/\b(?:window\.)?(?:alert|confirm|prompt)\s*\(/);
+    expect(panelSource).toContain('function trapAppModalFocus');
+    expect(panelSource).toContain("event.key === 'Tab'");
+    expect(panelSource).toContain('closeDangerousConfirmation()');
+    expect(template).toContain('role="alertdialog"');
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");
@@ -81,7 +89,7 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('keeps toast notifications below confirmation dialogs', () => {
     const toastClass = template.match(/id="toastWrapper" class="([^"]+)"/)?.[1] ?? '';
-    const dialogClass = template.match(/id="updateModalBackdrop" class="([^"]+)"/)?.[1] ?? '';
+    const dialogClass = template.match(/id="updateModalBackdrop"[^>]*class="([^"]+)"/)?.[1] ?? '';
     expect(toastClass.split(' ')).toContain('z-[40]');
     expect(dialogClass.split(' ')).toContain('z-50');
   });
@@ -551,7 +559,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('run_candidates_with_compaction_and_results');
     expect(backendSource).toContain('run_full_candidates_with_batches_and_results');
     expect(backendSource).toContain('operation.results.push(candidate.clone())');
-    expect(panelSource).toContain('window.confirm(');
+    expect(panelSource).toContain('requestDangerousConfirmation(\'Применить стратегию?\', `${applyScope}');
     expect(panelSource).toContain("result.targetKind");
     expect(panelStyles).toContain('freeze-result-error');
     expect(panelStyles).toContain('freeze-result-success');

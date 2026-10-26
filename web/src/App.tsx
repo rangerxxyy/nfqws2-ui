@@ -1318,9 +1318,9 @@ export default function App() {
 {"\n  "}
 {"\n  "}
 {"\n  "}
-    <div id={"updateModalBackdrop"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4"}>
+    <div id={"updateModalBackdrop"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4"}>
       {"\n    "}
-      <div className={"bg-[#0b101b] border border-slate-800 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl view-animate"}>
+      <div role={"dialog"} aria-modal={"true"} aria-labelledby={"updateModalTitle"} tabIndex={-1} className={"bg-[#0b101b] border border-slate-800 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl view-animate"}>
         {"\n      \n      "}
         <div className={"px-6 pt-5 pb-4 flex items-center justify-between"}>
           {"\n        "}
@@ -1408,15 +1408,16 @@ export default function App() {
     </div>
 {"\n\n  "}
 {"\n  "}
-    <div id={"diffModalBackdrop"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4"}>
+    <div id={"diffModalBackdrop"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4"}>
       {"\n    "}
-      <div className={"bg-[#0b101b] border border-slate-800 rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl view-animate"}>
+      <div role={"dialog"} aria-modal={"true"} aria-labelledby={"diffModalTitle"} tabIndex={-1} className={"bg-[#0b101b] border border-slate-800 rounded-2xl max-w-3xl w-full overflow-hidden shadow-2xl view-animate"}>
         {"\n      "}
         <div className={"px-6 py-4 border-b border-slate-800 flex items-center justify-between"}>
           {"\n        "}
-          <h3 className={"text-base font-bold text-white"}>
+          <h3 id={"diffModalTitle"} className={"text-base font-bold text-white"}>
             {"Сравнение с сохранённым `nfqws.conf`"}
           </h3>
+          <button type={"button"} data-action-click={"closeDiffModal"} aria-label={"Закрыть сравнение"} className={"backup-action"}>Закрыть</button>
           {"\n        "}
           {"\n      "}
         </div>
@@ -1430,7 +1431,7 @@ export default function App() {
 {"\n  "}
     <div id={"toastWrapper"} className={"fixed bottom-24 right-5 z-[40] space-y-2.5 pointer-events-none"}></div>
     <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] space-y-2.5 pointer-events-none"}></div>
-    <div id={"configClearModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
+    <div id={"configClearModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"configClearTitle"}>
         <h3 id={"configClearTitle"} className={"text-base font-bold text-white"}>Очистить конфигурацию?</h3>
         <p className={"mt-2 text-sm text-slate-300"}>Весь текст в редакторе будет удалён. Изменения затронут только черновик и не применятся к службе, пока вы отдельно не нажмёте «Применить конфигурацию».</p>
@@ -1440,7 +1441,7 @@ export default function App() {
         </div>
       </section>
     </div>
-    <div id={"listClearModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
+    <div id={"listClearModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"listClearTitle"}>
         <h3 id={"listClearTitle"} className={"text-base font-bold text-white"}>Очистить черновик списка?</h3>
         <p className={"mt-2 text-sm text-slate-300"}>Содержимое текущего файла будет удалено только из черновика. Чтобы записать изменения, отдельно нажмите «Применить список».</p>
@@ -1450,7 +1451,7 @@ export default function App() {
         </div>
       </section>
     </div>
-    <div id={"strategyHistoryClearModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
+    <div id={"strategyHistoryClearModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"strategyHistoryClearTitle"}>
         <h3 id={"strategyHistoryClearTitle"} className={"text-base font-bold text-white"}>Очистить историю подборов?</h3>
         <p className={"mt-2 text-sm text-slate-300"}>Удалятся сохранённые результаты завершённых подборов. Текущая проверка продолжится и останется в истории.</p>
@@ -1460,7 +1461,7 @@ export default function App() {
         </div>
       </section>
     </div>
-    <div id={"customListDeleteModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
+    <div id={"customListDeleteModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"customListDeleteTitle"}>
         <h3 id={"customListDeleteTitle"} className={"text-base font-bold text-white"}>Удалить пользовательский список?</h3>
         <p className={"mt-2 text-sm text-slate-300"}>Файл <code id={"customListDeleteName"} className={"text-sky-200"}></code> будет удалён из <code>/lists</code>. Несохранённый текст этого файла в редакторе тоже будет потерян.</p>
@@ -1470,14 +1471,14 @@ export default function App() {
         </div>
       </section>
     </div>
-    <div id={"operationConfirmModal"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[80] hidden items-center justify-center p-4"}>
+    <div id={"operationConfirmModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[80] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"alertdialog"} aria-modal={"true"} aria-labelledby={"operationConfirmTitle"} aria-describedby={"operationConfirmMessage"}>
         <h3 id={"operationConfirmTitle"} className={"text-base font-bold text-white"}>Подтвердите действие</h3>
-        <p id={"operationConfirmMessage"} className={"mt-2 text-sm leading-6 text-slate-300"}></p>
+        <p id={"operationConfirmMessage"} className={"mt-2 text-sm leading-6 text-slate-300 whitespace-pre-wrap"}></p>
         <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelOperationConfirmation"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"confirmOperationConfirmation"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Продолжить</button></div>
       </section>
     </div>
-    <div id={"profileImportDialog"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[75] hidden items-center justify-center p-4"}>
+    <div id={"profileImportDialog"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[75] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-2xl rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"profileImportTitle"}>
         <h3 id={"profileImportTitle"} className={"text-base font-bold text-white"}>Вставить профиль nfqws2</h3>
         <p className={"mt-2 text-sm text-slate-400"}>Вставьте аргументы профиля, включая параметры фильтров и шаги desync. Разделители --new будут импортированы отдельными профилями.</p>
