@@ -493,9 +493,9 @@ function renderRuntimeProfiles() {
   if (profile.editable && runtimeProfileEditorMode === 'builder') {
     const builder = document.createElement('div'); builder.className = 'mt-2 grid gap-2';
     const nameField = document.createElement('label'); nameField.className = 'grid gap-1 text-xs font-semibold text-slate-300'; nameField.textContent = 'Имя профиля';
-    const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.maxLength = 64; nameInput.autocomplete = 'off'; nameInput.spellcheck = false; nameInput.className = 'min-h-9 w-full max-w-sm rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100'; nameInput.value = profile.args.find((arg) => arg.startsWith('--name='))?.slice('--name='.length) ?? '';
+    const nameInput = document.createElement('input'); nameInput.type = 'text'; nameInput.maxLength = 32; nameInput.autocomplete = 'off'; nameInput.spellcheck = false; nameInput.className = 'min-h-9 w-full max-w-sm rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100'; nameInput.value = profile.args.find((arg) => arg.startsWith('--name='))?.slice('--name='.length) ?? '';
     nameInput.placeholder = profile.name; nameInput.setAttribute('aria-label', 'Имя пользовательского профиля'); nameInput.dataset.actionChange = 'renameRuntimeProfile'; nameInput.dataset.args = JSON.stringify([profile.id, { source: 'value' }]);
-    const nameHelp = document.createElement('span'); nameHelp.className = 'font-normal text-slate-500'; nameHelp.textContent = 'Буквы, цифры, точка, дефис или подчёркивание · до 64 символов'; nameField.append(nameInput, nameHelp); builder.append(nameField);
+    const nameHelp = document.createElement('span'); nameHelp.className = 'font-normal text-slate-500'; nameHelp.textContent = 'Буквы, цифры, точка, дефис или подчёркивание · до 32 символов'; nameField.append(nameInput, nameHelp); builder.append(nameField);
     const groups: Array<[string, (argument: string) => boolean]> = [
       ['TCP-порты', (arg) => arg.startsWith('--filter-tcp=')],
       ['UDP-порты', (arg) => arg.startsWith('--filter-udp=')],
@@ -695,7 +695,7 @@ function updateRuntimeProfileStep(id: string, argumentIndex: string, update: (ar
 function renameRuntimeProfile(id: string, name: string) {
   const index = Number(id.slice('custom-'.length)) - 1; const args = runtimeProfileDraft[index];
   if (!args) return;
-  if (name.trim() && !/^[\p{L}\p{N}_.-]{1,64}$/u.test(name.trim())) return toast('Имя: буквы, цифры, точка, дефис или подчёркивание; не больше 64 символов.', 'error');
+  if (name.trim() && !/^[\p{L}\p{N}_.-]{1,32}$/u.test(name.trim())) return toast('Имя: буквы, цифры, точка, дефис или подчёркивание; не больше 32 символов.', 'error');
   runtimeProfileDraft[index] = replaceProfileName(args, name); markRuntimeProfilesDirty();
 }
 function updateRuntimeProfileArgument(id: string, argumentIndex: string, value: string) {

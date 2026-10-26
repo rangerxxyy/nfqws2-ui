@@ -273,12 +273,12 @@ pub fn encode_custom_profile_args(profiles: &[Vec<String>]) -> Result<String, St
                 .and_then(|argument| argument.strip_prefix("--name="))
                 .filter(|name| !name.is_empty());
             if name.is_some_and(|name| {
-                name.chars().count() > 64
+                name.chars().count() > 32
                     || !name.chars().all(|character| {
                         character.is_alphanumeric() || matches!(character, '_' | '.' | '-')
                     })
             }) {
-                return Err("Имя профиля допускает буквы, цифры, точку, дефис и подчёркивание (до 64 символов)".into());
+                return Err("Имя профиля допускает буквы, цифры, точку, дефис и подчёркивание (до 32 символов)".into());
             }
             result.push(name.map_or_else(|| "--new".to_owned(), |name| format!("--new={name}")));
             if name.is_some() {
@@ -530,6 +530,13 @@ mod tests {
             encode_custom_profile_args(&[
                 vec!["--filter-tcp=443".into()],
                 vec!["--name=bad name".into()]
+            ])
+            .is_err()
+        );
+        assert!(
+            encode_custom_profile_args(&[
+                vec!["--filter-tcp=443".into()],
+                vec![format!("--name={}", "x".repeat(33))]
             ])
             .is_err()
         );

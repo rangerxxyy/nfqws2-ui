@@ -1652,6 +1652,31 @@ async fn validate_strategy_dry_run(argv: &[String]) -> Result<String, String> {
     Ok("nfqws2 --dry-run пройден".into())
 }
 
+async fn validate_profile_config_dry_run(
+    source: &str,
+    paths: &nfqws2_ui::Nfqws2Paths,
+) -> Result<String, String> {
+    let directory =
+        std::env::temp_dir().join(format!("nfqws2-ui-profile-check-{}", new_update_id()));
+    let mut cleanup = ForeignAutoListCleanup {
+        path: directory.clone(),
+        armed: false,
+    };
+    let mut auto_lists = Vec::new();
+    let arguments = external_config_args(
+        source,
+        &directory.join("auto.list"),
+        &paths.lua_dir,
+        &paths.blobs_dir,
+        &paths.lists_dir,
+        &mut auto_lists,
+        false,
+    )?;
+    prepare_foreign_auto_lists(&directory, &auto_lists, &mut cleanup).await?;
+    let argv = foreign_config_dry_run_argv(&paths.binary.to_string_lossy(), source, &arguments)?;
+    validate_strategy_dry_run(&argv).await
+}
+
 async fn preview_strategy_pick(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -5469,6 +5494,26 @@ fn external_config_test_args(
     lists_directory: &Path,
     auto_list_sources: &mut Vec<(PathBuf, Option<PathBuf>)>,
 ) -> Result<Vec<String>, String> {
+    external_config_args(
+        source,
+        isolated_auto_list,
+        lua_directory,
+        blobs_directory,
+        lists_directory,
+        auto_list_sources,
+        true,
+    )
+}
+
+fn external_config_args(
+    source: &str,
+    isolated_auto_list: &Path,
+    lua_directory: &Path,
+    blobs_directory: &Path,
+    lists_directory: &Path,
+    auto_list_sources: &mut Vec<(PathBuf, Option<PathBuf>)>,
+    require_http_filter: bool,
+) -> Result<Vec<String>, String> {
     let diagnostics = validate_nfqws2_config(source)?;
     if let Some(diagnostic) = diagnostics
         .iter()
@@ -5617,12 +5662,13 @@ fn external_config_test_args(
         profiles.push(profile);
     }
     let tcp = map_arguments("NFQWS_ARGS", &read_group("NFQWS_ARGS")?.join(" "))?;
-    if !document.contains_assignment("NFQWS_ARGS") {
+    if require_http_filter && !document.contains_assignment("NFQWS_ARGS") {
         return Err("В конфигурации отсутствует NFQWS_ARGS".into());
     }
-    if !tcp
-        .iter()
-        .any(|argument| argument.starts_with("--filter-tcp="))
+    if require_http_filter
+        && !tcp
+            .iter()
+            .any(|argument| argument.starts_with("--filter-tcp="))
     {
         return Err("В NFQWS_ARGS не найден --filter-tcp для проверки HTTPS/HTTP".into());
     }
@@ -9752,6 +9798,18 @@ async fn save_runtime_profiles(
         }
         Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
     };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Установка nfqws2 не обнаружена; профили не сохранены",
+        );
+    };
+    if let Err(message) = validate_profile_config_dry_run(&proposed, &paths).await {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("nfqws2 --dry-run отклонил конфигурацию; изменений нет: {message}"),
+        );
+    }
     let current_revision = revision(&bytes);
     match apply_config_transaction(
         &state,
@@ -11072,6 +11130,42 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_profile_dry_run_arguments_accept_udp_only_configurations() {
+        let directory = tempfile::tempdir().unwrap();
+        let lists = directory.path().join("lists");
+        let blobs = directory.path().join("blobs");
+        let lua = directory.path().join("lua");
+        std::fs::create_dir(&lists).unwrap();
+        std::fs::create_dir(&blobs).unwrap();
+        std::fs::create_dir(&lua).unwrap();
+        let source = "NFQWS_ARGS_CUSTOM=\"--filter-udp=443 --payload=quic_initial\"\n";
+        let mut auto_lists = Vec::new();
+        let arguments = external_config_args(
+            source,
+            &directory.path().join("auto.list"),
+            &lua,
+            &blobs,
+            &lists,
+            &mut auto_lists,
+            false,
+        )
+        .unwrap();
+        assert!(arguments.contains(&"--filter-udp=443".to_owned()));
+        assert!(arguments.contains(&"--payload=quic_initial".to_owned()));
+        assert!(
+            external_config_test_args(
+                source,
+                &directory.path().join("auto.list"),
+                &lua,
+                &blobs,
+                &lists,
+                &mut Vec::new(),
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn runtime_profile_edit_changes_only_custom_arguments_and_preserves_other_config() {

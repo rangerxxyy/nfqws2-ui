@@ -103,7 +103,7 @@ function isOneDesyncParameter(value: string): boolean {
 
 export function replaceProfileName(args: readonly string[], name: string): string[] {
   const value = name.trim();
-  if (value && (!/^[\p{L}\p{N}_.-]{1,64}$/u.test(value))) return [...args];
+  if (value && (!/^[\p{L}\p{N}_.-]{1,32}$/u.test(value))) return [...args];
   const result = args.filter((argument) => !argument.startsWith('--name='));
   if (value) result.unshift(`--name=${value}`);
   return result;

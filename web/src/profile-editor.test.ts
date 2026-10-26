@@ -81,6 +81,12 @@ describe('profile fields', () => {
     expect(replaceProfileName(['--filter-tcp=443'], 'bad name'))
       .toEqual(['--filter-tcp=443']);
   });
+
+  it('matches the reference profile-name limit of 32 characters', () => {
+    const valid = 'a'.repeat(32);
+    expect(replaceProfileName([], valid)).toEqual([`--name=${valid}`]);
+    expect(replaceProfileName([], `${valid}a`)).toEqual([]);
+  });
 });
 
 describe('profile sharing', () => {
