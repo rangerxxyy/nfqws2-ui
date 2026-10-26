@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { filterProfileArgumentChoices, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('profile builder choices', () => {
+  it('searches parameter choices by label, group, or nfqws2 argument syntax', () => {
+    const choices = [
+      { group: 'Когда срабатывает · транспорт', value: '--filter-tcp=', label: '--filter-tcp=<ports> · TCP-порты' },
+      { group: 'Параметры nfqws2 · остальные', value: '--debug', label: '--debug · вывод отладки' },
+    ];
+
+    expect(filterProfileArgumentChoices(choices, 'отладки')).toEqual([choices[1]]);
+    expect(filterProfileArgumentChoices(choices, 'транспорт')).toEqual([choices[0]]);
+    expect(filterProfileArgumentChoices(choices, '--filter-tcp')).toEqual([choices[0]]);
+    expect(filterProfileArgumentChoices(choices, '   ')).toEqual(choices);
+  });
+
+  it('shows localized Russian help for Lua functions and arguments instead of English source comments', () => {
+    expect(getRussianLuaFunctionDescription('circular')).toMatch(/переключает.*стратегии/i);
+    expect(getRussianLuaFunctionDescription('custom_function')).toMatch(/функция Lua/i);
+    expect(getRussianLuaArgumentDescription('host=<str> — hostname template')).toMatch(/шаблон доменного имени/i);
+    expect(getRussianLuaArgumentDescription('unknown_option=<value> — unknown English description')).toMatch(/параметр шага Lua/i);
+    expect(getRussianLuaArgumentDescription('oob — out of band packet')).toMatch(/вне основного потока/i);
+    expect(getRussianNfqwsOptionDescription('filter-tcp')).toMatch(/TCP-портами/i);
+    expect(getRussianNfqwsOptionDescription('unmapped-option')).toMatch(/параметр nfqws2/i);
+  });
+
   it('offers editable match conditions, list scopes, and ordered strategy steps', () => {
     const choices = profileArgumentChoices([], [{ id: 'youtube', path: '/opt/etc/nfqws2/lists/youtube.txt', readable: true, writable: true }]);
     expect(choices.map((choice) => choice.value)).toEqual(expect.arrayContaining([

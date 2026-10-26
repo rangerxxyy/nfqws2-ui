@@ -110,3 +110,9 @@ The XKeen UI source uses the variable Inter family for interface text and JetBra
 - Сверка с роутером по `nfqws2 --help` (core v1.0.6): pipe-вывод содержит 16 значений `filter-l7` и 31 payload; полный список попадает в каталог. Интерактивная SSH-обёртка сужает строки и добавляет ANSI-перемещения курсора, поэтому парсер очищает терминальные коды; backend вызывает процесс без TTY.
 - Повторная сверка на роутере с nfqws2 v1.3.2 подтвердила полный каталог: 63 CLI-опции, 16 протоколов, 31 тип пакетов, 44 Lua-функции и 7 стандартных групп. Синтаксис необязательного значения `key[=value]` теперь корректно разбирается; например, `tcp_md5[=hex]` доступен в выборе и больше не порождает ложное предупреждение.
 - Структурные `--new` и `--name` не предлагаются как общие параметры профиля: первое значение разделяет группы и не допускается в теле профиля, второе задаётся отдельным полем имени. Остальные локальные multi-strategy опции (например, `--skip`, `--template`, `--cookie`, `--import`) остаются доступными.
+# Profile editor usability update
+
+- Removed the introductory copy above the profile workspace so the profile list and current editor lead the page.
+- Replaced inline Lua source comments and English parameter descriptions with Russian summaries generated from the installed nfqws2 catalog. The contextual reference stays beside the editor on wide screens and moves above it on narrow screens.
+- Added a searchable, grouped parameter chooser for profile-scoped nfqws2 options and Lua functions. Selecting an item updates the active profile draft through the existing profile editing flow; global options and the profile separator remain excluded.
+- The reference follows focused Lua steps and CLI arguments, showing their syntax and Russian purpose. Parameter names and command syntax remain unchanged for accuracy.

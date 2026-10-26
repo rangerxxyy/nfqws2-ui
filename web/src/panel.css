@@ -1387,3 +1387,29 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 .profile-manual-parameter summary { cursor:pointer; color:#94a3b8; font-size:.72rem; }
 .profile-parameter-picker { width:min(100%,25rem); min-width:min(100%,20rem); flex:1 1 25rem; }
 @media (max-width:640px) { .profile-parameter-picker { min-width:100%; } }
+
+.profile-editor-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(16rem,23rem); align-items:start; gap:1rem; }
+.profile-editor-main { min-width:0; }
+.profile-reference { position:sticky; top:1rem; max-height:calc(100vh - 2rem); overflow:auto; border:1px solid #263244; border-radius:.65rem; background:linear-gradient(155deg,#111a29,#0b111b); padding:.85rem; color:#cbd5e1; }
+.profile-reference-eyebrow { color:#64748b; font-size:.65rem; font-weight:800; letter-spacing:.12em; }
+.profile-reference h3 { margin-top:.35rem; color:#bfdbfe; font-size:.9rem; font-weight:750; overflow-wrap:anywhere; }
+.profile-reference h4 { margin-top:.8rem; color:#e2e8f0; font-size:.75rem; font-weight:700; }
+.profile-reference-summary,.profile-reference-selected { margin-top:.5rem; font-size:.76rem; line-height:1.5; color:#aebdd0; }
+.profile-reference-selected { border-left:2px solid #2dd4bf; padding:.3rem .5rem; color:#99f6e4; }
+.profile-reference-list { display:grid; gap:.45rem; margin-top:.45rem; padding-left:1rem; list-style:disc; color:#aebdd0; font-size:.7rem; line-height:1.45; }
+.profile-choice-dialog { width:min(46rem,calc(100vw - 2rem)); max-width:none; max-height:min(86vh,52rem); border:1px solid #334155; border-radius:.8rem; background:#0b101b; padding:0; color:#e2e8f0; box-shadow:0 24px 90px #000a; }
+.profile-choice-dialog::backdrop { background:#020617bd; backdrop-filter:blur(3px); }
+.profile-choice-panel { display:grid; max-height:min(86vh,52rem); grid-template-rows:auto auto minmax(0,1fr); gap:.75rem; padding:1rem; }
+.profile-choice-heading { display:flex; align-items:center; justify-content:space-between; gap:.75rem; }
+.profile-choice-heading h3 { font-size:1rem; font-weight:750; }
+.profile-choice-search { min-height:2.5rem; width:100%; border:1px solid #334155; border-radius:.55rem; background:#080d16; padding:.6rem .75rem; color:#f1f5f9; font-size:.85rem; }
+.profile-choice-search:focus { border-color:#60a5fa; outline:2px solid #3b82f644; }
+.profile-choice-results { overflow:auto; padding-right:.25rem; }
+.profile-choice-group { margin-top:.7rem; }
+.profile-choice-group h4 { position:sticky; top:0; z-index:1; border-bottom:1px solid #263244; background:#0b101b; padding:.35rem 0; color:#5eead4; font-size:.7rem; font-weight:800; }
+.profile-choice-option { display:grid; width:100%; gap:.2rem; border-radius:.45rem; padding:.5rem .6rem; text-align:left; transition:background .14s ease,color .14s ease; }
+.profile-choice-option:hover,.profile-choice-option:focus-visible { background:#1d4ed833; outline:none; }
+.profile-choice-option strong { color:#e2e8f0; font-size:.78rem; font-weight:650; }
+.profile-choice-option code { color:#94a3b8; font-size:.68rem; overflow-wrap:anywhere; }
+.profile-choice-empty { padding:1.25rem .5rem; color:#94a3b8; font-size:.8rem; text-align:center; }
+@media (max-width:820px) { .profile-editor-layout { grid-template-columns:minmax(0,1fr); } .profile-reference { position:static; max-height:none; order:-1; } }

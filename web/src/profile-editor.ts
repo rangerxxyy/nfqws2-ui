@@ -2,6 +2,17 @@ import type { NfqwsCliCatalog, NfqwsListSummary, NfqwsLuaFunctionInfo, NfqwsLuaS
 
 export type ProfileArgumentChoice = { group: string; value: string; label: string };
 
+/** Filters the runtime-backed profile argument catalog by visible label, syntax, or group. */
+export function filterProfileArgumentChoices(
+  choices: readonly ProfileArgumentChoice[],
+  query: string,
+): ProfileArgumentChoice[] {
+  const needle = query.trim().toLocaleLowerCase();
+  if (!needle) return [...choices];
+  return choices.filter(({ group, label, value }) =>
+    `${group} ${label} ${value}`.toLocaleLowerCase().includes(needle));
+}
+
 export function summarizeProfileSelection(args: readonly string[]): string {
   const parts: string[] = [];
   for (const argument of args) {
@@ -107,7 +118,7 @@ export function profileArgumentChoices(args: readonly string[], lists: readonly 
       // already has a dedicated editor field and must not be duplicated here.
       if (option.global || ['new', 'name', 'filter-l7', 'payload'].includes(option.name)) continue;
       const value = option.takesValue ? `--${option.name}=` : `--${option.name}`;
-      definitions.push({ group: 'Параметры nfqws2 · остальные', value, label: `${option.syntax}${option.description ? ` · ${option.description}` : ''}` });
+      definitions.push({ group: 'Параметры nfqws2', value, label: `${option.syntax} · ${getRussianNfqwsOptionDescription(option.name)}` });
     }
   }
   return definitions.filter(({ value }, index) => {
@@ -230,6 +241,94 @@ export function parseLuaParameterOption(definition: string): LuaParameterOption 
   const example = separator < 0 ? null : token.slice(separator + 1);
   const value = example === null ? null : example.startsWith('<') || example.endsWith('>') ? '' : example;
   return { key, value, display };
+}
+
+const luaFunctionDescriptionsRu: Readonly<Record<string, string>> = {
+  circular: 'При ошибках последовательно переключает номера стратегий и повторяет запрос.',
+  fake: 'Отправляет поддельный пакет перед исходным, чтобы изменить видимый для провайдера запрос.',
+  fakedsplit: 'Разделяет поддельный пакет на части и меняет их порядок или содержимое.',
+  fakeddisorder: 'Меняет порядок частей поддельного пакета перед отправкой.',
+  hostfakesplit: 'Применяет подмену только к указанному имени сайта и поддельным пакетам.',
+  hostfake: 'Подставляет указанное имя сайта в поддельный пакет.',
+  multisplit: 'Разделяет запрос на несколько частей в указанных позициях.',
+  multidisorder: 'Разделяет запрос на части и отправляет их в заданном порядке.',
+  tcpseg: 'Разбивает TCP-запрос на сегменты в заданных позициях.',
+  udplen: 'Меняет длину UDP-пакета, добавляя или убирая данные.',
+  badseq: 'Изменяет номер последовательности TCP-пакета.',
+  disorder: 'Меняет порядок отправки частей исходного запроса.',
+  split: 'Разделяет исходный запрос на части в выбранных позициях.',
+  tamper: 'Изменяет выбранные поля запроса перед отправкой.',
+};
+
+const luaArgumentDescriptionsRu: Readonly<Record<string, string>> = {
+  altorder: 'чередовать порядок отправки частей',
+  badsum: 'подменить контрольную сумму поддельного пакета',
+  blob: 'использовать указанный файл данных вместо встроенного шаблона',
+  disorder_after: 'отправить часть после указанной позиции',
+  fails: 'число неудачных запросов до переключения стратегии',
+  host: 'шаблон доменного имени для поддельного запроса',
+  ip_autottl: 'автоматически подобрать TTL для поддельного IP-пакета',
+  midhost: 'указать имя сайта для подмены в середине запроса',
+  nld: 'количество повторов стратегии без ответа',
+  nofake1: 'не отправлять поддельный пакет первого типа',
+  nofake2: 'не отправлять поддельный пакет второго типа',
+  nofake3: 'не отправлять поддельный пакет третьего типа',
+  nofake4: 'не отправлять поддельный пакет четвёртого типа',
+  oob: 'передать байт вне основного потока TCP',
+  oob_data: 'значение байта, передаваемого вне основного потока TCP',
+  pattern: 'шаблон содержимого поддельного пакета',
+  pos: 'позиции разделения или изменения запроса',
+  repeats: 'число повторных отправок',
+  retrans: 'число повторных передач до переключения стратегии',
+  seqovl: 'перекрыть часть номера последовательности',
+  seqovl_pattern: 'шаблон данных для перекрытия',
+  strategy: 'номер стратегии для механизма circular',
+  tcp_ack: 'смещение номера подтверждения TCP',
+  tcp_md5: 'добавить заголовок TCP MD5; значение необязательно',
+  tcp_ts_up: 'изменить временную метку TCP',
+  time: 'интервал в секундах для сброса счётчика ошибок',
+};
+
+/** Keeps source Lua comments out of the Russian UI while retaining argument names verbatim. */
+export function getRussianLuaFunctionDescription(name: string): string {
+  if (name === 'circular') return 'Переключает стратегии по кругу после заданного числа ошибок.';
+  return luaFunctionDescriptionsRu[name] ?? `Функция Lua «${name}» из установленных скриптов nfqws2.`;
+}
+
+/** Provides a Russian help line even when the installed Lua file documents a key only in English. */
+export function getRussianLuaArgumentDescription(definition: string): string {
+  const parsed = parseLuaParameterOption(definition);
+  if (!parsed) return 'Аргумент Lua из справки установленного скрипта.';
+  return `${parsed.key} — ${luaArgumentDescriptionsRu[parsed.key] ?? 'параметр шага Lua; формат значения зависит от выбранной функции.'}`;
+}
+
+const nfqwsOptionDescriptionsRu: Readonly<Record<string, string>> = {
+  'filter-tcp': 'ограничить профиль TCP-портами',
+  'filter-udp': 'ограничить профиль UDP-портами',
+  'filter-l7': 'ограничить профиль сетевыми протоколами',
+  'filter-7': 'ограничить профиль сетевыми протоколами',
+  'hostlist': 'применять профиль к доменам из списка',
+  'hostlist-exclude': 'исключить домены из списка',
+  'hostlist-domains': 'применять профиль к указанным доменам',
+  'hostlist-exclude-domains': 'исключить указанные домены',
+  'ipset': 'применять профиль к адресам из IP-списка',
+  'ipset-exclude': 'исключить адреса из IP-списка',
+  'ipset-ip': 'применять профиль к указанному IP-адресу',
+  'ipset-exclude-ip': 'исключить указанный IP-адрес',
+  'autohostlist': 'добавлять доступные домены в автосписок',
+  'hostlist-auto': 'добавлять доступные домены в автосписок',
+  'payload': 'выбрать тип пакетов для Lua-обработки',
+  'lua-desync': 'добавить Lua-функцию в последовательность обработки',
+  'in-range': 'ограничить обработку входящими пакетами',
+  'out-range': 'ограничить обработку исходящими пакетами',
+  'name': 'задать отображаемое имя профиля',
+  'new': 'начать следующий профиль в конфигурации',
+  'skip': 'пропустить обработку этого профиля',
+};
+
+/** Replaces English nfqws2 help text with Russian context while keeping exact CLI syntax. */
+export function getRussianNfqwsOptionDescription(name: string): string {
+  return nfqwsOptionDescriptionsRu[name] ?? 'параметр nfqws2; точный формат значения задаёт справка установленной версии.';
 }
 
 /** Reports only issues that can be proven from the installed Lua catalog. */
