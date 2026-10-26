@@ -28,6 +28,12 @@ export function getRuntimeProfileListTarget(profile: NfqwsArgumentProfile, argum
   return primary ? { source: primary.source, editable: primary.editable } : null;
 }
 
+export function getRuntimeProfileSharedComponentNote(source: string): string | null {
+  if (source === 'NFQWS_ARGS_IPSET') return 'Общая переменная: изменения затронут профили «QUIC по IP» и «HTTP/HTTPS по IP».';
+  if (source === 'NFQWS_EXTRA_ARGS') return 'Общая переменная: изменения затронут профили «QUIC по сайтам» и «HTTP/HTTPS по сайтам».';
+  return null;
+}
+
 /** Filters the runtime-backed profile argument catalog by visible label, syntax, or group. */
 export function filterProfileArgumentChoices(
   choices: readonly ProfileArgumentChoice[],

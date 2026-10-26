@@ -11766,6 +11766,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn managed_profile_settings_can_update_every_constructor_source_in_one_transaction() {
+        let original = "";
+        let mut variables = std::collections::HashMap::new();
+        variables.insert(
+            "NFQWS_ARGS_UDP".to_owned(),
+            vec![
+                "--filter-udp=443".to_owned(),
+                "--payload=quic_initial".to_owned(),
+            ],
+        );
+        variables.insert(
+            "NFQWS_ARGS_QUIC".to_owned(),
+            vec![
+                "--filter-udp=443".to_owned(),
+                "--payload=quic_initial".to_owned(),
+                "--lua-desync=fake".to_owned(),
+            ],
+        );
+        variables.insert(
+            "NFQWS_ARGS_IPSET".to_owned(),
+            vec!["--ipset=lists/ipset.list".to_owned()],
+        );
+        variables.insert(
+            "NFQWS_ARGS".to_owned(),
+            vec![
+                "--filter-tcp=80,443".to_owned(),
+                "--filter-l7=tls".to_owned(),
+                "--lua-desync=fake".to_owned(),
+            ],
+        );
+        variables.insert(
+            "NFQWS_EXTRA_ARGS".to_owned(),
+            vec!["--hostlist=lists/user.list".to_owned()],
+        );
+
+        let updated = build_runtime_profile_settings_config(
+            original,
+            RuntimeProfileSettingsWrite {
+                variables,
+                revision: revision(original.as_bytes()),
+            },
+        )
+        .unwrap();
+        let document = ConfigDocument::parse(&updated).unwrap();
+        for (source, expected) in [
+            ("NFQWS_ARGS_UDP", "--filter-udp=443\n--payload=quic_initial"),
+            (
+                "NFQWS_ARGS_QUIC",
+                "--filter-udp=443\n--payload=quic_initial\n--lua-desync=fake",
+            ),
+            ("NFQWS_ARGS_IPSET", "--ipset=lists/ipset.list"),
+            (
+                "NFQWS_ARGS",
+                "--filter-tcp=80,443\n--filter-l7=tls\n--lua-desync=fake",
+            ),
+            ("NFQWS_EXTRA_ARGS", "--hostlist=lists/user.list"),
+        ] {
+            assert_eq!(
+                document.literal_or_mode_value(source).unwrap(),
+                expected,
+                "{source}"
+            );
+        }
+        let profiles = nfqws2_ui::runtime_profiles::from_config(&updated, "rev").unwrap();
+        assert_eq!(
+            profiles
+                .profiles
+                .iter()
+                .filter(|profile| !profile.editable)
+                .count(),
+            5
+        );
+        assert_eq!(profiles.profiles[0].components[0].source, "NFQWS_ARGS_UDP");
+        assert_eq!(profiles.profiles[1].components[0].source, "NFQWS_ARGS_QUIC");
+        assert_eq!(profiles.profiles[2].components[0].source, "NFQWS_ARGS_QUIC");
+        assert_eq!(profiles.profiles[3].components[0].source, "NFQWS_ARGS");
+        assert_eq!(profiles.profiles[4].components[0].source, "NFQWS_ARGS");
+    }
+
     #[tokio::test]
     async fn profile_api_lists_all_groups_and_only_custom_are_marked_editable() {
         let dir = tempfile::tempdir().unwrap();

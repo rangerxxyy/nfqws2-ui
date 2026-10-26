@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
+import { appendProfileFilterValue, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, filterProfileArgumentChoices, moveProfileStepTo, nextProfileChoiceIndex, parseLuaParameterOption, profileArgumentChoices, profileFilterValues, profileOrderWarnings, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, summarizeProfileSelection, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { navigationGroupForRoute } from './navigation';
 
@@ -745,11 +745,13 @@ function renderRuntimeProfiles() {
           const status = $('#profileStatus'); if (status) status.textContent = `Изменена ${component.source}. Применение проверит конфигурацию и перезапустит nfqws2 с откатом при ошибке.`;
         });
         label.append(textarea); componentEditors.append(label);
-        if (component.note) { const note = document.createElement('p'); note.className = 'mt-1 text-xs leading-5 text-slate-500'; note.textContent = component.note; componentEditors.append(note); }
+        const sharedNote = getRuntimeProfileSharedComponentNote(component.source);
+        if (component.note || sharedNote) { const note = document.createElement('p'); note.className = 'mt-1 text-xs leading-5 text-slate-400'; note.textContent = [component.note, sharedNote].filter(Boolean).join(' '); componentEditors.append(note); }
       }
       if (runtimeProfileEditorMode === 'builder' && editorComponents.length) {
         const details = document.createElement('details'); details.className = 'mt-3 rounded-lg border border-slate-800 px-3 py-2';
-        const summary = document.createElement('summary'); summary.className = 'cursor-pointer text-sm font-semibold text-slate-300'; summary.textContent = 'Общие списки и дополнительные настройки';
+        const summary = document.createElement('summary'); summary.className = 'cursor-pointer text-sm font-semibold text-slate-300'; summary.textContent = 'Связанные списки и дополнительные настройки';
+        details.open = true;
         details.append(summary, componentEditors); editor.append(details);
       } else editor.append(componentEditors);
     }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NfqwsArgumentProfile } from './api';
-import { filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
+import { filterProfileArgumentChoices, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, getRussianNfqwsOptionDescription, nextProfileChoiceIndex, profileArgumentChoices, profileFilterValues, profileOrderWarnings, summarizeProfileSelection, diagnoseProfileLuaArguments, getLuaProfileHelp, getLuaProfileParameterOptions, moveProfileStepTo, parseLuaParameterOption, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, updateProfileFilterValue, removeProfileFilterValue, appendProfileFilterValue, parseProfilePaste } from './profile-editor';
 
 describe('runtime profile constructor targets', () => {
   it('uses each managed profile primary config component while keeping shared scope components separate', () => {
@@ -46,6 +46,14 @@ describe('runtime profile constructor targets', () => {
     expect(getRuntimeProfileListTarget(profile([
       { source: 'NFQWS_ARGS_UDP', args: [], editable: true, note: null },
     ]), '--hostlist=lists/user.list')).toEqual({ source: 'NFQWS_ARGS_UDP', editable: true });
+  });
+
+  it('names the paired built-in profiles that share IP and site-list variables', () => {
+    expect(getRuntimeProfileSharedComponentNote('NFQWS_ARGS_IPSET')).toContain('QUIC по IP');
+    expect(getRuntimeProfileSharedComponentNote('NFQWS_ARGS_IPSET')).toContain('HTTP/HTTPS по IP');
+    expect(getRuntimeProfileSharedComponentNote('NFQWS_EXTRA_ARGS')).toContain('QUIC по сайтам');
+    expect(getRuntimeProfileSharedComponentNote('NFQWS_EXTRA_ARGS')).toContain('HTTP/HTTPS по сайтам');
+    expect(getRuntimeProfileSharedComponentNote('NFQWS_ARGS_UDP')).toBeNull();
   });
 });
 
