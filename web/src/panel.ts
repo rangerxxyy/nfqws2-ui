@@ -26,7 +26,7 @@ import { diagnosisQueueMarker, diagnosisQueueState, nextDiagnosisQueueIndex, SIT
 import { canShowToast, lifecycleMessage, toastPresentation } from './notifications';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
-import { reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName } from './profile-editor';
+import { reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
@@ -456,7 +456,7 @@ function renderRuntimeProfiles() {
   title.append(name, source); heading.append(title);
   if (profile.editable) {
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap gap-1';
-    for (const [action, label, accessible] of [['copyRuntimeProfile', 'Копия', 'Создать копию профиля'], ['moveRuntimeProfileUp', '↑', 'Переместить профиль выше'], ['moveRuntimeProfileDown', '↓', 'Переместить профиль ниже'], ['deleteRuntimeProfile', 'Удалить', 'Удалить профиль из черновика']] as const) {
+    for (const [action, label, accessible] of [['shareRuntimeProfile', 'Для чата', 'Скопировать профиль для отправки в чат'], ['copyRuntimeProfile', 'Копия', 'Создать копию профиля'], ['moveRuntimeProfileUp', '↑', 'Переместить профиль выше'], ['moveRuntimeProfileDown', '↓', 'Переместить профиль ниже'], ['deleteRuntimeProfile', 'Удалить', 'Удалить профиль из черновика']] as const) {
       const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = action; button.dataset.args = JSON.stringify([profile.id]); button.className = 'backup-action'; button.textContent = label; button.setAttribute('aria-label', accessible); if (action === 'copyRuntimeProfile') button.dataset.actionTooltip = accessible; actions.append(button);
     }
     heading.append(actions);
@@ -464,7 +464,8 @@ function renderRuntimeProfiles() {
     const actions = document.createElement('div'); actions.className = 'flex flex-wrap items-center gap-1.5';
     const copy = document.createElement('button'); copy.type = 'button'; copy.dataset.actionClick = 'copyRuntimeProfile'; copy.dataset.args = JSON.stringify([profile.id]); copy.dataset.actionTooltip = 'Скопировать в пользовательские профили для редактирования'; copy.className = 'backup-action'; copy.textContent = 'Копия';
     const lock = document.createElement('span'); lock.className = 'rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-400'; lock.textContent = 'Только просмотр';
-    actions.append(copy, lock); heading.append(actions);
+    const share = document.createElement('button'); share.type = 'button'; share.dataset.actionClick = 'shareRuntimeProfile'; share.dataset.args = JSON.stringify([profile.id]); share.dataset.actionTooltip = 'Скопировать профиль вместе с подписью версии nfqws2'; share.className = 'backup-action'; share.textContent = 'Для чата';
+    actions.append(share, copy, lock); heading.append(actions);
   }
   editor.append(heading);
   const sections: Array<[string, string[]]> = [['Фильтры', profile.filters], ['Протоколы', profile.protocols], ['Списки', profile.lists], ['Упорядоченные шаги', profile.steps]];
@@ -533,7 +534,7 @@ function renderRuntimeProfiles() {
             row.append(badge, input, controls); section.append(row); return;
           }
           const body = argument.slice('--lua-desync='.length);
-          const [functionName = '', ...parameterParts] = body.split(':');
+          const [functionName = ''] = body.split(':');
           const row = document.createElement('div'); row.className = 'grid gap-2 rounded-lg border border-slate-800 bg-slate-900/70 p-2 sm:grid-cols-[2rem_minmax(0,1fr)_auto] sm:items-start';
           const badge = document.createElement('span'); badge.className = 'grid h-6 w-6 place-items-center rounded-md bg-blue-500/15 text-xs font-bold text-blue-200'; badge.textContent = String(stepIndex + 1);
           const content = document.createElement('div'); content.className = 'grid min-w-0 gap-1.5';
@@ -541,9 +542,19 @@ function renderRuntimeProfiles() {
           functionSelect.dataset.actionChange = 'setRuntimeProfileStepFunction'; functionSelect.dataset.args = JSON.stringify([profile.id, String(argumentIndex), { source: 'value' }]); functionSelect.dataset.actionTooltip = 'Выберите Lua-функцию шага; доступность проверит nfqws2 при применении.';
           [...new Set([...functions, functionName])].sort().forEach((name) => { const option = document.createElement('option'); option.value = name; option.textContent = name; option.selected = name === functionName; functionSelect.append(option); });
           const description = document.createElement('span'); description.className = 'text-xs leading-5 text-slate-400'; description.textContent = descriptions[functionName] ?? 'Параметры шага будут проверены установленным nfqws2 при применении.';
-          const parameterInput = document.createElement('input'); parameterInput.type = 'text'; parameterInput.className = 'min-w-0 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-blue-200'; parameterInput.value = parameterParts.join(':'); parameterInput.placeholder = 'параметры шага'; parameterInput.setAttribute('aria-label', `Параметры шага ${stepIndex + 1}`);
-          parameterInput.dataset.actionChange = 'setRuntimeProfileStepParameters'; parameterInput.dataset.args = JSON.stringify([profile.id, String(argumentIndex), { source: 'value' }]);
-          content.append(functionSelect, description, parameterInput);
+          const parameterList = document.createElement('div'); parameterList.className = 'flex min-w-0 flex-wrap items-center gap-1';
+          const parameterParts = splitDesyncParameters(argument);
+          parameterParts.forEach((parameter, parameterIndex) => {
+            const [key, ...valueParts] = parameter.split('='); const hasValue = parameter.includes('=');
+            const chip = document.createElement('span'); chip.className = 'inline-flex max-w-full items-center gap-1 rounded-md border border-slate-700 bg-slate-800 px-1.5 py-1 font-mono text-xs';
+            const keyLabel = document.createElement('span'); keyLabel.className = 'text-fuchsia-300'; keyLabel.textContent = hasValue ? `${key}=` : parameter; chip.append(keyLabel);
+            if (hasValue) { const valueInput = document.createElement('input'); valueInput.type = 'text'; valueInput.className = 'min-w-8 max-w-36 bg-transparent text-blue-100 focus:outline-none'; valueInput.value = valueParts.join('='); valueInput.size = Math.min(20, Math.max(3, valueInput.value.length)); valueInput.setAttribute('aria-label', `Значение параметра ${key}`); valueInput.dataset.actionChange = 'setRuntimeProfileStepParameter'; valueInput.dataset.args = JSON.stringify([profile.id, String(argumentIndex), String(parameterIndex), { source: 'value' }]); chip.append(valueInput); }
+            const removeParameter = document.createElement('button'); removeParameter.type = 'button'; removeParameter.dataset.actionClick = 'removeRuntimeProfileStepParameter'; removeParameter.dataset.args = JSON.stringify([profile.id, String(argumentIndex), String(parameterIndex)]); removeParameter.className = 'px-0.5 text-slate-400 hover:text-white'; removeParameter.textContent = '×'; removeParameter.setAttribute('aria-label', `Убрать параметр ${key}`); chip.append(removeParameter); parameterList.append(chip);
+          });
+          const addParameterInput = document.createElement('input'); addParameterInput.type = 'text'; addParameterInput.className = 'min-h-7 min-w-36 max-w-52 rounded-md border border-slate-700 bg-slate-950 px-2 py-1 font-mono text-xs text-slate-200'; addParameterInput.placeholder = '+ параметр'; addParameterInput.setAttribute('aria-label', 'Новый параметр шага в формате key=value или флаг');
+          const addParameter = document.createElement('button'); addParameter.type = 'button'; addParameter.className = 'backup-action'; addParameter.textContent = '+ параметр'; addParameter.addEventListener('click', () => { const value = addParameterInput.value.trim(); if (value) addRuntimeProfileStepParameter(profile.id, String(argumentIndex), value); });
+          parameterList.append(addParameterInput, addParameter);
+          content.append(functionSelect, description, parameterList);
           const controls = document.createElement('div'); controls.className = 'flex items-center gap-1';
           for (const [direction, label, accessible] of [['up', '↑', 'Переместить шаг выше'], ['down', '↓', 'Переместить шаг ниже']] as const) {
             const button = document.createElement('button'); button.type = 'button'; button.dataset.actionClick = 'moveRuntimeProfileStep'; button.dataset.args = JSON.stringify([profile.id, String(stepIndex), direction]); button.className = 'backup-action'; button.textContent = label; button.setAttribute('aria-label', accessible); button.dataset.actionTooltip = accessible; button.disabled = direction === 'up' ? stepIndex === 0 : stepIndex === indexes.length - 1; controls.append(button);
@@ -627,6 +638,13 @@ function copyRuntimeProfile(id: string) {
   markRuntimeProfilesDirty();
   toast(`Создана копия профиля «${source.name}». Её можно изменить перед применением.`);
 }
+async function shareRuntimeProfile(id: string) {
+  const profile = visibleRuntimeProfiles().find((item) => item.id === id);
+  if (!profile) return toast('Профиль не найден. Обновите список профилей.', 'error');
+  const text = serializeProfileForSharing(profile.name, profile.args, status?.service.version ?? null);
+  try { await writeTextToClipboard(text); toast('Профиль скопирован для чата. Если в нём есть списки, получателю может понадобиться заменить их пути.'); }
+  catch { toast('Не удалось скопировать профиль. Проверьте доступ к буферу обмена.', 'error'); }
+}
 function pasteRuntimeProfile() {
   const modal = $('#profileImportDialog'); const input = $<HTMLTextAreaElement>('#profileImportInput');
   if (input) input.value = '';
@@ -637,16 +655,17 @@ function cancelProfileImport() {
 }
 function acceptProfileImport() {
   const raw = $<HTMLTextAreaElement>('#profileImportInput')?.value ?? '';
-  if (!raw.trim() || /[\0\r]/.test(raw) || /[;'"`$\\&|]/.test(raw)) return toast('Вставьте аргументы профиля без shell-команд и кавычек.', 'error');
-  const imported: string[][] = [[]];
-  for (const arg of raw.split(/\s+/).filter(Boolean)) {
-    if (arg === '--new' || arg.startsWith('--new=')) {
-      const name = arg.slice('--new='.length);
-      imported.push(name ? [`--name=${name}`] : []);
-    } else imported[imported.length - 1]!.push(arg);
+  const parsed = parseProfilePaste(raw);
+  if (!parsed.ok) {
+    const message = parsed.reason === 'shell-syntax' ? 'В тексте есть shell-команда, переменная или оператор. Обычные кавычки вокруг конфигурации разрешены.'
+      : parsed.reason === 'unclosed-quote' ? 'В тексте осталась незакрытая кавычка.'
+        : parsed.reason === 'profile-limit' ? 'Вставленный текст содержит больше 64 профилей.'
+          : parsed.reason === 'argument-limit' ? 'Вставленный текст превышает лимит размера или числа аргументов.'
+            : 'Не удалось найти параметры nfqws2 в тексте.';
+    return toast(message, 'error');
   }
-  if (imported[0]?.length === 0 && imported.length > 1) imported.shift();
-  if (imported.length > 64 || imported.flat().length > 8192) return toast('Вставленный набор превышает допустимый размер профилей.', 'error');
+  const imported = parsed.profiles;
+  if (runtimeProfileDraft.length + imported.length > 64 || runtimeProfileDraft.flat().length + imported.flat().length > 8192) return toast('После добавления превысится лимит 64 пользовательских профиля или 8192 аргумента.', 'error');
   runtimeProfileDraft.push(...imported); selectedRuntimeProfileId = `custom-${runtimeProfileDraft.length}`;
   cancelProfileImport(); markRuntimeProfilesDirty();
 }
@@ -665,7 +684,9 @@ function updateRuntimeProfileStep(id: string, argumentIndex: string, update: (ar
   const index = Number(id.slice('custom-'.length)); const position = Number(argumentIndex);
   const args = runtimeProfileDraft[index - 1];
   if (!args || !Number.isInteger(position) || !args[position]?.startsWith('--lua-desync=')) return;
-  args[position] = update(args[position]!); markRuntimeProfilesDirty();
+  const updated = update(args[position]!);
+  if (updated === args[position]) return;
+  args[position] = updated; markRuntimeProfilesDirty();
 }
 function renameRuntimeProfile(id: string, name: string) {
   const index = Number(id.slice('custom-'.length)) - 1; const args = runtimeProfileDraft[index];
@@ -679,6 +700,25 @@ function updateRuntimeProfileArgument(id: string, argumentIndex: string, value: 
   const updated = replaceProfileArgument(args, position, value.trim());
   if (updated[position] === args[position] && value.trim() !== args[position]) return toast('Один параметр должен оставаться единым аргументом без shell-синтаксиса.', 'error');
   runtimeProfileDraft[index - 1] = updated; markRuntimeProfilesDirty();
+}
+function addRuntimeProfileStepParameter(id: string, argumentIndex: string, parameter: string) {
+  const index = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const current = runtimeProfileDraft[index]?.[position];
+  if (!current) return;
+  const updated = appendDesyncParameter(current, parameter);
+  if (updated === current) return toast('Параметр должен быть одним ключом, значением или флагом без пробелов.', 'error');
+  updateRuntimeProfileStep(id, argumentIndex, () => updated);
+}
+function updateRuntimeProfileStepParameter(id: string, argumentIndex: string, parameterIndex: string, value: string) {
+  const index = Number(id.slice('custom-'.length)) - 1; const position = Number(argumentIndex); const current = runtimeProfileDraft[index]?.[position];
+  if (!current) return;
+  const parameter = splitDesyncParameters(current)[Number(parameterIndex)];
+  if (!parameter) return;
+  const updated = updateDesyncParameter(current, Number(parameterIndex), `${parameter.split('=')[0]}=${value}`);
+  if (updated === current && value !== parameter.slice(parameter.indexOf('=') + 1)) return toast('Значение параметра должно быть одним аргументом без пробелов и shell-синтаксиса.', 'error');
+  updateRuntimeProfileStep(id, argumentIndex, () => updated);
+}
+function removeRuntimeProfileStepParameter(id: string, argumentIndex: string, parameterIndex: string) {
+  updateRuntimeProfileStep(id, argumentIndex, (argument) => removeDesyncParameter(argument, Number(parameterIndex)));
 }
 function moveRuntimeProfileStep(id: string, stepIndex: string, direction: string) {
   const index = Number(id.slice('custom-'.length)) - 1; const step = Number(stepIndex);
@@ -3273,6 +3313,7 @@ function bindPrototypeActions() {
     restoreSnapshot: (id: string) => void restoreSnapshot(id),
     pinSnapshot: (id: string, pinned: string | boolean) => void (async () => { try { await nfqwsSnapshots.pin(id, pinned === true || pinned === 'true'); await loadBackups(); } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось закрепить снимок.', 'error'); } })(),
     addRuntimeProfile: () => addRuntimeProfile(),
+    shareRuntimeProfile: (id: string) => void shareRuntimeProfile(id),
     copyRuntimeProfile: (id: string) => copyRuntimeProfile(id),
     pasteRuntimeProfile: () => pasteRuntimeProfile(),
     acceptProfileImport: () => acceptProfileImport(),
@@ -3282,6 +3323,8 @@ function bindPrototypeActions() {
     appendRuntimeProfileArgument: (argument: string) => appendRuntimeProfileArgument(argument),
     setRuntimeProfileStepFunction: (id: string, index: string, functionName: string) => updateRuntimeProfileStep(id, index, (argument) => replaceDesyncFunction(argument, functionName)),
     setRuntimeProfileStepParameters: (id: string, index: string, parameters: string) => updateRuntimeProfileStep(id, index, (argument) => replaceDesyncParameters(argument, parameters)),
+    setRuntimeProfileStepParameter: (id: string, index: string, parameterIndex: string, value: string) => updateRuntimeProfileStepParameter(id, index, parameterIndex, value),
+    removeRuntimeProfileStepParameter: (id: string, index: string, parameterIndex: string) => removeRuntimeProfileStepParameter(id, index, parameterIndex),
     renameRuntimeProfile: (id: string, name: string) => renameRuntimeProfile(id, name),
     updateRuntimeProfileArgument: (id: string, index: string, value: string) => updateRuntimeProfileArgument(id, index, value),
     moveRuntimeProfileStep: (id: string, index: string, direction: string) => moveRuntimeProfileStep(id, index, direction),

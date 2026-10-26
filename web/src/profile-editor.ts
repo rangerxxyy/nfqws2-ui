@@ -32,6 +32,36 @@ export function replaceDesyncParameters(argument: string, parameters: string): s
   return `${prefix}${functionName}${value ? `:${value}` : ''}`;
 }
 
+export function splitDesyncParameters(argument: string): string[] {
+  if (!argument.startsWith('--lua-desync=')) return [];
+  return argument.slice('--lua-desync='.length).split(':').slice(1).filter(Boolean);
+}
+
+export function updateDesyncParameter(argument: string, index: number, parameter: string): string {
+  const params = splitDesyncParameters(argument);
+  if (!Number.isInteger(index) || index < 0 || index >= params.length || !isOneDesyncParameter(parameter)) return argument;
+  params[index] = parameter;
+  return replaceDesyncParameters(argument, params.join(':'));
+}
+
+export function removeDesyncParameter(argument: string, index: number): string {
+  const params = splitDesyncParameters(argument);
+  if (!Number.isInteger(index) || index < 0 || index >= params.length) return argument;
+  params.splice(index, 1);
+  return replaceDesyncParameters(argument, params.join(':'));
+}
+
+export function appendDesyncParameter(argument: string, parameter: string): string {
+  if (!isOneDesyncParameter(parameter)) return argument;
+  const params = splitDesyncParameters(argument);
+  params.push(parameter);
+  return replaceDesyncParameters(argument, params.join(':'));
+}
+
+function isOneDesyncParameter(value: string): boolean {
+  return Boolean(value) && !/[\s:\0\r\n'"`$\\;&|]/.test(value);
+}
+
 export function replaceProfileName(args: readonly string[], name: string): string[] {
   const value = name.trim();
   if (value && (!/^[\p{L}\p{N}_.-]{1,64}$/u.test(value))) return [...args];
@@ -46,4 +76,70 @@ export function replaceProfileArgument(args: readonly string[], index: number, a
   const result = [...args];
   result[index] = argument;
   return result;
+}
+
+export function serializeProfileForSharing(name: string, args: readonly string[], version: string | null): string {
+  const versionLabel = version ? ` v${version.replace(/^v/i, '')}` : '';
+  return `# nfqws2${versionLabel} · ${name}\n${args.join(' ')}`;
+}
+
+export type ProfilePasteResult =
+  | { ok: true; profiles: string[][] }
+  | { ok: false; reason: 'empty' | 'shell-syntax' | 'unclosed-quote' | 'profile-limit' | 'argument-limit' };
+
+const PROFILE_ASSIGNMENTS = new Set(['NFQWS_ARGS_CUSTOM', 'NFQWS_ARGS', 'NFQWS_ARGS_UDP', 'NFQWS_ARGS_IPSET', 'NFQWS_EXTRA_ARGS']);
+
+export function parseProfilePaste(source: string): ProfilePasteResult {
+  if (!source.trim()) return { ok: false, reason: 'empty' };
+  if (source.length > 512 * 1024 || source.includes('\0')) return { ok: false, reason: 'argument-limit' };
+  const text = source.replace(/\\[ \t]*\r?\n/g, ' ');
+  const tokens: string[] = [];
+  let token = '';
+  let active = false;
+  let quote: "'" | '"' | null = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!;
+    if ('$`;&|<>\\'.includes(character)) return { ok: false, reason: 'shell-syntax' };
+    if (quote) {
+      if (character === quote) quote = null;
+      else token += character;
+      active = true;
+      continue;
+    }
+    if (character === "'" || character === '"') { quote = character; active = true; continue; }
+    if (character === '#' && !active) {
+      while (index < text.length && text[index] !== '\n') index += 1;
+      continue;
+    }
+    if (/\s/.test(character)) {
+      if (active) { tokens.push(token); token = ''; active = false; }
+      continue;
+    }
+    token += character; active = true;
+  }
+  if (quote) return { ok: false, reason: 'unclosed-quote' };
+  if (active) tokens.push(token);
+
+  const args: string[] = [];
+  for (const item of tokens) {
+    const assignment = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(item);
+    if (assignment && PROFILE_ASSIGNMENTS.has(assignment[1]!)) {
+      args.push(...(assignment[2] ?? '').split(/\s+/).filter(Boolean));
+      continue;
+    }
+    if (item.startsWith('--')) args.push(item);
+    else if (/^[a-z_][a-z0-9_]*:\S/.test(item)) args.push(`--lua-desync=${item}`);
+  }
+  if (args.length > 8192) return { ok: false, reason: 'argument-limit' };
+  const profiles: string[][] = [[]];
+  for (const argument of args) {
+    if (argument === '--new' || argument.startsWith('--new=')) {
+      const name = argument.slice('--new='.length);
+      profiles.push(name ? [`--name=${name}`] : []);
+    } else profiles[profiles.length - 1]!.push(argument);
+  }
+  if (profiles[0]?.length === 0 && profiles.length > 1) profiles.shift();
+  if (profiles.length > 64) return { ok: false, reason: 'profile-limit' };
+  const nonEmpty = profiles.filter((profile) => profile.length > 0);
+  return nonEmpty.length ? { ok: true, profiles: nonEmpty } : { ok: false, reason: 'empty' };
 }

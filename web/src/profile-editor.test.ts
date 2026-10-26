@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName } from './profile-editor';
+import { reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 
 describe('reorderProfileSteps', () => {
   it('moves ordered payload and desync steps while leaving filters in place', () => {
@@ -36,6 +36,14 @@ describe('desync step editing', () => {
     expect(replaceDesyncParameters('--lua-desync=multisplit:pos=1', 'pos=2:midsld'))
       .toBe('--lua-desync=multisplit:pos=2:midsld');
   });
+
+  it('edits individual key-value parameters, flags and additions without changing the function', () => {
+    const argument = '--lua-desync=hostfakesplit:host=google.com:tcp_md5';
+    expect(splitDesyncParameters(argument)).toEqual(['host=google.com', 'tcp_md5']);
+    expect(updateDesyncParameter(argument, 0, 'host=example.org')).toBe('--lua-desync=hostfakesplit:host=example.org:tcp_md5');
+    expect(removeDesyncParameter(argument, 1)).toBe('--lua-desync=hostfakesplit:host=google.com');
+    expect(appendDesyncParameter(argument, 'repeats=3')).toBe('--lua-desync=hostfakesplit:host=google.com:tcp_md5:repeats=3');
+  });
 });
 
 describe('profile fields', () => {
@@ -56,5 +64,30 @@ describe('profile fields', () => {
       .toEqual(['--filter-tcp=443']);
     expect(replaceProfileName(['--filter-tcp=443'], 'bad name'))
       .toEqual(['--filter-tcp=443']);
+  });
+});
+
+describe('profile sharing', () => {
+  it('creates a chat-friendly header with the exact ordered arguments', () => {
+    expect(serializeProfileForSharing('HTTP/HTTPS по сайтам', ['--filter-tcp=443', '--payload=tls_client_hello', '--lua-desync=fake'], '1.23.1'))
+      .toBe('# nfqws2 v1.23.1 · HTTP/HTTPS по сайтам\n--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake');
+  });
+});
+
+describe('profile paste parsing', () => {
+  it('accepts quoted config lines, comments, continuations, Lua shorthand and named profiles', () => {
+    const pasted = '# profile from chat\nNFQWS_ARGS_CUSTOM="--filter-tcp=443 \\\n      --lua-desync=hostfakesplit:host=example.com"\n--new=video --filter-tcp=80 fake:blob=tls_clienthello';
+    expect(parseProfilePaste(pasted)).toEqual({
+      ok: true,
+      profiles: [
+        ['--filter-tcp=443', '--lua-desync=hostfakesplit:host=example.com'],
+        ['--name=video', '--filter-tcp=80', '--lua-desync=fake:blob=tls_clienthello'],
+      ],
+    });
+  });
+
+  it('rejects shell operators and expansion syntax even when quoted', () => {
+    expect(parseProfilePaste('--filter-tcp=443; reboot')).toMatchObject({ ok: false, reason: 'shell-syntax' });
+    expect(parseProfilePaste('"$(reboot)"')).toMatchObject({ ok: false, reason: 'shell-syntax' });
   });
 });
