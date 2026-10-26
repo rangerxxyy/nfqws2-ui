@@ -407,7 +407,7 @@ function profileFromArgs(index: number, args: string[], editable: boolean): Nfqw
   const name = explicitName || (editable ? `Свой профиль ${index}` : `Профиль ${index}`);
   return {
     id: editable ? `custom-${index}` : `draft-managed-${index}`, index, name, source, editable, args,
-    filters: args.filter((argument) => argument.startsWith('--filter-')),
+    filters: args.filter((argument) => argument.startsWith('--filter-') && !argument.startsWith('--filter-7=') && !argument.startsWith('--filter-l7=')),
     protocols: args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
     payloads: args.filter((argument) => argument.startsWith('--payload=')),
     lists: args.filter((argument) => argument.startsWith('--hostlist') || argument.startsWith('--ipset') || argument.startsWith('--autohostlist')),
@@ -418,6 +418,7 @@ function visibleRuntimeProfiles(): NfqwsArgumentProfile[] {
   if (!runtimeProfilesState) return [];
   const managed = runtimeProfilesState.profiles.filter((profile) => !profile.editable).map((profile) => ({
     ...profile,
+    filters: profile.args.filter((argument) => argument.startsWith('--filter-') && !argument.startsWith('--filter-7=') && !argument.startsWith('--filter-l7=')),
     protocols: profile.args.filter((argument) => argument.startsWith('--filter-7=') || argument.startsWith('--filter-l7=')),
     payloads: profile.args.filter((argument) => argument.startsWith('--payload=')),
     steps: profile.args.filter((argument) => argument.startsWith('--lua-desync=') || argument.startsWith('--payload=') || argument.startsWith('--in-range=') || argument.startsWith('--out-range=')),

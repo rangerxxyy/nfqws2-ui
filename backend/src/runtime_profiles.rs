@@ -358,7 +358,11 @@ fn describe_profile(
     let (mut filters, mut protocols, mut payloads, mut lists, mut steps) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for arg in &args {
-        if arg.starts_with("--filter-") && filters.len() < 32 {
+        if arg.starts_with("--filter-")
+            && !arg.starts_with("--filter-7=")
+            && !arg.starts_with("--filter-l7=")
+            && filters.len() < 32
+        {
             filters.push(arg.clone());
         }
         if (arg.starts_with("--filter-7=") || arg.starts_with("--filter-l7="))
@@ -615,13 +619,14 @@ mod tests {
     #[test]
     fn profile_summary_separates_match_protocols_from_packet_types_and_ordered_steps() {
         let response = from_config(
-            "NFQWS_ARGS_CUSTOM=\"--filter-l7=tls --payload=tls_client_hello --out-range=<n2 --lua-desync=fake --in-range=2\"\n",
+            "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --out-range=<n2 --lua-desync=fake --in-range=2\"\n",
             "rev",
         )
         .unwrap();
         let profile = &response.profiles[0];
 
         assert_eq!(profile.protocols, ["--filter-l7=tls"]);
+        assert_eq!(profile.filters, ["--filter-tcp=443"]);
         assert_eq!(profile.payloads, ["--payload=tls_client_hello"]);
         assert_eq!(
             profile.steps,
