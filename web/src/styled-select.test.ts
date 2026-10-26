@@ -45,4 +45,9 @@ describe('styled select navigation helpers', () => {
     expect(shouldCloseStyledSelectOnFocusOut(true, true)).toBe(false);
     expect(shouldCloseStyledSelectOnFocusOut(false, false)).toBe(false);
   });
+
+  it('keeps the menu open while a pointer selection is being completed', () => {
+    expect(shouldCloseStyledSelectOnFocusOut(true, false, true)).toBe(false);
+    expect(shouldCloseStyledSelectOnFocusOut(true, false, false)).toBe(true);
+  });
 });

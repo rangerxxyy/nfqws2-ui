@@ -35,8 +35,8 @@ export function styledSelectMenuWidth(triggerWidth: number, minimumWidth: number
   return Math.max(0, Math.min(preferred, viewportWidth - edge * 2));
 }
 
-export function shouldCloseStyledSelectOnFocusOut(isOpen: boolean, focusRemainsInControl: boolean): boolean {
-  return isOpen && !focusRemainsInControl;
+export function shouldCloseStyledSelectOnFocusOut(isOpen: boolean, focusRemainsInControl: boolean, pointerSelectionPending = false): boolean {
+  return isOpen && !focusRemainsInControl && !pointerSelectionPending;
 }
 
 type StyledSelectState = {
@@ -46,6 +46,7 @@ type StyledSelectState = {
   menu: HTMLDivElement;
   activeIndex: number;
   open: boolean;
+  pointerSelectionPending: boolean;
   search: string;
   searchTimer: number | null;
   menuClosingTimer: number | null;
@@ -118,6 +119,7 @@ function closeMenu(state: StyledSelectState) {
 function chooseOption(state: StyledSelectState, index: number) {
   const option = state.select.options.item(index);
   if (!option || option.disabled || state.select.disabled) return;
+  state.pointerSelectionPending = false;
   const changed = state.select.value !== option.value;
   state.select.value = option.value;
   closeMenu(state);
@@ -258,7 +260,7 @@ function installOne(select: HTMLSelectElement) {
   const chevron = wrapper.nextElementSibling;
   if (chevron instanceof SVGElement && chevron.classList.contains('trace-protocol-chevron')) chevron.setAttribute('hidden', '');
 
-  const state: StyledSelectState = { select, wrapper, trigger, menu, activeIndex: select.selectedIndex, open: false, search: '', searchTimer: null, menuClosingTimer: null, observer: new MutationObserver(() => refreshState(state)) };
+  const state: StyledSelectState = { select, wrapper, trigger, menu, activeIndex: select.selectedIndex, open: false, pointerSelectionPending: false, search: '', searchTimer: null, menuClosingTimer: null, observer: new MutationObserver(() => refreshState(state)) };
   states.set(select, state);
   activeStates.add(state);
   state.observer.observe(select, { attributes: true, childList: true, subtree: true, characterData: true, attributeFilter: ['disabled', 'label', 'value', 'selected'] });
@@ -287,8 +289,18 @@ function installOne(select: HTMLSelectElement) {
   trigger.addEventListener('focusout', (event) => {
     const nextTarget = event.relatedTarget;
     const focusRemainsInControl = nextTarget instanceof Node && (wrapper.contains(nextTarget) || menu.contains(nextTarget));
-    if (shouldCloseStyledSelectOnFocusOut(state.open, focusRemainsInControl)) closeMenu(state);
+    if (shouldCloseStyledSelectOnFocusOut(state.open, focusRemainsInControl, state.pointerSelectionPending)) closeMenu(state);
   });
+  menu.addEventListener('pointerdown', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('.styled-select-option')) return;
+    state.pointerSelectionPending = true;
+    // Menu options are non-focusable; suppress the browser's default focus move
+    // so the trigger does not close the menu before the option's click fires.
+    event.preventDefault();
+  });
+  menu.addEventListener('pointerup', () => { state.pointerSelectionPending = false; });
+  menu.addEventListener('pointercancel', () => { state.pointerSelectionPending = false; });
   trigger.addEventListener('keydown', (event) => {
     const models = optionModels(select);
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
