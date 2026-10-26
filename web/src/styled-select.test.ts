@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findEnabledOptionByPrefix, nextEnabledOption, styledSelectMenuMaxHeight, styledSelectMenuSide, styledSelectMenuWidth, type StyledOption } from './styled-select';
+import { findEnabledOptionByPrefix, nextEnabledOption, shouldCloseStyledSelectOnFocusOut, styledSelectMenuMaxHeight, styledSelectMenuSide, styledSelectMenuWidth, type StyledOption } from './styled-select';
 
 const options: StyledOption[] = [
   { value: '', label: 'Выберите', disabled: true },
@@ -38,5 +38,11 @@ describe('styled select navigation helpers', () => {
     expect(styledSelectMenuWidth(225, 360, 1200)).toBe(360);
     expect(styledSelectMenuWidth(225, 360, 340)).toBe(324);
     expect(styledSelectMenuWidth(225, 0, 1200)).toBe(225);
+  });
+
+  it('closes an open menu when keyboard focus leaves its trigger', () => {
+    expect(shouldCloseStyledSelectOnFocusOut(true, false)).toBe(true);
+    expect(shouldCloseStyledSelectOnFocusOut(true, true)).toBe(false);
+    expect(shouldCloseStyledSelectOnFocusOut(false, false)).toBe(false);
   });
 });

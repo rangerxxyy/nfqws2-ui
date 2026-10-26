@@ -35,6 +35,10 @@ export function styledSelectMenuWidth(triggerWidth: number, minimumWidth: number
   return Math.max(0, Math.min(preferred, viewportWidth - edge * 2));
 }
 
+export function shouldCloseStyledSelectOnFocusOut(isOpen: boolean, focusRemainsInControl: boolean): boolean {
+  return isOpen && !focusRemainsInControl;
+}
+
 type StyledSelectState = {
   select: HTMLSelectElement;
   wrapper: HTMLDivElement;
@@ -279,6 +283,11 @@ function installOne(select: HTMLSelectElement) {
       state.activeIndex = -1;
       refreshState(state);
     }
+  });
+  trigger.addEventListener('focusout', (event) => {
+    const nextTarget = event.relatedTarget;
+    const focusRemainsInControl = nextTarget instanceof Node && (wrapper.contains(nextTarget) || menu.contains(nextTarget));
+    if (shouldCloseStyledSelectOnFocusOut(state.open, focusRemainsInControl)) closeMenu(state);
   });
   trigger.addEventListener('keydown', (event) => {
     const models = optionModels(select);
