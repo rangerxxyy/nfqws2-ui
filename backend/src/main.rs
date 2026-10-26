@@ -9710,11 +9710,11 @@ fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
         // Some nfqws2 builds wrap help descriptions at the terminal width.
         // Join continuation lines so value lists (notably --payload/--filter-l7)
         // are complete even when the command inherits a narrow terminal.
-        if !trimmed.is_empty() {
-            if let Some((previous, _)) = logical_options.last_mut() {
-                previous.push(' ');
-                previous.push_str(trimmed);
-            }
+        if !trimmed.is_empty()
+            && let Some((previous, _)) = logical_options.last_mut()
+        {
+            previous.push(' ');
+            previous.push_str(trimmed);
         }
     }
     for (line, section) in logical_options {
@@ -11393,13 +11393,12 @@ mod tests {
                 .global
         );
         assert!(
-            catalog
+            !catalog
                 .options
                 .iter()
                 .find(|option| option.name == "daemon")
                 .unwrap()
                 .takes_value
-                == false
         );
     }
 

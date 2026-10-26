@@ -32,11 +32,10 @@ fn lua_argument_key_after_reference(value: &str) -> Option<(&str, usize)> {
     } else if let Some(rest) = value.strip_prefix("['") {
         let length = rest.find("']")?;
         (rest.get(..length)?, length + 4)
-    } else if let Some(rest) = value.strip_prefix("[\"") {
+    } else {
+        let rest = value.strip_prefix("[\"")?;
         let length = rest.find("\"]")?;
         (rest.get(..length)?, length + 4)
-    } else {
-        return None;
     };
     (!candidate.is_empty()
         && candidate
@@ -165,107 +164,105 @@ pub fn parse_lua_catalog(file: &str, source: &str) -> Vec<LuaFunctionInfo> {
             }
             continue;
         }
-        if let Some(signature) = line.strip_prefix("function ") {
-            if let Some((name, signature)) = signature.split_once('(')
-                && signature.split_once(')').is_some_and(|(parameters, _)| {
-                    parameters
-                        .split(',')
-                        .map(str::trim)
-                        .take(2)
-                        .eq(["ctx", "desync"])
-                })
-                && !name.is_empty()
-                && name.len() <= 48
-                && name
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte.is_ascii_digit())
-            {
-                let mut arguments = Vec::new();
-                let mut required = Vec::new();
-                let mut function_docs = Vec::new();
-                let mut standard_groups = Vec::new();
-                for doc in &docs {
-                    if let Some(value) = doc
-                        .strip_prefix("arg")
-                        .and_then(|value| value.trim_start().strip_prefix(':'))
-                    {
-                        arguments.push(value.trim().to_string());
-                    } else if let Some(value) = doc
-                        .strip_prefix("standard args")
-                        .and_then(|value| value.trim_start().strip_prefix(':'))
-                    {
-                        let (groups, note) =
-                            value.trim().split_once('.').unwrap_or((value.trim(), ""));
-                        standard_groups.extend(
-                            groups
-                                .split(',')
-                                .map(str::trim)
-                                .filter(|name| !name.is_empty())
-                                .map(|name| name.replace(' ', "_")),
-                        );
-                        if !note.trim().is_empty() {
-                            function_docs.push(note.trim().to_string());
-                        }
-                    } else if !doc.trim().is_empty() && !doc.starts_with("standard args:") {
-                        function_docs.push(doc.trim().to_string());
+        if let Some(signature) = line.strip_prefix("function ")
+            && let Some((name, signature)) = signature.split_once('(')
+            && signature.split_once(')').is_some_and(|(parameters, _)| {
+                parameters
+                    .split(',')
+                    .map(str::trim)
+                    .take(2)
+                    .eq(["ctx", "desync"])
+            })
+            && !name.is_empty()
+            && name.len() <= 48
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte.is_ascii_digit())
+        {
+            let mut arguments = Vec::new();
+            let mut required = Vec::new();
+            let mut function_docs = Vec::new();
+            let mut standard_groups = Vec::new();
+            for doc in &docs {
+                if let Some(value) = doc
+                    .strip_prefix("arg")
+                    .and_then(|value| value.trim_start().strip_prefix(':'))
+                {
+                    arguments.push(value.trim().to_string());
+                } else if let Some(value) = doc
+                    .strip_prefix("standard args")
+                    .and_then(|value| value.trim_start().strip_prefix(':'))
+                {
+                    let (groups, note) = value.trim().split_once('.').unwrap_or((value.trim(), ""));
+                    standard_groups.extend(
+                        groups
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|name| !name.is_empty())
+                            .map(|name| name.replace(' ', "_")),
+                    );
+                    if !note.trim().is_empty() {
+                        function_docs.push(note.trim().to_string());
                     }
+                } else if !doc.trim().is_empty() && !doc.starts_with("standard args:") {
+                    function_docs.push(doc.trim().to_string());
                 }
-                for body_line in lines.iter().skip(index + 1).take(4096) {
-                    let trimmed_body_line = body_line.trim();
-                    if body_line.len() == body_line.trim_start().len()
-                        && (trimmed_body_line.starts_with("function ")
-                            || trimmed_body_line.starts_with("local function "))
-                    {
-                        break;
-                    }
-                    let mut rest = *body_line;
-                    while let Some(position) = rest.find("desync.arg") {
-                        rest = &rest[position + "desync.arg".len()..];
-                        let Some((key, consumed)) = lua_argument_key_after_reference(rest) else {
-                            continue;
-                        };
-                        let already_documented = arguments.iter().any(|argument| {
-                            argument
-                                .split([' ', '—', ':', '='])
-                                .next()
-                                .is_some_and(|documented| documented == key)
-                        });
-                        if !already_documented {
-                            arguments.push(format!("{key} — обнаружен в коде функции"));
-                        }
-                        rest = &rest[consumed..];
-                    }
-                    for marker in ["'", "\""] {
-                        let needle = format!("{marker} arg required");
-                        let mut rest = *body_line;
-                        while let Some(position) = rest.find(&needle) {
-                            let before = &rest[..position];
-                            if let Some(start) = before.rfind(marker) {
-                                let argument = &before[start + 1..];
-                                if !argument.is_empty()
-                                    && argument
-                                        .bytes()
-                                        .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
-                                {
-                                    required.push(argument.to_string());
-                                }
-                            }
-                            rest = &rest[position + needle.len()..];
-                        }
-                    }
-                }
-                required.sort();
-                required.dedup();
-                result.push(LuaFunctionInfo {
-                    name: name.to_string(),
-                    file: file.to_string(),
-                    docs: function_docs,
-                    arguments,
-                    file_arguments: Vec::new(),
-                    standard_groups,
-                    required,
-                });
             }
+            for body_line in lines.iter().skip(index + 1).take(4096) {
+                let trimmed_body_line = body_line.trim();
+                if body_line.len() == body_line.trim_start().len()
+                    && (trimmed_body_line.starts_with("function ")
+                        || trimmed_body_line.starts_with("local function "))
+                {
+                    break;
+                }
+                let mut rest = *body_line;
+                while let Some(position) = rest.find("desync.arg") {
+                    rest = &rest[position + "desync.arg".len()..];
+                    let Some((key, consumed)) = lua_argument_key_after_reference(rest) else {
+                        continue;
+                    };
+                    let already_documented = arguments.iter().any(|argument| {
+                        argument
+                            .split([' ', '—', ':', '='])
+                            .next()
+                            .is_some_and(|documented| documented == key)
+                    });
+                    if !already_documented {
+                        arguments.push(format!("{key} — обнаружен в коде функции"));
+                    }
+                    rest = &rest[consumed..];
+                }
+                for marker in ["'", "\""] {
+                    let needle = format!("{marker} arg required");
+                    let mut rest = *body_line;
+                    while let Some(position) = rest.find(&needle) {
+                        let before = &rest[..position];
+                        if let Some(start) = before.rfind(marker) {
+                            let argument = &before[start + 1..];
+                            if !argument.is_empty()
+                                && argument
+                                    .bytes()
+                                    .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+                            {
+                                required.push(argument.to_string());
+                            }
+                        }
+                        rest = &rest[position + needle.len()..];
+                    }
+                }
+            }
+            required.sort();
+            required.dedup();
+            result.push(LuaFunctionInfo {
+                name: name.to_string(),
+                file: file.to_string(),
+                docs: function_docs,
+                arguments,
+                file_arguments: Vec::new(),
+                standard_groups,
+                required,
+            });
         }
         docs.clear();
     }
