@@ -462,6 +462,31 @@ fn curl_args() -> Vec<String> {
 }
 
 fn monitor_curl_args(host: &str, ip: std::net::Ipv4Addr) -> Vec<String> {
+    monitor_curl_args_with_local_ports(host, ip, None)
+}
+
+const MONITOR_POLICY_SOURCE_PORTS: &str = "41000-41099";
+
+pub fn monitor_policy_mark(
+    config: &str,
+    firewall_snapshot: &str,
+) -> Result<Option<String>, String> {
+    let document = crate::config_document::ConfigDocument::parse(config)?;
+    if !document.contains_assignment("POLICY_NAME") {
+        return Ok(None);
+    }
+    let policy_name = document.literal_value("POLICY_NAME")?;
+    if policy_name.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(crate::site_trace::policy_route_mark(firewall_snapshot))
+}
+
+fn monitor_curl_args_with_local_ports(
+    host: &str,
+    ip: std::net::Ipv4Addr,
+    local_ports: Option<&str>,
+) -> Vec<String> {
     let mut args = curl_args();
     args.extend([
         "--ipv4".into(),
@@ -486,6 +511,13 @@ fn monitor_curl_args(host: &str, ip: std::net::Ipv4Addr) -> Vec<String> {
         "\\nNFQWS2_MON|%{http_code}|%{time_connect}|%{time_appconnect}|%{time_starttransfer}|%{time_total}|%{size_download}".into(),
         format!("https://{host}/"),
     ]);
+    if let Some(local_ports) = local_ports {
+        let url_index = args.len() - 1;
+        args.splice(
+            url_index..url_index,
+            ["--local-port".into(), local_ports.into()],
+        );
+    }
     args
 }
 
@@ -504,7 +536,7 @@ fn monitor_should_test_upload(received_bytes: u64, status: &str) -> bool {
 }
 
 pub fn monitor_probe_needs_fallback(status: &str) -> bool {
-    status != "ok"
+    matches!(status, "warning" | "error")
 }
 
 fn monitor_upload_stall_confirmed(exit_code: i32, appconnect_seconds: Option<f64>) -> bool {
@@ -512,7 +544,7 @@ fn monitor_upload_stall_confirmed(exit_code: i32, appconnect_seconds: Option<f64
         && appconnect_seconds.is_some_and(|seconds| seconds.is_finite() && seconds > 0.0)
 }
 
-fn unavailable_monitor_result(detail: String) -> MonitorProbeResult {
+pub fn unavailable_monitor_result(detail: String) -> MonitorProbeResult {
     let steps = ["tcp", "tls", "http", "transfer"]
         .into_iter()
         .map(|id| DiagnosticStep::new(id, "unavailable", detail.clone()))
@@ -701,14 +733,31 @@ async fn monitor_probe_with_program(
     program: &str,
     host: &str,
     ip: std::net::Ipv4Addr,
+    policy_mark: Option<&str>,
 ) -> MonitorProbeResult {
-    let args = monitor_curl_args(host, ip);
+    let policy_route = if let Some(mark) = policy_mark {
+        match crate::site_trace::install_policy_probe_route(mark).await {
+            Ok(route) => Some(route),
+            Err(error) => {
+                return unavailable_monitor_result(format!(
+                    "Не удалось подготовить policy-маршрут проверки; запрос не отправлен: {error}"
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let local_ports = policy_mark.map(|_| MONITOR_POLICY_SOURCE_PORTS);
+    let args = local_ports.map_or_else(
+        || monitor_curl_args(host, ip),
+        |ports| monitor_curl_args_with_local_ports(host, ip, Some(ports)),
+    );
     let mut result = match capture(program, &args, 10, 4096).await {
         Ok((exit_code, output)) => parse_monitor_curl(exit_code, &output),
-        Err(error) => return unavailable_monitor_result(error),
+        Err(error) => unavailable_monitor_result(error),
     };
     if monitor_should_test_upload(result.received_bytes, result.current.status) {
-        match monitor_upload_stalled(host, ip).await {
+        match monitor_upload_stalled(host, ip, local_ports).await {
             Some(true) => {
                 result.current.status = "warning";
                 result.current.detail = format!(
@@ -732,17 +781,59 @@ async fn monitor_probe_with_program(
             None => {}
         }
     }
+    if let Some(route) = policy_route
+        && let Err(error) = route.cleanup().await
+    {
+        result.current.status = "warning";
+        result.current.detail = format!(
+            "{} · не удалось подтвердить удаление временных policy-правил: {error}",
+            result.current.detail
+        );
+        result.summary = result.current.detail.clone();
+    }
     result
 }
 
 pub async fn monitor_probe(host: &str, ip: std::net::Ipv4Addr) -> MonitorProbeResult {
-    monitor_probe_with_program(curl_program(), host, ip).await
+    monitor_probe_with_program(curl_program(), host, ip, None).await
 }
 
-async fn monitor_upload_stalled(host: &str, ip: std::net::Ipv4Addr) -> Option<bool> {
+pub async fn monitor_probe_with_policy(
+    host: &str,
+    ip: std::net::Ipv4Addr,
+    policy_mark: &str,
+) -> MonitorProbeResult {
+    monitor_probe_with_program(curl_program(), host, ip, Some(policy_mark)).await
+}
+
+async fn monitor_upload_stalled(
+    host: &str,
+    ip: std::net::Ipv4Addr,
+    local_ports: Option<&str>,
+) -> Option<bool> {
     let mut payload = vec![0_u8; MONITOR_VOLUME_TEST_BYTES];
     getrandom::fill(&mut payload).ok()?;
     let cache_buster = hex::encode(&payload[..8]);
+    let args = monitor_upload_curl_args(host, ip, &cache_buster, local_ports);
+    let (exit_code, output) = capture_with_input(curl_program(), &args, &payload, 10, 1024)
+        .await
+        .ok()?;
+    let appconnect_seconds = String::from_utf8_lossy(&output)
+        .rsplit_once("\nNFQWS2_MON_UPLOAD|")
+        .and_then(|(_, value)| value.trim().parse::<f64>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0 && *seconds <= 60.0);
+    Some(monitor_upload_stall_confirmed(
+        exit_code,
+        appconnect_seconds,
+    ))
+}
+
+fn monitor_upload_curl_args(
+    host: &str,
+    ip: std::net::Ipv4Addr,
+    cache_buster: &str,
+    local_ports: Option<&str>,
+) -> Vec<String> {
     let mut args = curl_args();
     args.extend([
         "--ipv4".into(),
@@ -767,17 +858,14 @@ async fn monitor_upload_stalled(host: &str, ip: std::net::Ipv4Addr) -> Option<bo
         "\\nNFQWS2_MON_UPLOAD|%{time_appconnect}".into(),
         format!("https://{host}/?t={cache_buster}"),
     ]);
-    let (exit_code, output) = capture_with_input(curl_program(), &args, &payload, 10, 1024)
-        .await
-        .ok()?;
-    let appconnect_seconds = String::from_utf8_lossy(&output)
-        .rsplit_once("\nNFQWS2_MON_UPLOAD|")
-        .and_then(|(_, value)| value.trim().parse::<f64>().ok())
-        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0 && *seconds <= 60.0);
-    Some(monitor_upload_stall_confirmed(
-        exit_code,
-        appconnect_seconds,
-    ))
+    if let Some(local_ports) = local_ports {
+        let url_index = args.len() - 1;
+        args.splice(
+            url_index..url_index,
+            ["--local-port".into(), local_ports.into()],
+        );
+    }
+    args
 }
 
 async fn capture_with_input(
@@ -1638,7 +1726,7 @@ mod tests {
         assert!(!monitor_probe_needs_fallback("ok"));
         assert!(monitor_probe_needs_fallback("warning"));
         assert!(monitor_probe_needs_fallback("error"));
-        assert!(monitor_probe_needs_fallback("unavailable"));
+        assert!(!monitor_probe_needs_fallback("unavailable"));
     }
 
     #[test]
@@ -1663,7 +1751,8 @@ mod tests {
     async fn monitor_probe_keeps_curl_launch_errors_as_unavailable_instead_of_network_failures() {
         let program = "nfqws2-ui-test-curl-that-does-not-exist";
         let unavailable =
-            monitor_probe_with_program(program, "example.com", "8.8.8.8".parse().unwrap()).await;
+            monitor_probe_with_program(program, "example.com", "8.8.8.8".parse().unwrap(), None)
+                .await;
 
         let message = format!("Утилита {program} недоступна");
         assert_eq!(unavailable.summary, message);
@@ -1703,6 +1792,60 @@ mod tests {
                 .any(|pair| pair == ["--connect-timeout", "5"])
         );
         assert!(args.windows(2).any(|pair| pair == ["--user-agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36"]));
+    }
+
+    #[test]
+    fn policy_monitoring_uses_runtime_policy_mark_and_ignores_unrecognized_service_marks() {
+        let firewall = "-N nfqws_post\n-A nfqws_post -m mark ! --mark 0x123/0x0fffffff -j RETURN\n";
+        assert_eq!(
+            monitor_policy_mark("POLICY_NAME=\"nfqws\"\n", firewall).unwrap(),
+            Some("0x123/0x0fffffff".into())
+        );
+        assert_eq!(
+            monitor_policy_mark("POLICY_NAME=\"\"\n", firewall).unwrap(),
+            None
+        );
+        assert_eq!(
+            monitor_policy_mark("NFQWS_ARGS=\"--filter-tcp=443\"\n", firewall).unwrap(),
+            None
+        );
+        assert_eq!(
+            monitor_policy_mark("POLICY_NAME=\"nfqws\"\n", "").unwrap(),
+            None
+        );
+        assert_eq!(
+            monitor_policy_mark(
+                "POLICY_NAME=\"nfqws\"\n",
+                "-A nfqws_post -m mark ! --mark 0x40000000/0x40000000 -j RETURN\n"
+            )
+            .unwrap(),
+            None
+        );
+        assert!(monitor_policy_mark("POLICY_NAME=$MODE_POLICY\n", firewall).is_err());
+    }
+
+    #[test]
+    fn policy_marked_monitor_requests_are_pinned_to_the_dedicated_local_port_lane() {
+        let args = monitor_curl_args_with_local_ports(
+            "example.com",
+            "8.8.8.8".parse().unwrap(),
+            Some("41000-41099"),
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--local-port", "41000-41099"])
+        );
+        let upload = monitor_upload_curl_args(
+            "example.com",
+            "8.8.8.8".parse().unwrap(),
+            "a1b2c3d4",
+            Some("41000-41099"),
+        );
+        assert!(
+            upload
+                .windows(2)
+                .any(|pair| pair == ["--local-port", "41000-41099"])
+        );
     }
 
     #[test]

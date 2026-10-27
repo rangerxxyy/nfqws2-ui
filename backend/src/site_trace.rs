@@ -8,7 +8,7 @@ use std::{
     process::Stdio,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -22,6 +22,7 @@ use tokio::{
 pub const MAX_TRACE_LINES: usize = 1_500;
 pub const MAX_TRACE_LINE_BYTES: usize = 2_048;
 pub const MAX_TRACE_BYTES: usize = 256 * 1024;
+static POLICY_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 pub type TraceProgressCallback = Arc<dyn Fn(&'static str, TraceReport) + Send + Sync>;
 
@@ -237,6 +238,143 @@ pub fn policy_route_mark(firewall_snapshot: &str) -> Option<String> {
         }
     }
     None
+}
+
+pub async fn read_policy_route_mark() -> Result<Option<String>, String> {
+    let program = program_path("iptables");
+    let (status, output) = command(&program, &["-w", "-t", "mangle", "-S", "nfqws_post"]).await?;
+    if status != 0 {
+        return Err(format!(
+            "Не удалось прочитать правило метки из nfqws_post: {}",
+            String::from_utf8_lossy(&output).trim()
+        ));
+    }
+    Ok(policy_route_mark(&String::from_utf8_lossy(&output)))
+}
+
+pub struct PolicyProbeRoute {
+    cleanup: Option<Vec<Vec<String>>>,
+}
+
+fn policy_probe_route_guard(chain: &str) -> PolicyProbeRoute {
+    PolicyProbeRoute {
+        cleanup: Some(vec![vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-X".into(),
+            chain.into(),
+        ]]),
+    }
+}
+
+impl PolicyProbeRoute {
+    pub async fn cleanup(mut self) -> Result<(), String> {
+        let Some(rules) = self.cleanup.as_ref().cloned() else {
+            return Ok(());
+        };
+        match remove_rules(&rules).await {
+            Ok(()) => {
+                self.cleanup = None;
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+impl Drop for PolicyProbeRoute {
+    fn drop(&mut self) {
+        let Some(rules) = self.cleanup.take() else {
+            return;
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = remove_rules(&rules).await;
+            });
+        }
+    }
+}
+
+pub async fn install_policy_probe_route(mark: &str) -> Result<PolicyProbeRoute, String> {
+    if !valid_policy_mark(mark) {
+        return Err("Маршрутный fwmark не прошёл проверку формата".into());
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos() as u64)
+        .unwrap_or_default()
+        ^ POLICY_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let token = format!(
+        "{:04x}{:010x}",
+        std::process::id() & 0xffff,
+        nonce & 0xffffffffff
+    );
+    let chain = format!("N2UM{token}");
+    // Arm cleanup before the create call. A timeout may occur after the kernel
+    // accepted -N, so the route must already know how to remove the chain.
+    let mut route = policy_probe_route_guard(&chain);
+    let create = vec![
+        "-w".into(),
+        "-t".into(),
+        "mangle".into(),
+        "-N".into(),
+        chain.clone(),
+    ];
+    if let Err(error) = iptables_owned(&create).await {
+        return Err(match route.cleanup().await {
+            Ok(()) => error,
+            Err(cleanup_error) => format!(
+                "{error}; не удалось подтвердить очистку временной цепочки после создания: {cleanup_error}"
+            ),
+        });
+    }
+
+    let Some(rule) = policy_mark_rule_for_ports(&chain, mark, "41000:41099") else {
+        return Err(match route.cleanup().await {
+            Ok(()) => "Маршрутный fwmark не прошёл проверку формата".into(),
+            Err(cleanup_error) => format!(
+                "Маршрутный fwmark не прошёл проверку; не удалось удалить тестовую цепочку: {cleanup_error}"
+            ),
+        });
+    };
+    if let Err(error) = iptables_owned(&rule).await {
+        return Err(match route.cleanup().await {
+            Ok(()) => error,
+            Err(cleanup_error) => format!(
+                "{error}; не удалось удалить тестовую цепочку после ошибки: {cleanup_error}"
+            ),
+        });
+    }
+    route
+        .cleanup
+        .as_mut()
+        .expect("cleanup route is armed")
+        .push(vec![
+            "-w".into(),
+            "-t".into(),
+            "mangle".into(),
+            "-F".into(),
+            chain.clone(),
+        ]);
+
+    let jump = chain_jump("-I", "OUTPUT", &chain);
+    // Register the inverse before attempting the insert: an iptables command can
+    // time out after the kernel accepted the rule, and cleanup must still try to remove it.
+    route
+        .cleanup
+        .as_mut()
+        .expect("cleanup route is armed")
+        .push(chain_jump("-D", "OUTPUT", &chain));
+    if let Err(error) = iptables_owned(&jump).await {
+        return Err(match route.cleanup().await {
+            Ok(()) => error,
+            Err(cleanup_error) => format!(
+                "{error}; не удалось очистить тестовую цепочку после ошибки: {cleanup_error}"
+            ),
+        });
+    }
+    Ok(route)
 }
 
 fn valid_policy_mark(value: &str) -> bool {
@@ -2710,6 +2848,38 @@ mod tests {
                 .any(|pair| pair == ["--set-xmark", "0x123/0x0fffffff"])
         );
         assert!(rule.ends_with(&["--set-xmark".into(), "0x123/0x0fffffff".into()]));
+
+        let monitor_rule =
+            policy_mark_rule_for_ports("N2UMabc123", "0x123/0x0fffffff", "41000:41099").unwrap();
+        assert!(
+            monitor_rule
+                .windows(2)
+                .any(|pair| pair == ["--sport", "41000:41099"])
+        );
+        assert!(
+            monitor_rule
+                .windows(2)
+                .any(|pair| pair == ["--set-xmark", "0x123/0x0fffffff"])
+        );
+        let cleanup_jump = chain_jump("-D", "OUTPUT", "N2UMabc123");
+        assert!(
+            cleanup_jump
+                .windows(2)
+                .any(|pair| pair == ["-j", "N2UMabc123"])
+        );
+    }
+
+    #[test]
+    fn policy_probe_cleanup_guard_can_remove_a_chain_created_before_a_command_timeout() {
+        let route = policy_probe_route_guard("N2UMfixture");
+        let cleanup = route
+            .cleanup
+            .as_ref()
+            .expect("new probe route is armed for cleanup");
+        assert_eq!(
+            cleanup,
+            &vec![vec!["-w", "-t", "mangle", "-X", "N2UMfixture"]]
+        );
     }
 
     #[test]

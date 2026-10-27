@@ -8,6 +8,7 @@ if grep -Eq 'Create panel password|hash-password|/dev/tty' "$INSTALLER"; then
 fi
 grep -q 'успешно установлена' "$INSTALLER" || { echo 'installer success message is missing' >&2; exit 1; }
 grep -q 'ip -o -4 addr show scope global' "$INSTALLER" || { echo 'installer LAN address detection is missing' >&2; exit 1; }
+grep -Fq "\"\$STAGE/scripts/nfqws2-ui-ctl\" prune-releases \"\$ROOT/releases\" \"\$STAGE\"" "$INSTALLER" || { echo 'installer does not prune old releases after success' >&2; exit 1; }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 mkdir "$TMP/bin"

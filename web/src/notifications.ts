@@ -8,12 +8,11 @@ export function shouldCheckCoreUpdate(now: number, lastCheckedAt: number): boole
 }
 
 export function coreUpdateNoticePresentation(
-  status: { latestTag: string | null; installedTag: string | null },
+  status: { latestTag: string | null; installedTag: string | null; updateAvailable: boolean },
   dismissedTag: string | null,
 ) {
-  const latestTag = status.latestTag;
-  const normalize = (tag: string | null) => tag?.trim().replace(/^v/i, '').split('-')[0] ?? null;
-  const updateAvailable = Boolean(latestTag && status.installedTag && normalize(latestTag) !== normalize(status.installedTag));
+  const latestTag = status.latestTag?.trim() || null;
+  const updateAvailable = Boolean(status.updateAvailable && latestTag && status.installedTag?.trim());
   const version = updateAvailable ? latestTag : null;
   return { highlight: version !== null, notify: version !== null && version !== dismissedTag, version };
 }

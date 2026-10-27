@@ -904,6 +904,11 @@ html.list-editor-fullscreen-open { overflow:hidden; }
   background: linear-gradient(180deg, rgba(244, 63, 94, 0.12) 0%, #060a12 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px -12px rgba(244, 63, 94, 0.6);
 }
+.status-pill:has(#statusMainDot.bg-amber-400) {
+  border-color: rgba(251, 191, 36, 0.36);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.12) 0%, #060a12 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 8px 20px -12px rgba(245, 158, 11, 0.55);
+}
 .status-restarting .status-pill {
   border-color: rgba(96, 165, 250, 0.4);
   background: linear-gradient(180deg, rgba(59, 130, 246, 0.13) 0%, #060a12 100%);
@@ -920,6 +925,7 @@ html.list-editor-fullscreen-open { overflow:hidden; }
 }
 .status-pill:has(#statusMainDot.bg-emerald-400) #statusTextLabel { color: #6ee7b7; }
 .status-pill:has(#statusMainDot.bg-rose-400) #statusTextLabel { color: #fda4af; }
+.status-pill:has(#statusMainDot.bg-amber-400) #statusTextLabel { color: #fcd34d; }
 
 /* Кнопки перезапуска и питания */
 #headerServiceControls { gap: 0.4rem; }
@@ -1118,12 +1124,22 @@ html.list-editor-fullscreen-open { overflow:hidden; }
   font-weight: 650;
 }
 #tabContent-diagnostic16k .freeze-result-details[open] { color: #cbd5e1; }
-#tabContent-diagnostic16k .freeze-scan-table td:last-child { min-width: 13rem; }
+#tabContent-diagnostic16k .freeze-scan-table { font-size: .82rem; }
+#tabContent-diagnostic16k .freeze-scan-table th,
+#tabContent-diagnostic16k .freeze-scan-table td { padding: .55rem .7rem; }
+#tabContent-diagnostic16k .freeze-scan-table td:last-child { min-width: 11rem; }
 #tabContent-diagnostic16k .freeze-scan-table td:first-child,
 #tabContent-diagnostic16k .freeze-scan-table td:nth-child(2) {
   font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", monospace;
   font-variant-numeric: tabular-nums;
 }
+/* Compact results like Zemidala's network list while keeping the status readable. */
+#tabContent-diagnostic16k .freeze-scan-table { font-size: .78rem; }
+#tabContent-diagnostic16k .freeze-scan-table th { padding: .45rem .6rem; }
+#tabContent-diagnostic16k .freeze-scan-table td { padding: .4rem .6rem; line-height: 1.3; }
+#tabContent-diagnostic16k .freeze-result-badge { padding: .2rem .55rem; }
+#tabContent-diagnostic16k .freeze-result-details { margin-top: .2rem; font-size: .72rem; }
+#tabContent-diagnostic16k .freeze-scan-table td:last-child { min-width: 9rem; }
 #tabContent-autotune :where(input[type="checkbox"], select, textarea) {
   transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
@@ -1181,9 +1197,9 @@ html.list-editor-fullscreen-open { overflow:hidden; }
   #freezeScanResults { overflow: visible; border: 0; }
   .freeze-scan-table { min-width: 0; display: block; }
   .freeze-scan-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-  .freeze-scan-table tbody { display: grid; gap: 0.65rem; }
-  .freeze-scan-table tr { display: grid; gap: 0.35rem; padding: 0.8rem; border: 1px solid rgb(51 65 85 / 75%); border-radius: 0.8rem; background: rgb(15 23 42 / 58%); }
-  .freeze-scan-table td { display: grid; grid-template-columns: minmax(6.5rem, 0.7fr) minmax(0, 1.3fr); gap: 0.65rem; padding: 0.25rem 0; overflow-wrap: anywhere; font-size: 0.82rem; line-height: 1.45; }
+  .freeze-scan-table tbody { display: grid; gap: 0.35rem; }
+  .freeze-scan-table tr { display: grid; gap: 0.15rem; padding: 0.5rem 0.6rem; border: 1px solid rgb(51 65 85 / 75%); border-radius: 0.65rem; background: rgb(15 23 42 / 58%); }
+  .freeze-scan-table td { display: grid; grid-template-columns: minmax(5.5rem, 0.7fr) minmax(0, 1.3fr); gap: 0.4rem; padding: 0.1rem 0; overflow-wrap: anywhere; font-size: 0.76rem; line-height: 1.35; }
   .freeze-scan-table td::before { content: attr(data-label); color: #a9bad2; font-weight: 700; }
 }
 

@@ -2,10 +2,10 @@ export type UiTheme = 'dark' | 'light' | 'neon';
 export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified';
 export type UiAccent = 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet';
 export type UiStatusBar = 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse';
-export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean; showConfigWarnings: boolean };
+export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean; showConfigWarnings: boolean; wrapConfigLines?: boolean };
 
 const STORAGE_KEY = 'nfqws2-ui-appearance-v1';
-const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, showConfigWarnings: true };
+const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, showConfigWarnings: true, wrapConfigLines: true };
 
 function readStorage(storage: Storage | null): unknown {
   try {
@@ -27,6 +27,7 @@ export function loadAppearance(storage: Storage | null): AppearanceSettings {
     statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(value.statusBar ?? '') ? value.statusBar as UiStatusBar : 'standard',
     remindWindowsTcpTimestamps: value.remindWindowsTcpTimestamps !== false,
     showConfigWarnings: value.showConfigWarnings !== false,
+    wrapConfigLines: value.wrapConfigLines !== false,
   };
 }
 
@@ -38,6 +39,7 @@ export function saveAppearance(storage: Storage | null, settings: AppearanceSett
     statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(settings.statusBar) ? settings.statusBar : 'standard',
     remindWindowsTcpTimestamps: settings.remindWindowsTcpTimestamps !== false,
     showConfigWarnings: settings.showConfigWarnings !== false,
+    wrapConfigLines: settings.wrapConfigLines !== false,
   };
   try { storage?.setItem(STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Appearance still applies for this session. */ }
   return normalized;

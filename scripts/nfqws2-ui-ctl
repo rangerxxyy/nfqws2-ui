@@ -44,10 +44,27 @@ new_operation_id() {
 	command -v tr >/dev/null 2>&1 || fail 'не найден tr для создания ID операции'
 	od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
 }
+prune_releases() {
+	releases_dir=${1:-} current_release=${2:-}
+	if [ -z "$releases_dir" ] || [ -z "$current_release" ]; then
+		fail 'usage: nfqws2-ui-ctl prune-releases RELEASES_DIR CURRENT_RELEASE'
+	fi
+	[ "$releases_dir" = "$ROOT/releases" ] || fail 'release directory is outside nfqws2-ui storage'
+	[ "${current_release%/*}" = "$releases_dir" ] || fail 'current release must be a direct child of the releases directory'
+	if [ ! -d "$releases_dir" ] || [ ! -d "$current_release" ] || [ -L "$current_release" ]; then
+		fail 'release directory is missing or invalid'
+	fi
+	for old_release in "$releases_dir"/*; do
+		[ -d "$old_release" ] || continue
+		[ "$old_release" = "$current_release" ] && continue
+		rm -rf -- "$old_release"
+	done
+}
 
 cmd=${1:-help}
 [ "$#" -eq 0 ] || shift
 case "$cmd" in
+	prune-releases) prune_releases "$@" ;;
 	update)
 		check=0 force=0 requested=''
 		for arg do

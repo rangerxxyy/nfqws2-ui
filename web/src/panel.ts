@@ -258,7 +258,7 @@ async function refreshUiUpdateStatus() {
   catch { /* Background update checks must not interrupt panel use. */ }
   finally { uiUpdateStatusPolling = false; }
 }
-function renderCoreUpdateNotice(status: { latestTag: string | null; installedTag: string | null }, manualCheck = false) {
+function renderCoreUpdateNotice(status: { latestTag: string | null; installedTag: string | null; updateAvailable: boolean }, manualCheck = false) {
   let dismissedTag: string | null = null;
   try { dismissedTag = window.localStorage.getItem(CORE_UPDATE_DISMISSED_TAG_KEY); } catch { /* Treat storage failure as not dismissed. */ }
   const dismissedVersion = status.latestTag && (dismissedTag === status.latestTag && !manualCheck) ? dismissedTag : null;
@@ -1676,7 +1676,21 @@ function syncAppearanceControls() {
   all<HTMLInputElement>('input[name="appearanceStatusBar"]').forEach((input) => { input.checked = input.value === appearanceSettings.statusBar; });
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
   all<HTMLInputElement>('[data-appearance-config-warnings]').forEach((input) => { input.checked = appearanceSettings.showConfigWarnings; });
+  syncConfigWordWrap(appearanceSettings.wrapConfigLines !== false);
   syncConfigWarningsVisibility();
+}
+function syncConfigWordWrap(enabled: boolean) {
+  const toggle = $('#configWordWrapToggle');
+  if (toggle instanceof HTMLInputElement) toggle.checked = enabled;
+  const editor = $('#nfqwsConfTextarea');
+  if (editor instanceof HTMLTextAreaElement) {
+    editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre';
+    syncConfigHighlight(editor);
+  }
+}
+function routerAppearanceSettings(settings: AppearanceSettings) {
+  const { wrapConfigLines: _wrapConfigLines, ...routerSettings } = settings;
+  return routerSettings;
 }
 function syncNavigationLayout(route?: Route) {
   const activeRoute = route ?? (all<HTMLElement>('[id^="tabContent-"]').find((section) => !section.classList.contains('hidden'))?.id.replace('tabContent-', '') as Route | undefined);
@@ -1701,13 +1715,13 @@ function updateAppearance(change: Partial<AppearanceSettings>) {
   applyAppearance(appearanceSettings);
   syncAppearanceControls();
   syncNavigationLayout();
-  void nfqwsAppearance.save(appearanceSettings).catch((error) => toast(error instanceof Error ? `Оформление сохранено только в этом браузере: ${error.message}` : 'Оформление сохранено только в этом браузере.', 'error'));
+  void nfqwsAppearance.save(routerAppearanceSettings(appearanceSettings)).catch((error) => toast(error instanceof Error ? `Оформление сохранено только в этом браузере: ${error.message}` : 'Оформление сохранено только в этом браузере.', 'error'));
   if (change.showConfigWarnings === true) scheduleConfigWarnings(0);
 }
 async function syncAppearanceFromRouter() {
   const saved = await nfqwsAppearance.get(); if (!saved) return;
   let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Use the restored settings for this session. */ }
-  appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
+  appearanceSettings = saveAppearance(storage, { ...saved, wrapConfigLines: appearanceSettings.wrapConfigLines }); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
 }
 function initializeAppearanceSettings() {
   let storage: Storage | null = null;
@@ -1717,8 +1731,8 @@ function initializeAppearanceSettings() {
   syncAppearanceControls();
   syncNavigationLayout();
   void nfqwsAppearance.get().then((saved) => {
-    if (!saved) { void nfqwsAppearance.save(appearanceSettings).catch(() => undefined); return; }
-    appearanceSettings = saveAppearance(storage, saved); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
+    if (!saved) { void nfqwsAppearance.save(routerAppearanceSettings(appearanceSettings)).catch(() => undefined); return; }
+    appearanceSettings = saveAppearance(storage, { ...saved, wrapConfigLines: appearanceSettings.wrapConfigLines }); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
   }).catch(() => undefined);
 }
 async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
@@ -1933,14 +1947,21 @@ async function fetchStatus() {
     const service = status.service.state;
     const running = service === 'running';
     const stopped = service === 'stopped';
-    const label = running ? 'nfqws2 запущен' : stopped ? 'nfqws2 остановлен' : service === 'error' ? 'Ошибка nfqws2' : 'Статус неизвестен';
-    const tone = running ? 'emerald' : stopped || service === 'error' ? 'rose' : 'slate';
+    const missingHooks = running ? status.interception?.missingHooks ?? [] : [];
+    const interceptionWarning = missingHooks.length > 0;
+    const interceptionDetail = interceptionWarning
+      ? `Перехват nfqws2 подключён не полностью: нет перехода из ${missingHooks.join(' и ')}. Перезапустите nfqws2; если проблема повторится — проверьте журнал.`
+      : '';
+    const label = interceptionWarning
+      ? missingHooks.length > 1 ? 'Перехват отключён' : 'Перехват частичный'
+      : running ? 'nfqws2 запущен' : stopped ? 'nfqws2 остановлен' : service === 'error' ? 'Ошибка nfqws2' : 'Статус неизвестен';
+    const tone = interceptionWarning ? 'amber' : running ? 'emerald' : stopped || service === 'error' ? 'rose' : 'slate';
     if (!restartInProgress) {
-      const text = $('#statusTextLabel'); if (text) { text.textContent = label; text.className = `text-xs sm:text-sm font-semibold text-${tone}-400 tracking-tight`; }
-      const dot = $('#statusMainDot'); if (dot) dot.className = `${running ? 'status-dot-active' : ''} relative inline-flex rounded-full h-2.5 w-2.5 bg-${tone}-400`;
-      const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${running ? 'emerald' : stopped ? 'rose' : 'slate'}-400`;
+      const text = $('#statusTextLabel'); if (text) { text.textContent = label; text.title = interceptionWarning ? interceptionDetail : status.service.detail; text.className = `text-xs sm:text-sm font-semibold text-${tone}-400 tracking-tight`; }
+      const dot = $('#statusMainDot'); if (dot) dot.className = `${running && !interceptionWarning ? 'status-dot-active' : ''} relative inline-flex rounded-full h-2.5 w-2.5 bg-${tone}-400`;
+      const ring = $('#statusRadarRing'); if (ring) ring.className = `status-radar absolute inline-flex h-full w-full rounded-full bg-${tone}-400`;
     }
-    const monitorBadge = $('#sideMonitorBadge'); if (monitorBadge) monitorBadge.className = `w-2 h-2 rounded-full bg-${running ? 'emerald' : 'slate'}-400`;
+    const monitorBadge = $('#sideMonitorBadge'); if (monitorBadge) monitorBadge.className = `w-2 h-2 rounded-full bg-${interceptionWarning ? 'amber' : running ? 'emerald' : 'slate'}-400`;
     const used = status.system.memoryUsedBytes, total = status.system.memoryTotalBytes;
     const ramPercent = resourceUsagePercent(used, total);
     setText('#ramMetricText', used !== null && total !== null ? `${fmtMb(used)} / ${fmtMb(total)} МБ` : '—');
@@ -1955,11 +1976,11 @@ async function fetchStatus() {
     setText('#headerCoreVersion', status.service.version ?? '—'); setText('#headerUiVersion', status.panel.version);
     syncServiceControl(service);
     setText('#checkedAt', status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : '—');
-    setText('#statusDetail', `Опрос: ${status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : 'выполняется'} · метрики: ${status.system.source === 'keenetic-rci' ? 'Keenetic RCI' : 'Linux'}`);
+    setText('#statusDetail', `Опрос: ${status.service.checkedAt ? new Date(status.service.checkedAt * 1000).toLocaleTimeString() : 'выполняется'} · метрики: ${status.system.source === 'keenetic-rci' ? 'Keenetic RCI' : 'Linux'}${interceptionWarning ? ` · ${interceptionDetail}` : ''}`);
   } catch (error) {
     status = null;
     if (!restartInProgress) {
-      const label = $('#statusTextLabel'); if (label) { label.textContent = 'Статус неизвестен'; label.className = 'text-xs sm:text-sm font-semibold text-slate-400 tracking-tight'; }
+      const label = $('#statusTextLabel'); if (label) { label.textContent = 'Статус неизвестен'; label.title = ''; label.className = 'text-xs sm:text-sm font-semibold text-slate-400 tracking-tight'; }
       const dot = $('#statusMainDot'); if (dot) dot.className = 'relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-400';
       const ring = $('#statusRadarRing'); if (ring) ring.className = 'absolute inline-flex h-full w-full rounded-full bg-slate-400';
     }
@@ -4530,7 +4551,11 @@ function bindPrototypeActions() {
     })(),
     handleConfInput: () => { syncConfigLines(); renderConfigOutline(); scheduleConfigWarnings(); },
     syncConfScroll: () => syncConfigScroll(),
-    toggleWordWrapConf: (enabled: boolean) => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) { editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre'; syncConfigHighlight(editor); } },
+    toggleWordWrapConf: (enabled: boolean) => {
+      let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Keep this session's choice if browser storage is blocked. */ }
+      appearanceSettings = saveAppearance(storage, { ...appearanceSettings, wrapConfigLines: enabled });
+      syncConfigWordWrap(enabled);
+    },
     toggleConfigOutline: () => toggleConfigOutline(),
     scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); editor.scrollTop = editor.value.slice(0, offset).split('\n').length * 23; },
     toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) closeAppModal(modal); else showDiff(); },

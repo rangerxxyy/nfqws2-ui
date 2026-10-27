@@ -15,6 +15,7 @@ use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nf
 use nfqws2_ui::config_format::format_nfqws_config;
 use nfqws2_ui::freeze_diagnostic;
 use nfqws2_ui::freeze_profile_join;
+use nfqws2_ui::interception_status::{self, InterceptionStatus};
 use nfqws2_ui::managed_asn_lists::{self, ManagedAsnList, ManagedAsnListStore};
 use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::site_trace;
@@ -97,6 +98,7 @@ struct AppState {
     config_override: Option<PathBuf>,
     update_lock: Mutex<()>,
     core_release_cache: Mutex<Option<CoreReleaseCacheEntry>>,
+    interception_status_cache: Mutex<InterceptionStatusCache>,
     ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
     managed_asn_refresh_lock: Mutex<()>,
@@ -111,6 +113,13 @@ struct AppState {
     nfqws_lua_catalog_cache: Mutex<Option<NfqwsLuaCatalogCacheEntry>>,
     #[cfg(test)]
     change_history_fail_path: Mutex<Option<PathBuf>>,
+}
+
+#[derive(Default)]
+struct InterceptionStatusCache {
+    checked_at: Option<Instant>,
+    visible: Option<InterceptionStatus>,
+    missing_since: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2324,6 +2333,7 @@ async fn apply_freeze_profile_join(
         content: preview.proposed_content,
         revision: preview.original_revision,
     };
+    let monitor_policy_route = resolve_monitoring_policy_route(&state).await;
     match apply_freeze_join_transaction(
         &state,
         write,
@@ -2331,16 +2341,23 @@ async fn apply_freeze_profile_join(
         &state.data_dir,
         asn,
         || async { service_action(ServiceAction::Restart).await },
-        || async {
-            verify_strategy_hosts_with(hosts.clone(), |host| async move {
-                let report = check_monitoring_host(host).await;
-                if report.current.status == "ok" {
-                    Ok(())
-                } else {
-                    Err(report.summary)
-                }
-            })
-            .await
+        || {
+            let monitor_policy_route = monitor_policy_route.clone();
+            let hosts = hosts.clone();
+            async move {
+                verify_strategy_hosts_with(hosts, move |host| {
+                    let monitor_policy_route = monitor_policy_route.clone();
+                    async move {
+                        let report = check_monitoring_host(host, monitor_policy_route).await;
+                        if report.current.status == "ok" {
+                            Ok(())
+                        } else {
+                            Err(report.summary)
+                        }
+                    }
+                })
+                .await
+            }
         },
     )
     .await
@@ -2612,20 +2629,28 @@ async fn apply_confirmed_strategy(
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
     };
     let verify_hosts = strategy_apply_verification_hosts(&operation.host, &monitoring);
+    let monitor_policy_route = resolve_monitoring_policy_route(&state).await;
     match apply_config_transaction_with_verification(
         &state,
         write,
         || async { service_action(ServiceAction::Restart).await },
-        || async {
-            verify_strategy_hosts_with(verify_hosts.clone(), |host| async move {
-                let report = check_monitoring_host(host).await;
-                if report.current.status == "ok" {
-                    Ok(())
-                } else {
-                    Err(report.summary)
-                }
-            })
-            .await
+        || {
+            let monitor_policy_route = monitor_policy_route.clone();
+            let verify_hosts = verify_hosts.clone();
+            async move {
+                verify_strategy_hosts_with(verify_hosts, move |host| {
+                    let monitor_policy_route = monitor_policy_route.clone();
+                    async move {
+                        let report = check_monitoring_host(host, monitor_policy_route).await;
+                        if report.current.status == "ok" {
+                            Ok(())
+                        } else {
+                            Err(report.summary)
+                        }
+                    }
+                })
+                .await
+            }
         },
     )
     .await
@@ -2800,6 +2825,7 @@ struct StatusResponse {
     service: ServiceInfo,
     system: SystemInfo,
     panel: PanelInfo,
+    interception: Option<InterceptionStatus>,
 }
 
 #[derive(Serialize)]
@@ -3089,6 +3115,13 @@ struct MonitoringHostResult {
     summary: String,
     current: MonitoringStep,
     steps: Vec<MonitoringStep>,
+}
+
+#[derive(Debug, Clone)]
+enum MonitoringPolicyRoute {
+    Standard,
+    Marked(String),
+    Unavailable(String),
 }
 
 #[derive(Serialize)]
@@ -4354,6 +4387,7 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
 
 async fn get_status(State(state): State<Arc<AppState>>) -> Response {
     let (service_state, detail) = service_status().await;
+    let interception = cached_interception_status(&state, service_state).await;
     let core_version = match tokio::process::Command::new("/opt/bin/opkg")
         .args(["status", "nfqws2-keenetic"])
         .output()
@@ -4391,8 +4425,41 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
             version: env!("CARGO_PKG_VERSION"),
             port: state.port,
         },
+        interception,
     })
     .into_response()
+}
+
+async fn cached_interception_status(
+    state: &AppState,
+    service_state: ServiceState,
+) -> Option<InterceptionStatus> {
+    const CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+    let mut cache = state.interception_status_cache.lock().await;
+    if service_state != ServiceState::Running {
+        *cache = InterceptionStatusCache::default();
+        return None;
+    }
+    let now = Instant::now();
+    if cache
+        .checked_at
+        .is_some_and(|checked_at| now.duration_since(checked_at) < CACHE_TTL)
+    {
+        return cache.visible.clone();
+    }
+    let observed = interception_status::read_iptables_status().await;
+    let observed_at = Instant::now();
+    let (visible, missing_since) = interception_status::visible_interception_status(
+        observed,
+        cache.missing_since,
+        observed_at,
+    );
+    *cache = InterceptionStatusCache {
+        checked_at: Some(observed_at),
+        visible: visible.clone(),
+        missing_since,
+    };
+    visible
 }
 
 async fn build_support_report(
@@ -5516,7 +5583,76 @@ async fn diagnose_site(
     Json(report).into_response()
 }
 
-async fn check_monitoring_host(host: String) -> MonitoringHostResult {
+async fn resolve_monitoring_policy_route(state: &AppState) -> MonitoringPolicyRoute {
+    let Some(path) = config_path_for_state(state) else {
+        return MonitoringPolicyRoute::Standard;
+    };
+    let config = match tokio::fs::read_to_string(&path).await {
+        Ok(config) => config,
+        Err(error) => {
+            return MonitoringPolicyRoute::Unavailable(format!(
+                "Не удалось прочитать конфигурацию для определения POLICY_NAME: {error}"
+            ));
+        }
+    };
+    let document = match ConfigDocument::parse(&config) {
+        Ok(document) => document,
+        Err(error) => {
+            let policy_assignment_present = config.lines().any(|line| {
+                let line = line.trim_start();
+                !line.starts_with('#') && line.starts_with("POLICY_NAME=")
+            });
+            return if policy_assignment_present {
+                MonitoringPolicyRoute::Unavailable(format!(
+                    "Не удалось безопасно разобрать POLICY_NAME: {error}"
+                ))
+            } else {
+                MonitoringPolicyRoute::Standard
+            };
+        }
+    };
+    if !document.contains_assignment("POLICY_NAME") {
+        return MonitoringPolicyRoute::Standard;
+    }
+    let policy_name = match document.literal_value("POLICY_NAME") {
+        Ok(value) => value,
+        Err(error) => return MonitoringPolicyRoute::Unavailable(error),
+    };
+    if policy_name.trim().is_empty() {
+        return MonitoringPolicyRoute::Standard;
+    }
+    match site_trace::read_policy_route_mark().await {
+        Ok(Some(mark)) => MonitoringPolicyRoute::Marked(mark),
+        // Match Zemidala: POLICY_NAME alone does not prove that the active
+        // nfqws2 rules are in policy-only mode. Service marks such as
+        // 0x40000000/0x40000000 are intentionally ignored by policy_route_mark.
+        Ok(None) => MonitoringPolicyRoute::Standard,
+        Err(error) => MonitoringPolicyRoute::Unavailable(format!(
+            "Не удалось прочитать активную метку политики: {error}"
+        )),
+    }
+}
+
+async fn run_monitor_probe(
+    host: &str,
+    ip: std::net::Ipv4Addr,
+    route: &MonitoringPolicyRoute,
+) -> site_diagnostics::MonitorProbeResult {
+    match route {
+        MonitoringPolicyRoute::Standard => site_diagnostics::monitor_probe(host, ip).await,
+        MonitoringPolicyRoute::Marked(mark) => {
+            site_diagnostics::monitor_probe_with_policy(host, ip, mark).await
+        }
+        MonitoringPolicyRoute::Unavailable(detail) => {
+            site_diagnostics::unavailable_monitor_result(detail.clone())
+        }
+    }
+}
+
+async fn check_monitoring_host(
+    host: String,
+    policy_route: MonitoringPolicyRoute,
+) -> MonitoringHostResult {
     use tokio::net::lookup_host;
     use tokio::time::{Duration, Instant, timeout};
 
@@ -5570,11 +5706,11 @@ async fn check_monitoring_host(host: String) -> MonitoringHostResult {
         duration_ms: Some(dns_ms),
         http_code: None,
     };
-    let mut probe = site_diagnostics::monitor_probe(&host, ip).await;
+    let mut probe = run_monitor_probe(&host, ip, &policy_route).await;
     if site_diagnostics::monitor_probe_needs_fallback(probe.current.status)
         && let Some(fallback_ip) = addresses.get(1).copied()
     {
-        let fallback = site_diagnostics::monitor_probe(&host, fallback_ip).await;
+        let fallback = run_monitor_probe(&host, fallback_ip, &policy_route).await;
         if !site_diagnostics::monitor_probe_needs_fallback(fallback.current.status) {
             probe = fallback;
         }
@@ -5683,7 +5819,10 @@ async fn detect_podkop_hosts(hosts: &[String]) -> Vec<String> {
         .collect()
 }
 
-async fn monitor_sites(Json(request): Json<MonitoringRequest>) -> Response {
+async fn monitor_sites(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<MonitoringRequest>,
+) -> Response {
     if request.hosts.is_empty() || request.hosts.len() > 20 {
         return error(StatusCode::BAD_REQUEST, "Нужно передать от 1 до 20 доменов");
     }
@@ -5696,7 +5835,12 @@ async fn monitor_sites(Json(request): Json<MonitoringRequest>) -> Response {
         Ok(hosts) => hosts,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    match run_bounded_monitor_checks(hosts, check_monitoring_host).await {
+    let policy_route = resolve_monitoring_policy_route(&state).await;
+    match run_bounded_monitor_checks(hosts, move |host| {
+        check_monitoring_host(host, policy_route.clone())
+    })
+    .await
+    {
         Ok(results) => Json(results).into_response(),
         Err(join_error) => error(StatusCode::INTERNAL_SERVER_ERROR, join_error.to_string()),
     }
@@ -6290,9 +6434,12 @@ async fn check_saved_sites(
     if sites.is_empty() {
         return Ok(Vec::new());
     }
-    let reports = run_bounded_monitor_checks(sites, check_monitoring_host)
-        .await
-        .map_err(|error| error.to_string())?;
+    let policy_route = resolve_monitoring_policy_route(state).await;
+    let reports = run_bounded_monitor_checks(sites, move |host| {
+        check_monitoring_host(host, policy_route.clone())
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     let mut updated = load_monitoring_store(data_dir).await?;
     record_monitoring_completion(&mut updated, only_hosts.is_none(), now_unix_seconds());
     let mut notification_messages = Vec::new();
@@ -13652,6 +13799,7 @@ async fn main() {
         config_override: None,
         update_lock: Mutex::new(()),
         core_release_cache: Mutex::new(None),
+        interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
         ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
         managed_asn_refresh_lock: Mutex::new(()),
@@ -15366,6 +15514,7 @@ mod tests {
             config_override,
             update_lock: Mutex::new(()),
             core_release_cache: Mutex::new(None),
+            interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             managed_asn_refresh_lock: Mutex::new(()),
@@ -15580,6 +15729,7 @@ mod tests {
             config_override: None,
             update_lock: Mutex::new(()),
             core_release_cache: Mutex::new(None),
+            interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             managed_asn_refresh_lock: Mutex::new(()),
@@ -16323,6 +16473,8 @@ mod tests {
             response.headers().get("x-content-type-options").unwrap(),
             "nosniff"
         );
+        let status = body_json(response).await;
+        assert!(status.get("interception").is_some());
     }
 
     #[tokio::test]

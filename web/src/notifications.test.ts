@@ -41,17 +41,27 @@ describe('nfqws2 core update notice', () => {
   });
 
   it('highlights and notifies when the newest release differs from installed core', () => {
-    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1' }, null))
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1', updateAvailable: true }, null))
       .toEqual({ highlight: true, notify: true, version: 'v1.3.2' });
   });
 
   it('does not show an update when the newest release is already installed', () => {
-    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.2-r1' }, null))
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.2-r1', updateAvailable: false }, null))
       .toEqual({ highlight: false, notify: false, version: null });
   });
 
+  it('does not override a negative update decision from the backend', () => {
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.3', installedTag: '1.3.2', updateAvailable: false }, null))
+      .toEqual({ highlight: false, notify: false, version: null });
+  });
+
+  it('respects the backend update decision for package revision tags', () => {
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2-r2', installedTag: '1.3.2-r1', updateAvailable: true }, null))
+      .toEqual({ highlight: true, notify: true, version: 'v1.3.2-r2' });
+  });
+
   it('allows a manually checked update notice to be shown again after dismissal', () => {
-    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1' }, null).notify).toBe(true);
-    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1' }, 'v1.3.2').notify).toBe(false);
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1', updateAvailable: true }, null).notify).toBe(true);
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1', updateAvailable: true }, 'v1.3.2').notify).toBe(false);
   });
 });

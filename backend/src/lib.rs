@@ -5,6 +5,7 @@ pub mod config_document;
 pub mod config_format;
 pub mod freeze_diagnostic;
 pub mod freeze_profile_join;
+pub mod interception_status;
 pub mod managed_asn_lists;
 pub mod probe_lanes;
 pub mod quic_probe;

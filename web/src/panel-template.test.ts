@@ -543,12 +543,22 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(diagnostic16k).toContain('id="freezeScanProgress"');
     expect(diagnostic16k).toContain('id="freezeScanProgressSteps"');
     expect(diagnostic16k).toContain('id="freezeScanResults"');
+    expect(diagnostic16k).toContain('p-3 sm:p-3.5 space-y-2');
+    expect(diagnostic16k).toContain('py-1.5 rounded-lg bg-blue-600 text-sm');
+    expect(panelStyles).toContain('#tabContent-diagnostic16k .freeze-scan-table th,');
+    expect(panelStyles).toContain('padding: .45rem .6rem;');
+    expect(panelStyles).toContain('padding: 0.5rem 0.6rem;');
     expect(diagnostic16k.match(/data-action-click="runFreezeScan"/g)).toHaveLength(1);
     expect(diagnostic16k.match(/data-action-click="cancelFreezeScan"/g)).toHaveLength(1);
     expect(diagnostic16k).not.toContain('transferDomainInput');
     expect(diagnostic16k).not.toContain('Диагностика передачи данных');
     expect(panelSource).toContain('freezeScanStart');
     expect(panelSource).toContain('freeze-scan-table');
+    expect(panelSource).toContain('function syncConfigWordWrap(enabled: boolean)');
+    expect(panelSource).toContain('wrapConfigLines: enabled');
+    expect(panelSource).toContain('const { wrapConfigLines: _wrapConfigLines, ...routerSettings } = settings;');
+    expect(panelSource).toContain('nfqwsAppearance.save(routerAppearanceSettings(appearanceSettings))');
+    expect(template).toContain('id="configWordWrapToggle"');
     expect(panelSource).toContain('freezeRowIdentity(result)');
     expect(panelSource).toContain('freezeRowDetails(result)');
     expect(panelSource).toContain("operation.stage === 'strategy_search'");
@@ -1263,6 +1273,21 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('data-key="ISP_INTERFACE"');
     expect(panelSource).toContain('installation.networkInterfaces');
     expect(backendSource).toContain('network_interface_names(Path::new("/sys/class/net"))');
+  });
+
+  it('warns about disconnected interception hooks only from a definitive status result', () => {
+    expect(panelSource).toContain('status.interception?.missingHooks');
+    expect(panelSource).toContain('Перехват nfqws2 подключён не полностью');
+    expect(panelSource).toContain("tone = interceptionWarning ? 'amber'");
+    expect(panelSource).toContain("'Перехват частичный'");
+    expect(panelSource).toContain("'Перехват отключён'");
+    expect(panelSource).toContain('const missingHooks = running ? status.interception?.missingHooks ?? [] : []');
+    expect(panelSource).toContain('syncServiceControl(service)');
+    expect(panelStyles).toContain('.status-pill:has(#statusMainDot.bg-amber-400)');
+  });
+
+  it('labels the ISP interface quick setting consistently with the other base parameters', () => {
+    expect(template).toMatch(/<span>ISP_INTERFACE<\/span>[\s\S]*?<span class="text-blue-400">WAN<\/span>[\s\S]*?<select id="ispInterfaceSelect"/);
   });
 
   it('keeps Lua script source browsing in the Scripts tab instead of duplicating paths in settings', () => {

@@ -27,7 +27,7 @@ export default function App() {
               {"\n          "}
             </div>
             {"\n          "}
-            <span id={"statusTextLabel"} className={"text-[11px] sm:text-xs font-semibold text-slate-400 tracking-tight"}>
+            <span id={"statusTextLabel"} aria-live={"polite"} className={"text-[11px] sm:text-xs font-semibold text-slate-400 tracking-tight"}>
               {"Статус неизвестен"}
             </span>
             <span id={"statusDetail"} className={"sr-only"}></span>
@@ -449,7 +449,7 @@ export default function App() {
                 {"\n\n              "}
                 <label className={"flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none"}>
                   {"\n                "}
-                  <input type={"checkbox"} data-action-change={"toggleWordWrapConf"} data-args={JSON.stringify([{"source": "checked"}])} defaultChecked={true} className={"rounded bg-slate-900 border-slate-700 text-blue-500 focus:ring-0"} />
+                  <input id={"configWordWrapToggle"} type={"checkbox"} data-action-change={"toggleWordWrapConf"} data-args={JSON.stringify([{"source": "checked"}])} defaultChecked={true} className={"rounded bg-slate-900 border-slate-700 text-blue-500 focus:ring-0"} />
                   {"\n                "}
                   <span>
                     {"Перенос строк"}
@@ -527,8 +527,15 @@ export default function App() {
                   {"\n                "}
                   <div className={"bg-[#070b14] border border-slate-800/90 rounded-xl p-2.5"}>
                     {"\n                  "}
+                    <div className={"flex items-center justify-between text-[11px] font-mono text-slate-400"}>
+                      {"\n                    "}
+                      <span>{"ISP_INTERFACE"}</span>
+                      {"\n                    "}
+                      <span className={"text-blue-400"}>{"WAN"}</span>
+                      {"\n                  "}
+                    </div>
                     <label htmlFor={"ispInterfaceSelect"} className={"sr-only"}>{"Интерфейс провайдера (ISP_INTERFACE)"}</label>
-                    <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       <option value={""}>{"Backend ещё не обнаружил сетевые интерфейсы"}</option>
                     </select>
                     <input id={"ispInterfaceManualInput"} type={"text"} inputMode={"text"} autoComplete={"off"} maxLength={15} aria-label={"Имя сетевого интерфейса"} placeholder={"например eth0 или ppp0"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 hidden w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs font-bold text-white focus:border-blue-500 focus:outline-none"} />
@@ -1121,21 +1128,21 @@ export default function App() {
         {"\n      "}
         {"\n      "}
         {"\n      "}
-        <section id={"tabContent-diagnostic16k"} className={"hidden view-animate space-y-5"}>
-          <div className={"ui-card rounded-2xl p-5 sm:p-6 space-y-4"}>
+        <section id={"tabContent-diagnostic16k"} className={"hidden view-animate space-y-3"}>
+          <div className={"ui-card rounded-2xl p-3 sm:p-3.5 space-y-2"}>
             <div>
-              <h2 className={"text-lg font-bold text-white"}>Обрыв на 16 КБ</h2>
-              <p className={"mt-1 text-sm leading-relaxed text-slate-300"}>Сравниваем передачу напрямую и через nfqws2. Результаты замеров и объяснение проверки скрыты до нажатия «Замеры и детали».</p>
+              <h2 className={"text-base font-bold text-white"}>Обрыв на 16 КБ</h2>
+              <p className={"mt-0.5 text-xs leading-relaxed text-slate-300"}>Сравниваем передачу напрямую и через nfqws2. Результаты и пояснения открываются по запросу.</p>
             </div>
-            <div className={"flex flex-col sm:flex-row sm:items-end gap-3"}>
-              <label htmlFor={"freezeScanHostsInput"} className={"min-w-0 flex-1 space-y-2 text-sm font-semibold text-slate-200"}>
+            <div className={"flex flex-col sm:flex-row sm:items-end gap-2"}>
+              <label htmlFor={"freezeScanHostsInput"} className={"min-w-0 flex-1 space-y-1 text-xs font-semibold text-slate-200"}>
                 <span>Свои сайты <span className={"font-medium text-slate-400"}>(необязательно)</span></span>
-                <input id={"freezeScanHostsInput"} type={"text"} placeholder={"example.com, video.example"} autoCapitalize={"none"} spellCheck={false} className={"w-full bg-[#060a12] border border-slate-700 rounded-xl px-4 py-3 text-sm font-mono text-white placeholder:text-slate-500"} />
+                <input id={"freezeScanHostsInput"} type={"text"} placeholder={"example.com, video.example"} autoCapitalize={"none"} spellCheck={false} className={"w-full bg-[#060a12] border border-slate-700 rounded-lg px-3 py-1.5 text-sm font-mono text-white placeholder:text-slate-500"} />
               </label>
-              <button data-action-click={"runFreezeScan"} className={"px-5 py-3 rounded-xl bg-blue-600 text-white font-semibold"}>Запустить пробу</button>
-              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-4 py-3 rounded-xl border border-rose-500/30 text-rose-200"}>Остановить</button>
+              <button data-action-click={"runFreezeScan"} className={"px-3.5 py-1.5 rounded-lg bg-blue-600 text-sm text-white font-semibold"}>Запустить пробу</button>
+              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-3 py-1.5 rounded-lg border border-rose-500/30 text-sm text-rose-200"}>Остановить</button>
             </div>
-            <label className={"flex items-start gap-2 text-xs text-slate-300"}><input id={"freezeScanUploadProbe"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} /><span><strong>Дополнительно проверить короткие ответы POST-запросом до 64 КБ</strong><small className={"mt-1 block text-slate-400"}>Только для введённых вами доменов: сервер получит тестовое тело и может его обработать. Отказ POST будет отмечен отдельно и сам по себе не доказывает обрыв передачи.</small></span></label>
+            <label className={"flex items-start gap-2 text-xs text-slate-300"}><input id={"freezeScanUploadProbe"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} /><span><strong>Проверить короткие POST-ответы (до 64 КБ)</strong><small className={"mt-0.5 block text-slate-400"}>Только для введённых доменов: сервер получит тестовое тело. Отказ POST сам по себе не означает обрыв передачи.</small></span></label>
             <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
             <div id={"freezeScanProgress"} className={"hidden rounded-xl border border-blue-400/25 bg-blue-500/5 p-4"} role={"status"} aria-live={"polite"}>
               <div className={"flex items-center justify-between gap-3"}>
@@ -1148,7 +1155,7 @@ export default function App() {
               <p id={"freezeScanProgressDetail"} className={"mt-2 text-xs leading-relaxed text-slate-300"}></p>
               <ol id={"freezeScanProgressSteps"} className={"mt-3 grid gap-2 sm:grid-cols-3"}></ol>
             </div>
-            <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-4 py-3 text-sm font-bold leading-relaxed"} role={"status"} aria-live={"polite"}></p>
+            <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-3 py-2 text-sm font-bold leading-snug"} role={"status"} aria-live={"polite"}></p>
             <div id={"freezeScanResults"} className={"hidden overflow-x-auto rounded-xl border border-slate-800"}></div>
             <section id={"freezeApplyPreviewPanel"} className={"hidden rounded-2xl border border-blue-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>
               <div>

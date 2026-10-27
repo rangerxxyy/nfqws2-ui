@@ -120,5 +120,9 @@ cp "$STAGE/scripts/nfqws2-ui-ctl" /opt/bin/nfqws2-ui-ctl
 chmod 755 /opt/bin/nfqws2-ui-ctl
 SWITCHED=0
 COMMITTED=1
-set_state success "Panel $TAG passed HTTP health-check; nfqws2 restarted and status verified. Previous release retained."
+if "$STAGE/scripts/nfqws2-ui-ctl" prune-releases "$ROOT/releases" "$STAGE"; then
+	set_state success "Panel $TAG passed HTTP health-check; nfqws2 restarted and status verified. Older panel releases removed."
+else
+	set_state success "Panel $TAG passed health-checks; update succeeded, but older panel releases could not all be removed."
+fi
 exit 0
