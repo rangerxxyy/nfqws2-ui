@@ -16,14 +16,14 @@ export type StrategyPickResult = { candidate: { name: string; source: string; st
 export type MultiSiteBaselineResult = { host: string; eligible: boolean; reason: string };
 export type MultiSiteDomainResult = { host: string; eligible: boolean; baselineReason: string; attempts: number; successes: number; elapsedMs: number; confirmed: boolean };
 export type MultiSiteCandidateResult = { candidate: StrategyPickResult['candidate']; openedDomains: number; domains: MultiSiteDomainResult[] };
-export type StrategyPickOperation = { id: string; host: string; hosts?: string[]; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; multiSiteBaseline?: MultiSiteBaselineResult[]; multiSiteResults?: MultiSiteCandidateResult[]; message: string; updatedAt: number };
+export type StrategyPickOperation = { id: string; host: string; hosts?: string[]; podkopHosts?: string[]; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; multiSiteBaseline?: MultiSiteBaselineResult[]; multiSiteResults?: MultiSiteCandidateResult[]; message: string; updatedAt: number };
 export type StrategyPickPreview = { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickResult['candidate']; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
 export type FreezeProfileJoinPreview = { operationId: string; resultIndex: number; asn: number; profileIndex: number; profileName: string; listId: string; prefixCount: number; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
 export type FreezeStrategyMatch = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; reusedFrom: string | null };
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
 export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
 export type FreezeScanOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: FreezeNetworkResult[]; message: string; updatedAt: number };
-export type ForeignConfigCheckOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; hosts: string[]; comparisons: { name: string; source: string; sites: { host: string; currentOk: boolean | null; currentDetail: string; currentAttempts: number; currentSuccesses: number; currentAverageMs: number | null; candidateOk: boolean | null; candidateDetail: string; candidateAttempts: number; candidateSuccesses: number; candidateAverageMs: number | null }[] }[]; message: string; updatedAt: number };
+export type ForeignConfigCheckOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; hosts: string[]; podkopHosts?: string[]; comparisons: { name: string; source: string; sites: { host: string; currentOk: boolean | null; currentDetail: string; currentAttempts: number; currentSuccesses: number; currentAverageMs: number | null; candidateOk: boolean | null; candidateDetail: string; candidateAttempts: number; candidateSuccesses: number; candidateAverageMs: number | null }[] }[]; message: string; updatedAt: number };
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
 export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = string;
@@ -92,11 +92,12 @@ export type CommunityTarget = { host?: string; asn?: number };
 export type CommunityStrategy = { id: string; asn: number; provider: string; proto: 'tls' | 'http'; steps: string[]; targets: CommunityTarget[]; reports: number; fails: number; lastFail: string; issues: number[]; first: string; last: string; nfqws2: string; name: string; fresh: boolean; skipped: boolean };
 export type CommunityStrategiesResponse = { asn: number | null; provider: string; fetchedAt: number | null; error: string | null; total: number | null; providers: number | null; items: CommunityStrategy[]; repo: string; page: string; mine: string | null };
 export type LogSource = 'nfqws2-ui' | 'nfqws2';
-export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean };
+export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean; showConfigWarnings: boolean };
 export type PanelAuthStatus = { enabled: boolean; hasPassword: boolean; authenticated: boolean; rememberDays: number };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
 export type UiUpdateStatus = { currentVersion: string; latestVersion: string | null; updateAvailable: boolean; releaseUrl: string | null; checkedAt: number | null };
 export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null };
+export type NfqwsCoreUpdateStatus = { latestTag: string | null; installedTag: string | null; updateAvailable: boolean; checkedAt: number };
 export type UpdateOperation = {
   id: string;
   state: 'downloading' | 'verifying' | 'installing' | 'health_check' | 'success' | 'rolled_back' | 'failed';
@@ -186,7 +187,7 @@ export const nfqwsSnapshots = {
 
 export const nfqwsProfiles = {
   list: () => api<NfqwsProfilesResponse>('/api/profiles'),
-  catalog: () => api<NfqwsLuaCatalogResponse>('/api/profiles/catalog'),
+  catalog: (forceRefresh = false) => api<NfqwsLuaCatalogResponse>(`/api/profiles/catalog${forceRefresh ? '?forceRefresh=true' : ''}`),
   saveCustom: (profiles: string[][], revision: string) => api<{ config: ConfigResponse; message: string }>('/api/profiles', { method: 'PUT', body: JSON.stringify({ profiles, revision }) }),
   saveSettings: (variables: Record<string, string[]>, revision: string) => api<{ config: ConfigResponse; message: string }>('/api/profiles/settings', { method: 'PUT', body: JSON.stringify({ variables, revision }) }),
 };
@@ -293,6 +294,7 @@ export const nfqwsUpdates = {
   }),
   status: (id: string) => api<UpdateOperation>(`/api/updates/operations/${encodeURIComponent(id)}`),
   coreReleases: () => api<NfqwsCoreReleases>('/api/nfqws2/updates/releases'),
+  coreStatus: () => api<NfqwsCoreUpdateStatus>('/api/nfqws2/updates/status'),
   installCore: (tag: string) => api<UpdateOperation>('/api/nfqws2/updates/install', {
     method: 'POST', body: JSON.stringify({ tag }),
   }),

@@ -42,7 +42,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use tokio::{net::TcpListener, sync::Mutex};
@@ -53,6 +53,8 @@ const MAX_CONFIG_BYTES: usize = 512 * 1024;
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
+const CORE_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
+const CORE_RELEASE_ERROR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const WRITE_REVISION_CONFLICT: &str = "REVISION_CONFLICT";
 const GITHUB_RELEASES_API: &str =
     "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=30";
@@ -94,6 +96,7 @@ struct AppState {
     config_write_lock: Mutex<()>,
     config_override: Option<PathBuf>,
     update_lock: Mutex<()>,
+    core_release_cache: Mutex<Option<CoreReleaseCacheEntry>>,
     ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
     managed_asn_refresh_lock: Mutex<()>,
@@ -104,6 +107,8 @@ struct AppState {
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     freeze_scan_controls: Mutex<HashMap<String, Arc<freeze_diagnostic::FreezeScanPause>>>,
+    nfqws_cli_catalog_cache: Mutex<Option<NfqwsCliCatalogCacheEntry>>,
+    nfqws_lua_catalog_cache: Mutex<Option<NfqwsLuaCatalogCacheEntry>>,
     #[cfg(test)]
     change_history_fail_path: Mutex<Option<PathBuf>>,
 }
@@ -286,6 +291,8 @@ struct ForeignConfigCheckOperation {
     done: usize,
     total: usize,
     hosts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    podkop_hosts: Vec<String>,
     comparisons: Vec<ForeignConfigComparison>,
     message: String,
     updated_at: u64,
@@ -431,6 +438,8 @@ struct StrategyPickOperation {
     results: Vec<strategy_picker::StrategyCandidateResult>,
     #[serde(default)]
     hosts: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    podkop_hosts: Vec<String>,
     #[serde(default)]
     multi_site_results: Vec<MultiSiteCandidateResult>,
     #[serde(default)]
@@ -2403,6 +2412,7 @@ fn freeze_result_as_strategy_operation(
             detail: "Три последовательные проверки прошли на этом домене".into(),
         }],
         hosts: Vec::new(),
+        podkop_hosts: Vec::new(),
         multi_site_results: Vec::new(),
         multi_site_baseline: Vec::new(),
         message: "Проверка 16 КБ завершена".into(),
@@ -3170,7 +3180,7 @@ struct PanelRelease {
     notes: String,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CoreRelease {
     tag: String,
@@ -3178,6 +3188,184 @@ struct CoreRelease {
     notes: String,
     asset: String,
     sha256: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CoreReleaseCacheEntry {
+    checked_at: u64,
+    architecture: String,
+    releases: Vec<CoreRelease>,
+    #[serde(default)]
+    last_error_at: Option<u64>,
+}
+
+fn core_release_cache_is_fresh(
+    entry: &CoreReleaseCacheEntry,
+    architecture: &str,
+    now: u64,
+) -> bool {
+    if entry.architecture != architecture {
+        return false;
+    }
+    if entry
+        .last_error_at
+        .is_some_and(|checked| now.saturating_sub(checked) < CORE_RELEASE_ERROR_CACHE_TTL.as_secs())
+    {
+        return true;
+    }
+    entry.checked_at > 0 && now.saturating_sub(entry.checked_at) < CORE_RELEASE_CACHE_TTL.as_secs()
+}
+
+fn core_release_cache_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("core-releases-cache.json")
+}
+
+async fn read_core_release_cache(path: &Path) -> Option<CoreReleaseCacheEntry> {
+    let metadata = tokio::fs::metadata(path).await.ok()?;
+    if metadata.len() > MAX_RELEASE_RESPONSE_BYTES as u64 {
+        return None;
+    }
+    let bytes = tokio::fs::read(path).await.ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+async fn write_core_release_cache(
+    path: &Path,
+    entry: &CoreReleaseCacheEntry,
+) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Не удалось определить каталог кэша релизов nfqws2".to_owned())?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|error| format!("Не удалось создать каталог кэша релизов nfqws2: {error}"))?;
+    let bytes = serde_json::to_vec(entry).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_RELEASE_RESPONSE_BYTES {
+        return Err("Кэш релизов nfqws2 превышает ограничение размера".into());
+    }
+    let temporary = path.with_extension(format!("{}.tmp", new_update_id()));
+    tokio::fs::write(&temporary, bytes)
+        .await
+        .map_err(|error| format!("Не удалось записать кэш релизов nfqws2: {error}"))?;
+    #[cfg(unix)]
+    if let Err(error) =
+        tokio::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600)).await
+    {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(format!("Не удалось защитить кэш релизов nfqws2: {error}"));
+    }
+    #[cfg(windows)]
+    if tokio::fs::try_exists(path).await.unwrap_or(false)
+        && let Err(error) = tokio::fs::remove_file(path).await
+    {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(format!("Не удалось заменить кэш релизов nfqws2: {error}"));
+    }
+    if let Err(error) = tokio::fs::rename(&temporary, path).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(format!("Не удалось обновить кэш релизов nfqws2: {error}"));
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CoreUpdateStatus {
+    latest_tag: Option<String>,
+    installed_tag: Option<String>,
+    update_available: bool,
+    checked_at: u64,
+}
+
+async fn load_cached_core_releases(
+    state: &AppState,
+    architecture: &str,
+) -> Result<(Vec<CoreRelease>, u64), String> {
+    let mut cache = state.core_release_cache.lock().await;
+    if cache.is_none() {
+        *cache = read_core_release_cache(&core_release_cache_path(&state.data_dir)).await;
+    }
+    let now = now_unix_seconds();
+    if let Some(entry) = cache
+        .as_ref()
+        .filter(|entry| core_release_cache_is_fresh(entry, architecture, now))
+    {
+        return Ok((entry.releases.clone(), entry.checked_at));
+    }
+    let stale = cache
+        .as_ref()
+        .filter(|entry| entry.architecture == architecture)
+        .map(|entry| (entry.releases.clone(), entry.checked_at));
+    match fetch_github_url(NFQWS2_RELEASES_API).await {
+        Ok(json) => match eligible_core_releases(&json, architecture) {
+            Ok(releases) => {
+                let checked_at = now_unix_seconds();
+                let entry = CoreReleaseCacheEntry {
+                    checked_at,
+                    architecture: architecture.to_owned(),
+                    releases: releases.clone(),
+                    last_error_at: None,
+                };
+                *cache = Some(entry.clone());
+                if let Err(error) =
+                    write_core_release_cache(&core_release_cache_path(&state.data_dir), &entry)
+                        .await
+                {
+                    tracing::warn!("cannot persist nfqws2 release cache: {error}");
+                }
+                Ok((releases, checked_at))
+            }
+            Err(message) => Err(message),
+        },
+        Err(message) => {
+            let mut entry = stale
+                .as_ref()
+                .map(|(releases, checked_at)| CoreReleaseCacheEntry {
+                    checked_at: *checked_at,
+                    architecture: architecture.to_owned(),
+                    releases: releases.clone(),
+                    last_error_at: None,
+                })
+                .or_else(|| {
+                    cache
+                        .as_ref()
+                        .cloned()
+                        .filter(|entry| entry.architecture == architecture && entry.checked_at == 0)
+                })
+                .unwrap_or_else(|| CoreReleaseCacheEntry {
+                    checked_at: 0,
+                    architecture: architecture.to_owned(),
+                    releases: Vec::new(),
+                    last_error_at: None,
+                });
+            entry.last_error_at = Some(now_unix_seconds());
+            *cache = Some(entry.clone());
+            if let Err(error) =
+                write_core_release_cache(&core_release_cache_path(&state.data_dir), &entry).await
+            {
+                tracing::warn!("cannot persist nfqws2 release-check backoff: {error}");
+            }
+            if entry.checked_at > 0 {
+                Ok((entry.releases, entry.checked_at))
+            } else {
+                Err(message)
+            }
+        }
+    }
+}
+
+fn core_update_available(latest: Option<&str>, installed: Option<&str>) -> bool {
+    let normalize = |tag: &str| {
+        tag.trim()
+            .strip_prefix('v')
+            .unwrap_or(tag.trim())
+            .to_owned()
+    };
+    match (latest, installed) {
+        (Some(latest), Some(installed)) => normalize(latest) != normalize(installed),
+        _ => false,
+    }
 }
 
 #[derive(Serialize)]
@@ -3225,6 +3413,8 @@ struct UiAppearanceSettings {
     status_bar: String,
     #[serde(default = "default_true")]
     remind_windows_tcp_timestamps: bool,
+    #[serde(default = "default_true")]
+    show_config_warnings: bool,
 }
 
 fn default_accent() -> String {
@@ -3627,6 +3817,33 @@ async fn get_core_releases() -> Response {
         },
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
+}
+
+async fn get_core_update_status(State(state): State<Arc<AppState>>) -> Response {
+    let Some(architecture) = entware_architecture() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Не удалось определить поддерживаемую архитектуру Entware nfqws2",
+        );
+    };
+    let (releases, checked_at) = match load_cached_core_releases(&state, &architecture).await {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::BAD_GATEWAY, message),
+    };
+    let installed_tag = std::process::Command::new("/opt/bin/opkg")
+        .args(["status", "nfqws2-keenetic"])
+        .output()
+        .ok()
+        .and_then(|output| installed_core_tag_from_output(&output.stdout));
+    let latest_tag = releases.first().map(|release| release.tag.clone());
+    let update_available = core_update_available(latest_tag.as_deref(), installed_tag.as_deref());
+    Json(CoreUpdateStatus {
+        latest_tag,
+        installed_tag,
+        update_available,
+        checked_at,
+    })
+    .into_response()
 }
 
 async fn post_core_update_install(
@@ -4510,8 +4727,15 @@ fn strip_shell_comment(line: &str) -> &str {
 }
 
 fn configured_list_reference_for_flag(config_text: &str, flag: &str) -> Option<PathBuf> {
-    let mut found = None;
-    let mut unresolved = false;
+    let (references, ambiguous) = configured_list_references_for_flag(config_text, flag);
+    (!ambiguous && references.len() <= 1)
+        .then(|| references.into_iter().next())
+        .flatten()
+}
+
+fn configured_list_references_for_flag(config_text: &str, flag: &str) -> (Vec<PathBuf>, bool) {
+    let mut references = Vec::new();
+    let mut ambiguous = false;
     for line in config_text.lines() {
         let line = strip_shell_comment(line);
         let mut start_at = 0;
@@ -4546,6 +4770,7 @@ fn configured_list_reference_for_flag(config_text: &str, flag: &str) -> Option<P
                     cursor += 1;
                 }
             } else if cursor == end {
+                ambiguous = true;
                 start_at = end;
                 continue;
             }
@@ -4571,20 +4796,43 @@ fn configured_list_reference_for_flag(config_text: &str, flag: &str) -> Option<P
             }
             if cursor > value_start {
                 let value = line[value_start..cursor].trim_start_matches('@');
-                if value.contains('$') || value.starts_with('~') {
-                    unresolved = true;
+                if value.contains(['$', '`']) || value.starts_with(['~', '-']) {
+                    ambiguous = true;
                 } else {
                     let path = PathBuf::from(value);
-                    if found.as_ref().is_some_and(|existing| existing != &path) {
-                        return None;
+                    if !references.contains(&path) {
+                        references.push(path);
                     }
-                    found = Some(path);
                 }
+            } else {
+                ambiguous = true;
             }
             start_at = end;
         }
     }
-    (!unresolved).then_some(found).flatten()
+    (references, ambiguous)
+}
+
+fn argv_has_ambiguous_list_reference(args: &[String], flag: &str) -> bool {
+    for (index, argument) in args.iter().take(16_384).enumerate() {
+        let value = if let Some(value) = argument
+            .strip_prefix(flag)
+            .and_then(|suffix| suffix.strip_prefix('='))
+        {
+            Some(value)
+        } else if argument == flag {
+            Some(args.get(index + 1).map(String::as_str).unwrap_or_default())
+        } else {
+            None
+        };
+        let Some(value) = value else {
+            continue;
+        };
+        if value.is_empty() || value.contains(['$', '`', '\0']) || value.starts_with(['~', '-']) {
+            return true;
+        }
+    }
+    false
 }
 
 fn configured_list_reference(config_text: &str, id: &str) -> Option<PathBuf> {
@@ -4749,6 +4997,40 @@ fn diagnostic_list_candidates(config: &Path, args: &[String]) -> Vec<(String, Pa
         candidates.push((label, path, is_ipset));
     }
     candidates
+}
+
+async fn read_matching_runtime_list_entries(
+    candidates: &[(String, PathBuf, bool)],
+    host: &str,
+    addresses: &[IpAddr],
+) -> (Vec<String>, Vec<String>) {
+    let mut matches = Vec::new();
+    let mut unreadable = Vec::new();
+    for (id, path, is_ipset) in candidates {
+        let mut bytes = Vec::new();
+        let read = match tokio::fs::File::open(path).await {
+            Ok(file) => file
+                .take((MAX_LIST_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .await
+                .is_ok(),
+            Err(_) => false,
+        };
+        if !read || bytes.len() > MAX_LIST_BYTES {
+            unreadable.push(id.clone());
+            continue;
+        }
+        for line in String::from_utf8_lossy(&bytes).lines() {
+            if site_diagnostics::list_entry_matches(host, addresses, line, *is_ipset) {
+                matches.push(format!(
+                    "{id}: {}",
+                    line.chars().take(253).collect::<String>()
+                ));
+                break;
+            }
+        }
+    }
+    (matches, unreadable)
 }
 
 fn active_process_arguments() -> Option<Vec<String>> {
@@ -4984,6 +5266,64 @@ fn list_reference_matches(config: &Path, id: &str, reference: &Path) -> bool {
         .is_some_and(|path| path == target)
 }
 
+fn list_reference_matches_path(config: &Path, list_path: &Path, reference: &Path) -> bool {
+    let Some(root) = config
+        .canonicalize()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+    else {
+        return false;
+    };
+    let candidate = if reference.is_absolute() {
+        reference.to_path_buf()
+    } else {
+        root.join(reference)
+    };
+    let target = list_path
+        .canonicalize()
+        .unwrap_or_else(|_| list_path.to_path_buf());
+    candidate.canonicalize().is_ok_and(|path| path == target)
+}
+
+fn list_requires_nfqws_validation(
+    config: &Path,
+    list_path: &Path,
+    id: &str,
+    config_source: &str,
+    active_args: Option<&[String]>,
+) -> bool {
+    if !LIST_IDS.contains(&id) {
+        return true;
+    }
+    let flags: &[&str] = if id.starts_with("ipset") {
+        &["--ipset", "--ipset-exclude"]
+    } else {
+        &["--hostlist", "--hostlist-auto", "--hostlist-exclude"]
+    };
+    for flag in flags {
+        let (references, ambiguous) = configured_list_references_for_flag(config_source, flag);
+        if ambiguous
+            || references
+                .iter()
+                .any(|reference| list_reference_matches_path(config, list_path, reference))
+        {
+            return true;
+        }
+    }
+    if let Some(args) = active_args {
+        if flags
+            .iter()
+            .any(|flag| argv_has_ambiguous_list_reference(args, flag))
+        {
+            return true;
+        }
+        return runtime_list_references(args)
+            .iter()
+            .any(|(reference, _)| list_reference_matches_path(config, list_path, reference));
+    }
+    false
+}
+
 fn custom_list_is_ipset(config: &Path, id: &str) -> bool {
     const IPSET_FLAGS: [&str; 2] = ["--ipset", "--ipset-exclude"];
     if let Some(args) = active_process_arguments()
@@ -5130,42 +5470,14 @@ async fn diagnose_site(
             );
         }
     };
-    let mut matches = Vec::new();
-    let mut unreadable = Vec::new();
     if let Some(config) = config_path_for_state(&state) {
+        let lists_started = Instant::now();
         let active_args = active_process_arguments().unwrap_or_default();
         let candidates = diagnostic_list_candidates(&config, &active_args);
         let no_active_lists = candidates.is_empty();
-        for (id, path, is_ipset) in candidates {
-            let mut bytes = Vec::new();
-            let read = match tokio::fs::File::open(&path).await {
-                Ok(file) => file
-                    .take((MAX_LIST_BYTES + 1) as u64)
-                    .read_to_end(&mut bytes)
-                    .await
-                    .is_ok(),
-                Err(_) => false,
-            };
-            if !read || bytes.len() > MAX_LIST_BYTES {
-                unreadable.push(id);
-                continue;
-            }
-            for line in String::from_utf8_lossy(&bytes).lines() {
-                if site_diagnostics::list_entry_matches(
-                    &report.host,
-                    &report.addresses,
-                    line,
-                    is_ipset,
-                ) {
-                    matches.push(format!(
-                        "{id}: {}",
-                        line.chars().take(253).collect::<String>()
-                    ));
-                    break;
-                }
-            }
-        }
-        report.steps.push(DiagnosticStep {
+        let (matches, unreadable) =
+            read_matching_runtime_list_entries(&candidates, &report.host, &report.addresses).await;
+        let mut lists_step = DiagnosticStep {
             id: "lists".into(),
             status: if unreadable.is_empty() {
                 "ok"
@@ -5189,7 +5501,9 @@ async fn diagnose_site(
             ),
             duration_ms: None,
             http_code: None,
-        });
+        };
+        lists_step.record_elapsed(lists_started);
+        report.steps.push(lists_step);
     } else {
         report.steps.push(DiagnosticStep {
             id: "lists".into(),
@@ -5296,6 +5610,77 @@ async fn check_monitoring_host(host: String) -> MonitoringHostResult {
 fn monitor_probe_ipv4(ip: std::net::Ipv4Addr) -> bool {
     let value = u32::from(ip);
     site_diagnostics::public_ip(IpAddr::V4(ip)) || (0xc612_0000..=0xc613_ffff).contains(&value)
+}
+
+fn is_podkop_fake_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    u32::from(ip) & 0xfffe_0000 == 0xc612_0000
+}
+
+fn output_contains_podkop_fake_ip(output: &[u8]) -> bool {
+    String::from_utf8_lossy(output)
+        .split(|character: char| !character.is_ascii_digit() && character != '.')
+        .filter_map(|candidate| candidate.parse::<std::net::Ipv4Addr>().ok())
+        .any(is_podkop_fake_ipv4)
+}
+
+async fn detect_podkop_hosts(hosts: &[String]) -> Vec<String> {
+    if !Path::new("/etc/init.d/podkop").is_file() {
+        return Vec::new();
+    }
+    let mut tasks = tokio::task::JoinSet::new();
+    let mut detected = HashSet::new();
+    for host in hosts {
+        if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+            if is_podkop_fake_ipv4(ip) {
+                detected.insert(host.clone());
+            }
+            continue;
+        }
+        let host = host.clone();
+        tasks.spawn(async move {
+            let lookup = async {
+                let output = match tokio::process::Command::new("nslookup")
+                    .args([host.as_str(), "127.0.0.42"])
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .kill_on_drop(true)
+                    .output()
+                    .await
+                {
+                    Ok(output) => output,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        tokio::process::Command::new("busybox")
+                            .args(["nslookup", host.as_str(), "127.0.0.42"])
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::null())
+                            .kill_on_drop(true)
+                            .output()
+                            .await
+                            .ok()?
+                    }
+                    Err(_) => return None,
+                };
+                Some(output)
+            };
+            let is_fake = tokio::time::timeout(std::time::Duration::from_secs(2), lookup)
+                .await
+                .ok()
+                .flatten()
+                .filter(|output| output.status.success())
+                .is_some_and(|output| output_contains_podkop_fake_ip(&output.stdout));
+            (host, is_fake)
+        });
+    }
+    while let Some(result) = tasks.join_next().await {
+        if let Ok((host, true)) = result {
+            detected.insert(host);
+        }
+    }
+    hosts
+        .iter()
+        .filter(|host| detected.contains(*host))
+        .cloned()
+        .collect()
 }
 
 async fn monitor_sites(Json(request): Json<MonitoringRequest>) -> Response {
@@ -7082,6 +7467,7 @@ async fn start_foreign_config_check(
         current: None,
         done: 0,
         total: hosts.len().saturating_mul(prepared.len() + 1),
+        podkop_hosts: detect_podkop_hosts(&hosts).await,
         hosts,
         comparisons,
         message: "Проверка конфигов поставлена в очередь; активная конфигурация не меняется".into(),
@@ -7621,6 +8007,7 @@ async fn start_multi_strategy_pick(
         total: plan.candidates.len(),
         results: Vec::new(),
         hosts: hosts.clone(),
+        podkop_hosts: detect_podkop_hosts(&hosts).await,
         multi_site_results: Vec::new(),
         multi_site_baseline: Vec::new(),
         message: "Подбор общего профиля поставлен в очередь; исходный конфиг не меняется".into(),
@@ -8122,6 +8509,7 @@ async fn start_strategy_pick(
         total: plan.candidates.len(),
         results: Vec::new(),
         hosts: Vec::new(),
+        podkop_hosts: detect_podkop_hosts(std::slice::from_ref(&host)).await,
         multi_site_results: Vec::new(),
         multi_site_baseline: Vec::new(),
         message: "Подбор поставлен в очередь; основной конфиг не изменяется".into(),
@@ -9449,9 +9837,6 @@ async fn put_list(
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
     let ip_list = id.starts_with("ipset") || custom_list_is_ipset(&config, &id);
-    if let Err(message) = validate_list_content_with_kind(&id, &write.content, ip_list) {
-        return error(StatusCode::BAD_REQUEST, message);
-    }
     let _write_guard = state.config_write_lock.lock().await;
     let Some(path) = list_file_path(&config, &id) else {
         return error(
@@ -9459,6 +9844,25 @@ async fn put_list(
             "Разрешённый существующий список не найден",
         );
     };
+    let config_source = match tokio::fs::read_to_string(&config).await {
+        Ok(content) => content,
+        Err(read_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось проверить ссылки конфигурации: {read_error}"),
+            );
+        }
+    };
+    if list_requires_nfqws_validation(
+        &config,
+        &path,
+        &id,
+        &config_source,
+        active_process_arguments().as_deref(),
+    ) && let Err(message) = validate_list_content_with_kind(&id, &write.content, ip_list)
+    {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
     let original = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
@@ -10589,6 +10993,27 @@ async fn undo_last_change(State(state): State<Arc<AppState>>) -> Response {
             "Нет изменения, которое можно отменить",
         );
     };
+    let current_config_source = match tokio::fs::read_to_string(&config).await {
+        Ok(content) => content,
+        Err(read_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось проверить конфигурацию перед откатом: {read_error}"),
+            );
+        }
+    };
+    let mut target_config_source = None;
+    for item in batch.iter().filter(|item| item.file == "nfqws2.conf") {
+        let (entry, previous) = match change_history::version_before(&state.data_dir, &item.id) {
+            Ok(value) => value,
+            Err(message) => return error(StatusCode::NOT_FOUND, message),
+        };
+        if Path::new(&entry.path) == config {
+            target_config_source = previous;
+            break;
+        }
+    }
+    let active_args = active_process_arguments();
     // Check the entire operation before changing anything, so an intervening
     // edit cannot leave a multi-file undo half-applied.
     for entry in &batch {
@@ -10657,12 +11082,32 @@ async fn undo_last_change(State(state): State<Arc<AppState>>) -> Response {
                         "Предыдущая версия списка превышает лимит 512 КБ",
                     );
                 }
-                let kind = entry.file.starts_with("ipset");
-                if let Err(message) = validate_list_content_with_kind(&entry.file, &content, kind) {
-                    return error(
-                        StatusCode::BAD_REQUEST,
-                        format!("Предыдущая версия списка не проходит проверку: {message}"),
-                    );
+                let requires_validation =
+                    list_requires_nfqws_validation(
+                        &config,
+                        &path,
+                        &entry.file,
+                        &current_config_source,
+                        active_args.as_deref(),
+                    ) || target_config_source.as_deref().is_some_and(|target| {
+                        list_requires_nfqws_validation(
+                            &config,
+                            &path,
+                            &entry.file,
+                            target,
+                            active_args.as_deref(),
+                        )
+                    });
+                if requires_validation {
+                    let kind = entry.file.starts_with("ipset");
+                    if let Err(message) =
+                        validate_list_content_with_kind(&entry.file, &content, kind)
+                    {
+                        return error(
+                            StatusCode::BAD_REQUEST,
+                            format!("Предыдущая версия списка не проходит проверку: {message}"),
+                        );
+                    }
                 }
             }
         }
@@ -10915,12 +11360,24 @@ async fn revert_change_history_id_inner(
                     "Предыдущая версия списка превышает лимит 512 КБ",
                 );
             }
-            let kind = entry.file.starts_with("ipset");
-            if let Err(message) = validate_list_content_with_kind(&entry.file, &content, kind) {
-                return error(
-                    StatusCode::BAD_REQUEST,
-                    format!("Предыдущая версия списка не проходит проверку: {message}"),
-                );
+            let config_source = tokio::fs::read_to_string(&config).await.ok();
+            let requires_validation = config_source.as_deref().is_none_or(|source| {
+                list_requires_nfqws_validation(
+                    &config,
+                    &path,
+                    &entry.file,
+                    source,
+                    active_process_arguments().as_deref(),
+                )
+            });
+            if requires_validation {
+                let kind = entry.file.starts_with("ipset");
+                if let Err(message) = validate_list_content_with_kind(&entry.file, &content, kind) {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        format!("Предыдущая версия списка не проходит проверку: {message}"),
+                    );
+                }
             }
             if let Err(message) = backup_and_write_named(
                 &state.data_dir,
@@ -11199,7 +11656,7 @@ async fn save_runtime_profile_settings(
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct NfqwsCliOption {
     name: String,
@@ -11209,13 +11666,100 @@ struct NfqwsCliOption {
     takes_value: bool,
 }
 
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct NfqwsCliCatalog {
     options: Vec<NfqwsCliOption>,
     l7: Vec<String>,
     payloads: Vec<String>,
     full: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NfqwsCliCatalogCacheKey {
+    binary: PathBuf,
+    modified: Option<SystemTime>,
+    length: u64,
+}
+
+#[derive(Debug, Clone)]
+struct NfqwsCliCatalogCacheEntry {
+    key: NfqwsCliCatalogCacheKey,
+    catalog: NfqwsCliCatalog,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NfqwsLuaCatalogCacheKey {
+    directory: PathBuf,
+    files: Vec<(PathBuf, Option<SystemTime>, u64)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NfqwsLuaCatalog {
+    functions: Vec<nfqws2_ui::runtime_profiles::LuaFunctionInfo>,
+    standard_groups: Vec<nfqws2_ui::runtime_profiles::LuaStandardGroup>,
+}
+
+#[derive(Debug, Clone)]
+struct NfqwsLuaCatalogCacheEntry {
+    key: NfqwsLuaCatalogCacheKey,
+    catalog: NfqwsLuaCatalog,
+}
+
+fn nfqws_lua_catalog_cache_key(directory: &Path) -> Option<NfqwsLuaCatalogCacheKey> {
+    let directory = directory.canonicalize().ok()?;
+    let mut files = std::fs::read_dir(&directory)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| {
+            let path = entry.path();
+            let extension = path.extension()?.to_str()?;
+            if extension != "lua" && extension != "gz" {
+                return None;
+            }
+            let metadata = std::fs::metadata(&path).ok()?;
+            Some((path, metadata.modified().ok(), metadata.len()))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Some(NfqwsLuaCatalogCacheKey { directory, files })
+}
+
+fn reusable_nfqws_lua_catalog(
+    cached: Option<&NfqwsLuaCatalogCacheEntry>,
+    key: &NfqwsLuaCatalogCacheKey,
+    force_refresh: bool,
+) -> Option<NfqwsLuaCatalog> {
+    if force_refresh {
+        return None;
+    }
+    cached
+        .filter(|entry| entry.key == *key)
+        .map(|entry| entry.catalog.clone())
+}
+
+fn nfqws_cli_catalog_cache_key(binary: &Path) -> Option<NfqwsCliCatalogCacheKey> {
+    let binary = binary.canonicalize().ok()?;
+    let metadata = std::fs::metadata(&binary).ok()?;
+    Some(NfqwsCliCatalogCacheKey {
+        binary,
+        modified: metadata.modified().ok(),
+        length: metadata.len(),
+    })
+}
+
+fn reusable_nfqws_cli_catalog(
+    cached: Option<&NfqwsCliCatalogCacheEntry>,
+    key: &NfqwsCliCatalogCacheKey,
+    force_refresh: bool,
+) -> Option<NfqwsCliCatalog> {
+    if force_refresh {
+        return None;
+    }
+    cached
+        .filter(|entry| entry.key == *key && entry.catalog.full)
+        .map(|entry| entry.catalog.clone())
 }
 
 fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
@@ -11301,14 +11845,12 @@ fn parse_nfqws_cli_catalog(help: &str) -> NfqwsCliCatalog {
         "payload",
         "lua-desync",
     ];
-    catalog.full = !catalog.l7.is_empty()
-        && !catalog.payloads.is_empty()
-        && REQUIRED_OPTIONS.iter().all(|required| {
-            catalog
-                .options
-                .iter()
-                .any(|option| option.name == *required)
-        });
+    catalog.full = REQUIRED_OPTIONS.iter().all(|required| {
+        catalog
+            .options
+            .iter()
+            .any(|option| option.name == *required)
+    });
     catalog
 }
 
@@ -11346,39 +11888,37 @@ async fn load_nfqws_cli_catalog(binary: &Path) -> NfqwsCliCatalog {
     }
 }
 
-fn strip_terminal_controls(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    let mut chars = value.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if chars.next_if_eq(&'[').is_some() {
-                for code in chars.by_ref() {
-                    if ('@'..='~').contains(&code) {
-                        break;
-                    }
-                }
-            } else {
-                let _ = chars.next();
-            }
-        } else if ch == '\t' {
-            output.push(' ');
-        } else if !ch.is_control() {
-            output.push(ch);
-        }
+async fn load_cached_nfqws_cli_catalog(
+    state: &AppState,
+    binary: &Path,
+    force_refresh: bool,
+) -> NfqwsCliCatalog {
+    let Some(key) = nfqws_cli_catalog_cache_key(binary) else {
+        return load_nfqws_cli_catalog(binary).await;
+    };
+    let mut cache = state.nfqws_cli_catalog_cache.lock().await;
+    if let Some(catalog) = reusable_nfqws_cli_catalog(cache.as_ref(), &key, force_refresh) {
+        return catalog;
     }
-    output
+    let catalog = load_nfqws_cli_catalog(binary).await;
+    if catalog.full {
+        *cache = Some(NfqwsCliCatalogCacheEntry {
+            key,
+            catalog: catalog.clone(),
+        });
+    } else if cache.as_ref().is_some_and(|entry| entry.key != key) {
+        // Never keep a complete catalog for an older/replaced binary.
+        *cache = None;
+    }
+    catalog
 }
 
-async fn get_profile_lua_catalog() -> Response {
-    let Some(paths) = discover_system_paths() else {
-        return error(StatusCode::NOT_FOUND, "Установка nfqws2 не обнаружена");
-    };
-    let cli_catalog = load_nfqws_cli_catalog(&paths.binary).await;
-    let Ok(entries) = std::fs::read_dir(&paths.lua_dir) else {
-        return Json(
-            serde_json::json!({ "functions": [], "standardGroups": [], "cli": cli_catalog }),
-        )
-        .into_response();
+fn load_nfqws_lua_catalog(directory: &Path) -> NfqwsLuaCatalog {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return NfqwsLuaCatalog {
+            functions: Vec::new(),
+            standard_groups: Vec::new(),
+        };
     };
     let mut entries = entries.filter_map(Result::ok).collect::<Vec<_>>();
     entries.sort_by_key(|entry| entry.file_name());
@@ -11419,15 +11959,14 @@ async fn get_profile_lua_catalog() -> Response {
         } else {
             bytes
         };
+        let source = String::from_utf8_lossy(&decoded);
         let file = path
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or_default()
             .trim_end_matches(".gz")
             .to_string();
-        for group in
-            nfqws2_ui::runtime_profiles::parse_lua_standard_args(&String::from_utf8_lossy(&decoded))
-        {
+        for group in nfqws2_ui::runtime_profiles::parse_lua_standard_args(&source) {
             let entry = standard_groups
                 .entry(group.name.clone())
                 .or_insert_with(|| nfqws2_ui::runtime_profiles::LuaStandardGroup {
@@ -11440,14 +11979,78 @@ async fn get_profile_lua_catalog() -> Response {
                 }
             }
         }
-        for function in nfqws2_ui::runtime_profiles::parse_lua_catalog(
-            &file,
-            &String::from_utf8_lossy(&decoded),
-        ) {
+        for function in nfqws2_ui::runtime_profiles::parse_lua_catalog(&file, &source) {
             catalog.entry(function.name.clone()).or_insert(function);
         }
     }
-    Json(serde_json::json!({ "functions": catalog.into_values().collect::<Vec<_>>(), "standardGroups": standard_groups.into_values().collect::<Vec<_>>(), "cli": cli_catalog })).into_response()
+    NfqwsLuaCatalog {
+        functions: catalog.into_values().collect(),
+        standard_groups: standard_groups.into_values().collect(),
+    }
+}
+
+async fn load_cached_nfqws_lua_catalog(
+    state: &AppState,
+    directory: &Path,
+    force_refresh: bool,
+) -> NfqwsLuaCatalog {
+    let Some(key) = nfqws_lua_catalog_cache_key(directory) else {
+        return load_nfqws_lua_catalog(directory);
+    };
+    let mut cache = state.nfqws_lua_catalog_cache.lock().await;
+    if let Some(catalog) = reusable_nfqws_lua_catalog(cache.as_ref(), &key, force_refresh) {
+        return catalog;
+    }
+    let catalog = load_nfqws_lua_catalog(directory);
+    *cache = Some(NfqwsLuaCatalogCacheEntry {
+        key,
+        catalog: catalog.clone(),
+    });
+    catalog
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProfileCatalogQuery {
+    #[serde(default)]
+    force_refresh: bool,
+}
+
+fn strip_terminal_controls(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.next_if_eq(&'[').is_some() {
+                for code in chars.by_ref() {
+                    if ('@'..='~').contains(&code) {
+                        break;
+                    }
+                }
+            } else {
+                let _ = chars.next();
+            }
+        } else if ch == '\t' {
+            output.push(' ');
+        } else if !ch.is_control() {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+async fn get_profile_lua_catalog(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ProfileCatalogQuery>,
+) -> Response {
+    let Some(paths) = discover_system_paths() else {
+        return error(StatusCode::NOT_FOUND, "Установка nfqws2 не обнаружена");
+    };
+    let cli_catalog =
+        load_cached_nfqws_cli_catalog(&state, &paths.binary, query.force_refresh).await;
+    let lua_catalog =
+        load_cached_nfqws_lua_catalog(&state, &paths.lua_dir, query.force_refresh).await;
+    Json(serde_json::json!({ "functions": lua_catalog.functions, "standardGroups": lua_catalog.standard_groups, "cli": cli_catalog })).into_response()
 }
 
 fn build_runtime_profiles_config(
@@ -12985,6 +13588,7 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/updates/status", get(get_ui_update_status))
         .route("/api/updates/install", post(post_update_install))
         .route("/api/nfqws2/updates/releases", get(get_core_releases))
+        .route("/api/nfqws2/updates/status", get(get_core_update_status))
         .route(
             "/api/nfqws2/updates/install",
             post(post_core_update_install),
@@ -13047,6 +13651,7 @@ async fn main() {
         config_write_lock: Mutex::new(()),
         config_override: None,
         update_lock: Mutex::new(()),
+        core_release_cache: Mutex::new(None),
         ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
         managed_asn_refresh_lock: Mutex::new(()),
@@ -13057,6 +13662,8 @@ async fn main() {
         strategy_pick_controls: Mutex::new(HashMap::new()),
         transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         freeze_scan_controls: Mutex::new(HashMap::new()),
+        nfqws_cli_catalog_cache: Mutex::new(None),
+        nfqws_lua_catalog_cache: Mutex::new(None),
         #[cfg(test)]
         change_history_fail_path: Mutex::new(None),
     });
@@ -13259,6 +13866,95 @@ mod tests {
     }
 
     #[test]
+    fn nfqws_cli_catalog_cache_only_reuses_full_entries_for_the_same_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("nfqws2");
+        std::fs::write(&binary, b"binary-v1").unwrap();
+        let key = super::nfqws_cli_catalog_cache_key(&binary).unwrap();
+        let full = super::NfqwsCliCatalog {
+            options: vec![super::NfqwsCliOption {
+                name: "lua-desync".into(),
+                syntax: "--lua-desync=<func>".into(),
+                description: "Lua desync".into(),
+                global: false,
+                takes_value: true,
+            }],
+            l7: vec!["tls".into()],
+            payloads: vec!["tls_client_hello".into()],
+            full: true,
+        };
+        let entry = super::NfqwsCliCatalogCacheEntry {
+            key: key.clone(),
+            catalog: full.clone(),
+        };
+        assert_eq!(
+            super::reusable_nfqws_cli_catalog(Some(&entry), &key, false),
+            Some(full.clone())
+        );
+        assert_eq!(
+            super::reusable_nfqws_cli_catalog(Some(&entry), &key, true),
+            None
+        );
+
+        std::fs::write(&binary, b"replacement-binary-with-different-length").unwrap();
+        let changed_key = super::nfqws_cli_catalog_cache_key(&binary).unwrap();
+        assert_ne!(changed_key, key);
+        assert_eq!(
+            super::reusable_nfqws_cli_catalog(Some(&entry), &changed_key, false),
+            None
+        );
+
+        let partial = super::NfqwsCliCatalog {
+            full: false,
+            ..full
+        };
+        let partial_entry = super::NfqwsCliCatalogCacheEntry {
+            key: changed_key.clone(),
+            catalog: partial,
+        };
+        assert_eq!(
+            super::reusable_nfqws_cli_catalog(Some(&partial_entry), &changed_key, false),
+            None
+        );
+    }
+
+    #[test]
+    fn nfqws_lua_catalog_cache_tracks_script_files_and_can_be_refreshed() {
+        let dir = tempfile::tempdir().unwrap();
+        let lua = dir.path().join("host.lua");
+        std::fs::write(&lua, b"function host(ctx, desync) end\n").unwrap();
+        let key = super::nfqws_lua_catalog_cache_key(dir.path()).unwrap();
+        let catalog = super::NfqwsLuaCatalog {
+            functions: Vec::new(),
+            standard_groups: Vec::new(),
+        };
+        let entry = super::NfqwsLuaCatalogCacheEntry {
+            key: key.clone(),
+            catalog: catalog.clone(),
+        };
+        assert_eq!(
+            super::reusable_nfqws_lua_catalog(Some(&entry), &key, false),
+            Some(catalog)
+        );
+        assert_eq!(
+            super::reusable_nfqws_lua_catalog(Some(&entry), &key, true),
+            None
+        );
+
+        std::fs::write(dir.path().join("notes.txt"), b"not a Lua dependency").unwrap();
+        let unchanged_key = super::nfqws_lua_catalog_cache_key(dir.path()).unwrap();
+        assert_eq!(unchanged_key, key);
+
+        std::fs::write(&lua, b"function host(ctx, desync) end\n-- updated\n").unwrap();
+        let changed_key = super::nfqws_lua_catalog_cache_key(dir.path()).unwrap();
+        assert_ne!(changed_key, key);
+        assert_eq!(
+            super::reusable_nfqws_lua_catalog(Some(&entry), &changed_key, false),
+            None
+        );
+    }
+
+    #[test]
     fn nfqws_help_catalog_marks_partial_and_complete_help_output() {
         let partial = parse_nfqws_cli_catalog(
             "GLOBAL:\n  --qnum=<n>\nMULTI-STRATEGY:\n  --filter-l7=proto ; protocols : tls http\nLUA PACKET PASS MODE:\n  --payload=type ; payloads : known tls_client_hello\n",
@@ -13269,6 +13965,13 @@ mod tests {
             "GLOBAL:\n  --qnum=<n>\n  --lua-init=<code>\n  --blob=<name>:<file>\nMULTI-STRATEGY:\n  --new\n  --filter-tcp=<ports>\n  --filter-l7=proto ; protocols : tls http\n  --lua-desync=<fn>\nLUA PACKET PASS MODE:\n  --payload=type ; payloads : known tls_client_hello\n",
         );
         assert!(complete.full);
+
+        // Match Zemidala's completeness rule: required option definitions prove
+        // that help is complete; optional value lists may be absent on variants.
+        let complete_without_value_lists = parse_nfqws_cli_catalog(
+            "GLOBAL:\n  --qnum=<n>\n  --lua-init=<code>\n  --blob=<name>:<file>\nMULTI-STRATEGY:\n  --new\n  --filter-tcp=<ports>\n  --lua-desync=<fn>\nLUA PACKET PASS MODE:\n  --payload=type\n",
+        );
+        assert!(complete_without_value_lists.full);
     }
 
     #[test]
@@ -14386,10 +15089,12 @@ mod tests {
         }))
         .unwrap();
         assert!(settings.remind_windows_tcp_timestamps);
+        assert!(settings.show_config_warnings);
         let serialized = serde_json::to_value(settings).unwrap();
         assert_eq!(serialized["remindWindowsTcpTimestamps"], true);
         assert_eq!(serialized["accent"], "blue");
         assert_eq!(serialized["statusBar"], "standard");
+        assert_eq!(serialized["showConfigWarnings"], true);
         assert!(serialized.get("simplifiedNavigation").is_none());
     }
 
@@ -14401,6 +15106,7 @@ mod tests {
             "accent": "cyan",
             "statusBar": "stacked",
             "remindWindowsTcpTimestamps": false,
+            "showConfigWarnings": false,
             "simplifiedNavigation": true
         }))
         .unwrap();
@@ -14408,6 +15114,7 @@ mod tests {
         assert_eq!(settings.accent, "cyan");
         assert_eq!(settings.status_bar, "stacked");
         assert!(!settings.remind_windows_tcp_timestamps);
+        assert!(!settings.show_config_warnings);
         let serialized = serde_json::to_value(settings).unwrap();
         assert!(serialized.get("simplifiedNavigation").is_none());
     }
@@ -14450,12 +15157,44 @@ mod tests {
         assert_eq!(store.interval_minutes, 10);
     }
 
+    #[tokio::test]
+    async fn telegram_transport_and_conditional_fields_survive_store_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = MonitoringStore::default();
+        store.telegram.send_via = "proxy".into();
+        store.telegram.interface = "eth0".into();
+        store.telegram.proxy = "socks5h://127.0.0.1:1080".into();
+        save_monitoring_store(dir.path(), &store).await.unwrap();
+
+        let reloaded = load_monitoring_store(dir.path()).await.unwrap();
+        assert_eq!(reloaded.telegram.send_via, "proxy");
+        assert_eq!(reloaded.telegram.interface, "eth0");
+        assert_eq!(reloaded.telegram.proxy, "socks5h://127.0.0.1:1080");
+    }
+
     #[test]
     fn monitoring_accepts_podkop_fake_ipv4_range_but_rejects_other_reserved_addresses() {
         assert!(monitor_probe_ipv4("198.18.0.0".parse().unwrap()));
         assert!(monitor_probe_ipv4("198.19.255.255".parse().unwrap()));
         assert!(!monitor_probe_ipv4("198.51.100.1".parse().unwrap()));
         assert!(!monitor_probe_ipv4("127.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn podkop_detection_matches_only_the_198_18_15_fake_ip_range() {
+        assert!(is_podkop_fake_ipv4("198.18.0.0".parse().unwrap()));
+        assert!(is_podkop_fake_ipv4("198.18.255.255".parse().unwrap()));
+        assert!(is_podkop_fake_ipv4("198.19.0.0".parse().unwrap()));
+        assert!(is_podkop_fake_ipv4("198.19.255.255".parse().unwrap()));
+        assert!(!is_podkop_fake_ipv4("198.17.255.255".parse().unwrap()));
+        assert!(!is_podkop_fake_ipv4("198.20.0.0".parse().unwrap()));
+        assert!(!is_podkop_fake_ipv4("198.51.100.1".parse().unwrap()));
+        assert!(output_contains_podkop_fake_ip(
+            b"Server: 127.0.0.42\nName: example.org\nAddress: 198.18.1.2\n"
+        ));
+        assert!(!output_contains_podkop_fake_ip(
+            b"Server: 127.0.0.42\nName: example.org\nAddress: 203.0.113.2\n"
+        ));
     }
 
     #[test]
@@ -14626,6 +15365,7 @@ mod tests {
             config_write_lock: Mutex::new(()),
             config_override,
             update_lock: Mutex::new(()),
+            core_release_cache: Mutex::new(None),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             managed_asn_refresh_lock: Mutex::new(()),
@@ -14636,6 +15376,8 @@ mod tests {
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
             freeze_scan_controls: Mutex::new(HashMap::new()),
+            nfqws_cli_catalog_cache: Mutex::new(None),
+            nfqws_lua_catalog_cache: Mutex::new(None),
             change_history_fail_path: Mutex::new(None),
         })
     }
@@ -14837,6 +15579,7 @@ mod tests {
             config_write_lock: Mutex::new(()),
             config_override: None,
             update_lock: Mutex::new(()),
+            core_release_cache: Mutex::new(None),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
             managed_asn_refresh_lock: Mutex::new(()),
@@ -14847,6 +15590,8 @@ mod tests {
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
             freeze_scan_controls: Mutex::new(HashMap::new()),
+            nfqws_cli_catalog_cache: Mutex::new(None),
+            nfqws_lua_catalog_cache: Mutex::new(None),
             change_history_fail_path: Mutex::new(None),
         })
     }
@@ -14938,11 +15683,21 @@ mod tests {
                 detail: "two target probes".into(),
             }],
             hosts: Vec::new(),
+            podkop_hosts: Vec::new(),
             multi_site_results: Vec::new(),
             multi_site_baseline: Vec::new(),
             message: state.into(),
             updated_at: now_unix_seconds(),
         }
+    }
+
+    #[test]
+    fn strategy_pick_history_without_podkop_field_remains_readable() {
+        let mut legacy =
+            serde_json::to_value(confirmed_strategy_pick("complete", "https", true)).unwrap();
+        legacy.as_object_mut().unwrap().remove("podkopHosts");
+        let restored: StrategyPickOperation = serde_json::from_value(legacy).unwrap();
+        assert!(restored.podkop_hosts.is_empty());
     }
 
     #[tokio::test]
@@ -15476,6 +16231,77 @@ mod tests {
             installed_core_tag_from_output(b"Version: 1.3.2; touch /tmp/nope\n"),
             None
         );
+    }
+
+    #[test]
+    fn core_update_status_normalizes_package_version_and_only_flags_newer_release() {
+        assert!(core_update_available(Some("v1.3.3"), Some("1.3.2")));
+        assert!(!core_update_available(Some("v1.3.2"), Some("1.3.2")));
+        assert!(!core_update_available(Some("v1.3.2"), None));
+        assert!(!core_update_available(None, Some("v1.3.2")));
+    }
+
+    #[test]
+    fn core_release_status_cache_expires_after_twelve_hours_and_is_architecture_scoped() {
+        let now = 2_000_000_000_u64;
+        let entry = CoreReleaseCacheEntry {
+            checked_at: now - CORE_RELEASE_CACHE_TTL.as_secs(),
+            architecture: "aarch64-3.10".into(),
+            releases: Vec::new(),
+            last_error_at: None,
+        };
+        assert!(core_release_cache_is_fresh(&entry, "aarch64-3.10", now - 1));
+        assert!(!core_release_cache_is_fresh(&entry, "aarch64-3.10", now));
+        assert!(!core_release_cache_is_fresh(
+            &entry,
+            "mips-3.4",
+            now - CORE_RELEASE_CACHE_TTL.as_secs() + 1
+        ));
+    }
+
+    #[test]
+    fn core_release_error_cache_backs_off_for_ten_minutes() {
+        let now = 2_000_000_000_u64;
+        let entry = CoreReleaseCacheEntry {
+            checked_at: 0,
+            architecture: "aarch64-3.10".into(),
+            releases: Vec::new(),
+            last_error_at: Some(now),
+        };
+        assert!(core_release_cache_is_fresh(
+            &entry,
+            "aarch64-3.10",
+            now + 599
+        ));
+        assert!(!core_release_cache_is_fresh(
+            &entry,
+            "aarch64-3.10",
+            now + 600
+        ));
+    }
+
+    #[tokio::test]
+    async fn core_release_cache_persists_and_reads_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = core_release_cache_path(dir.path());
+        let entry = CoreReleaseCacheEntry {
+            checked_at: 1_900_000_000,
+            architecture: "aarch64-3.10".into(),
+            releases: vec![CoreRelease {
+                tag: "v1.3.6".into(),
+                published_at: Some("2026-10-27T00:00:00Z".into()),
+                notes: "release notes".into(),
+                asset: "nfqws2-aarch64.tar.gz".into(),
+                sha256: "a".repeat(64),
+            }],
+            last_error_at: Some(1_900_000_001),
+        };
+        write_core_release_cache(&path, &entry).await.unwrap();
+        let actual = read_core_release_cache(&path).await.unwrap();
+        assert_eq!(actual.checked_at, entry.checked_at);
+        assert_eq!(actual.architecture, entry.architecture);
+        assert_eq!(actual.releases[0].tag, entry.releases[0].tag);
+        assert_eq!(actual.last_error_at, entry.last_error_at);
     }
 
     #[tokio::test]
@@ -16567,6 +17393,198 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn change_history_undo_last_preserves_unconnected_standard_list_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=\"\"\n")
+            .await
+            .unwrap();
+        let list = lists.join("user.list");
+        tokio::fs::write(&list, "+example.org\n").await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let baseline = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(baseline.status(), StatusCode::OK);
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/user.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let revision = body_json(loaded).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let saved = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"example.org\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved.status(), StatusCode::OK);
+        let undo = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/change-history/undo-last")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(undo.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(list).await.unwrap(),
+            "+example.org\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn change_history_undo_keeps_validation_when_target_config_connects_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n")
+            .await
+            .unwrap();
+        let list = lists.join("user.list");
+        tokio::fs::write(&list, "+example.org\n").await.unwrap();
+        let state_dir = dir.path().join("state");
+        let app = api_router(
+            test_state_with_config(state_dir.clone(), Some(config.clone())),
+            dir.path().join("web"),
+        );
+        let baseline = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(baseline.status(), StatusCode::OK);
+        tokio::fs::write(&config, "NFQWS_ARGS=\"\"\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&list, "example.org\n").await.unwrap();
+        let events = change_history::scan(
+            &state_dir,
+            &config,
+            "интерфейс",
+            "список отключён вместе с настройкой",
+        )
+        .unwrap();
+        assert_eq!(events.len(), 2);
+
+        let undo = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/change-history/undo-last")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(undo.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            tokio::fs::read_to_string(&config).await.unwrap(),
+            "NFQWS_ARGS=\"\"\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(&list).await.unwrap(),
+            "example.org\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn change_history_undo_keeps_validation_when_current_config_connects_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n")
+            .await
+            .unwrap();
+        let list = lists.join("user.list");
+        tokio::fs::write(&list, "+example.org\n").await.unwrap();
+        let state_dir = dir.path().join("state");
+        let app = api_router(
+            test_state_with_config(state_dir.clone(), Some(config.clone())),
+            dir.path().join("web"),
+        );
+        let baseline = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(baseline.status(), StatusCode::OK);
+        tokio::fs::write(&list, "example.org\n").await.unwrap();
+        change_history::scan(
+            &state_dir,
+            &config,
+            "интерфейс",
+            "исправлена подключённая запись",
+        )
+        .unwrap();
+
+        let undo = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/change-history/undo-last")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(undo.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            tokio::fs::read_to_string(&list).await.unwrap(),
+            "example.org\n"
+        );
+    }
+
+    #[tokio::test]
     async fn change_history_undo_last_restores_all_lists_in_the_latest_ui_batch_once() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
@@ -17256,6 +18274,7 @@ mod tests {
             total: 1,
             results: Vec::new(),
             hosts: Vec::new(),
+            podkop_hosts: Vec::new(),
             multi_site_results: Vec::new(),
             multi_site_baseline: Vec::new(),
             message: "running".into(),
@@ -17367,6 +18386,7 @@ mod tests {
                     total: 1,
                     results: Vec::new(),
                     hosts: Vec::new(),
+                    podkop_hosts: Vec::new(),
                     multi_site_results: Vec::new(),
                     multi_site_baseline: Vec::new(),
                     message: state.into(),
@@ -17415,6 +18435,7 @@ mod tests {
                     total: 1,
                     results: Vec::new(),
                     hosts: Vec::new(),
+                    podkop_hosts: Vec::new(),
                     multi_site_results: Vec::new(),
                     multi_site_baseline: Vec::new(),
                     message: state.into(),
@@ -17797,12 +18818,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn package_user_list_without_config_reference_can_be_read_saved_and_reread() {
+    async fn connected_package_user_list_can_be_read_validated_and_reread() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("nfqws2.conf");
         let list_dir = dir.path().join("lists");
         tokio::fs::create_dir_all(&list_dir).await.unwrap();
-        tokio::fs::write(&config, "NFQWS_EXTRA_ARGS=\"$MODE_ALL\"\n")
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n")
             .await
             .unwrap();
         tokio::fs::write(list_dir.join("user.list"), "example.org\n")
@@ -18097,6 +19118,106 @@ mod tests {
         assert_eq!(
             tokio::fs::read_to_string(custom_path).await.unwrap(),
             "google.com\nwww.google.com\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn unconnected_standard_list_can_save_other_tool_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=\"\"\n")
+            .await
+            .unwrap();
+        let path = list_dir.join("user.list");
+        tokio::fs::write(&path, "example.org\n").await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/user.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let revision = body_json(loaded).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let saved = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"+example.org\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(path).await.unwrap(),
+            "+example.org\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn connected_standard_list_rejects_other_tool_format_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--hostlist=lists/user.list\n")
+            .await
+            .unwrap();
+        let path = list_dir.join("user.list");
+        tokio::fs::write(&path, "example.org\n").await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/user.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let revision = body_json(loaded).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let saved = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"+example.org\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(saved.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            tokio::fs::read_to_string(path).await.unwrap(),
+            "example.org\n"
         );
     }
 
@@ -18412,6 +19533,77 @@ mod tests {
     }
 
     #[test]
+    fn configured_list_reference_parser_keeps_multiple_paths_and_marks_dynamic_values() {
+        let (references, ambiguous) = configured_list_references_for_flag(
+            "NFQWS_ARGS=\"--hostlist=lists/one.list --hostlist=lists/two.list\"\n",
+            "--hostlist",
+        );
+        assert_eq!(
+            references,
+            [
+                PathBuf::from("lists/one.list"),
+                PathBuf::from("lists/two.list")
+            ]
+        );
+        assert!(!ambiguous);
+
+        let (references, ambiguous) = configured_list_references_for_flag(
+            "NFQWS_ARGS=\"--hostlist=${USER_LIST}\"\n",
+            "--hostlist",
+        );
+        assert!(references.is_empty());
+        assert!(ambiguous);
+    }
+
+    #[test]
+    fn list_validation_is_skipped_only_when_unreferenced_is_proven() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        std::fs::write(&config, "").unwrap();
+        let user_list = lists.join("user.list");
+        std::fs::write(&user_list, "+example.org\n").unwrap();
+
+        assert!(!list_requires_nfqws_validation(
+            &config,
+            &user_list,
+            "user.list",
+            "",
+            None,
+        ));
+        assert!(list_requires_nfqws_validation(
+            &config,
+            &user_list,
+            "user.list",
+            "NFQWS_ARGS=\"--hostlist=lists/user.list --hostlist=lists/other.list\"\n",
+            None,
+        ));
+        assert!(list_requires_nfqws_validation(
+            &config,
+            &user_list,
+            "user.list",
+            "NFQWS_ARGS=\"--hostlist=${USER_LIST}\"\n",
+            None,
+        ));
+        let active_args = ["nfqws2".to_owned(), "--hostlist=lists/user.list".to_owned()];
+        assert!(list_requires_nfqws_validation(
+            &config,
+            &user_list,
+            "user.list",
+            "",
+            Some(&active_args),
+        ));
+        assert!(list_requires_nfqws_validation(
+            &config,
+            &user_list,
+            "custom.list",
+            "",
+            None,
+        ));
+    }
+
+    #[test]
     fn active_list_inventory_reads_custom_profile_lists_and_keeps_their_kind() {
         let args = [
             "nfqws2",
@@ -18466,6 +19658,49 @@ mod tests {
                 .filter(|(_, path, _)| path == &standard.canonicalize().unwrap())
                 .count(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn active_runtime_list_matching_finds_domain_and_ip_entries_only_in_referenced_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        std::fs::write(&config, "").unwrap();
+        std::fs::write(lists.join("active-domains.list"), "example.com\n").unwrap();
+        std::fs::write(lists.join("active-ips.list"), "8.8.8.0/24\n").unwrap();
+        std::fs::write(lists.join("other-tool.list"), "example.com\n").unwrap();
+        let args = [
+            "nfqws2".to_owned(),
+            "--hostlist=lists/active-domains.list".to_owned(),
+            "--ipset=lists/active-ips.list".to_owned(),
+        ];
+        let candidates = diagnostic_list_candidates(&config, &args);
+
+        let (matches, unreadable) = read_matching_runtime_list_entries(
+            &candidates,
+            "example.com",
+            &["8.8.8.8".parse().unwrap()],
+        )
+        .await;
+
+        assert!(unreadable.is_empty());
+        assert_eq!(matches.len(), 2);
+        assert!(
+            matches
+                .iter()
+                .any(|entry| { entry == "lists/active-domains.list: example.com" })
+        );
+        assert!(
+            matches
+                .iter()
+                .any(|entry| { entry == "lists/active-ips.list: 8.8.8.0/24" })
+        );
+        assert!(
+            !matches
+                .iter()
+                .any(|entry| entry.contains("other-tool.list"))
         );
     }
 

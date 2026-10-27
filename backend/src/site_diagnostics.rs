@@ -47,6 +47,10 @@ impl DiagnosticStep {
             http_code: None,
         }
     }
+
+    pub fn record_elapsed(&mut self, started: Instant) {
+        self.duration_ms = Some(started.elapsed().as_millis() as u64);
+    }
 }
 
 #[derive(Serialize)]
@@ -1042,15 +1046,18 @@ async fn tcp_step(addresses: &[IpAddr]) -> DiagnosticStep {
             return step;
         }
     }
-    DiagnosticStep::new("tcp", "error", results.join("; "))
+    let mut step = DiagnosticStep::new("tcp", "error", results.join("; "));
+    step.record_elapsed(started);
+    step
 }
 
 async fn route_step(ip: IpAddr) -> DiagnosticStep {
+    let started = Instant::now();
     let program = ["/opt/sbin/ip", "/sbin/ip", "/usr/sbin/ip"]
         .into_iter()
         .find(|path| std::path::Path::new(path).is_file())
         .unwrap_or("ip");
-    match capture(
+    let mut step = match capture(
         program,
         &["route".into(), "get".into(), ip.to_string()],
         3,
@@ -1068,7 +1075,9 @@ async fn route_step(ip: IpAddr) -> DiagnosticStep {
             "unavailable",
             "Маршрут ядра не удалось прочитать (нужна утилита ip)",
         ),
-    }
+    };
+    step.record_elapsed(started);
+    step
 }
 
 fn http3_advertised(headers: &[u8]) -> Option<bool> {
@@ -1224,6 +1233,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         );
         (vec![skipped_dns, skipped_doh], vec![ip], Vec::new())
     } else {
+        let dns_started = Instant::now();
         let (system, (mut reference_step, reference)) = tokio::join!(
             timeout(Duration::from_secs(4), lookup_host(format!("{host}:443"))),
             dns_reference(&host)
@@ -1242,7 +1252,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
             .copied()
             .filter(|ip| public_ip(*ip))
             .collect::<Vec<_>>();
-        let dns = DiagnosticStep::new(
+        let mut dns = DiagnosticStep::new(
             "dns",
             if system_addresses.is_empty() {
                 "error"
@@ -1264,6 +1274,7 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
                 )
             },
         );
+        dns.record_elapsed(dns_started);
         if !reference.is_empty()
             && !addresses.is_empty()
             && !addresses.iter().any(|ip| reference.contains(ip))
@@ -1416,6 +1427,15 @@ mod tests {
         assert!(diagnosis_summary(&unavailable, &failed).contains("неполное"));
         let error = parse_curl("direct", 0, b"\nNFQWS2_DIAG|451|0.1|0.2|0.3|7");
         assert!(!probe_open(&error));
+    }
+
+    #[test]
+    fn diagnostic_step_can_record_elapsed_time_for_success_and_failure() {
+        let started = Instant::now();
+        let mut failed = DiagnosticStep::new("tcp", "error", "timeout");
+        failed.record_elapsed(started);
+
+        assert!(failed.duration_ms.is_some());
     }
 
     #[test]

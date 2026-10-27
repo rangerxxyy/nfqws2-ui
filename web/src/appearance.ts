@@ -2,10 +2,10 @@ export type UiTheme = 'dark' | 'light' | 'neon';
 export type UiLayout = 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified';
 export type UiAccent = 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet';
 export type UiStatusBar = 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse';
-export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean };
+export type AppearanceSettings = { theme: UiTheme; layout: UiLayout; accent: UiAccent; statusBar: UiStatusBar; remindWindowsTcpTimestamps: boolean; showConfigWarnings: boolean };
 
 const STORAGE_KEY = 'nfqws2-ui-appearance-v1';
-const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
+const DEFAULTS: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, showConfigWarnings: true };
 
 function readStorage(storage: Storage | null): unknown {
   try {
@@ -26,6 +26,7 @@ export function loadAppearance(storage: Storage | null): AppearanceSettings {
     accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(value.accent ?? '') ? value.accent as UiAccent : 'blue',
     statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(value.statusBar ?? '') ? value.statusBar as UiStatusBar : 'standard',
     remindWindowsTcpTimestamps: value.remindWindowsTcpTimestamps !== false,
+    showConfigWarnings: value.showConfigWarnings !== false,
   };
 }
 
@@ -36,6 +37,7 @@ export function saveAppearance(storage: Storage | null, settings: AppearanceSett
     accent: ['cyan', 'emerald', 'amber', 'rose', 'violet'].includes(settings.accent) ? settings.accent : 'blue',
     statusBar: ['minimal', 'compact', 'stacked', 'reverse'].includes(settings.statusBar) ? settings.statusBar : 'standard',
     remindWindowsTcpTimestamps: settings.remindWindowsTcpTimestamps !== false,
+    showConfigWarnings: settings.showConfigWarnings !== false,
   };
   try { storage?.setItem(STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Appearance still applies for this session. */ }
   return normalized;

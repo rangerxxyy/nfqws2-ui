@@ -415,9 +415,10 @@ export default function App() {
           {"\n        "}
           <div className={"ui-card mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3"}>
             <div className={"flex items-center gap-2.5"}>
-              <span className={"h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_8px_#60a5fa]"}></span>
+              <span className={"config-section-indicator h-2.5 w-2.5 rounded-full"}></span>
               <span id={"currentConfigPath"} className={"font-mono text-sm font-bold tracking-tight text-white sm:text-base"}>{"Конфигурация"}</span>
               <span id={"confLinesBadge"} className={"rounded-md border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-xs text-slate-300"}>{"— строк"}</span>
+              <span id={"configWarningsBadge"} className={"hidden rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-300"} aria-live={"polite"}></span>
             </div>
           </div>
           <nav aria-label={"Раздел конфигурации"} className={"config-subtabs mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-[#090e1a] p-1.5"}>
@@ -494,6 +495,10 @@ export default function App() {
             </div>
             {"\n\n          "}
             {"\n          "}
+            <section id={"configWarningsPanel"} className={"hidden config-warnings-panel ui-card xl:col-span-12 rounded-xl border border-amber-500/20 p-3 sm:p-4"} aria-label={"Предупреждения конфигурации"}>
+              <div className={"mb-2 flex items-center justify-between gap-2 border-b border-amber-500/15 pb-2"}><h3 className={"text-sm font-semibold text-amber-200"}>Предупреждения конфигурации</h3><span id={"configWarningsSummary"} className={"text-xs text-slate-400"} aria-live={"polite"}></span></div>
+              <div id={"configWarningsList"} className={"grid gap-1.5"}></div>
+            </section>
             <div id={"configSettingsPanel"} className={"config-settings-panel config-section-panel hidden xl:col-span-12 grid grid-cols-1 xl:grid-cols-2 gap-4"}>
               {"\n            \n            "}
               {"\n            "}
@@ -1241,6 +1246,7 @@ export default function App() {
               {[['standard', 'Классический (стандартный)', 'Состояние, управление и RAM / CPU в одну строку'], ['minimal', 'Минималистичный', 'Состояние и кнопки управления'], ['compact', 'Компактный с иконками', 'Те же данные при меньших отступах'], ['stacked', 'Двухрядный', 'Метрики переходят на отдельный ряд'], ['reverse', 'Обратный порядок', 'Метрики, управление и статус справа налево']].map(([value, label, description]) => <label key={value} className={`appearance-layout-choice appearance-status-${value}`}><input type={"radio"} name={"appearanceStatusBar"} value={value} data-action-change={"setAppearanceStatusBar"} data-value-source={"value"} /><span className={"appearance-layout-preview status-layout-preview"} aria-hidden={"true"}><i></i><i></i><i></i><i></i></span><span><strong>{label}</strong><small>{description}</small></span></label>)}
             </div></div>
             <label className={"flex cursor-pointer items-start gap-3 border-t border-slate-800 pt-4 text-sm text-slate-200"}><input type={"checkbox"} data-appearance-remind-timestamps={"true"} data-action-change={"setAppearanceTimestampReminder"} data-value-source={"checked"} className={"mt-0.5 accent-blue-500"} /><span><strong>Напоминать о TCP timestamps в Windows</strong><small className={"mt-1 block text-xs text-slate-400"}>Показывать предупреждение, если стратегия использует только TCP timestamps. При необходимости включите их командой <code>netsh interface tcp set global timestamps=enabled</code>.</small></span></label>
+            <label className={"flex cursor-pointer items-start gap-3 border-t border-slate-800 pt-4 text-sm text-slate-200"}><input type={"checkbox"} data-appearance-config-warnings={"true"} data-action-change={"setAppearanceConfigWarnings"} data-value-source={"checked"} className={"mt-0.5 accent-blue-500"} /><span><strong>Показывать предупреждения конфигурации</strong><small className={"mt-1 block text-xs text-slate-400"}>Проверять черновик и показывать найденные предупреждения под редактором. Ошибки синтаксиса по-прежнему проверяются перед применением.</small></span></label>
             <div className={"border-t border-slate-800 pt-4"}><h2 className={"font-bold text-white"}>Расположение меню</h2><p className={"mt-1 text-xs text-slate-400"}>Варианты расположения всей навигации. Все разделы остаются доступны, кроме группы диагностики в режиме «Компактный».</p><div className={"mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"}>
               {[["standard", "Стандартный", "Слева, вертикальный список"], ["compact", "Компактный", "Скрывает группу диагностики"], ["dense", "Плотный", "Меньше отступов"], ["wide", "Широкий", "Расширенная боковая панель"], ["right", "Справа", "Навигация у правого края"], ["top", "Верхнее меню", "Разделы в горизонтальной строке"], ["tiles", "Плитки", "Разделы в виде карточек"], ["simplified", "Группы", "Шесть компактных вкладок с разделами"]].map(([value, label, description]) => <label key={value} className={`appearance-layout-choice appearance-layout-${value}`}><input type={"radio"} name={"appearanceLayout"} value={value} data-action-change={"setAppearanceLayout"} data-value-source={"value"} /><span className={"appearance-layout-preview"} aria-hidden={"true"}><i></i><i></i><i></i><i></i></span><span><strong>{label}</strong><small>{description}</small></span></label>)}
             </div></div>
@@ -1458,7 +1464,7 @@ export default function App() {
 {"\n\n  "}
 {"\n  "}
     <div id={"toastWrapper"} className={"fixed bottom-24 right-5 z-[40] space-y-2.5 pointer-events-none"}></div>
-    <div id={"uiUpdateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] space-y-2.5 pointer-events-none"}></div>
+    <div id={"updateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] grid gap-2.5 pointer-events-none"}></div>
     <div id={"configClearModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"dialog"} aria-modal={"true"} aria-labelledby={"configClearTitle"}>
         <h3 id={"configClearTitle"} className={"text-base font-bold text-white"}>Очистить конфигурацию?</h3>

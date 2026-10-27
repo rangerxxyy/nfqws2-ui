@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canShowToast, lifecycleMessage, toastCardsToDismiss } from './notifications';
+import { canShowToast, coreUpdateNoticePresentation, CORE_UPDATE_CHECK_INTERVAL_MS, lifecycleMessage, shouldCheckCoreUpdate, toastCardsToDismiss } from './notifications';
 
 describe('toast stack overflow', () => {
   it('removes only the oldest active toast cards and respects the visible-card limit', () => {
@@ -30,5 +30,28 @@ describe('lifecycle notifications', () => {
     expect(canShowToast('nfqws2 остановлен', 'success', 1000, seen)).toBe(true);
     expect(canShowToast('nfqws2 остановлен', 'success', 6300, seen)).toBe(false);
     expect(canShowToast('nfqws2 остановлен', 'success', 6500, seen)).toBe(true);
+  });
+});
+
+describe('nfqws2 core update notice', () => {
+  it('throttles background release checks to avoid repeated router requests on tab focus', () => {
+    expect(shouldCheckCoreUpdate(10_000, 0)).toBe(false);
+    expect(shouldCheckCoreUpdate(CORE_UPDATE_CHECK_INTERVAL_MS, 0)).toBe(true);
+    expect(shouldCheckCoreUpdate(CORE_UPDATE_CHECK_INTERVAL_MS + 1, 1)).toBe(true);
+  });
+
+  it('highlights and notifies when the newest release differs from installed core', () => {
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1' }, null))
+      .toEqual({ highlight: true, notify: true, version: 'v1.3.2' });
+  });
+
+  it('does not show an update when the newest release is already installed', () => {
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.2-r1' }, null))
+      .toEqual({ highlight: false, notify: false, version: null });
+  });
+
+  it('allows a manually checked update notice to be shown again after dismissal', () => {
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1' }, null).notify).toBe(true);
+    expect(coreUpdateNoticePresentation({ latestTag: 'v1.3.2', installedTag: '1.3.1' }, 'v1.3.2').notify).toBe(false);
   });
 });

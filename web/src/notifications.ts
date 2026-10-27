@@ -1,6 +1,22 @@
 export type ToastTone = 'success' | 'error';
 export type LifecycleEvent = 'start' | 'stop' | 'restart' | 'panel-update' | 'core-update';
 export const TOAST_DEDUPLICATION_WINDOW_MS = 5500;
+export const CORE_UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
+
+export function shouldCheckCoreUpdate(now: number, lastCheckedAt: number): boolean {
+  return now - lastCheckedAt >= CORE_UPDATE_CHECK_INTERVAL_MS;
+}
+
+export function coreUpdateNoticePresentation(
+  status: { latestTag: string | null; installedTag: string | null },
+  dismissedTag: string | null,
+) {
+  const latestTag = status.latestTag;
+  const normalize = (tag: string | null) => tag?.trim().replace(/^v/i, '').split('-')[0] ?? null;
+  const updateAvailable = Boolean(latestTag && status.installedTag && normalize(latestTag) !== normalize(status.installedTag));
+  const version = updateAvailable ? latestTag : null;
+  return { highlight: version !== null, notify: version !== null && version !== dismissedTag, version };
+}
 
 export function toastCardsToDismiss<T extends { removing: boolean }>(cards: readonly T[], maxVisible = 4): T[] {
   const activeCards = cards.filter((card) => !card.removing);

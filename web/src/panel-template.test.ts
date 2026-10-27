@@ -167,7 +167,10 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('offers an explicit retry when the nfqws2 help catalog is incomplete', () => {
     expect(panelSource).toContain("retry.setAttribute('aria-label', 'Повторить загрузку справки nfqws2')");
-    expect(panelSource).toContain("retry.addEventListener('click', () => void loadProfiles())");
+    expect(panelSource).toContain("retry.addEventListener('click', () => void refreshRuntimeProfileCatalog(true))");
+    const refresh = panelSource.match(/async function refreshRuntimeProfileCatalog[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(refresh).toContain('fetchRuntimeProfileCatalog(forceRefresh)');
+    expect(refresh).not.toMatch(/runtimeProfileDraft\s*=/);
   });
 
   it('keeps toast notifications below confirmation dialogs', () => {
@@ -607,7 +610,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('synchronizes config editor scrolling once per animation frame without rebuilding syntax highlighting', () => {
-    const scrollSync = panelSource.slice(panelSource.indexOf('function syncConfigScroll'), panelSource.indexOf('function escapeConfigHtml'));
+    const scrollSync = panelSource.slice(panelSource.indexOf('function syncConfigScroll'), panelSource.indexOf('function syncConfigHighlight'));
     expect(scrollSync).toContain('requestAnimationFrame');
     expect(scrollSync).toContain('scrollTop');
     expect(scrollSync).toContain('scrollLeft');
@@ -662,10 +665,20 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('set_literal_or_append(&request.key, &request.value)');
   });
 
-  it('places the UI release notice in its own bottom-right notification area', () => {
-    expect(template).toContain('id="uiUpdateNoticeWrapper"');
+  it('places core and UI release notices in a shared bottom-right notification area', () => {
+    expect(template).toContain('id="updateNoticeWrapper"');
     expect(template).toContain('fixed bottom-5 right-5');
-    expect(panelSource).toContain("const host = $('#uiUpdateNoticeWrapper')");
+    expect(panelSource).toContain("const host = $('#updateNoticeWrapper')");
+    expect(panelSource).toContain("item.id = 'coreUpdateNotice'");
+    expect(panelSource).toContain("item.id = 'uiUpdateNotice'");
+    expect(panelSource).toContain('nfqwsUpdates.coreStatus()');
+    expect(backendSource).toContain('/api/nfqws2/updates/status');
+  });
+
+  it('uses the shared release notice style and a white success checkmark for confirmations', () => {
+    expect(panelSource).toContain("icon.classList.add('h-[18px]', 'w-[18px]', 'shrink-0', 'text-slate-100')");
+    expect(panelStyles).toMatch(/\.toast-card-icon-success\s*\{[^}]*color:\s*#f8fafc/);
+    expect(panelStyles).not.toMatch(/\.toast-card-icon-success\s*\{[^}]*color:\s*#34d399/);
   });
 
   it('renders a concise nfqws2-UI browser title and themed favicon in all shells', () => {
@@ -946,6 +959,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).not.toContain('selection:bg-blue-500/30');
     expect(appSource).not.toContain('selection:bg-blue-500/30');
     expect(entrySource).not.toContain('selection:bg-blue-500/30');
+  });
+
+  it('uses the selected accent for config editor caret and structure focus states', () => {
+    expect(appSource).toContain('config-section-indicator h-2.5 w-2.5 rounded-full');
+    expect(panelStyles).toContain('.config-section-indicator { background:var(--accent-color,#3b82f6);');
+    expect(panelStyles).toContain('caret-color:var(--accent-color,#60a5fa); white-space:pre-wrap;');
+    expect(panelStyles).toContain('caret-color:var(--accent-color,#2563eb);');
+    expect(panelStyles).toContain('.config-editor-icon-button:focus-visible { outline:2px solid var(--accent-border,#60a5fa);');
+    expect(panelStyles).toContain('.config-structure-toggle-active { border-color:var(--accent-border,#60a5fa);');
+    expect(panelStyles).toContain('.config-outline-entry:focus-visible { outline:2px solid var(--accent-border,#60a5fa);');
+    expect(panelStyles).not.toContain('.conf-editor-input { z-index:1; background:transparent !important; color:transparent !important; -webkit-text-fill-color:transparent !important; caret-color:#60a5fa;');
   });
 
   it('does not let accent background rules match hover utility classes outside hover', () => {
@@ -1279,6 +1303,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toMatch(/data-action(?:-(?:click|input|change|scroll|submit))=/);
     expect(panelSource).toContain("import './panel.css'");
     expect(panelStyles).toContain('.simplified-nav.hidden, .simplified-nav-button.hidden { display: none; }');
+    expect(panelStyles).toContain('[data-accent] .simplified-nav-button.simplified-nav-active');
+    expect(panelStyles).toContain('[data-theme="light"][data-accent] .monitor-subtab.active');
+    expect(panelStyles).toContain('[data-accent] .appearance-choice:has(input:checked)');
     expect(panelSource).toContain("import '@fontsource-variable/inter'");
     expect(panelSource).toContain("import '@fontsource-variable/jetbrains-mono'");
   });
@@ -1289,6 +1316,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('id="navBtn-trace"');
     expect(template).toContain('id="tabContent-trace"');
     expect(template).toContain('data-action-click="runSiteTrace"');
+  });
+
+  it('uses the selected accent for navigation glow and keyboard focus instead of fixed blue', () => {
+    expect(panelStyles).toContain('background-color: var(--accent-color,#3b82f6)');
+    expect(panelStyles).toContain('box-shadow: 0 0 8px color-mix(in srgb,var(--accent-color,#3b82f6) 55%,transparent)');
+    expect(panelStyles).toContain('outline: 2px solid var(--accent-border,#60a5fa)');
+    expect(panelStyles).toContain('box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent-color,#3b82f6) 18%,transparent)');
+    const activeIndicator = panelStyles.match(/\.side-nav-btn\.active::before\s*\{([^}]*)\}/)?.[1] ?? '';
+    expect(activeIndicator).toContain('var(--accent-color,#3b82f6)');
+    expect(activeIndicator).not.toContain('background-color: #3b82f6');
   });
 
   it('provides a compact community strategies page backed by the provider ASN and the Zemidala repository', () => {
@@ -1305,9 +1342,25 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('data-action-click="editCommunityProvider"');
     expect(backendSource).toContain('query.auto_detect');
     expect(panelSource).toContain("dataset.actionClick = 'testCommunityStrategy'");
+    expect(panelSource).toContain("community-strategy-badge-skipped");
+    expect(panelSource).toContain("community-strategy-badge-stale");
+    expect(panelSource).toContain('allTargets.length > targets.length');
+    expect(panelSource).toContain("await writeTextToClipboard(item.steps.join('\\n'))");
     expect(backendSource).toContain('/api/community-strategies');
     expect(backendSource).toContain('include_community');
     expect(panelStyles).toContain('.community-strategy-row');
+    expect(panelStyles).toContain('.community-strategy-badge-skipped');
+    expect(panelStyles).toContain('.community-strategy-badge-stale');
+    expect(panelStyles).toContain('[data-theme="light"] #tabContent-community');
+    expect(panelStyles).toContain('color:var(--community-text)');
+    expect(panelStyles).toContain('[data-theme="light"] #tabContent-community .community-strategy-badge-stale');
+  });
+
+  it('warns when strategy or foreign-config probes resolve through Podkop FakeIP', () => {
+    expect(panelSource).toContain('appendPodkopWarning(container, operation.podkopHosts)');
+    expect(panelSource).toContain('appendPodkopWarning(results, operation.podkopHosts)');
+    expect(panelStyles).toContain('.podkop-route-warning');
+    expect(panelStyles).toContain('[data-theme="light"] .podkop-route-warning');
   });
 
   it('polls the router-side trace operation and exposes graceful stop', () => {
@@ -1381,6 +1434,34 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('const strategyNumber = strategyNumbers[argumentIndex] ?? 0');
     expect(panelSource).toContain('`Стратегия ${strategyNumber}`');
     expect(panelSource).not.toContain('badge.textContent = String(stepIndex + 1)');
+  });
+
+  it('gates live configuration warnings behind the appearance preference and navigates to their line', () => {
+    expect(appSource).toContain('data-appearance-config-warnings');
+    expect(appSource).toContain('id={"configWarningsPanel"}');
+    expect(appSource).toContain('config-warnings-panel ui-card xl:col-span-12');
+    expect(panelSource).toContain('setAppearanceConfigWarnings: (showConfigWarnings: boolean) => updateAppearance({ showConfigWarnings })');
+    expect(panelSource).toContain('scheduleConfigWarnings();');
+    expect(panelSource).toContain('nfqwsConfig.validate(content)');
+    expect(panelSource).toContain("pluralize(warnings.length, 'предупреждение', 'предупреждения', 'предупреждений')");
+    expect(panelSource).toContain('goToLine.textContent = `К строке ${warning.line}`');
+  });
+
+  it('uses the full config token highlighter in grouped argument editors', () => {
+    expect(panelSource).toContain("import { highlightConfigLine } from './config-syntax'");
+    expect(panelSource).toContain("field.value.split('\\n').map(highlightConfigLine).join('\\n')");
+    expect(panelSource).toContain("highlight.className = 'config-argument-highlight conf-syntax-highlight");
+    expect(panelStyles).toContain('.config-argument-input');
+    expect(panelSource).not.toContain('focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20');
+    expect(panelStyles).toContain('.config-argument-editor:focus-within { border-color:var(--accent-border');
+  });
+
+  it('uses the selected accent for custom select focus and active choices in both themes', () => {
+    expect(panelStyles).toContain('[data-accent] .styled-select-trigger-open { border-color:var(--accent-border) !important;');
+    expect(panelStyles).toContain("[data-accent] .styled-select-option[data-active='true']");
+    expect(panelStyles).toContain("[data-accent] .styled-select-option:hover:not([aria-disabled='true']) { background:color-mix(in srgb,var(--accent-color) 15%,transparent); color:var(--accent-border); }");
+    expect(panelStyles).toContain('[data-theme="light"][data-accent] .styled-select-option[data-active=\'true\']');
+    expect(panelStyles).toContain('background:color-mix(in srgb,var(--accent-color) 13%,white); color:var(--accent-soft);');
   });
 
   it('has no duplicate action attributes and every template action is wired', () => {

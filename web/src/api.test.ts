@@ -62,7 +62,7 @@ describe('API client used by the source-based panel', () => {
   it('persists the selected appearance layout and palette with the standard status bar', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const settings = { theme: 'light', layout: 'tiles', accent: 'cyan', statusBar: 'stacked', remindWindowsTcpTimestamps: true } as const;
+    const settings = { theme: 'light', layout: 'tiles', accent: 'cyan', statusBar: 'stacked', remindWindowsTcpTimestamps: true, showConfigWarnings: true } as const;
     await nfqwsAppearance.save(settings);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/ui/appearance');
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual(settings);
@@ -428,6 +428,13 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/profiles/catalog');
   });
 
+  it('can explicitly bypass the cached profile help catalog', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"functions":[],"standardGroups":[],"cli":{"options":[],"l7":[],"payloads":[],"full":false}}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await nfqwsProfiles.catalog(true);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/profiles/catalog?forceRefresh=true');
+  });
+
   it('applies a config through the transactional endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(
       '{"config":{"file":"/opt/etc/nfqws2/nfqws2.conf","content":"NFQWS_ARGS=--filter-tcp=443\\n","revision":"new"},"message":"Started and verified"}',
@@ -499,5 +506,18 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/updates/releases');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/nfqws2/updates/install');
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ tag: 'v1.3.2' });
+  });
+
+  it('loads a lightweight cached nfqws2 release status for background update checks', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      '{"latestTag":"v1.3.2","installedTag":"v1.3.1","updateAvailable":true,"checkedAt":123}',
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const status = await nfqwsUpdates.coreStatus();
+
+    expect(status).toMatchObject({ latestTag: 'v1.3.2', installedTag: 'v1.3.1', updateAvailable: true });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/updates/status');
   });
 });

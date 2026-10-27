@@ -8,6 +8,7 @@ import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
 import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries } from './config-values';
+import { highlightConfigLine } from './config-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
@@ -24,13 +25,15 @@ import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
 import { diagnosisQueueMarker, diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
-import { canShowToast, lifecycleMessage, toastCardsToDismiss, toastPresentation } from './notifications';
+import { canShowToast, CORE_UPDATE_CHECK_INTERVAL_MS, coreUpdateNoticePresentation, lifecycleMessage, shouldCheckCoreUpdate, toastCardsToDismiss, toastPresentation } from './notifications';
+import { podkopWarningPresentation } from './podkop-warning';
 import { shouldPollLogs } from './log-polling';
 import { shouldFollowLogTail } from './log-scroll';
 import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterval, saveMonitoringState, type MonitoringState } from './monitoring';
 import { copyProfileIntoDraft } from './copy-profile';
 import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileProtocol, appendProfileUdpFilter, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, filterProfileArgumentChoices, moveProfileStepTo, profileStrategyNumbers, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
+import { configLuaArgumentEntries } from './config-diagnostics';
 import { navigationGroupForRoute } from './navigation';
 import { isValidNetworkInterfaceName } from './network-interface';
 
@@ -58,7 +61,10 @@ let monitoringRunning = false;
 const monitoringHostsRunning = new Set<string>();
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
-let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true };
+let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, showConfigWarnings: true };
+let configWarningsTimer: number | null = null;
+let configWarningsRequest = 0;
+let configWarningsCatalogPromise: Promise<void> | null = null;
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
@@ -91,6 +97,7 @@ let uiUpdateStatusPolling = false;
 let uiUpdateNoticeOpenedTag: string | null = null;
 const UPDATE_NOTICE_KEY = 'nfqws2-ui-update-notice';
 const UI_UPDATE_DISMISSED_TAG_KEY = 'nfqws2-ui-update-dismissed-tag';
+const CORE_UPDATE_DISMISSED_TAG_KEY = 'nfqws2-core-update-dismissed-tag';
 const LIST_DISPLAY_NAMES: Partial<Record<NfqwsListId, string>> = {
   'user.list': 'Пользовательские домены',
   'auto.list': 'Домены для автообучения',
@@ -172,6 +179,7 @@ function showPendingUpdateNotice() {
   } catch { /* Storage can be unavailable in restricted browser contexts. */ }
 }
 function hideUiUpdateNotice() { $('#uiUpdateNotice')?.remove(); }
+function hideCoreUpdateNotice() { $('#coreUpdateNotice')?.remove(); }
 function dismissUiUpdateNotice(tag: string) {
   try { window.localStorage.setItem(UI_UPDATE_DISMISSED_TAG_KEY, tag); } catch { /* Still allow the notice to be closed if storage is blocked. */ }
   hideUiUpdateNotice();
@@ -192,7 +200,7 @@ function renderUiUpdateNotice(status: UiUpdateStatus, manualCheck = false) {
     hideUiUpdateNotice();
     return;
   }
-  const host = $('#uiUpdateNoticeWrapper');
+  const host = $('#updateNoticeWrapper');
   if (!host || $('#uiUpdateNotice')?.getAttribute('data-version') === presentation.version) return;
   hideUiUpdateNotice();
   const item = document.createElement('section');
@@ -249,6 +257,50 @@ async function refreshUiUpdateStatus() {
   try { renderUiUpdateNotice(await nfqwsUpdates.uiStatus()); }
   catch { /* Background update checks must not interrupt panel use. */ }
   finally { uiUpdateStatusPolling = false; }
+}
+function renderCoreUpdateNotice(status: { latestTag: string | null; installedTag: string | null }, manualCheck = false) {
+  let dismissedTag: string | null = null;
+  try { dismissedTag = window.localStorage.getItem(CORE_UPDATE_DISMISSED_TAG_KEY); } catch { /* Treat storage failure as not dismissed. */ }
+  const dismissedVersion = status.latestTag && (dismissedTag === status.latestTag && !manualCheck) ? dismissedTag : null;
+  const presentation = coreUpdateNoticePresentation(status, dismissedVersion);
+  const button = $('#updateNfqws2Button');
+  button?.classList.toggle('update-available', presentation.highlight);
+  button?.setAttribute('aria-label', presentation.highlight
+    ? `Доступно обновление nfqws2: ${presentation.version}`
+    : `Версия nfqws2 ${status.installedTag ?? 'не определена'}`);
+  if (!presentation.notify || !presentation.version) { hideCoreUpdateNotice(); return; }
+  const host = $('#updateNoticeWrapper');
+  if (!host || $('#coreUpdateNotice')?.dataset.version === presentation.version) return;
+  hideCoreUpdateNotice();
+  const item = document.createElement('section');
+  item.id = 'coreUpdateNotice'; item.dataset.version = presentation.version;
+  item.className = 'ui-update-notice pointer-events-auto relative w-[22.5rem] max-w-[calc(100vw-2.5rem)] rounded-xl border px-4 py-3 text-slate-100 shadow-2xl';
+  item.setAttribute('role', 'status'); item.setAttribute('aria-live', 'polite');
+  const heading = document.createElement('div'); heading.className = 'flex min-w-0 items-center gap-2 text-sm font-bold text-blue-100';
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('fill', 'none'); icon.setAttribute('stroke', 'currentColor');
+  icon.setAttribute('stroke-width', '2'); icon.setAttribute('stroke-linecap', 'round'); icon.setAttribute('stroke-linejoin', 'round');
+  icon.setAttribute('aria-hidden', 'true'); icon.classList.add('h-[18px]', 'w-[18px]', 'shrink-0', 'text-slate-100');
+  icon.innerHTML = '<path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0"/><path d="M9 12l2 2l4 -4"/>';
+  const title = document.createElement('span'); title.textContent = 'Доступно обновление nfqws2';
+  const actions = document.createElement('span'); actions.className = 'ml-auto flex shrink-0 items-center gap-1';
+  const close = document.createElement('button'); close.type = 'button'; close.dataset.actionClick = 'dismissCoreUpdateNotice';
+  close.dataset.args = JSON.stringify([presentation.version]); close.className = 'inline-flex h-7 w-7 items-center justify-center rounded-md text-[18px] leading-none text-slate-400 transition-colors hover:bg-slate-700/70 hover:text-white';
+  close.setAttribute('aria-label', 'Скрыть уведомление об обновлении nfqws2'); close.textContent = '×'; actions.append(close);
+  const body = document.createElement('button'); body.type = 'button'; body.dataset.actionClick = 'openUpdateModal'; body.dataset.args = JSON.stringify(['core']);
+  body.className = 'mt-1 block w-full text-left text-sm leading-relaxed text-slate-300 hover:text-white';
+  body.textContent = `Доступна новая версия nfqws2 ${presentation.version}`;
+  heading.append(icon, title, actions); item.append(heading, body); host.append(item);
+}
+let coreUpdateStatusPolling = false;
+let lastCoreUpdateCheckedAt = 0;
+async function refreshCoreUpdateStatus(manualCheck = false) {
+  if (coreUpdateStatusPolling || (!manualCheck && !shouldCheckCoreUpdate(Date.now(), lastCoreUpdateCheckedAt))) return;
+  coreUpdateStatusPolling = true;
+  lastCoreUpdateCheckedAt = Date.now();
+  try { renderCoreUpdateNotice(await nfqwsUpdates.coreStatus(), manualCheck); }
+  catch { /* Background update checks must not interrupt panel use. */ }
+  finally { coreUpdateStatusPolling = false; }
 }
 function showDiagnosisProgress(host: HTMLElement, domain: string) {
   const item = document.createElement('div');
@@ -359,11 +411,15 @@ function renderCommunityStrategies(data: CommunityStrategiesResponse) {
     for (const item of items) {
       const row = document.createElement('article'); row.className = 'community-strategy-row';
       const details = document.createElement('div'); details.className = 'community-strategy-details';
-      const name = document.createElement('strong'); name.className = 'community-strategy-name'; name.textContent = item.name || item.steps.map((step) => step.replace('--lua-desync=', '').split(':')[0]).join(' + ');
+      const nameLine = document.createElement('div'); nameLine.className = 'community-strategy-name-line';
+      const name = document.createElement('strong'); name.className = 'community-strategy-name'; name.textContent = item.name || item.steps.map((step) => step.replace('--lua-desync=', '').split(':')[0]).join(' + '); nameLine.append(name);
+      if (item.skipped) { const badge = document.createElement('span'); badge.className = 'community-strategy-badge community-strategy-badge-skipped'; badge.textContent = 'Подбор пропускает'; nameLine.append(badge); }
+      if (!item.fresh) { const badge = document.createElement('span'); badge.className = 'community-strategy-badge community-strategy-badge-stale'; badge.textContent = 'Давно не подтверждалась'; nameLine.append(badge); }
       const meta = document.createElement('p'); meta.className = 'community-strategy-meta';
-      const targets = item.targets.slice(0, 6).map((target) => [target.host, target.asn ? `AS${target.asn}` : ''].filter(Boolean).join(' · ')).filter(Boolean);
-      meta.textContent = `${targets.length ? targets.join(' · ') : 'сайт не указан'} · подтверждений ${item.reports} · не сработала ${item.fails}${item.last ? ` · проверена ${item.last}` : ''}`;
-      details.append(name, meta);
+      const allTargets = item.targets.map((target) => [target.host, target.asn ? `AS${target.asn}` : ''].filter(Boolean).join(' · ')).filter(Boolean);
+      const targets = allTargets.slice(0, 6);
+      meta.textContent = `${targets.length ? targets.join(' · ') : 'сайт не указан'}${allTargets.length > targets.length ? ` · и ещё ${allTargets.length - targets.length}` : ''} · подтверждений ${item.reports} · не сработала ${item.fails}${item.last ? ` · проверена ${item.last}` : ''}`;
+      details.append(nameLine, meta);
       const code = document.createElement('code'); code.className = 'community-strategy-code'; code.textContent = item.steps.join('\n'); details.append(code);
       const actions = document.createElement('div'); actions.className = 'community-strategy-actions';
       const test = document.createElement('button'); test.type = 'button'; test.className = 'backup-action'; test.dataset.actionClick = 'testCommunityStrategy'; test.dataset.args = JSON.stringify([item.id]); test.textContent = 'Проверить';
@@ -414,7 +470,7 @@ async function testCommunityStrategy(id: string) {
 }
 async function copyCommunityStrategy(id: string) {
   const item = findCommunityStrategy(id); if (!item) return;
-  try { await navigator.clipboard.writeText(item.steps.join('\n')); toast('Стратегия скопирована.'); }
+  try { await writeTextToClipboard(item.steps.join('\n')); toast('Стратегия скопирована.'); }
   catch { toast('Буфер обмена недоступен.', 'error'); }
 }
 
@@ -1144,28 +1200,57 @@ function renderRuntimeProfiles() {
   editor.append(main);
   installStyledSelects(editor);
 }
+async function fetchRuntimeProfileCatalog(forceRefresh = false) {
+  const catalog = await nfqwsProfiles.catalog(forceRefresh);
+  runtimeProfileLuaCatalog = catalog.functions;
+  runtimeProfileLuaStandardGroups = catalog.standardGroups ?? [];
+  runtimeProfileCliCatalog = catalog.cli;
+}
+function renderRuntimeProfileCatalogStatus() {
+  const label = $('#profileStatus');
+  if (!label || !runtimeProfilesState) return;
+  if (runtimeProfilesDirty || runtimeProfileManagedDirty) {
+    label.textContent = 'Есть несохранённые изменения. Применение сохранит снимок, проверит конфиг и перезапустит nfqws2.';
+    return;
+  }
+  const cliStatus = runtimeProfileCliCatalog
+    ? runtimeProfileCliCatalog.full
+      ? `справка nfqws2 полная · ${runtimeProfileCliCatalog.options.length} параметров, ${runtimeProfileCliCatalog.l7.length} протоколов, ${runtimeProfileCliCatalog.payloads.length} типов пакетов`
+      : `справка nfqws2 неполная · найдено ${runtimeProfileCliCatalog.options.length} параметров`
+    : 'справка параметров nfqws2 недоступна';
+  label.replaceChildren(document.createTextNode(`${visibleRuntimeProfiles().length} профилей nfqws2 · пользовательских ${runtimeProfileDraft.length}; штатные UDP, HTTP/HTTPS и QUIC доступны для настройки · ${cliStatus}`));
+  if (!runtimeProfileCliCatalog?.full) {
+    const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'ml-1 inline-flex min-h-7 items-center rounded-md border border-slate-700 px-2 text-xs font-medium text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400'; retry.textContent = '⟳ Повторить'; retry.setAttribute('aria-label', 'Повторить загрузку справки nfqws2'); retry.title = 'Повторно запросить каталоги параметров nfqws2';
+    retry.addEventListener('click', () => void refreshRuntimeProfileCatalog(true));
+    label.append(' ', retry);
+  }
+}
+async function refreshRuntimeProfileCatalog(forceRefresh = false) {
+  const label = $('#profileStatus');
+  if (label) label.textContent = 'Обновляем каталоги параметров nfqws2…';
+  try {
+    await fetchRuntimeProfileCatalog(forceRefresh);
+    renderRuntimeProfiles();
+    renderRuntimeProfileCatalogStatus();
+  } catch (error) {
+    if (label) {
+      label.textContent = error instanceof Error ? `Не удалось обновить каталог: ${error.message}` : 'Не удалось обновить каталог параметров nfqws2.';
+      const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'ml-1 inline-flex min-h-7 items-center rounded-md border border-slate-700 px-2 text-xs font-medium text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400'; retry.textContent = '⟳ Повторить'; retry.setAttribute('aria-label', 'Повторить загрузку справки nfqws2');
+      retry.addEventListener('click', () => void refreshRuntimeProfileCatalog(true));
+      label.append(' ', retry);
+    }
+  }
+}
 async function loadProfiles() {
   const label = $('#profileStatus'); if (label) label.textContent = 'Загружаем профильные группы nfqws2…';
   try {
     const result = await nfqwsProfiles.list(); runtimeProfilesState = result;
-    try { const catalog = await nfqwsProfiles.catalog(); runtimeProfileLuaCatalog = catalog.functions; runtimeProfileLuaStandardGroups = catalog.standardGroups ?? []; runtimeProfileCliCatalog = catalog.cli; } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileCliCatalog = undefined; }
+    try { await fetchRuntimeProfileCatalog(); } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileCliCatalog = undefined; }
     try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
     runtimeProfileManagedDraft = {}; runtimeProfileManagedDirty = false;
     runtimeProfilesDirty = false; renderRuntimeProfiles();
-    const cliStatus = runtimeProfileCliCatalog
-      ? runtimeProfileCliCatalog.full
-        ? `справка nfqws2 полная · ${runtimeProfileCliCatalog.options.length} параметров, ${runtimeProfileCliCatalog.l7.length} протоколов, ${runtimeProfileCliCatalog.payloads.length} типов пакетов`
-        : `справка nfqws2 неполная · найдено ${runtimeProfileCliCatalog.options.length} параметров`
-      : 'справка параметров nfqws2 недоступна';
-    if (label) {
-      label.textContent = `${visibleRuntimeProfiles().length} профилей nfqws2 · пользовательских ${runtimeProfileDraft.length}; штатные UDP, HTTP/HTTPS и QUIC доступны для настройки · ${cliStatus}`;
-      if (!runtimeProfileCliCatalog?.full) {
-        const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'ml-1 inline-flex min-h-7 items-center rounded-md border border-slate-700 px-2 text-xs font-medium text-cyan-200 hover:border-cyan-400 hover:bg-cyan-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400'; retry.textContent = '⟳ Повторить'; retry.setAttribute('aria-label', 'Повторить загрузку справки nfqws2'); retry.title = 'Повторно запросить nfqws2 --help';
-        retry.addEventListener('click', () => void loadProfiles());
-        label.append(' ', retry);
-      }
-    }
+    renderRuntimeProfileCatalogStatus();
   } catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили nfqws2.'; }
 }
 function addRuntimeProfile() {
@@ -1590,6 +1675,8 @@ function syncAppearanceControls() {
   all<HTMLInputElement>('input[name="appearanceAccent"]').forEach((input) => { input.checked = input.value === appearanceSettings.accent; });
   all<HTMLInputElement>('input[name="appearanceStatusBar"]').forEach((input) => { input.checked = input.value === appearanceSettings.statusBar; });
   all<HTMLInputElement>('[data-appearance-remind-timestamps]').forEach((input) => { input.checked = appearanceSettings.remindWindowsTcpTimestamps; });
+  all<HTMLInputElement>('[data-appearance-config-warnings]').forEach((input) => { input.checked = appearanceSettings.showConfigWarnings; });
+  syncConfigWarningsVisibility();
 }
 function syncNavigationLayout(route?: Route) {
   const activeRoute = route ?? (all<HTMLElement>('[id^="tabContent-"]').find((section) => !section.classList.contains('hidden'))?.id.replace('tabContent-', '') as Route | undefined);
@@ -1615,6 +1702,7 @@ function updateAppearance(change: Partial<AppearanceSettings>) {
   syncAppearanceControls();
   syncNavigationLayout();
   void nfqwsAppearance.save(appearanceSettings).catch((error) => toast(error instanceof Error ? `Оформление сохранено только в этом браузере: ${error.message}` : 'Оформление сохранено только в этом браузере.', 'error'));
+  if (change.showConfigWarnings === true) scheduleConfigWarnings(0);
 }
 async function syncAppearanceFromRouter() {
   const saved = await nfqwsAppearance.get(); if (!saved) return;
@@ -1947,6 +2035,7 @@ async function loadConfig() {
     setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:—');
     syncConfigLines();
     renderConfigOutline();
+    scheduleConfigWarnings(0);
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
 }
 function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
@@ -1958,6 +2047,7 @@ function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
   }
   const activePanel = document.getElementById(selectedId);
   if (!activePanel) return;
+  syncConfigWarningsVisibility();
   const copyButton = $('#copyConfigTextButton');
   copyButton?.classList.toggle('hidden', section !== 'editor');
   activePanel.classList.remove('config-panel-enter');
@@ -2133,22 +2223,33 @@ function renderNfqwsArgumentEditors(content: string) {
     field.placeholder = key === 'NFQWS_ARGS_CUSTOM' ? '--new --filter-tcp=443 --hostlist-domains=example.com …' : 'Введите аргументы для этой группы';
     field.title = 'Изменение обновит черновик; сохранить его можно кнопкой «Применить конфигурацию».';
     const editor = document.createElement('div');
-    editor.className = 'config-argument-editor flex min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 transition focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20';
+    editor.className = 'config-argument-editor flex min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 transition';
     const gutter = document.createElement('div');
     gutter.className = 'config-argument-line-numbers line-numbers-col min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[#05080f] px-2.5 py-2 font-mono text-xs leading-5 text-slate-500';
     gutter.setAttribute('aria-hidden', 'true');
-    editor.append(gutter, field);
+    const surface = document.createElement('div');
+    surface.className = 'config-argument-surface relative min-w-0 flex-1 overflow-hidden';
+    const highlight = document.createElement('pre');
+    highlight.className = 'config-argument-highlight conf-syntax-highlight absolute inset-0 m-0 overflow-hidden px-3 py-2 font-mono text-xs leading-5';
+    highlight.setAttribute('aria-hidden', 'true');
+    field.classList.add('config-argument-input', 'absolute', 'inset-0', 'h-full', 'w-full', 'overflow-auto');
+    surface.append(highlight, field);
+    editor.append(gutter, surface);
     const syncEditor = () => {
       const layout = configEditorLayout(field.value, minimumRows);
       const viewportHeight = configEditorViewportHeight(layout.visibleRows);
       field.rows = layout.visibleRows;
       field.style.maxHeight = viewportHeight;
+      surface.style.height = viewportHeight;
+      highlight.innerHTML = field.value.split('\n').map(highlightConfigLine).join('\n');
+      highlight.scrollTop = field.scrollTop;
+      highlight.scrollLeft = field.scrollLeft;
       gutter.style.maxHeight = viewportHeight;
       gutter.textContent = layout.lineNumbers;
       gutter.scrollTop = field.scrollTop;
     };
     field.addEventListener('input', syncEditor);
-    field.addEventListener('scroll', () => { gutter.scrollTop = field.scrollTop; });
+    field.addEventListener('scroll', () => { gutter.scrollTop = field.scrollTop; highlight.scrollTop = field.scrollTop; highlight.scrollLeft = field.scrollLeft; });
     syncEditor();
     field.addEventListener('change', () => void updateConfigVariable(key, field.value));
     card.append(heading, editor);
@@ -2239,6 +2340,7 @@ async function updateConfigVariable(key: string, value: string) {
     syncConfigLines();
     renderConfigOutline();
     renderNfqwsArgumentEditors(editor.value);
+    scheduleConfigWarnings(0);
     toast('Черновик изменён. Нажмите «Применить конфигурацию», чтобы сохранить.');
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось изменить черновик', 'error');
@@ -2256,6 +2358,107 @@ function syncConfigLines() {
   syncConfigHighlight(editor);
   setText('#confLinesBadge', `${count} строк`);
 }
+function syncConfigWarningsVisibility() {
+  const panel = $('#configWarningsPanel');
+  const badge = $('#configWarningsBadge');
+  const editorSection = $('#configEditorPanel');
+  const visible = appearanceSettings.showConfigWarnings && !editorSection?.classList.contains('hidden');
+  panel?.classList.toggle('hidden', !visible);
+  badge?.classList.toggle('hidden', !appearanceSettings.showConfigWarnings);
+  if (!appearanceSettings.showConfigWarnings) {
+    if (configWarningsTimer !== null) window.clearTimeout(configWarningsTimer);
+    configWarningsTimer = null;
+    configWarningsRequest += 1;
+  }
+}
+function scheduleConfigWarnings(delay = 500) {
+  if (configWarningsTimer !== null) window.clearTimeout(configWarningsTimer);
+  configWarningsTimer = null;
+  if (!appearanceSettings.showConfigWarnings) { syncConfigWarningsVisibility(); return; }
+  configWarningsTimer = window.setTimeout(() => { configWarningsTimer = null; void validateConfigWarnings(); }, delay);
+}
+async function validateConfigWarnings() {
+  const editor = $('#nfqwsConfTextarea');
+  if (!(editor instanceof HTMLTextAreaElement) || !appearanceSettings.showConfigWarnings) return;
+  const content = editor.value;
+  const request = ++configWarningsRequest;
+  const list = $('#configWarningsList');
+  const summary = $('#configWarningsSummary');
+  if (!list || !summary) return;
+  summary.textContent = 'Проверка…';
+  try {
+    const luaEntries = configLuaArgumentEntries(content);
+    const [result] = await Promise.all([
+      nfqwsConfig.validate(content),
+      luaEntries.length ? ensureConfigWarningsLuaCatalog() : Promise.resolve(),
+    ]);
+    if (request !== configWarningsRequest || editor.value !== content || !appearanceSettings.showConfigWarnings) return;
+    const luaWarnings = luaEntries.flatMap((entry) => diagnoseProfileLuaArguments(
+      [entry.argument], runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups,
+    ).map((diagnostic) => ({ severity: 'warning' as const, code: 'lua_argument', message: diagnostic.message, line: entry.line })));
+    const warnings = [...result.diagnostics.filter((diagnostic) => diagnostic.severity === 'warning'), ...luaWarnings];
+    const badge = $('#configWarningsBadge');
+    if (badge) badge.textContent = warnings.length ? `${warnings.length} ${pluralize(warnings.length, 'предупреждение', 'предупреждения', 'предупреждений')}` : 'Предупреждений нет';
+    summary.textContent = warnings.length ? `Найдено: ${warnings.length}` : 'Замечаний нет';
+    list.replaceChildren();
+    if (!warnings.length) {
+      const empty = document.createElement('p');
+      empty.className = 'px-1 py-1 text-xs text-slate-400';
+      empty.textContent = result.valid ? 'В текущем черновике предупреждений нет.' : 'Предупреждений нет; перед применением проверьте ошибки валидации.';
+      list.append(empty);
+    }
+    for (const warning of warnings) {
+      const row = document.createElement('div');
+      row.className = 'config-warning-row flex flex-wrap items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm';
+      const message = document.createElement('p');
+      message.className = 'flex min-w-0 flex-1 items-start gap-2 text-slate-200';
+      const icon = document.createElement('span');
+      icon.className = 'shrink-0 text-amber-400';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.textContent = '⚠';
+      const text = document.createElement('span');
+      text.className = 'min-w-0';
+      text.textContent = `${warning.line ? `Строка ${warning.line}: ` : ''}${warning.message}`;
+      message.append(icon, text);
+      row.append(message);
+      if (warning.line) {
+        const goToLine = document.createElement('button');
+        goToLine.type = 'button';
+        goToLine.className = 'config-warning-action shrink-0 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors';
+        goToLine.textContent = `К строке ${warning.line}`;
+        goToLine.addEventListener('click', () => {
+          const start = content.split(/\r?\n/).slice(0, warning.line! - 1).join('\n').length + (warning.line! > 1 ? 1 : 0);
+          const end = content.indexOf('\n', start);
+          editor.focus();
+          editor.setSelectionRange(start, end < 0 ? content.length : end);
+          const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 23;
+          editor.scrollTop = (warning.line! - 1) * lineHeight;
+          syncConfigScroll();
+        });
+        row.append(goToLine);
+      }
+      list.append(row);
+    }
+    syncConfigWarningsVisibility();
+  } catch {
+    if (request !== configWarningsRequest) return;
+    summary.textContent = 'Проверка недоступна';
+    list.replaceChildren();
+    const unavailable = document.createElement('p');
+    unavailable.className = 'px-1 py-1 text-xs text-slate-400';
+    unavailable.textContent = 'Не удалось получить предупреждения от backend.';
+    list.append(unavailable);
+  }
+}
+async function ensureConfigWarningsLuaCatalog() {
+  if (runtimeProfileLuaCatalog.length) return;
+  if (!configWarningsCatalogPromise) {
+    configWarningsCatalogPromise = fetchRuntimeProfileCatalog()
+      .catch(() => undefined)
+      .finally(() => { configWarningsCatalogPromise = null; });
+  }
+  await configWarningsCatalogPromise;
+}
 function syncConfigScroll() {
   if (configScrollFramePending) return;
   configScrollFramePending = true;
@@ -2271,73 +2474,6 @@ function syncConfigScroll() {
       highlight.scrollLeft = editor.scrollLeft;
     }
   });
-}
-function escapeConfigHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ?? character);
-}
-function highlightConfigTokens(source: string, comments: boolean): string {
-  let html = '';
-  let index = 0;
-  let inLua = false;
-  let afterLuaFlag = false;
-  let awaitingLuaMode = false;
-  let awaitingParamKey = false;
-  let awaitingParamValue = false;
-  const append = (value: string, token?: string) => {
-    const safe = escapeConfigHtml(value);
-    html += token ? `<span class="conf-token-${token}">${safe}</span>` : safe;
-  };
-  while (index < source.length) {
-    const rest = source.slice(index);
-    if (comments && rest.startsWith('#')) { append(rest, 'comment'); break; }
-    if (rest[0] === '"' || rest[0] === "'") {
-      const quote = rest[0]; let end = 1; let escaped = false;
-      while (end < rest.length) { const ch = rest[end]; if (ch === quote && !escaped) break; escaped = ch === '\\' && !escaped; if (ch !== '\\') escaped = false; end += 1; }
-      if (end < rest.length) {
-        append(quote, 'string');
-        if (quote === '"') html += highlightConfigTokens(rest.slice(1, end), false);
-        else append(rest.slice(1, end), 'string');
-        append(quote, 'string'); index += end + 1; continue;
-      }
-      append(quote, 'string'); index += 1; continue;
-    }
-    const variable = rest.match(/^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/);
-    if (variable) { append(variable[0], 'variable'); index += variable[0].length; continue; }
-    const flag = rest.match(/^--[A-Za-z0-9_-]+/);
-    if (flag) {
-      append(flag[0], 'flag');
-      if (flag[0] === '--lua-desync') { inLua = true; afterLuaFlag = true; awaitingLuaMode = false; awaitingParamKey = false; awaitingParamValue = false; }
-      index += flag[0].length; continue;
-    }
-    const delimiter = rest.match(/^[=,:]/);
-    if (delimiter) {
-      append(delimiter[0], 'operator');
-      if (delimiter[0] === '=' && afterLuaFlag) { afterLuaFlag = false; awaitingLuaMode = true; }
-      else if (delimiter[0] === ':') { awaitingParamKey = true; awaitingParamValue = false; }
-      else if (delimiter[0] === '=' && awaitingParamKey) { awaitingParamKey = false; awaitingParamValue = true; }
-      index += 1; continue;
-    }
-    const number = rest.match(/^-?\d+(?:[._+-]\d+)*%?/);
-    if (number) { append(number[0], 'number'); index += number[0].length; continue; }
-    const word = rest.match(/^[A-Za-z_][A-Za-z0-9_.-]*/);
-    if (word) {
-      const value = word[0]; const isKey = rest.slice(value.length).startsWith('=');
-      if (isKey) append(value, 'key');
-      else if (awaitingLuaMode) { append(value, 'mode'); awaitingLuaMode = false; }
-      else if (awaitingParamKey) { append(value, 'mode'); awaitingParamKey = false; }
-      else if (awaitingParamValue && inLua) append(value, 'value');
-      else if (/^(if|then|else|elif|fi|for|while|do|done|case|esac|in|export|local|return|function)$/i.test(value)) append(value, 'keyword');
-      else append(value, 'word');
-      index += value.length; continue;
-    }
-    append(source[index]); index += 1;
-  }
-  return html;
-}
-function highlightConfigLine(line: string): string {
-  const trimmed = line.trimStart();
-  if (trimmed.startsWith('#')) return escapeConfigHtml(line.slice(0, line.length - trimmed.length)) + highlightConfigTokens(trimmed, true);
-  return highlightConfigTokens(line, true) || '&nbsp;';
 }
 function syncConfigHighlight(editor?: HTMLTextAreaElement) {
   const input = editor ?? $('#nfqwsConfTextarea'); const highlight = $('#confSyntaxHighlight');
@@ -3023,6 +3159,15 @@ function foreignStatusLabel(value: boolean | null) {
   return value === true ? 'Доступен' : value === false ? 'Не отвечает' : 'Ожидает';
 }
 
+function appendPodkopWarning(container: HTMLElement, hosts: readonly string[] | undefined) {
+  const presentation = podkopWarningPresentation(hosts);
+  if (!presentation) return;
+  const warning = document.createElement('aside'); warning.className = 'podkop-route-warning'; warning.setAttribute('role', 'note');
+  const title = document.createElement('strong'); title.textContent = presentation.title;
+  const detail = document.createElement('p'); detail.textContent = presentation.detail;
+  warning.append(title, detail); container.append(warning);
+}
+
 function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
   const status = $('#foreignConfigStatus');
   const results = $('#foreignConfigResults');
@@ -3043,6 +3188,7 @@ function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
   if (!results) return;
   const openDisclosures = captureForeignConfigDisclosureState(results.querySelectorAll<HTMLDetailsElement>('details[data-disclosure-key]'));
   results.replaceChildren();
+  appendPodkopWarning(results, operation.podkopHosts);
   const renderSites = (sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail') => {
     const list = document.createElement('div'); list.className = 'mt-2 divide-y divide-slate-800/70';
     for (const site of sites) {
@@ -3200,6 +3346,7 @@ function renderStrategyPick(operation: StrategyPickOperation) {
       .filter((key): key is string => Boolean(key)),
   );
   container.replaceChildren();
+  appendPodkopWarning(container, operation.podkopHosts);
   const confirmed = operation.results.filter((result) => result.confirmed);
   const windowsTcpTimestampsCommand = 'netsh interface tcp set global timestamps=enabled';
   const resultSummary = document.createElement('section');
@@ -4295,6 +4442,7 @@ function bindPrototypeActions() {
     setAppearanceAccent: (accent: AppearanceSettings['accent']) => updateAppearance({ accent }),
     setAppearanceStatusBar: (statusBar: AppearanceSettings['statusBar']) => updateAppearance({ statusBar }),
     setAppearanceTimestampReminder: (remindWindowsTcpTimestamps: boolean) => updateAppearance({ remindWindowsTcpTimestamps }),
+    setAppearanceConfigWarnings: (showConfigWarnings: boolean) => updateAppearance({ showConfigWarnings }),
     switchSimplifiedNavGroup: (group: string) => { const routes: Record<string, Route> = { configuration: 'conf', 'site-check': 'check', tuning: 'autotune', monitoring: 'monitor', lists: 'lists', system: 'appearance' }; const route = routes[group]; if (route) showRoute(route); },
     checkUiUpdate: () => void checkUiUpdate(),
     showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
@@ -4380,7 +4528,7 @@ function bindPrototypeActions() {
         } else toast('Фрагмент скопирован');
       } catch { toast('Буфер обмена недоступен', 'error'); }
     })(),
-    handleConfInput: () => { syncConfigLines(); renderConfigOutline(); },
+    handleConfInput: () => { syncConfigLines(); renderConfigOutline(); scheduleConfigWarnings(); },
     syncConfScroll: () => syncConfigScroll(),
     toggleWordWrapConf: (enabled: boolean) => { const editor = $('#nfqwsConfTextarea'); if (editor instanceof HTMLTextAreaElement) { editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre'; syncConfigHighlight(editor); } },
     toggleConfigOutline: () => toggleConfigOutline(),
@@ -4393,6 +4541,7 @@ function bindPrototypeActions() {
     retryUpdateList: () => void openUpdatePicker(updateTarget),
     openLatestUiUpdate: (tag: string) => { uiUpdateNoticeOpenedTag = tag; hideUiUpdateNotice(); void openUpdatePicker('ui'); },
     dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
+    dismissCoreUpdateNotice: (tag: string) => { try { window.localStorage.setItem(CORE_UPDATE_DISMISSED_TAG_KEY, tag); } catch { /* The notice can still be closed for this page session. */ } hideCoreUpdateNotice(); },
     selectVersionItem: (tag: string) => { if (availableReleases.some((release) => release.tag === tag) && !updatePolling) { const toggling = expandedReleaseTag === tag; selectedReleaseTag = tag; expandedReleaseTag = toggling ? null : tag; renderReleases(); } },
     installSelectedRelease: () => void installSelectedRelease(),
     syncListLineNumbers: (editor?: HTMLTextAreaElement) => syncListLineNumbers(editor),
@@ -4527,6 +4676,9 @@ function boot() {
   void refreshUiUpdateStatus();
   window.setInterval(() => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); }, 5 * 60 * 1000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); });
+  void refreshCoreUpdateStatus();
+  window.setInterval(() => { if (document.visibilityState === 'visible') void refreshCoreUpdateStatus(); }, CORE_UPDATE_CHECK_INTERVAL_MS);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refreshCoreUpdateStatus(); });
   void loadConfig();
   window.setInterval(() => { if (document.visibilityState === 'visible') void fetchStatus(); }, 3000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void fetchStatus(); });
