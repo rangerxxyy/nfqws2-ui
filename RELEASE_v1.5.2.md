@@ -16,10 +16,11 @@
 - Frontend: 375 тестов, `pnpm --dir web typecheck`, `pnpm --dir web build`.
 - Backend: `cargo test --locked` (413 тестов), `cargo fmt --all -- --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo check --target aarch64-unknown-linux-musl --locked`.
 - Зависимости: `pnpm --dir web audit --prod` и `cargo audit --file backend/Cargo.lock`.
+- GitHub preflight workflow `40532437737` завершился успешно: release source/build checks, `cross test` и ARM64/musl package build прошли. Dry-run archive `nfqws2-ui-v1.5.2-aarch64-unknown-linux-musl.tar.gz` собран; SHA-256 `483bce05ace8a4ab86f64f133a3d25df88c4cc7482e53dda6169125be48d3d66` сверен локально, состав архива проверен.
 - В Chromium с локальным mock API проверены общий экран, редакторы групп и смена акцентной палитры при переходе в раздел сообщества. Mock API использовал старую схему данных и не является проверкой backend; временная вкладка и процессы закрыты.
 - На роутере выполнен один read-only `GET /api/health` по адресу панели: HTTP 200, `{"ok":true,"service":"nfqws2-ui"}`. Это проверка работающей установленной панели, не кандидатного бинарника. Диагностик и нагрузочных сетевых тестов не запускалось; временные файлы на роутере не создавались.
 
 ## Ограничения
 
 - Результаты community/history на локальном preview нельзя считать backend-проверкой: mock API несовместим с текущей схемой этих разделов.
-- ARM64/musl проверен командой `cargo check`; готовый release archive и SHA-256 должны быть подтверждены release workflow после публикации тега.
+- Кандидатный архив не устанавливался на роутер. Прочитана только health-проверка установленной панели; для теста этого кандидата на роутере потребовалась бы установка/замена бинарника.
