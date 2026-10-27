@@ -12,4 +12,5 @@
 
 - Frontend: 351 тест, TypeScript typecheck, production build, production dependency audit.
 - Rust: 161 тест библиотеки и 176 тестов backend; integration suites: freeze 14, service status 3, strategy picker 20, transfer diagnostics 16; formatting и Clippy без предупреждений.
-- Installer/updater preflight и сборка ARM64 выполняются release workflow. Результаты проверки и smoke-test на роутере будут отражены после проверки установленной сборки.
+- Release workflow прошёл полностью: shell/preflight checks, Rust и frontend проверки, cross-test и сборка `aarch64-unknown-linux-musl`, упаковка и SHA-256.
+- На роутере `aarch64` smoke-test v1.5.0: запуск сервиса, `/api/health` и `/api/community-strategies` (каталог 15 стратегий, 11 провайдеров) успешны. Сетевые тесты стратегий не запускались. После проверки восстановлена v1.4.3; её health-check успешен.
