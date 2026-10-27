@@ -35,7 +35,7 @@ import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileP
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { configLuaArgumentEntries } from './config-diagnostics';
 import { navigationGroupForRoute } from './navigation';
-import { isValidNetworkInterfaceName } from './network-interface';
+import { isValidNetworkInterfaceName, orderNetworkInterfaces } from './network-interface';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['supportReport'] as const;
@@ -2282,26 +2282,12 @@ function updateQuickParameters(content: string, networkInterfaces: string[] = []
   const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
   if (interfaceSelect instanceof HTMLSelectElement) {
     const configured = configAssignmentValue(content, 'ISP_INTERFACE');
-    interfaceSelect.replaceChildren(new Option(networkInterfaces.length ? 'Выберите интерфейс провайдера' : 'Сетевые интерфейсы не обнаружены', '', !configured, false));
-    for (const name of [...new Set(networkInterfaces)].sort()) interfaceSelect.add(new Option(name, name));
-    if (configured && !networkInterfaces.includes(configured)) {
-      interfaceSelect.add(new Option(`${configured} (настроен, но не обнаружен)`, configured, true, true));
-    } else {
-      interfaceSelect.value = configured;
-    }
-    interfaceSelect.add(new Option('Указать имя вручную…', '__manual__'));
+    interfaceSelect.replaceChildren(new Option('Выберите интерфейс', '', !configured, false));
+    for (const name of orderNetworkInterfaces(networkInterfaces, configured)) interfaceSelect.add(new Option(name, name));
+    interfaceSelect.value = configured;
     interfaceSelect.disabled = false;
-    interfaceSelect.title = networkInterfaces.length ? 'Сетевые интерфейсы устройства и ручной ввод' : 'Автоопределение недоступно; имя можно указать вручную';
+    interfaceSelect.title = '';
     interfaceSelect.classList.remove('hidden');
-    const manualInterface = $('#ispInterfaceManualInput');
-    const manualOpen = interfaceSelect.dataset.manualOpen === 'true';
-    manualInterface?.classList.toggle('hidden', !manualOpen);
-    const discoveryHint = $('#ispInterfaceDiscoveryHint');
-    discoveryHint?.classList.toggle('hidden', !manualOpen);
-    if (discoveryHint) discoveryHint.textContent = networkInterfaces.length
-      ? 'Если нужного интерфейса нет в списке, укажите его имя вручную.'
-      : 'Интерфейсы не обнаружены; введите имя вручную.';
-    if (manualInterface instanceof HTMLInputElement) manualInterface.value = configured;
   }
   all<HTMLSelectElement>('select[data-action-change="updateConfVariable"][data-key]').forEach((select) => {
     const key = select.dataset.key;
@@ -2327,24 +2313,6 @@ async function updateConfigVariable(key: string, value: string) {
   const editor = $('#nfqwsConfTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return;
   if (key === 'ISP_INTERFACE') {
-    const interfaceSelect = $('#ispInterfaceSelect');
-    const manualInterface = $('#ispInterfaceManualInput');
-    const discoveryHint = $('#ispInterfaceDiscoveryHint');
-    if (value === '__manual__') {
-      if (interfaceSelect instanceof HTMLSelectElement) interfaceSelect.dataset.manualOpen = 'true';
-      manualInterface?.classList.remove('hidden');
-      discoveryHint?.classList.remove('hidden');
-      if (manualInterface instanceof HTMLInputElement) {
-        manualInterface.value = configAssignmentValue(editor.value, 'ISP_INTERFACE');
-        manualInterface.focus();
-      }
-      return;
-    }
-    if (interfaceSelect instanceof HTMLSelectElement && [...interfaceSelect.options].some((option) => option.value === value && value !== '__manual__')) {
-      interfaceSelect.dataset.manualOpen = 'false';
-      manualInterface?.classList.add('hidden');
-      discoveryHint?.classList.add('hidden');
-    }
     value = value.trim();
     if (!isValidNetworkInterfaceName(value)) {
       toast('Имя интерфейса должно содержать 1–15 латинских букв, цифр или символов . _ @ + -.', 'error');

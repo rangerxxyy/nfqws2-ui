@@ -215,12 +215,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toContain('navigator.clipboard.writeText(editor.value)');
   });
 
-  it('uses one ISP interface selector and reveals manual entry only on request', () => {
-    expect(template).toContain('id="ispInterfaceManualInput"');
+  it('uses one simple ISP interface selector without discovery warnings or manual-entry prompts', () => {
+    expect(template).toContain('id="ispInterfaceSelect"');
+    expect(template).not.toContain('id="ispInterfaceManualInput"');
+    expect(template).not.toContain('Интерфейсы не обнаружены; введите имя вручную.');
+    expect(template).not.toContain('настроен, но не обнаружен');
     expect(panelSource).toContain("interfaceSelect.classList.remove('hidden')");
-    expect(panelSource).toContain("new Option('Указать имя вручную…', '__manual__')");
-    expect(panelSource).toContain("manualInterface?.classList.toggle('hidden', !manualOpen)");
-    expect(panelSource).toContain("if (value === '__manual__')");
+    expect(panelSource).toContain("new Option('Выберите интерфейс', '', !configured, false)");
+    expect(panelSource).toContain('orderNetworkInterfaces(networkInterfaces, configured)');
+    expect(panelSource).not.toContain("new Option('Указать имя вручную…', '__manual__')");
     expect(template).not.toContain('text-slate-400">WAN</span>');
     expect(panelSource).toContain('isValidNetworkInterfaceName(value)');
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');

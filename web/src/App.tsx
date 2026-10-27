@@ -536,10 +536,8 @@ export default function App() {
                     </div>
                     <label htmlFor={"ispInterfaceSelect"} className={"sr-only"}>{"Интерфейс провайдера (ISP_INTERFACE)"}</label>
                     <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      <option value={""}>{"Backend ещё не обнаружил сетевые интерфейсы"}</option>
+                      <option value={""}>{"Загрузка интерфейсов…"}</option>
                     </select>
-                    <input id={"ispInterfaceManualInput"} type={"text"} inputMode={"text"} autoComplete={"off"} maxLength={15} aria-label={"Имя сетевого интерфейса"} placeholder={"например eth0 или ppp0"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 hidden w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 font-mono text-xs font-bold text-white focus:border-blue-500 focus:outline-none"} />
-                    <p id={"ispInterfaceDiscoveryHint"} className={"mt-1 hidden text-xs text-slate-500"}>{"Интерфейсы не обнаружены; введите имя вручную."}</p>
                     {"\n                "}
                   </div>
                   {"\n\n                "}
