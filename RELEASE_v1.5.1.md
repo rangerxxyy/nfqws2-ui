@@ -9,6 +9,7 @@
 
 ## Проверки
 
-- Frontend: 355 тестов, TypeScript typecheck, production build.
+- Frontend: 355 тестов, TypeScript typecheck и production build.
 - Rust: 395 тестов, `cargo fmt --check`, Clippy с `-D warnings`; `cargo check --target aarch64-unknown-linux-musl --locked`.
-- На роутере проверены SSH-доступ, архитектура ARM64 и лёгкий smoke-test уже установленной панели v1.5.0 (`/api/health` и главная страница). Кандидат v1.5.1 будет отдельно проверен перед публикацией.
+- GitHub release workflow на коммите кандидата завершился успешно: прошли shell/preflight-проверки, `cargo audit`, `pnpm audit --prod`, `cross test`, статическая ARM64/musl-сборка, ELF-проверки, упаковка и проверка SHA-256.
+- На роутере проверены ARM64-архитектура, health endpoint и главная страница установленной v1.5.0. Собранный бинарник v1.5.1 отдельно запущен с `--version` во временном каталоге: `nfqws2-ui 1.5.1`. Сжатый архив и распакованный бинарник удалены; работающий сервис не заменялся.
