@@ -157,6 +157,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('role="alertdialog"');
   });
 
+  it('releases the busy lock while config confirmation is open and restores it on continue', () => {
+    const apply = panelSource.match(/async function saveConfigAndApply[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(apply).toContain("setBusy(false);\n    requestDangerousConfirmation('Проверка конфигурации'");
+    expect(apply).toContain('const applyValidatedConfig = async () => {\n    if (editor.value !== draft || !config)');
+    expect(apply).toContain('    setBusy(true);\n    setRestartInProgress(true);');
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");

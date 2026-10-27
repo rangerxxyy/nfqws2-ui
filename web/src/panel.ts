@@ -2576,6 +2576,7 @@ async function saveConfigAndApply() {
     : 'Проверка установленным бинарником выполнена.';
   const applyValidatedConfig = async () => {
     if (editor.value !== draft || !config) { setBusy(false); return toast('Черновик изменился во время подтверждения. Проверьте конфигурацию повторно.', 'error'); }
+    setBusy(true);
     setRestartInProgress(true);
     try {
       const result = await nfqwsApply.apply(draft, config.revision);
@@ -2587,6 +2588,7 @@ async function saveConfigAndApply() {
     finally { setRestartInProgress(false); setBusy(false); }
   };
   if (warnings.length || validation.checks.installedBinary === 'not_run') {
+    setBusy(false);
     requestDangerousConfirmation('Проверка конфигурации', [
       'Backend проверил только безопасно разбираемый синтаксис и известные ограничения init-скрипта.',
       ...warnings.map((item) => `${item.line ? `Строка ${item.line}: ` : ''}${item.message}`),
