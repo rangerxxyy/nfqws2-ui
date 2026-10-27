@@ -104,6 +104,8 @@ struct AppState {
     strategy_pick_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     transfer_diagnostic_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     freeze_scan_controls: Mutex<HashMap<String, Arc<freeze_diagnostic::FreezeScanPause>>>,
+    #[cfg(test)]
+    change_history_fail_path: Mutex<Option<PathBuf>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -488,6 +490,8 @@ struct StrategyPickRequest {
 struct CommunityQuery {
     #[serde(default)]
     detect: bool,
+    #[serde(default)]
+    auto_detect: bool,
     #[serde(default)]
     force: bool,
 }
@@ -9603,6 +9607,22 @@ where
 async fn apply_config_transaction_with_verification<F, Fut, V, VFut>(
     state: &AppState,
     write: ConfigWrite,
+    restart: F,
+    verify: V,
+) -> Result<ConfigApplyResponse, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+    V: FnMut() -> VFut,
+    VFut: std::future::Future<Output = Result<(), String>>,
+{
+    let _write_guard = state.config_write_lock.lock().await;
+    apply_config_transaction_with_verification_locked(state, write, restart, verify).await
+}
+
+async fn apply_config_transaction_with_verification_locked<F, Fut, V, VFut>(
+    state: &AppState,
+    write: ConfigWrite,
     mut restart: F,
     mut verify: V,
 ) -> Result<ConfigApplyResponse, String>
@@ -9615,7 +9635,6 @@ where
     if write.content.len() > MAX_CONFIG_BYTES || write.content.as_bytes().contains(&0) {
         return Err("Конфигурация превышает лимит или содержит запрещённый NUL-байт".into());
     }
-    let _write_guard = state.config_write_lock.lock().await;
     let path = config_path_for_state(state)
         .ok_or_else(|| "Разрешённый конфигурационный файл не найден".to_string())?;
     let original = tokio::fs::read(&path)
@@ -10397,7 +10416,11 @@ async fn get_community_strategies(
 ) -> Response {
     let mut provider = community_strategies::read_provider_settings(&state.data_dir);
     let mut detection_error = None;
-    if query.detect {
+    if community_strategies::provider_detection_needed(
+        provider.asn,
+        query.detect,
+        query.auto_detect,
+    ) {
         match community_strategies::detect_provider().await {
             Ok(detected) => {
                 provider = detected;
@@ -10547,12 +10570,14 @@ async fn revert_change_history(
 }
 
 async fn undo_last_change(State(state): State<Arc<AppState>>) -> Response {
-    if let Some(config) = config_path_for_state(&state) {
-        let _guard = state.config_write_lock.lock().await;
-        let (source, note) = external_change_source(&config);
-        if let Err(message) = change_history::scan(&state.data_dir, &config, source, note) {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
-        }
+    let Some(config) = config_path_for_state(&state).and_then(|path| path.canonicalize().ok())
+    else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let _write_guard = state.config_write_lock.lock().await;
+    let (source, note) = external_change_source(&config);
+    if let Err(message) = change_history::scan(&state.data_dir, &config, source, note) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
     }
     let batch = match change_history::undoable_batch(&state.data_dir) {
         Ok(batch) => batch,
@@ -10581,22 +10606,121 @@ async fn undo_last_change(State(state): State<Arc<AppState>>) -> Response {
             );
         }
     }
+    // Resolve and validate every historical version before writing any file.
+    // A bad older list must not leave earlier files in the same batch reverted.
+    for item in &batch {
+        let (entry, previous) = match change_history::version_before(&state.data_dir, &item.id) {
+            Ok(value) => value,
+            Err(message) => return error(StatusCode::NOT_FOUND, message),
+        };
+        let path = PathBuf::from(&entry.path);
+        if path == config {
+            let Some(content) = previous else {
+                return error(StatusCode::CONFLICT, "Нельзя удалить конфигурацию nfqws2");
+            };
+            let diagnostics = match validate_nfqws2_config(&content) {
+                Ok(diagnostics) => diagnostics,
+                Err(message) => return error(StatusCode::BAD_REQUEST, message),
+            };
+            if let Some(diagnostic) = diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+            {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Предыдущая версия конфигурации не проходит проверку: {}",
+                        diagnostic.message
+                    ),
+                );
+            }
+        } else {
+            let valid_path = path.extension().and_then(|extension| extension.to_str())
+                == Some("list")
+                && path.parent().is_some_and(|parent| {
+                    parent
+                        == config
+                            .parent()
+                            .unwrap_or_else(|| Path::new("/"))
+                            .join("lists")
+                });
+            if !valid_path {
+                return error(
+                    StatusCode::FORBIDDEN,
+                    "Запись истории выходит за разрешённые файлы",
+                );
+            }
+            if let Some(content) = previous {
+                if content.len() > MAX_LIST_BYTES {
+                    return error(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "Предыдущая версия списка превышает лимит 512 КБ",
+                    );
+                }
+                let kind = entry.file.starts_with("ipset");
+                if let Err(message) = validate_list_content_with_kind(&entry.file, &content, kind) {
+                    return error(
+                        StatusCode::BAD_REQUEST,
+                        format!("Предыдущая версия списка не проходит проверку: {message}"),
+                    );
+                }
+            }
+        }
+    }
     // Restore lists first and the config last, so the single service restart
     // caused by a config rollback sees the complete restored operation.
     batch.sort_by_key(|entry| entry.file == "nfqws2.conf");
     let batch_id = batch[0].batch.clone();
     let files: Vec<_> = batch.iter().map(|entry| entry.file.clone()).collect();
+    let snapshot = match snapshots::create_snapshot(
+        &state.data_dir,
+        &config,
+        "перед восстановлением",
+        &format!("страховочная копия перед отменой {batch_id}"),
+        true,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let mut config_reverted = false;
     for entry in &batch {
         let response =
-            revert_change_history_id(&state, &entry.id, "Отмена последнего изменения").await;
+            revert_change_history_id_inner(&state, &entry.id, "Отмена последнего изменения", true)
+                .await;
         if !response.status().is_success() {
-            return response;
+            let failure_status = response.status();
+            let failure_body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+                .await
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .unwrap_or_else(|body_error| {
+                    format!("Не удалось прочитать ошибку отката: {body_error}")
+                });
+            return restore_failed_undo_batch(
+                &state,
+                &config,
+                &snapshot.id,
+                config_reverted,
+                failure_status,
+                failure_body,
+            )
+            .await;
         }
-        if let Err(message) =
-            change_history::mark_undo_of_latest(&state.data_dir, Path::new(&entry.path), &batch_id)
-        {
-            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
-        }
+        config_reverted |= entry.file == "nfqws2.conf";
+    }
+    let paths: Vec<_> = batch
+        .iter()
+        .map(|entry| PathBuf::from(&entry.path))
+        .collect();
+    if let Err(message) = change_history::mark_undo_of_batch(&state.data_dir, &paths, &batch_id) {
+        return restore_failed_undo_batch(
+            &state,
+            &config,
+            &snapshot.id,
+            config_reverted,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            message,
+        )
+        .await;
     }
     Json(serde_json::json!({
         "ok": true,
@@ -10606,7 +10730,67 @@ async fn undo_last_change(State(state): State<Arc<AppState>>) -> Response {
     .into_response()
 }
 
+async fn restore_failed_undo_batch(
+    state: &AppState,
+    config: &Path,
+    snapshot_id: &str,
+    restart_config: bool,
+    failure_status: StatusCode,
+    failure_body: String,
+) -> Response {
+    let archive = match snapshots::archive_bytes(&state.data_dir, snapshot_id) {
+        Ok(archive) => archive,
+        Err(message) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("{failure_body}; не удалось прочитать страховочную копию: {message}"),
+            );
+        }
+    };
+    let restored = match snapshots::validate_and_restore(&state.data_dir, config, &archive) {
+        Ok(files) => files,
+        Err(message) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("{failure_body}; не удалось восстановить страховочную копию: {message}"),
+            );
+        }
+    };
+    if restart_config && let Err(message) = service_action(ServiceAction::Restart).await {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "{failure_body}; файлы восстановлены, но перезапуск службы не удался: {message}"
+            ),
+        );
+    }
+    if let Err(message) = change_history::scan(
+        &state.data_dir,
+        config,
+        "откат",
+        "восстановление после ошибки групповой отмены",
+    ) {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "{failure_body}; файлы восстановлены ({}), но не удалось обновить историю: {message}",
+                restored.len()
+            ),
+        );
+    }
+    error(failure_status, failure_body)
+}
+
 async fn revert_change_history_id(state: &AppState, id: &str, note: &str) -> Response {
+    revert_change_history_id_inner(state, id, note, false).await
+}
+
+async fn revert_change_history_id_inner(
+    state: &AppState,
+    id: &str,
+    note: &str,
+    lock_held: bool,
+) -> Response {
     let Some(config) = config_path_for_state(state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
@@ -10634,21 +10818,22 @@ async fn revert_change_history_id(state: &AppState, id: &str, note: &str) -> Res
             "Запись истории выходит за разрешённые файлы",
         );
     }
-    let current = match tokio::fs::read(&path).await {
-        Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
-    };
-    let current_hash = current
-        .as_deref()
-        .map(|bytes| hex::encode(Sha256::digest(bytes)));
-    if current_hash != entry.to {
-        return error(
-            StatusCode::CONFLICT,
-            "Файл изменился после этой записи; откат остановлен. Обновите историю и проверьте diff.",
-        );
-    }
     if path == config {
+        let current = match tokio::fs::read(&path).await {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+        };
+        if current
+            .as_deref()
+            .map(|bytes| hex::encode(Sha256::digest(bytes)))
+            != entry.to
+        {
+            return error(
+                StatusCode::CONFLICT,
+                "Файл изменился после этой записи; откат остановлен. Обновите историю и проверьте diff.",
+            );
+        }
         let Some(previous) = previous else {
             return error(StatusCode::CONFLICT, "Нельзя удалить конфигурацию nfqws2");
         };
@@ -10656,11 +10841,21 @@ async fn revert_change_history_id(state: &AppState, id: &str, note: &str) -> Res
             content: previous,
             revision: revision(current.as_deref().unwrap_or_default()),
         };
-        return match apply_config_transaction(state, write, || async {
-            service_action(ServiceAction::Restart).await
-        })
-        .await
-        {
+        let result = if lock_held {
+            apply_config_transaction_with_verification_locked(
+                state,
+                write,
+                || async { service_action(ServiceAction::Restart).await },
+                || async { Ok(()) },
+            )
+            .await
+        } else {
+            apply_config_transaction(state, write, || async {
+                service_action(ServiceAction::Restart).await
+            })
+            .await
+        };
+        return match result {
             Ok(result) => {
                 if let Err(message) =
                     change_history::mark_latest(&state.data_dir, &path, "откат", note)
@@ -10674,15 +10869,42 @@ async fn revert_change_history_id(state: &AppState, id: &str, note: &str) -> Res
             Err(message) => error(StatusCode::BAD_GATEWAY, message),
         };
     }
-
-    let _guard = state.config_write_lock.lock().await;
-    if let Err(message) = snapshots::create_snapshot(
-        &state.data_dir,
-        &config,
-        "перед восстановлением",
-        &format!("перед откатом {id}"),
-        true,
-    ) {
+    #[cfg(test)]
+    if state.change_history_fail_path.lock().await.as_ref() == Some(&path) {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Тестовый сбой отката файла истории",
+        );
+    }
+    let _guard = if lock_held {
+        None
+    } else {
+        Some(state.config_write_lock.lock().await)
+    };
+    let current = match tokio::fs::read(&path).await {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    if current
+        .as_deref()
+        .map(|bytes| hex::encode(Sha256::digest(bytes)))
+        != entry.to
+    {
+        return error(
+            StatusCode::CONFLICT,
+            "Файл изменился после этой записи; откат остановлен. Обновите историю и проверьте diff.",
+        );
+    }
+    if !lock_held
+        && let Err(message) = snapshots::create_snapshot(
+            &state.data_dir,
+            &config,
+            "перед восстановлением",
+            &format!("перед откатом {id}"),
+            true,
+        )
+    {
         return error(StatusCode::INTERNAL_SERVER_ERROR, message);
     }
     match previous {
@@ -12835,6 +13057,8 @@ async fn main() {
         strategy_pick_controls: Mutex::new(HashMap::new()),
         transfer_diagnostic_controls: Mutex::new(HashMap::new()),
         freeze_scan_controls: Mutex::new(HashMap::new()),
+        #[cfg(test)]
+        change_history_fail_path: Mutex::new(None),
     });
     if let Err(error) = recover_pending_config_apply(&state).await {
         eprintln!("nfqws2-ui: не удалось восстановить прерванное применение конфига: {error}");
@@ -14412,6 +14636,7 @@ mod tests {
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
             freeze_scan_controls: Mutex::new(HashMap::new()),
+            change_history_fail_path: Mutex::new(None),
         })
     }
 
@@ -14622,6 +14847,7 @@ mod tests {
             strategy_pick_controls: Mutex::new(HashMap::new()),
             transfer_diagnostic_controls: Mutex::new(HashMap::new()),
             freeze_scan_controls: Mutex::new(HashMap::new()),
+            change_history_fail_path: Mutex::new(None),
         })
     }
 
@@ -16423,6 +16649,156 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body_json(after).await["canUndoLast"], false);
+    }
+
+    #[tokio::test]
+    async fn change_history_undo_last_validates_all_list_versions_before_restoring_any() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--filter-tcp=443\n")
+            .await
+            .unwrap();
+        let first = lists.join("first.list");
+        let second = lists.join("second.list");
+        tokio::fs::write(&first, "before-first.example\n")
+            .await
+            .unwrap();
+        // Existing list content may have been edited outside the UI and is
+        // captured by history even when it would not pass the UI validator.
+        tokio::fs::write(&second, "%%% invalid previous value\n")
+            .await
+            .unwrap();
+        let state_dir = dir.path().join("state");
+        let state = test_state_with_config(state_dir.clone(), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        tokio::fs::write(&first, "after-first.example\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&second, "after-second.example\n")
+            .await
+            .unwrap();
+        change_history::scan(&state_dir, &config, "интерфейс", "двойное изменение").unwrap();
+
+        let undone = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/change-history/undo-last")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(undone.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            tokio::fs::read_to_string(first).await.unwrap(),
+            "after-first.example\n",
+            "a failed batch undo must not leave earlier files reverted"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(second).await.unwrap(),
+            "after-second.example\n"
+        );
+        let history = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body_json(history).await["canUndoLast"], true);
+    }
+
+    #[tokio::test]
+    async fn change_history_undo_last_restores_the_full_batch_if_a_file_write_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--filter-tcp=443\n")
+            .await
+            .unwrap();
+        let first = lists.join("first.list");
+        let second = lists.join("second.list");
+        tokio::fs::write(&first, "before-first.example\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&second, "before-second.example\n")
+            .await
+            .unwrap();
+        let state_dir = dir.path().join("state");
+        let state = test_state_with_config(state_dir.clone(), Some(config.clone()));
+        *state.change_history_fail_path.lock().await = Some(second.canonicalize().unwrap());
+        let app = api_router(state, dir.path().join("web"));
+
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        tokio::fs::write(&first, "after-first.example\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&second, "after-second.example\n")
+            .await
+            .unwrap();
+        change_history::scan(&state_dir, &config, "интерфейс", "двойное изменение").unwrap();
+        let batch = change_history::undoable_batch(&state_dir).unwrap().unwrap();
+        assert_eq!(batch.len(), 2);
+
+        let undone = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/change-history/undo-last")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(undone.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            tokio::fs::read_to_string(first).await.unwrap(),
+            "after-first.example\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(second).await.unwrap(),
+            "after-second.example\n"
+        );
+
+        let history = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body_json(history).await["canUndoLast"], true);
     }
 
     #[tokio::test]

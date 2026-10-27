@@ -139,8 +139,15 @@ describe('API client used by the source-based panel', () => {
     vi.stubGlobal('fetch', fetchMock);
     await expect(nfqwsCommunityStrategies.list()).resolves.toEqual(response);
     await expect(nfqwsCommunityStrategies.setProvider(12389, 'ISP')).resolves.toEqual({ asn: 12389, name: 'ISP' });
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/community-strategies?detect=false&force=false');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/community-strategies?detect=false&force=false&autoDetect=false');
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ asn: 12389, name: 'ISP' });
+  });
+
+  it('requests automatic provider detection without forcing saved ASN replacement', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"asn":12389,"provider":"ISP","items":[]}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await nfqwsCommunityStrategies.list(false, false, true);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/community-strategies?detect=false&force=false&autoDetect=true');
   });
 
   it('starts a shared strategy pick for a bounded list of sites', async () => {

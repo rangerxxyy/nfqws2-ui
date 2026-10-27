@@ -200,7 +200,7 @@ export const nfqwsChangeHistory = {
 };
 
 export const nfqwsCommunityStrategies = {
-  list: (detect = false, force = false) => api<CommunityStrategiesResponse>(`/api/community-strategies?detect=${detect}&force=${force}`),
+  list: (detect = false, force = false, autoDetect = false) => api<CommunityStrategiesResponse>(`/api/community-strategies?detect=${detect}&force=${force}&autoDetect=${autoDetect}`),
   setProvider: (asn: number | null, name: string) => api<{ asn: number | null; name: string }>('/api/community-strategies/provider', { method: 'POST', body: JSON.stringify({ asn, name }) }),
 };
 

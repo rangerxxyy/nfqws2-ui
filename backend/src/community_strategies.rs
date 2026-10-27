@@ -12,6 +12,10 @@ const COMMUNITY_ERROR_TTL: u64 = 10 * 60;
 const COMMUNITY_MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const COMMUNITY_MAX_CANDIDATES: usize = 8;
 
+pub fn provider_detection_needed(current_asn: Option<u32>, force: bool, if_missing: bool) -> bool {
+    force || (if_missing && current_asn.is_none())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ProviderSettings {
@@ -655,6 +659,14 @@ fn now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automatic_provider_detection_only_runs_when_no_asn_is_saved() {
+        assert!(provider_detection_needed(None, false, true));
+        assert!(!provider_detection_needed(Some(35807), false, true));
+        assert!(provider_detection_needed(Some(35807), true, false));
+        assert!(!provider_detection_needed(None, false, false));
+    }
 
     #[test]
     fn parses_only_bounded_safe_provider_strategies() {

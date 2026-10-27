@@ -19,6 +19,7 @@ import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
 import { strategyNeedsWindowsTcpTimestamps } from './strategy-capability';
 import { serviceControlPresentation } from './service-control';
+import { communityProviderLabel, visibleCommunityProtocols } from './community-presentation';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
@@ -65,6 +66,8 @@ let activeStrategyPickId: string | null = null;
 let strategyTargetMode: 'single' | 'multi' = 'single';
 let communityStrategies: CommunityStrategiesResponse | null = null;
 let communityLoading = false;
+let communityAutoDetectionAttempted = false;
+let communityProviderEditing = false;
 let pendingCommunityShare: { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickOperation['results'][number] } | null = null;
 let configScrollFramePending = false;
 type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
@@ -305,7 +308,11 @@ function showRoute(route: Route) {
   syncNavigationLayout(route);
   if (route === 'lists') void loadList(activeListId);
   if (route === 'profiles') void loadProfiles();
-  if (route === 'community') void loadCommunityStrategies(false, false);
+  if (route === 'community') {
+    const autoDetect = !communityAutoDetectionAttempted;
+    if (autoDetect) communityAutoDetectionAttempted = true;
+    void loadCommunityStrategies(false, false, autoDetect);
+  }
   if (route === 'snapshots') void loadBackups();
   if (route === 'changes') void loadChangeHistory();
   if (route === 'logs') { void loadLogs(); startLogPolling(); } else stopLogPolling();
@@ -314,11 +321,16 @@ function showRoute(route: Route) {
 
 function renderCommunityStrategies(data: CommunityStrategiesResponse) {
   const provider = $('#communityProviderSummary');
-  if (provider) provider.textContent = data.asn ? `AS${data.asn}${data.provider ? ` · ${data.provider}` : ''}` : 'Провайдер не выбран';
+  if (provider) provider.textContent = communityProviderLabel(data.asn, data.provider);
   const asnInput = $('#communityProviderAsn');
   const nameInput = $('#communityProviderName');
   if (asnInput instanceof HTMLInputElement) asnInput.value = data.asn ? String(data.asn) : '';
   if (nameInput instanceof HTMLInputElement) nameInput.value = data.provider;
+  const editor = $('#communityProviderEditor');
+  const editButton = $('#communityEditProvider');
+  const editing = data.asn === null || communityProviderEditing;
+  editor?.classList.toggle('hidden', !editing);
+  editButton?.classList.toggle('hidden', editing);
   const summary = $('#communityDatabaseSummary');
   if (summary) summary.textContent = `${data.total ?? '—'} стратегий · ${data.providers ?? '—'} провайдеров${data.fetchedAt ? ` · база обновлена ${new Date(data.fetchedAt * 1000).toLocaleString()}` : ''}`;
   const error = $('#communityDatabaseError');
@@ -326,15 +338,24 @@ function renderCommunityStrategies(data: CommunityStrategiesResponse) {
   const host = $('#communityStrategiesList');
   if (!host) return;
   host.replaceChildren();
-  const groups = [
-    { proto: 'tls', title: 'HTTPS / TLS' },
-    { proto: 'http', title: 'HTTP' },
-  ] as const;
+  const groups = visibleCommunityProtocols(data.items);
+  if (groups.length === 0) {
+    const empty = document.createElement('section'); empty.className = 'community-empty-state';
+    const title = document.createElement('h2'); title.className = 'community-empty-title';
+    const message = document.createElement('p'); message.className = 'community-empty-message';
+    if (data.asn === null) {
+      title.textContent = 'Определите провайдера';
+      message.textContent = 'Для загрузки стратегий нужен номер AS вашего интернет-провайдера. Попробуем определить его автоматически; если не получится, укажите ASN вручную выше.';
+    } else {
+      title.textContent = `Для ${communityProviderLabel(data.asn, data.provider)} пока нет стратегий`;
+      message.textContent = `В общей базе ${data.total ?? 0} стратегий для ${data.providers ?? 0} провайдеров. После успешного подбора можно поделиться своей стратегией, чтобы пополнить базу.`;
+    }
+    empty.append(title, message); host.append(empty);
+  }
   for (const group of groups) {
-    const items = data.items.filter((item) => item.proto === group.proto);
+    const items = group.items;
     const section = document.createElement('section'); section.className = 'community-protocol-group';
     const title = document.createElement('h2'); title.className = 'community-protocol-title'; title.textContent = `${group.title} · ${items.length}`; section.append(title);
-    if (!items.length) { const empty = document.createElement('p'); empty.className = 'community-empty'; empty.textContent = data.asn ? 'Для этого провайдера пока нет стратегий.' : 'Определите или укажите ASN провайдера.'; section.append(empty); }
     for (const item of items) {
       const row = document.createElement('article'); row.className = 'community-strategy-row';
       const details = document.createElement('div'); details.className = 'community-strategy-details';
@@ -353,14 +374,14 @@ function renderCommunityStrategies(data: CommunityStrategiesResponse) {
   }
 }
 
-async function loadCommunityStrategies(detect = false, force = false) {
+async function loadCommunityStrategies(detect = false, force = false, autoDetect = false) {
   if (communityLoading) return;
   communityLoading = true;
   const refresh = $('[data-action-click="refreshCommunityStrategies"]');
   if (refresh instanceof HTMLButtonElement) { refresh.disabled = true; refresh.textContent = 'Обновление…'; }
   setText('#communityDatabaseError', '');
-  setText('#communityDatabaseSummary', detect ? 'Определяю ASN и загружаю базу…' : 'Загружаю базу…');
-  try { communityStrategies = await nfqwsCommunityStrategies.list(detect, force); renderCommunityStrategies(communityStrategies); }
+  setText('#communityDatabaseSummary', detect || autoDetect ? 'Определяю провайдера и загружаю базу…' : 'Загружаю базу…');
+  try { communityStrategies = await nfqwsCommunityStrategies.list(detect, force, autoDetect); renderCommunityStrategies(communityStrategies); }
   catch (error) { setText('#communityDatabaseError', error instanceof Error ? error.message : 'Не удалось загрузить стратегии сообщества.'); $('#communityDatabaseError')?.classList.remove('hidden'); }
   finally { communityLoading = false; if (refresh instanceof HTMLButtonElement) { refresh.disabled = false; refresh.textContent = 'Обновить'; } }
 }
@@ -370,7 +391,7 @@ async function saveCommunityProvider() {
   if (!(asn instanceof HTMLInputElement) || !(name instanceof HTMLInputElement)) return;
   const parsed = asn.value.trim() ? Number(asn.value.trim()) : null;
   if (parsed !== null && (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 4_294_967_295)) return toast('Укажите корректный номер ASN.', 'error');
-  try { await nfqwsCommunityStrategies.setProvider(parsed, name.value.trim()); await loadCommunityStrategies(false, true); toast('Провайдер сохранён.'); }
+  try { await nfqwsCommunityStrategies.setProvider(parsed, name.value.trim()); communityProviderEditing = false; communityAutoDetectionAttempted = true; await loadCommunityStrategies(false, true); toast('Провайдер сохранён.'); }
   catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить провайдера.', 'error'); }
 }
 
@@ -4241,6 +4262,8 @@ function bindPrototypeActions() {
     openCommunityShare: (operationId: string, candidateIndex: string) => void openCommunityShare(operationId, Number(candidateIndex)),
     submitCommunityShare: () => submitCommunityShare(),
     closeCommunityShare: () => { const modal = $('#communityShareModal'); if (modal) closeAppModal(modal); pendingCommunityShare = null; },
+    editCommunityProvider: () => { communityProviderEditing = true; if (communityStrategies) renderCommunityStrategies(communityStrategies); $('#communityProviderAsn')?.focus(); },
+    cancelCommunityProviderEdit: () => { communityProviderEditing = false; if (communityStrategies) renderCommunityStrategies(communityStrategies); },
     detectCommunityProvider: () => void loadCommunityStrategies(true, true),
     refreshCommunityStrategies: () => void loadCommunityStrategies(false, true),
     saveCommunityProvider: () => void saveCommunityProvider(),

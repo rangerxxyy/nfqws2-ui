@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -157,6 +157,9 @@ fn get_object(data_dir: &Path, digest: Option<&str>) -> Result<Option<String>, S
         .map_err(|error| format!("Не удалось распаковать версию файла: {error}"))?;
     if bytes.len() as u64 > MAX_TRACKED_FILE_BYTES {
         return Err("Версия файла превышает лимит истории".into());
+    }
+    if hex::encode(sha2::Sha256::digest(&bytes)) != digest {
+        return Err("Контрольная сумма версии файла в истории не совпадает".into());
     }
     String::from_utf8(bytes)
         .map(Some)
@@ -433,19 +436,29 @@ pub fn undoable_batch(data_dir: &Path) -> Result<Option<Vec<ChangeHistoryEntry>>
 }
 
 pub fn mark_undo_of_latest(data_dir: &Path, path: &Path, batch: &str) -> Result<(), String> {
-    let path = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf())
-        .to_string_lossy()
-        .into_owned();
+    mark_undo_of_batch(data_dir, &[path.to_path_buf()], batch)
+}
+
+pub fn mark_undo_of_batch(data_dir: &Path, paths: &[PathBuf], batch: &str) -> Result<(), String> {
+    let paths: HashSet<String> = paths
+        .iter()
+        .map(|path| {
+            path.canonicalize()
+                .unwrap_or_else(|_| path.to_path_buf())
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
     let mut store = load(data_dir)?;
-    let entry = store
-        .entries
-        .iter_mut()
-        .rev()
-        .find(|entry| entry.path == path && entry.source == "откат")
-        .ok_or("Не удалось найти событие отмены в истории")?;
-    entry.undo_of = Some(batch.to_owned());
+    for path in &paths {
+        let entry = store
+            .entries
+            .iter_mut()
+            .rev()
+            .find(|entry| entry.path == *path && entry.source == "откат")
+            .ok_or("Не удалось найти событие отмены в истории")?;
+        entry.undo_of = Some(batch.to_owned());
+    }
     save(data_dir, &store)
 }
 
@@ -580,8 +593,24 @@ fn now() -> u64 {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Write;
 
+    use flate2::{Compression, write::GzEncoder};
     use tempfile::tempdir;
+
+    #[test]
+    fn object_reads_verify_the_content_digest() {
+        let temp = tempdir().unwrap();
+        let digest = super::put_object(temp.path(), b"trusted version\n").unwrap();
+        let path = super::object_path(temp.path(), &digest);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(b"tampered version\n").unwrap();
+        fs::write(path, encoder.finish().unwrap()).unwrap();
+
+        let result = super::get_object(temp.path(), Some(&digest));
+
+        assert!(result.is_err(), "digest mismatch must reject the object");
+    }
 
     #[test]
     fn scan_records_file_content_changes_and_diff() {
@@ -641,6 +670,37 @@ mod tests {
         fs::write(&config, "three\n").unwrap();
         super::scan(&data, &config, "интерфейс", "изменение 2").unwrap();
         assert!(super::list(&data, 20).unwrap().can_undo_last);
+    }
+
+    #[test]
+    fn marking_a_multi_file_undo_is_atomic_when_a_rollback_event_is_missing() {
+        let temp = tempdir().unwrap();
+        let config_dir = temp.path().join("nfqws2");
+        let lists = config_dir.join("lists");
+        fs::create_dir_all(&lists).unwrap();
+        let config = config_dir.join("nfqws2.conf");
+        let list = lists.join("user.list");
+        fs::write(&config, "one\n").unwrap();
+        fs::write(&list, "one.example\n").unwrap();
+        let data = temp.path().join("data");
+        super::scan(&data, &config, "интерфейс", "baseline").unwrap();
+
+        fs::write(&config, "two\n").unwrap();
+        fs::write(&list, "two.example\n").unwrap();
+        let change = super::scan(&data, &config, "интерфейс", "two-file update").unwrap();
+        assert_eq!(change.len(), 2);
+        let batch = change[0].batch.clone();
+
+        fs::write(&config, "one\n").unwrap();
+        fs::write(&list, "one.example\n").unwrap();
+        super::scan(&data, &config, "откат", "undo two-file update").unwrap();
+
+        let incomplete_paths = [config.clone(), lists.join("missing.list")];
+        assert!(super::mark_undo_of_batch(&data, &incomplete_paths, &batch).is_err());
+        assert!(super::list(&data, 20).unwrap().can_undo_last);
+
+        super::mark_undo_of_batch(&data, &[config, list], &batch).unwrap();
+        assert!(!super::list(&data, 20).unwrap().can_undo_last);
     }
 
     #[test]

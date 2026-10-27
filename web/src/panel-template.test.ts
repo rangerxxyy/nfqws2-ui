@@ -804,6 +804,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('"/api/change-history/initial"');
     expect(template).toContain('id="changeHistoryUndoLast"');
     expect(template).toContain('id="changeHistoryRestoreInitial"');
+    expect(template).toContain('class="ui-card rounded-xl p-3 sm:p-4"');
+    expect(template).toContain('class="change-history-controls"');
+    expect(panelStyles).toContain('.change-history-controls .backup-action { min-height:2.35rem;');
+    expect(panelStyles).toContain('.change-history-controls .backup-action:disabled { opacity:.78;');
+    expect(panelStyles).toContain('.change-history-actions .backup-action { min-height:2.15rem;');
+    expect(panelStyles).toContain('.change-history-file { color: var(--text-primary');
+    expect(panelStyles).toContain('font-size: .94rem; font-weight: 680');
     expect(panelSource).toContain("diffButton.textContent = 'Что изменилось'");
     expect(panelSource).toContain('nfqwsChangeHistory.diff(id)');
     expect(panelSource).toContain('nfqwsChangeHistory.revert(id)');
@@ -896,6 +903,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('input[type="checkbox"]:focus-visible');
     expect(panelStyles).toContain('[data-theme="light"] input[type="checkbox"]');
     expect(panelStyles).toContain('input[type="checkbox"]::before {');
+    expect(panelStyles).toContain('input[type="checkbox"]:checked { border-color:var(--accent-color,#3b82f6); background:var(--accent-strong,#2563eb);');
+    expect(panelStyles).toContain('input[type="checkbox"]:focus-visible { outline:2px solid var(--accent-border,#93c5fd);');
+    expect(panelStyles).toContain('[data-theme="light"] input[type="checkbox"]:not(:checked) { border-color: #94a3b8; background: #fff; }');
+    expect(panelStyles).toContain('[data-theme="neon"] input[type="checkbox"]:not(:checked) { border-color: #a855f7; }');
+    expect(panelStyles).not.toContain('[data-theme="neon"] input[type="checkbox"]:checked { border-color:#d946ef;');
   });
 
   it('colors scrollbars from the selected accent while preserving light-theme contrast', () => {
@@ -1286,7 +1298,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('id="communityStrategiesList"');
     expect(template).toContain('zemidala/nfqws2-strategies');
     expect(appSource).toContain('strategyIncludeCommunity');
-    expect(panelSource).toContain('nfqwsCommunityStrategies.list(detect, force)');
+    expect(panelSource).toContain('nfqwsCommunityStrategies.list(detect, force, autoDetect)');
+    expect(panelSource).toContain('communityProviderLabel(data.asn, data.provider)');
+    expect(panelSource).toContain('visibleCommunityProtocols(data.items)');
+    expect(template).toContain('Что это значит и как это устроено');
+    expect(template).toContain('data-action-click="editCommunityProvider"');
+    expect(backendSource).toContain('query.auto_detect');
     expect(panelSource).toContain("dataset.actionClick = 'testCommunityStrategy'");
     expect(backendSource).toContain('/api/community-strategies');
     expect(backendSource).toContain('include_community');

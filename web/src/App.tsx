@@ -1269,13 +1269,22 @@ export default function App() {
         </section>
         <section id={"tabContent-community"} className={"hidden view-animate space-y-3"}>
           <div className={"flex flex-wrap items-end justify-between gap-2"}><div><h1 className={"text-lg font-bold text-white"}>Стратегии сообщества</h1><p className={"mt-0.5 text-xs text-slate-400"}>Подсказки для сети вашего провайдера из открытой базы Zemidala. Перед применением каждая стратегия проходит отдельную проверку на роутере.</p></div><a id={"communityDatabaseLink"} href={"https://github.com/zemidala/nfqws2-strategies"} target={"_blank"} rel={"noreferrer"} className={"text-xs font-medium text-blue-300 hover:text-blue-200"}>База сообщества ↗</a></div>
-          <section className={"ui-card rounded-xl p-3 sm:p-4"}>
-            <div className={"flex flex-wrap items-center justify-between gap-2"}><div><p className={"text-xs text-slate-400"}>Ваш провайдер</p><p id={"communityProviderSummary"} className={"mt-0.5 text-sm font-semibold text-slate-100"}>Провайдер не выбран</p></div><div className={"flex flex-wrap gap-1.5"}><button type={"button"} data-action-click={"detectCommunityProvider"} className={"backup-action"}>Определить автоматически</button><button type={"button"} data-action-click={"refreshCommunityStrategies"} className={"backup-action"}>Обновить</button></div></div>
-            <div className={"mt-2 grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_auto]"}><label className={"text-[11px] text-slate-400"}>ASN<input id={"communityProviderAsn"} inputMode={"numeric"} placeholder={"например, 12389"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100"} /></label><label className={"text-[11px] text-slate-400"}>Название провайдера<input id={"communityProviderName"} maxLength={120} placeholder={"необязательно"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100"} /></label><button type={"button"} data-action-click={"saveCommunityProvider"} className={"backup-action self-end"}>Сохранить</button></div>
-            <p id={"communityDatabaseSummary"} className={"mt-2 text-[11px] text-slate-500"} role={"status"} aria-live={"polite"}>База будет загружена при открытии раздела.</p><p id={"communityDatabaseError"} className={"hidden mt-1 text-xs text-amber-300"} role={"status"} aria-live={"polite"}></p>
+          <section className={"community-provider-card"} aria-label={"Провайдер и ASN"}>
+            <div className={"community-provider-topline"}><div className={"min-w-0"}><p className={"community-provider-caption"}>Ваш провайдер</p><p id={"communityProviderSummary"} className={"community-provider-name"}>Провайдер не выбран</p></div><div className={"community-provider-actions"}><button type={"button"} id={"communityEditProvider"} data-action-click={"editCommunityProvider"} className={"backup-action hidden"}>Изменить</button><button type={"button"} data-action-click={"detectCommunityProvider"} className={"backup-action"}>Определить автоматически</button><button type={"button"} data-action-click={"refreshCommunityStrategies"} className={"backup-action"}>Обновить</button></div></div>
+            <div id={"communityProviderEditor"} className={"community-provider-editor"}><label className={"community-field"}>Номер ASN<input id={"communityProviderAsn"} inputMode={"numeric"} placeholder={"например, 12389"} /></label><label className={"community-field community-provider-name-field"}>Название провайдера<input id={"communityProviderName"} maxLength={120} placeholder={"определится автоматически или введите вручную"} /></label><div className={"community-provider-edit-actions"}><button type={"button"} data-action-click={"saveCommunityProvider"} className={"backup-action community-provider-save"}>Сохранить</button><button type={"button"} data-action-click={"cancelCommunityProviderEdit"} className={"backup-action community-provider-save"}>Отмена</button></div></div>
+            <div className={"community-provider-footer"}><p id={"communityDatabaseSummary"} role={"status"} aria-live={"polite"}>При первом открытии определим ASN и загрузим базу.</p><p id={"communityDatabaseError"} className={"hidden community-provider-error"} role={"status"} aria-live={"polite"}></p></div>
           </section>
-          <label className={"block max-w-md text-[11px] text-slate-400"}>Сайт для проверки, если в стратегии нет целевого домена<input id={"communityTestHost"} autoCapitalize={"none"} spellCheck={false} placeholder={"example.com"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100"} /></label>
+          <label className={"community-test-host"}>Сайт для проверки, если стратегия не содержит домен<input id={"communityTestHost"} autoCapitalize={"none"} spellCheck={false} placeholder={"example.com"} /></label>
           <div id={"communityStrategiesList"} className={"grid gap-2"}></div>
+          <section className={"community-how-card"}>
+            <h2 className={"community-how-title"}>Что это значит и как это устроено</h2>
+            <div className={"community-how-grid"}>
+              <div><h3>Что это значит</h3><p>У разных интернет-провайдеров фильтрация трафика отличается. Здесь собраны стратегии, которые подтвердились у пользователей того же провайдера.</p></div>
+              <div><h3>Как это устроено</h3><p>При подборе включите «Стратегии сообщества». Каждая найденная стратегия проверяется на вашем роутере и не меняет конфигурацию без предпросмотра и подтверждения.</p></div>
+              <div><h3>Подтверждения и публикация</h3><p>После проверки можно подтвердить рабочую стратегию, отметить неудачную или поделиться своей. Откроется форма GitHub; IP-адрес в неё не передаётся.</p></div>
+              <div><h3>Открытая база</h3><p>Список хранится в <a href={"https://github.com/zemidala/nfqws2-strategies"} target={"_blank"} rel={"noreferrer"}>репозитории сообщества</a>. Перед применением кандидаты проходят обычную проверку nfqws2-ui.</p></div>
+            </div>
+          </section>
         </section>
         <section id={"tabContent-profiles"} className={"hidden view-animate space-y-4"}>
           <div className={"flex flex-wrap items-center justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Конструктор стратегий</h1><p className={"mt-1 text-sm text-slate-400"}>Настройка профилей nfqws2 из раздела конфигурации.</p></div><div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"pasteRuntimeProfile"} className={"backup-action"}>Вставить чужой</button><button type={"button"} data-action-click={"addRuntimeProfile"} className={"backup-action"}>＋ Свой профиль</button><button type={"button"} data-action-click={"saveRuntimeProfiles"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Применить изменения</button></div></div>
@@ -1298,13 +1307,13 @@ export default function App() {
         <section id={"tabContent-changes"} className={"hidden view-animate space-y-4"}>
           <div className={"flex flex-wrap items-center justify-between gap-2"}>
             <div><h1 className={"text-xl font-bold text-white"}>История изменений</h1><p className={"mt-0.5 text-xs text-slate-400"}>Конфигурация и списки · в том числе изменения вне панели</p></div>
-            <div className={"flex flex-wrap gap-1.5"}>
+            <div className={"change-history-controls"}>
               <button id={"changeHistoryUndoLast"} type={"button"} disabled={true} data-action-click={"requestUndoLastChange"} className={"backup-action"}>↶ Отменить последнее</button>
               <button id={"changeHistoryRestoreInitial"} type={"button"} disabled={true} data-action-click={"requestRestoreInitialHistory"} className={"backup-action"}>⟲ Вернуть как при установке</button>
               <button type={"button"} data-action-click={"refreshChangeHistory"} className={"backup-action"} aria-label={"Обновить историю"} title={"Обновить"}>↻</button>
             </div>
           </div>
-          <section className={"ui-card max-w-5xl rounded-xl p-3 sm:p-4"}>
+          <section className={"ui-card rounded-xl p-3 sm:p-4"}>
             <div className={"flex flex-wrap gap-2"}><input id={"changeHistorySearch"} type={"search"} placeholder={"Фильтр по файлу или подписи"} className={"min-w-[14rem] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} data-action-input={"filterChangeHistory"} /></div>
             <p id={"changeHistoryStatus"} className={"my-2 text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p>
             <div id={"changeHistoryList"} className={"grid gap-1"}></div>
