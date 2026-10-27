@@ -215,18 +215,32 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toContain('navigator.clipboard.writeText(editor.value)');
   });
 
-  it('uses one simple ISP interface selector without discovery warnings or manual-entry prompts', () => {
+  it('offers detected ISP interfaces and a final manual-entry option', () => {
     expect(template).toContain('id="ispInterfaceSelect"');
-    expect(template).not.toContain('id="ispInterfaceManualInput"');
+    expect(template).toContain('id="ispInterfaceManualInput"');
     expect(template).not.toContain('Интерфейсы не обнаружены; введите имя вручную.');
     expect(template).not.toContain('настроен, но не обнаружен');
-    expect(panelSource).toContain("interfaceSelect.classList.remove('hidden')");
     expect(panelSource).toContain("new Option('Выберите интерфейс', '', !configured, false)");
     expect(panelSource).toContain('orderNetworkInterfaces(networkInterfaces, configured)');
-    expect(panelSource).not.toContain("new Option('Указать имя вручную…', '__manual__')");
+    expect(panelSource).toContain("new Option('Ввести имя вручную…', '__manual__')");
+    expect(panelSource).toContain('handleIspInterfaceSelection');
+    expect(panelSource).toContain('updateIspInterfaceManually');
     expect(template).not.toContain('text-slate-400">WAN</span>');
     expect(panelSource).toContain('isValidNetworkInterfaceName(value)');
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
+  });
+
+  it('keeps community empty state compact and provider actions readable', () => {
+    expect(panelSource).toContain("empty.className = 'community-empty-state'");
+    expect(panelSource).toContain("document.createElement('div'); empty.className = 'community-empty-state'");
+    expect(panelStyles).toContain('.community-provider-actions .backup-action');
+    expect(panelStyles).toContain('font-family:var(--ui-font-sans)');
+    expect(panelStyles).toContain('min-height:2.35rem');
+  });
+
+  it('does not show a redundant custom-profile badge in the strategy constructor', () => {
+    expect(panelSource).not.toContain("profile.editable ? 'Свой'");
+    expect(panelSource).toContain("profile.editable ? 'Пользовательский профиль'");
   });
 
   it('removes the disconnected nfqws2 flags reference from configuration settings', () => {

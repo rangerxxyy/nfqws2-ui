@@ -535,9 +535,13 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     <label htmlFor={"ispInterfaceSelect"} className={"sr-only"}>{"Интерфейс провайдера (ISP_INTERFACE)"}</label>
-                    <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"updateConfVariable"} data-args={JSON.stringify(["ISP_INTERFACE", {"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
+                    <select id={"ispInterfaceSelect"} defaultValue={""} data-key={"ISP_INTERFACE"} data-action-change={"selectIspInterface"} data-args={JSON.stringify([{"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                       <option value={""}>{"Загрузка интерфейсов…"}</option>
                     </select>
+                    <div id={"ispInterfaceManualEntry"} className={"hidden mt-2"}>
+                      <label htmlFor={"ispInterfaceManualInput"} className={"sr-only"}>{"Введите имя интерфейса ISP_INTERFACE"}</label>
+                      <input id={"ispInterfaceManualInput"} type={"text"} maxLength={15} autoComplete={"off"} spellCheck={false} placeholder={"Например, eth3 или pppoe-wan"} data-key={"ISP_INTERFACE"} data-action-change={"updateIspInterfaceManually"} data-args={JSON.stringify([{"source": "value"}])} className={"mt-1.5 w-full bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"} />
+                    </div>
                     {"\n                "}
                   </div>
                   {"\n\n                "}

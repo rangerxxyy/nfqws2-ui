@@ -392,7 +392,7 @@ function renderCommunityStrategies(data: CommunityStrategiesResponse) {
   host.replaceChildren();
   const groups = visibleCommunityProtocols(data.items);
   if (groups.length === 0) {
-    const empty = document.createElement('section'); empty.className = 'community-empty-state';
+    const empty = document.createElement('div'); empty.className = 'community-empty-state';
     const title = document.createElement('h2'); title.className = 'community-empty-title';
     const message = document.createElement('p'); message.className = 'community-empty-message';
     if (data.asn === null) {
@@ -846,7 +846,7 @@ function renderRuntimeProfiles() {
     const warnings = diagnoseProfileLuaArguments(profile.effectiveArgs ?? profile.args, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups);
     const ruleWarnings = orderWarnings[profileIndex] ?? [];
     const warningCount = warnings.length + ruleWarnings.length;
-    const badge = document.createElement('span'); badge.className = warningCount ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : profile.editable ? 'text-xs text-slate-500' : 'sr-only'; badge.textContent = warningCount ? String(warningCount) : profile.editable ? 'Свой' : 'Штатный профиль'; badge.setAttribute('aria-label', warningCount ? `Предупреждений профиля: ${[...warnings.map((item) => item.message), ...ruleWarnings].join('. ')}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль');
+    const badge = document.createElement('span'); badge.className = warningCount ? 'rounded-full bg-amber-500/15 px-1.5 text-[10px] font-semibold text-amber-300' : 'sr-only'; badge.textContent = warningCount ? String(warningCount) : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль'; badge.setAttribute('aria-label', warningCount ? `Предупреждений профиля: ${[...warnings.map((item) => item.message), ...ruleWarnings].join('. ')}` : profile.editable ? 'Пользовательский профиль' : 'Штатный профиль');
     button.append(num, nameWrap, badge); list.append(button);
   }
   editor.replaceChildren();
@@ -2284,6 +2284,7 @@ function updateQuickParameters(content: string, networkInterfaces: string[] = []
     const configured = configAssignmentValue(content, 'ISP_INTERFACE');
     interfaceSelect.replaceChildren(new Option('Выберите интерфейс', '', !configured, false));
     for (const name of orderNetworkInterfaces(networkInterfaces, configured)) interfaceSelect.add(new Option(name, name));
+    interfaceSelect.add(new Option('Ввести имя вручную…', '__manual__'));
     interfaceSelect.value = configured;
     interfaceSelect.disabled = false;
     interfaceSelect.title = '';
@@ -2336,6 +2337,30 @@ async function updateConfigVariable(key: string, value: string) {
   } finally {
     setBusy(false);
     updateQuickParameters(editor.value, discoveredNetworkInterfaces);
+  }
+}
+function handleIspInterfaceSelection(value: string) {
+  const editor = $('#nfqwsConfTextarea');
+  const select = $('#ispInterfaceSelect');
+  const manualEntry = $('#ispInterfaceManualEntry');
+  const manualInput = $('#ispInterfaceManualInput');
+  if (!(select instanceof HTMLSelectElement) || !(editor instanceof HTMLTextAreaElement) || !(manualEntry instanceof HTMLElement) || !(manualInput instanceof HTMLInputElement)) return;
+  if (value === '__manual__') {
+    manualEntry.classList.remove('hidden');
+    manualInput.value = configAssignmentValue(editor.value, 'ISP_INTERFACE');
+    manualInput.focus();
+    manualInput.select();
+    return;
+  }
+  manualEntry.classList.add('hidden');
+  void updateConfigVariable('ISP_INTERFACE', value);
+}
+async function updateIspInterfaceManually(value: string) {
+  await updateConfigVariable('ISP_INTERFACE', value);
+  const editor = $('#nfqwsConfTextarea');
+  const manualEntry = $('#ispInterfaceManualEntry');
+  if (editor instanceof HTMLTextAreaElement && manualEntry instanceof HTMLElement && configAssignmentValue(editor.value, 'ISP_INTERFACE') === value.trim()) {
+    manualEntry.classList.add('hidden');
   }
 }
 function syncConfigLines() {
@@ -4502,6 +4527,8 @@ function bindPrototypeActions() {
     toggleListEditorFullscreen: () => toggleListEditorFullscreen(),
     copyConfigText: () => void copyConfigText(),
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
+    selectIspInterface: (value: string) => handleIspInterfaceSelection(value),
+    updateIspInterfaceManually: (value: string) => void updateIspInterfaceManually(value),
     copySnippetToClipboard: (value: string | HTMLButtonElement) => void (async () => {
       const button = value instanceof HTMLButtonElement ? value : null;
       const command = button?.closest('.about-command-row')?.querySelector('code')?.textContent?.trim();
