@@ -7,9 +7,15 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
+use nfqws2_ui::change_history;
+use nfqws2_ui::community_strategies::{
+    self, CommunityResponse, CommunityViewItem, ProviderSettings,
+};
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::config_format::format_nfqws_config;
 use nfqws2_ui::freeze_diagnostic;
+use nfqws2_ui::freeze_profile_join;
+use nfqws2_ui::managed_asn_lists::{self, ManagedAsnList, ManagedAsnListStore};
 use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
 use nfqws2_ui::site_trace;
 use nfqws2_ui::strategy_picker::{self, StrategyMode, StrategyProtocol};
@@ -90,6 +96,7 @@ struct AppState {
     update_lock: Mutex<()>,
     ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
+    managed_asn_refresh_lock: Mutex<()>,
     monitoring_lock: Arc<Mutex<()>>,
     site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     site_trace_runner: Arc<SiteTraceRunner>,
@@ -471,7 +478,25 @@ struct StrategyPickRequest {
     include_other_history: bool,
     #[serde(default)]
     refine_lighter: bool,
+    #[serde(default)]
+    include_community: bool,
     custom_steps: Option<Vec<Vec<String>>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunityQuery {
+    #[serde(default)]
+    detect: bool,
+    #[serde(default)]
+    force: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunityProviderWrite {
+    asn: Option<u32>,
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -482,6 +507,8 @@ struct MultiStrategyPickRequest {
     repeats: Option<usize>,
     #[serde(default)]
     include_other_history: bool,
+    #[serde(default)]
+    include_community: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,6 +534,21 @@ struct StrategyApplyRequest {
     expected_revision: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FreezeProfileJoinRequest {
+    operation_id: String,
+    result_index: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FreezeProfileJoinApplyRequest {
+    operation_id: String,
+    result_index: usize,
+    expected_revision: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StrategyPickPreview {
@@ -515,6 +557,22 @@ struct StrategyPickPreview {
     host: String,
     protocol: String,
     candidate: strategy_picker::StrategyCandidate,
+    original_revision: String,
+    original_content: String,
+    proposed_content: String,
+    summary: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FreezeProfileJoinPreview {
+    operation_id: String,
+    result_index: usize,
+    asn: u32,
+    profile_index: usize,
+    profile_name: String,
+    list_id: String,
+    prefix_count: usize,
     original_revision: String,
     original_content: String,
     proposed_content: String,
@@ -1483,6 +1541,166 @@ fn build_freeze_strategy_preview(
     })
 }
 
+fn build_freeze_profile_join_preview(
+    operation: &FreezeScanOperation,
+    result_index: usize,
+    original_content: &str,
+    list_contents: &HashMap<String, String>,
+    prefixes: &[String],
+) -> Result<FreezeProfileJoinPreview, String> {
+    if !matches!(operation.state.as_str(), "complete" | "partial") {
+        return Err("Завершите проверку 16 КБ перед добавлением сети в профиль".into());
+    }
+    let result = operation
+        .results
+        .get(result_index)
+        .ok_or_else(|| "Проверенная сеть не найдена в сохранённом результате".to_owned())?;
+    if result.target_kind != freeze_diagnostic::FreezeTargetKind::UserHost
+        || !result.freeze_detected
+    {
+        return Err("Добавлять в существующий профиль можно только проверенную пользовательскую сеть с найденным обрывом".into());
+    }
+    let freeze_diagnostic::AsnVerification::Verified { asn } = result.asn else {
+        return Err("ASN сети не подтверждён RIPEstat".into());
+    };
+    let address = result
+        .address
+        .map(IpAddr::V4)
+        .filter(|address| site_diagnostics::public_ip(*address))
+        .ok_or_else(|| "Проверенная сеть не содержит публичный IPv4-адрес".to_owned())?;
+    let found = result
+        .found_strategy
+        .as_ref()
+        .filter(|strategy| {
+            strategy.attempts == 3 && strategy.successes == 3 && strategy.reused_from.is_none()
+        })
+        .ok_or_else(|| "Стратегия сети не прошла все три подтверждающие проверки".to_owned())?;
+    if !freeze_profile_join::address_is_in_prefixes(address, prefixes) {
+        return Err(format!(
+            "Проверенный адрес {address} не входит в текущие префиксы AS{asn}"
+        ));
+    }
+    let Some(profile_index) = freeze_profile_join::find_joinable_profile(
+        original_content,
+        &result.host,
+        address,
+        &found.step,
+        list_contents,
+    )?
+    else {
+        return Err(
+            "Не найден один однозначный IP-only профиль с той же стратегией и проверенным адресом"
+                .into(),
+        );
+    };
+    let list_id = format!("ipset_as{asn}.list");
+    let proposed_content =
+        freeze_profile_join::build_joined_config(original_content, profile_index, &list_id)?;
+    if proposed_content.len() > MAX_CONFIG_BYTES {
+        return Err("Изменённая конфигурация превышает лимит размера".into());
+    }
+    let diagnostics = validate_nfqws2_config(&proposed_content)?;
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
+        return Err("Изменённая конфигурация не прошла статическую проверку".into());
+    }
+    let profiles = nfqws2_ui::runtime_profiles::from_config(
+        original_content,
+        &revision(original_content.as_bytes()),
+    )?;
+    let profile_name = profiles
+        .profiles
+        .iter()
+        .find(|profile| profile.index == profile_index && profile.source == "NFQWS_ARGS_CUSTOM")
+        .map(|profile| profile.name.clone())
+        .ok_or_else(|| "Профиль изменился при построении предпросмотра".to_owned())?;
+    Ok(FreezeProfileJoinPreview {
+        operation_id: operation.id.clone(),
+        result_index,
+        asn,
+        profile_index,
+        profile_name: profile_name.clone(),
+        list_id: list_id.clone(),
+        prefix_count: prefixes.len(),
+        original_revision: revision(original_content.as_bytes()),
+        original_content: original_content.to_owned(),
+        proposed_content,
+        summary: format!(
+            "AS{asn}: {} префиксов будут записаны в {list_id} и добавлены в профиль #{profile_index} {profile_name}.",
+            prefixes.len()
+        ),
+    })
+}
+
+async fn fetch_ripe_announced_prefixes(asn: u32) -> Result<Vec<String>, String> {
+    if asn == 0 {
+        return Err("Некорректный номер AS".into());
+    }
+    let url = format!("https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{asn}");
+    let args = [
+        "--disable",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--location",
+        "--proto",
+        "=https",
+        "--connect-timeout",
+        "6",
+        "--max-time",
+        "20",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain(std::iter::once(url))
+    .collect::<Vec<_>>();
+    let (status, body) =
+        site_diagnostics::capture(site_diagnostics::curl_program(), &args, 24, 1024 * 1024 + 1)
+            .await?;
+    if status != 0 {
+        return Err("RIPEstat не смог вернуть анонсируемые префиксы AS".into());
+    }
+    freeze_profile_join::parse_announced_prefixes(&body)
+}
+
+async fn read_profile_list_contents(
+    config: &str,
+    lists_directory: &Path,
+) -> Result<HashMap<String, String>, String> {
+    let profiles = nfqws2_ui::runtime_profiles::from_config(config, "freeze-join")?;
+    let mut contents = HashMap::new();
+    for profile in profiles
+        .profiles
+        .iter()
+        .filter(|profile| profile.source == "NFQWS_ARGS_CUSTOM")
+    {
+        for reference in freeze_profile_join::profile_list_references(&profile.args)? {
+            let Ok(path) = resolve_foreign_list_path(&reference, lists_directory) else {
+                continue;
+            };
+            let Ok(file) = tokio::fs::File::open(path).await else {
+                continue;
+            };
+            let mut bytes = Vec::new();
+            if file
+                .take((MAX_LIST_BYTES + 1) as u64)
+                .read_to_end(&mut bytes)
+                .await
+                .is_err()
+                || bytes.len() > MAX_LIST_BYTES
+            {
+                continue;
+            }
+            if let Ok(content) = String::from_utf8(bytes) {
+                contents.insert(reference, content);
+            }
+        }
+    }
+    Ok(contents)
+}
+
 fn insert_first_strategy_steps(current: &str, steps: &[String]) -> Result<String, String> {
     if steps.is_empty()
         || steps
@@ -1820,6 +2038,313 @@ async fn preview_freeze_strategy(
     ) {
         Ok(preview) => Json(preview).into_response(),
         Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    }
+}
+
+async fn preview_freeze_profile_join(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<FreezeProfileJoinRequest>,
+) -> Response {
+    if !valid_site_trace_id(&request.operation_id) {
+        return error(StatusCode::NOT_FOUND, "Результат теста 16 КБ не найден");
+    }
+    let scan = match read_freeze_scan_operation(
+        &state.data_dir.join("freeze-diagnostic-operations"),
+        &request.operation_id,
+    )
+    .await
+    {
+        Ok(Some(operation)) => operation,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "Результат теста 16 КБ не найден"),
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    if active_process_snapshot().is_none() {
+        return error(
+            StatusCode::CONFLICT,
+            "Не найден однозначно работающий nfqws2 для проверки профиля",
+        );
+    }
+    let Some(result) = scan.results.get(request.result_index) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Проверенная сеть не найдена в результате сканирования",
+        );
+    };
+    let freeze_diagnostic::AsnVerification::Verified { asn } = result.asn else {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "ASN сети не подтверждён RIPEstat",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let Some(config_path) = config_path_for_state(&state) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    };
+    let original = match tokio::fs::read(config_path).await {
+        Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => bytes,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Конфигурация превышает лимит 512 КБ",
+            );
+        }
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    let content = match String::from_utf8(original) {
+        Ok(content) => content,
+        Err(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Конфигурация не является UTF-8 текстом",
+            );
+        }
+    };
+    let lists = match read_profile_list_contents(&content, &paths.lists_dir).await {
+        Ok(lists) => lists,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    let prefixes = match fetch_ripe_announced_prefixes(asn).await {
+        Ok(prefixes) => prefixes,
+        Err(message) => return error(StatusCode::BAD_GATEWAY, message),
+    };
+    match build_freeze_profile_join_preview(
+        &scan,
+        request.result_index,
+        &content,
+        &lists,
+        &prefixes,
+    ) {
+        Ok(preview) => {
+            match freeze_profile_join::asn_list_exists(&paths.lists_dir, &preview.list_id) {
+                Ok(false) => Json(preview).into_response(),
+                Ok(true) => error(
+                    StatusCode::CONFLICT,
+                    "ASN-список с таким именем уже существует; он не будет перезаписан",
+                ),
+                Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+            }
+        }
+        Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    }
+}
+
+async fn apply_freeze_profile_join(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<FreezeProfileJoinApplyRequest>,
+) -> Response {
+    if !valid_site_trace_id(&request.operation_id) {
+        return error(StatusCode::NOT_FOUND, "Результат теста 16 КБ не найден");
+    }
+    let Ok(_diagnostic_guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Сначала дождитесь завершения текущей сетевой диагностики",
+        );
+    };
+    let scan = match read_freeze_scan_operation(
+        &state.data_dir.join("freeze-diagnostic-operations"),
+        &request.operation_id,
+    )
+    .await
+    {
+        Ok(Some(operation)) => operation,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "Результат теста 16 КБ не найден"),
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let Some((active_pid, active_args)) = active_process_snapshot() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Не найден однозначно работающий nfqws2 для изменения профиля",
+        );
+    };
+    let Some(result) = scan.results.get(request.result_index) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Проверенная сеть не найдена в результате сканирования",
+        );
+    };
+    let freeze_diagnostic::AsnVerification::Verified { asn } = result.asn else {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "ASN сети не подтверждён RIPEstat",
+        );
+    };
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Пути установленного nfqws2 не обнаружены однозначно",
+        );
+    };
+    let Some(config_path) = config_path_for_state(&state) else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Разрешённый конфигурационный файл не найден",
+        );
+    };
+    let original = match tokio::fs::read(&config_path).await {
+        Ok(bytes) if bytes.len() <= MAX_CONFIG_BYTES => bytes,
+        Ok(_) => {
+            return error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Конфигурация превышает лимит 512 КБ",
+            );
+        }
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    let content = match String::from_utf8(original.clone()) {
+        Ok(content) => content,
+        Err(_) => {
+            return error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Конфигурация не является UTF-8 текстом",
+            );
+        }
+    };
+    if revision(&original) != request.expected_revision {
+        return error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась после предпросмотра; откройте preview снова",
+        );
+    }
+    let lists = match read_profile_list_contents(&content, &paths.lists_dir).await {
+        Ok(lists) => lists,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    let prefixes = match fetch_ripe_announced_prefixes(asn).await {
+        Ok(prefixes) => prefixes,
+        Err(message) => return error(StatusCode::BAD_GATEWAY, message),
+    };
+    let preview = match build_freeze_profile_join_preview(
+        &scan,
+        request.result_index,
+        &content,
+        &lists,
+        &prefixes,
+    ) {
+        Ok(preview) => preview,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    if preview.original_revision != request.expected_revision {
+        return error(
+            StatusCode::CONFLICT,
+            "Конфигурация изменилась после предпросмотра; откройте preview снова",
+        );
+    }
+    match freeze_profile_join::asn_list_exists(&paths.lists_dir, &preview.list_id) {
+        Ok(false) => {}
+        Ok(true) => {
+            return error(
+                StatusCode::CONFLICT,
+                "ASN-список с таким именем уже существует; он не будет перезаписан",
+            );
+        }
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+    let list_content = match managed_asn_lists::build_list_content(asn, &prefixes) {
+        Ok(content) => content,
+        Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, message),
+    };
+    if let Err(message) = validate_list_content_with_kind(&preview.list_id, &list_content, true) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    }
+    let list_path = match freeze_profile_join::create_list_exclusive(
+        &paths.lists_dir,
+        &preview.list_id,
+        &list_content,
+    ) {
+        Ok(path) => path,
+        Err(message) => return error(StatusCode::CONFLICT, message),
+    };
+    if let Err(message) = validate_profile_config_dry_run(&preview.proposed_content, &paths).await {
+        let message = cleanup_freeze_join_list(&list_path, message).await;
+        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    }
+    if !matches!(active_process_snapshot(), Some((pid, ref args)) if pid == active_pid && args == &active_args)
+    {
+        let cleanup_note = cleanup_freeze_join_list(&list_path, String::new()).await;
+        let cleanup_note = if cleanup_note.is_empty() {
+            String::new()
+        } else {
+            format!(". {}", cleanup_note.trim_start_matches(". "))
+        };
+        return error(
+            StatusCode::CONFLICT,
+            format!(
+                "Активный процесс nfqws2 изменился во время проверки; конфигурация не изменена{cleanup_note}"
+            ),
+        );
+    }
+    let monitoring = match load_monitoring_store(&state.data_dir).await {
+        Ok(monitoring) => monitoring,
+        Err(message) => {
+            let message = cleanup_freeze_join_list(&list_path, message).await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+        }
+    };
+    let hosts = strategy_apply_verification_hosts(&result.host, &monitoring);
+    let list_bytes = match tokio::fs::read(&list_path).await {
+        Ok(bytes) => bytes,
+        Err(io_error) => {
+            let message = cleanup_freeze_join_list(&list_path, io_error.to_string()).await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+        }
+    };
+    let feed = ManagedAsnList::new(asn, &preview.list_id, prefixes.len(), &list_bytes);
+    // Keep the scheduler from pruning this just-registered feed before the config transaction
+    // makes its list reference active; release the lock only after apply/rollback finishes.
+    let _managed_refresh_guard = state.managed_asn_refresh_lock.lock().await;
+    let mut managed_store = ManagedAsnListStore::load(&state.data_dir);
+    managed_store.register(feed);
+    if let Err(message) = managed_store.save(&state.data_dir) {
+        let message = cleanup_freeze_join_list(&list_path, message).await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    let write = ConfigWrite {
+        content: preview.proposed_content,
+        revision: preview.original_revision,
+    };
+    match apply_freeze_join_transaction(
+        &state,
+        write,
+        &list_path,
+        &state.data_dir,
+        asn,
+        || async { service_action(ServiceAction::Restart).await },
+        || async {
+            verify_strategy_hosts_with(hosts.clone(), |host| async move {
+                let report = check_monitoring_host(host).await;
+                if report.current.status == "ok" {
+                    Ok(())
+                } else {
+                    Err(report.summary)
+                }
+            })
+            .await
+        },
+    )
+    .await
+    {
+        Ok(applied) => Json(applied).into_response(),
+        Err(message) => {
+            if message.contains(WRITE_REVISION_CONFLICT)
+                || message.contains("Файл изменился после загрузки")
+            {
+                error(
+                    StatusCode::CONFLICT,
+                    message.replace(WRITE_REVISION_CONFLICT, "Конфигурация изменилась во время применения; проверьте конфиг и список перед повтором"),
+                )
+            } else {
+                error(StatusCode::BAD_GATEWAY, message)
+            }
+        }
     }
 }
 
@@ -2727,6 +3252,20 @@ struct ListSummary {
     path: String,
     readable: bool,
     writable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    managed_asn: Option<ManagedAsnListSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManagedAsnListSummary {
+    asn: u32,
+    prefix_count: usize,
+    last_attempt_date: Option<String>,
+    last_success_date: Option<String>,
+    last_error: Option<String>,
+    paused: bool,
+    pending: bool,
 }
 
 #[derive(Serialize)]
@@ -7025,6 +7564,25 @@ async fn start_multi_strategy_pick(
         .await;
         strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
     }
+    if request.include_community
+        && let Some(asn) = community_strategies::read_provider_settings(&state.data_dir).asn
+        && let Ok((items, _, _)) = community_strategies::load(&state.data_dir, asn, false).await
+    {
+        let protocol_name = match protocol {
+            StrategyProtocol::Http => "http",
+            StrategyProtocol::Https => "tls",
+            StrategyProtocol::Quic => unreachable!(),
+        };
+        for host in &hosts {
+            let candidates = community_strategies::picker_candidates(
+                items.clone(),
+                host,
+                protocol_name,
+                now_unix_seconds(),
+            );
+            strategy_picker::insert_reusable_candidates(&mut plan, candidates, &functions, &blobs);
+        }
+    }
     plan.candidates.truncate(128);
     if plan.candidates.is_empty() {
         return error(
@@ -7476,6 +8034,23 @@ async fn start_strategy_pick(
             return error(StatusCode::UNPROCESSABLE_ENTITY, message);
         }
         strategy_picker::retain_custom_candidates(&mut plan);
+    }
+    if request.include_community
+        && !custom_mode
+        && let Some(asn) = community_strategies::read_provider_settings(&state.data_dir).asn
+        && let Ok((items, _, _)) = community_strategies::load(&state.data_dir, asn, false).await
+    {
+        let protocol_name = match protocol {
+            StrategyProtocol::Http => "http",
+            _ => "tls",
+        };
+        let candidates = community_strategies::picker_candidates(
+            items,
+            &host,
+            protocol_name,
+            now_unix_seconds(),
+        );
+        strategy_picker::insert_reusable_candidates(&mut plan, candidates, &functions, &blobs);
     }
     {
         let history = load_confirmed_strategy_candidates(
@@ -8787,15 +9362,30 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
     let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
+    let managed = ManagedAsnListStore::load(&state.data_dir);
     let files = list_ids_for_config(&config)
         .into_iter()
         .filter_map(|id| {
             let path = list_file_path(&config, &id)?;
+            let managed_asn = managed
+                .entries
+                .iter()
+                .find(|entry| entry.list_id == id)
+                .map(|entry| ManagedAsnListSummary {
+                    asn: entry.asn,
+                    prefix_count: entry.prefix_count,
+                    last_attempt_date: entry.last_attempt_date.clone(),
+                    last_success_date: entry.last_success_date.clone(),
+                    last_error: entry.last_error.clone(),
+                    paused: entry.paused,
+                    pending: entry.pending_update.is_some(),
+                });
             Some(ListSummary {
                 id,
                 path: path.display().to_string(),
                 readable: std::fs::File::open(&path).is_ok(),
                 writable: std::fs::OpenOptions::new().append(true).open(&path).is_ok(),
+                managed_asn,
             })
         })
         .collect();
@@ -9158,6 +9748,58 @@ where
     }
 }
 
+async fn cleanup_freeze_join_list(path: &Path, message: String) -> String {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => message,
+        Err(cleanup_error) => {
+            format!("{message}. Созданный ASN-список не удалось удалить: {cleanup_error}")
+        }
+    }
+}
+
+async fn cleanup_freeze_join_managed_list(
+    path: &Path,
+    data_dir: &Path,
+    asn: u32,
+    message: String,
+) -> String {
+    let mut message = cleanup_freeze_join_list(path, message).await;
+    let mut store = ManagedAsnListStore::load(data_dir);
+    store.remove(asn);
+    if let Err(error) = store.save(data_dir) {
+        if !message.is_empty() {
+            message.push_str(". ");
+        }
+        message.push_str(&format!(
+            "Не удалось удалить регистрацию ASN-списка: {error}"
+        ));
+    }
+    message
+}
+
+async fn apply_freeze_join_transaction<F, Fut, V, VFut>(
+    state: &AppState,
+    write: ConfigWrite,
+    list_path: &Path,
+    data_dir: &Path,
+    asn: u32,
+    restart: F,
+    verify: V,
+) -> Result<ConfigApplyResponse, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+    V: FnMut() -> VFut,
+    VFut: std::future::Future<Output = Result<(), String>>,
+{
+    match apply_config_transaction_with_verification(state, write, restart, verify).await {
+        Ok(applied) => Ok(applied),
+        Err(message) => {
+            Err(cleanup_freeze_join_managed_list(list_path, data_dir, asn, message).await)
+        }
+    }
+}
+
 fn strategy_apply_verification_hosts(target: &str, monitoring: &MonitoringStore) -> Vec<String> {
     let mut hosts = vec![target.to_owned()];
     for site in &monitoring.sites {
@@ -9275,10 +9917,20 @@ async fn delete_custom_list(
         };
     }
     match tokio::fs::remove_file(&path).await {
-        Ok(()) => Json(MessageResponse {
-            message: format!("Пользовательский список {id} удалён"),
-        })
-        .into_response(),
+        Ok(()) => {
+            if let Err(message) = change_history::scan(
+                &state.data_dir,
+                &config,
+                "интерфейс",
+                &format!("Удаление списка {id}"),
+            ) {
+                tracing::warn!("Список удалён, но журнал изменений не обновлён: {message}");
+            }
+            Json(MessageResponse {
+                message: format!("Пользовательский список {id} удалён"),
+            })
+            .into_response()
+        }
         Err(io_error) => error(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Не удалось удалить список: {io_error}"),
@@ -9525,6 +10177,15 @@ async fn backup_and_write_named(
             .filter(|path| path.is_file())
             .or_else(|| config_path("nfqws2.conf"))
     };
+    let history_config = snapshot_config.clone();
+    if let Some(config) = &history_config {
+        let (source, note) = external_change_source(config);
+        change_history::scan(data_dir, config, source, note).map_err(|message| {
+            BackupWriteError::Failed(format!(
+                "Не удалось сверить историю перед изменением: {message}"
+            ))
+        })?;
+    }
     if let Some(config) =
         snapshot_config.filter(|_| snapshots::load_settings(data_dir).auto_enabled)
     {
@@ -9653,6 +10314,24 @@ async fn backup_and_write_named(
             .await
             .map_err(|error| format!("Конфиг заменён, но не удалось sync каталог: {error}"))?;
     }
+    if let Some(config) = history_config
+        && let Err(error) = change_history::scan(
+            data_dir,
+            &config,
+            if backup_name.starts_with("history-") {
+                "откат"
+            } else {
+                "интерфейс"
+            },
+            if backup_name.starts_with("history-") {
+                "Откат записи истории"
+            } else {
+                backup_name
+            },
+        )
+    {
+        tracing::warn!("Файл записан, но не удалось обновить журнал изменений: {error}");
+    }
     Ok(())
 }
 
@@ -9691,8 +10370,443 @@ async fn get_snapshots(State(state): State<Arc<AppState>>) -> Response {
 }
 
 async fn get_change_history(State(state): State<Arc<AppState>>) -> Response {
-    Json(serde_json::json!({ "items": snapshots::change_history(&state.data_dir, 200) }))
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let _guard = state.config_write_lock.lock().await;
+    let store = snapshots::load_store(&state.data_dir);
+    let last_snapshot = store
+        .items
+        .last()
+        .map(|item| item.id.as_str())
+        .unwrap_or_default();
+    let (source, note) = external_change_source(&config);
+    if let Err(message) = change_history::scan(&state.data_dir, &config, source, note) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    Json(match change_history::list(&state.data_dir, 300) {
+        Ok(history) => serde_json::json!({ "items": history.items, "initialAt": history.initial_at, "canRestoreInitial": history.can_restore_initial, "canUndoLast": history.can_undo_last, "lastSnapshot": last_snapshot }),
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    })
+    .into_response()
+}
+
+async fn get_community_strategies(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CommunityQuery>,
+) -> Response {
+    let mut provider = community_strategies::read_provider_settings(&state.data_dir);
+    let mut detection_error = None;
+    if query.detect {
+        match community_strategies::detect_provider().await {
+            Ok(detected) => {
+                provider = detected;
+                if let Err(message) =
+                    community_strategies::write_provider_settings(&state.data_dir, &provider)
+                {
+                    return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+                }
+            }
+            Err(message) => detection_error = Some(message),
+        }
+    }
+    let (provider_result, index) = if let Some(asn) = provider.asn {
+        let (provider_result, index) = tokio::join!(
+            community_strategies::load(&state.data_dir, asn, query.force),
+            community_strategies::load_index(&state.data_dir, query.force),
+        );
+        (Some(provider_result), index)
+    } else {
+        (
+            None,
+            community_strategies::load_index(&state.data_dir, query.force).await,
+        )
+    };
+    let (items, fetched_at, error_message) = match provider_result {
+        Some(Ok((items, fetched_at, load_error))) => (items, Some(fetched_at), load_error),
+        Some(Err(message)) => (Vec::new(), None, Some(message)),
+        None => (Vec::new(), None, None),
+    };
+    let now = now_unix_seconds();
+    let mut items: Vec<_> = items
+        .into_iter()
+        .map(|item| {
+            let skipped = item.fails >= 2 && item.fails > item.reports;
+            let fresh = community_strategies::is_fresh(&item, now);
+            let name = item
+                .steps
+                .iter()
+                .filter_map(|step| step.strip_prefix("--lua-desync="))
+                .map(|step| step.split(':').next().unwrap_or(step))
+                .collect::<Vec<_>>()
+                .join(" + ");
+            CommunityViewItem {
+                item,
+                name,
+                fresh,
+                skipped,
+            }
+        })
+        .collect();
+    items.sort_by(|left, right| {
+        (
+            left.skipped,
+            !left.fresh,
+            std::cmp::Reverse(left.item.reports.saturating_sub(left.item.fails)),
+            std::cmp::Reverse(&left.item.last),
+        )
+            .cmp(&(
+                right.skipped,
+                !right.fresh,
+                std::cmp::Reverse(right.item.reports.saturating_sub(right.item.fails)),
+                std::cmp::Reverse(&right.item.last),
+            ))
+    });
+    Json(CommunityResponse {
+        asn: provider.asn,
+        provider: provider.name,
+        fetched_at,
+        error: detection_error.or(error_message),
+        total: index.map(|entry| entry.0),
+        providers: index.map(|entry| entry.1),
+        items,
+        repo: community_strategies::COMMUNITY_REPO.to_owned(),
+        page: format!(
+            "{}/blob/main/STRATEGIES.md",
+            community_strategies::COMMUNITY_REPO
+        ),
+        mine: provider.asn.map(|asn| {
+            format!(
+                "{}/blob/main/providers/AS{asn}.md",
+                community_strategies::COMMUNITY_REPO
+            )
+        }),
+    })
+    .into_response()
+}
+
+async fn set_community_provider(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CommunityProviderWrite>,
+) -> Response {
+    let provider = ProviderSettings {
+        asn: request.asn,
+        name: request.name.trim().to_owned(),
+    };
+    if provider.asn.is_some_and(|asn| asn == 0) {
+        return error(StatusCode::BAD_REQUEST, "Номер ASN должен быть больше нуля");
+    }
+    if let Err(message) = community_strategies::write_provider_settings(&state.data_dir, &provider)
+    {
+        return error(StatusCode::BAD_REQUEST, message);
+    }
+    Json(provider).into_response()
+}
+
+fn external_change_source(config: &Path) -> (&'static str, &'static str) {
+    let parent = config.parent().unwrap_or_else(|| Path::new("/"));
+    let updated = std::fs::metadata(config)
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    for candidate in ["nfqws2.conf-opkg", "nfqws2.conf.apk-new"] {
+        if let (Some(changed), Ok(package)) = (
+            updated,
+            std::fs::metadata(parent.join(candidate)).and_then(|metadata| metadata.modified()),
+        ) && changed
+            .duration_since(package)
+            .or_else(|_| package.duration_since(changed))
+            .is_ok_and(|duration| duration.as_secs() <= 30)
+        {
+            return (
+                "обновление пакета",
+                "Обнаружено изменение рядом с шаблоном пакета",
+            );
+        }
+    }
+    (
+        "вне интерфейса",
+        "Изменение обнаружено при проверке истории",
+    )
+}
+
+async fn get_change_history_diff(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    match change_history::diff(&state.data_dir, &id) {
+        Ok(diff) => Json(diff).into_response(),
+        Err(message) => error(StatusCode::NOT_FOUND, message),
+    }
+}
+
+async fn revert_change_history(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    revert_change_history_id(&state, &id, "Откат изменения").await
+}
+
+async fn undo_last_change(State(state): State<Arc<AppState>>) -> Response {
+    if let Some(config) = config_path_for_state(&state) {
+        let _guard = state.config_write_lock.lock().await;
+        let (source, note) = external_change_source(&config);
+        if let Err(message) = change_history::scan(&state.data_dir, &config, source, note) {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+        }
+    }
+    let batch = match change_history::undoable_batch(&state.data_dir) {
+        Ok(batch) => batch,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let Some(mut batch) = batch else {
+        return error(
+            StatusCode::CONFLICT,
+            "Нет изменения, которое можно отменить",
+        );
+    };
+    // Check the entire operation before changing anything, so an intervening
+    // edit cannot leave a multi-file undo half-applied.
+    for entry in &batch {
+        let current = match tokio::fs::read(&entry.path).await {
+            Ok(bytes) => Some(hex::encode(Sha256::digest(bytes))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(io_error) => {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+            }
+        };
+        if current != entry.to {
+            return error(
+                StatusCode::CONFLICT,
+                "Файл изменился после этой операции; отмена остановлена. Обновите историю и проверьте diff.",
+            );
+        }
+    }
+    // Restore lists first and the config last, so the single service restart
+    // caused by a config rollback sees the complete restored operation.
+    batch.sort_by_key(|entry| entry.file == "nfqws2.conf");
+    let batch_id = batch[0].batch.clone();
+    let files: Vec<_> = batch.iter().map(|entry| entry.file.clone()).collect();
+    for entry in &batch {
+        let response =
+            revert_change_history_id(&state, &entry.id, "Отмена последнего изменения").await;
+        if !response.status().is_success() {
+            return response;
+        }
+        if let Err(message) =
+            change_history::mark_undo_of_latest(&state.data_dir, Path::new(&entry.path), &batch_id)
+        {
+            return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+        }
+    }
+    Json(serde_json::json!({
+        "ok": true,
+        "message": format!("Отменено изменение в {} {}", files.len(), if files.len() == 1 { "файле" } else { "файлах" }),
+        "files": files,
+    }))
+    .into_response()
+}
+
+async fn revert_change_history_id(state: &AppState, id: &str, note: &str) -> Response {
+    let Some(config) = config_path_for_state(state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let (entry, previous) = match change_history::version_before(&state.data_dir, id) {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::NOT_FOUND, message),
+    };
+    let config = match config.canonicalize() {
+        Ok(path) => path,
+        Err(io_error) => return error(StatusCode::NOT_FOUND, io_error.to_string()),
+    };
+    let path = PathBuf::from(&entry.path);
+    let valid = path == config
+        || (path.extension().and_then(|extension| extension.to_str()) == Some("list")
+            && path.parent().is_some_and(|parent| {
+                parent
+                    == config
+                        .parent()
+                        .unwrap_or_else(|| Path::new("/"))
+                        .join("lists")
+            }));
+    if !valid {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Запись истории выходит за разрешённые файлы",
+        );
+    }
+    let current = match tokio::fs::read(&path).await {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(io_error) => return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string()),
+    };
+    let current_hash = current
+        .as_deref()
+        .map(|bytes| hex::encode(Sha256::digest(bytes)));
+    if current_hash != entry.to {
+        return error(
+            StatusCode::CONFLICT,
+            "Файл изменился после этой записи; откат остановлен. Обновите историю и проверьте diff.",
+        );
+    }
+    if path == config {
+        let Some(previous) = previous else {
+            return error(StatusCode::CONFLICT, "Нельзя удалить конфигурацию nfqws2");
+        };
+        let write = ConfigWrite {
+            content: previous,
+            revision: revision(current.as_deref().unwrap_or_default()),
+        };
+        return match apply_config_transaction(state, write, || async {
+            service_action(ServiceAction::Restart).await
+        })
+        .await
+        {
+            Ok(result) => {
+                if let Err(message) =
+                    change_history::mark_latest(&state.data_dir, &path, "откат", note)
+                {
+                    tracing::warn!(
+                        "Конфигурация откатилась, но не удалось подписать запись истории: {message}"
+                    );
+                }
+                Json(serde_json::json!({"ok": true, "message": result.message})).into_response()
+            }
+            Err(message) => error(StatusCode::BAD_GATEWAY, message),
+        };
+    }
+
+    let _guard = state.config_write_lock.lock().await;
+    if let Err(message) = snapshots::create_snapshot(
+        &state.data_dir,
+        &config,
+        "перед восстановлением",
+        &format!("перед откатом {id}"),
+        true,
+    ) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    match previous {
+        Some(content) => {
+            if content.len() > MAX_LIST_BYTES {
+                return error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "Предыдущая версия списка превышает лимит 512 КБ",
+                );
+            }
+            let kind = entry.file.starts_with("ipset");
+            if let Err(message) = validate_list_content_with_kind(&entry.file, &content, kind) {
+                return error(
+                    StatusCode::BAD_REQUEST,
+                    format!("Предыдущая версия списка не проходит проверку: {message}"),
+                );
+            }
+            if let Err(message) = backup_and_write_named(
+                &state.data_dir,
+                &path,
+                &format!("history-{}", id),
+                MAX_LIST_BYTES,
+                content.as_bytes(),
+                current.as_deref().map(revision).as_deref(),
+            )
+            .await
+            {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, message.to_string());
+            }
+        }
+        None => {
+            if let Err(io_error) = tokio::fs::remove_file(&path).await {
+                return error(StatusCode::INTERNAL_SERVER_ERROR, io_error.to_string());
+            }
+        }
+    }
+    if let Err(message) = change_history::scan(&state.data_dir, &config, "откат", note) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    Json(serde_json::json!({"ok": true, "message": format!("{} · {}", note, entry.file)}))
         .into_response()
+}
+
+async fn restore_initial_history(State(state): State<Arc<AppState>>) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let config = match config.canonicalize() {
+        Ok(path) => path,
+        Err(io_error) => return error(StatusCode::NOT_FOUND, io_error.to_string()),
+    };
+    let _guard = state.config_write_lock.lock().await;
+    let (source, note) = external_change_source(&config);
+    if let Err(message) = change_history::scan(&state.data_dir, &config, source, note) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    let archive = match change_history::initial_archive(&state.data_dir, &config) {
+        Ok(archive) => archive,
+        Err(message) => return error(StatusCode::CONFLICT, message),
+    };
+    let before_restore = match snapshots::create_snapshot(
+        &state.data_dir,
+        &config,
+        "перед восстановлением",
+        "перед возвратом исходного состояния истории",
+        true,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let before_restore_archive = match snapshots::archive_bytes(&state.data_dir, &before_restore.id)
+    {
+        Ok(archive) => archive,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let changed = match snapshots::validate_and_restore(&state.data_dir, &config, &archive) {
+        Ok(changed) => changed,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    // Zemidala intentionally leaves lists created after history started: the
+    // restored config stops referencing them, while user-owned files are kept.
+    // Only files present in the baseline archive are restored above.
+    let restart_message = if discover_system_paths()
+        .is_some_and(|paths| paths.config.canonicalize().ok().as_ref() == Some(&config))
+    {
+        match service_action(ServiceAction::Restart).await {
+            Ok(message) => message,
+            Err(restart_error) => {
+                let rollback = snapshots::validate_and_restore(
+                    &state.data_dir,
+                    &config,
+                    &before_restore_archive,
+                );
+                let rollback_restart = service_action(ServiceAction::Restart).await;
+                let detail = match (rollback, rollback_restart) {
+                    (Ok(_), Ok(_)) => {
+                        "Исходное состояние восстановлено; служба перезапущена.".to_owned()
+                    }
+                    (Err(restore_error), restart) => format!(
+                        "Не удалось восстановить исходное состояние ({restore_error}); перезапуск службы: {}",
+                        restart.err().unwrap_or_else(|| "не требовался".into())
+                    ),
+                    (Ok(_), Err(rollback_error)) => format!(
+                        "Файлы исходного состояния восстановлены, но перезапуск отката не удался: {rollback_error}"
+                    ),
+                };
+                return error(
+                    StatusCode::BAD_GATEWAY,
+                    format!("Перезапуск после восстановления не удался: {restart_error}. {detail}"),
+                );
+            }
+        }
+    } else {
+        "Установленная служба не обнаружена".to_owned()
+    };
+    if let Err(message) = change_history::scan(
+        &state.data_dir,
+        &config,
+        "откат",
+        "Вернуть как при установке",
+    ) {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, message);
+    }
+    Json(serde_json::json!({"changed": changed, "message": format!("Исходное состояние восстановлено: {} файлов. {}", changed.len(), restart_message)})).into_response()
 }
 
 async fn delete_snapshot_api(
@@ -10950,6 +12064,210 @@ fn start_snapshot_scheduler(state: Arc<AppState>) {
     });
 }
 
+fn start_change_history_scheduler(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+        loop {
+            interval.tick().await;
+            let Some(config) = config_path_for_state(&state) else {
+                continue;
+            };
+            let _guard = state.config_write_lock.lock().await;
+            let (source, note) = external_change_source(&config);
+            if let Err(error) = change_history::scan(&state.data_dir, &config, source, note) {
+                tracing::warn!("Не удалось проверить историю изменений: {error}");
+            }
+        }
+    });
+}
+
+fn managed_asn_local_date() -> Option<String> {
+    #[cfg(unix)]
+    let output = std::process::Command::new("date")
+        .arg("+%Y-%m-%d")
+        .output()
+        .ok()?;
+    #[cfg(windows)]
+    let output = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-Date).ToString('yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture)",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let date = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    valid_iso_local_date(&date).then_some(date)
+}
+
+fn valid_iso_local_date(date: &str) -> bool {
+    let bytes = date.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+}
+
+fn config_uses_managed_asn_list(
+    config: &str,
+    list_id: &str,
+    lists_directory: &Path,
+) -> Option<bool> {
+    let list_path = lists_directory.join(list_id).canonicalize().ok()?;
+    let parsed = nfqws2_ui::runtime_profiles::from_config(config, "managed-asn-refresh").ok()?;
+    for profile in parsed
+        .profiles
+        .iter()
+        .filter(|profile| profile.source == "NFQWS_ARGS_CUSTOM")
+    {
+        let references = freeze_profile_join::profile_list_references(&profile.args).ok()?;
+        for reference in references {
+            let Ok(reference_path) = resolve_foreign_list_path(&reference, lists_directory) else {
+                continue;
+            };
+            if reference_path == list_path {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
+}
+
+fn reload_active_nfqw2_lists() -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let Some((pid, args)) = active_process_snapshot() else {
+            // The list is already on disk and nfqws2 will read it on its next start.
+            return Ok(());
+        };
+        if !matches!(active_process_snapshot(), Some((current_pid, ref current_args)) if current_pid == pid && current_args == &args)
+        {
+            return Err("Активный процесс nfqws2 изменился перед перечитыванием списков".into());
+        }
+        let pid = libc::pid_t::try_from(pid)
+            .map_err(|_| "Недопустимый PID nfqws2 для перечитывания списков".to_owned())?;
+        // zapret2/nfqws2 reloads hostlists and ipsets on SIGHUP; no service restart is needed.
+        let result = unsafe { libc::kill(pid, libc::SIGHUP) };
+        if result != 0 {
+            return Err(format!(
+                "Не удалось отправить SIGHUP процессу nfqws2: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        // The router backend is Unix-only; desktop test runs have no nfqws2 process to signal.
+        Ok(())
+    }
+}
+
+async fn refresh_managed_asn_lists(state: &AppState) {
+    let Some(local_date) = managed_asn_local_date() else {
+        tracing::warn!("managed ASN list refresh skipped: local date is unavailable");
+        return;
+    };
+    let Ok(_refresh_guard) = state.managed_asn_refresh_lock.try_lock() else {
+        return;
+    };
+    let Some(paths) = discover_system_paths() else {
+        return;
+    };
+    let Some(config_path) = config_path_for_state(state) else {
+        return;
+    };
+    let Ok(config_bytes) = tokio::fs::read(config_path).await else {
+        return;
+    };
+    let Ok(config) = String::from_utf8(config_bytes) else {
+        return;
+    };
+    let mut store = ManagedAsnListStore::load(&state.data_dir);
+    let entries = store.entries.clone();
+    for mut feed in entries {
+        if feed.asn == 0 || !freeze_profile_join::valid_asn_list_id(&feed.list_id) {
+            store.remove(feed.asn);
+            if let Err(message) = store.save(&state.data_dir) {
+                tracing::warn!("managed ASN registry cleanup failed: {message}");
+            }
+            continue;
+        }
+        let list_path = paths.lists_dir.join(&feed.list_id);
+        match std::fs::symlink_metadata(&list_path) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => {
+                feed.paused = true;
+                feed.last_error =
+                    Some("Путь управляемого ASN-списка больше не является обычным файлом".into());
+                store.register(feed);
+                if let Err(message) = store.save(&state.data_dir) {
+                    tracing::warn!("managed ASN state save failed: {message}");
+                }
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                store.remove(feed.asn);
+                if let Err(message) = store.save(&state.data_dir) {
+                    tracing::warn!("managed ASN registry cleanup failed: {message}");
+                }
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!("cannot inspect managed ASN list {}: {error}", feed.list_id);
+                continue;
+            }
+        }
+        let Some(referenced) =
+            config_uses_managed_asn_list(&config, &feed.list_id, &paths.lists_dir)
+        else {
+            continue;
+        };
+        if !referenced {
+            store.remove(feed.asn);
+            if let Err(message) = store.save(&state.data_dir) {
+                tracing::warn!("managed ASN registry cleanup failed: {message}");
+            }
+            continue;
+        }
+        if !feed.is_due(&local_date) {
+            continue;
+        }
+        let result = managed_asn_lists::refresh_managed_list_with(
+            &mut feed,
+            &mut store,
+            &state.data_dir,
+            &list_path,
+            &local_date,
+            |asn| async move { fetch_ripe_announced_prefixes(asn).await },
+            || async { reload_active_nfqw2_lists() },
+        )
+        .await;
+        if let Err(message) = result {
+            tracing::warn!("managed ASN list AS{} refresh failed: {message}", feed.asn);
+        } else {
+            tracing::info!("managed ASN list AS{} refreshed", feed.asn);
+        }
+    }
+}
+
+fn start_managed_asn_scheduler(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            refresh_managed_asn_lists(&state).await;
+        }
+    });
+}
+
 async fn create_backup(State(state): State<Arc<AppState>>) -> Response {
     let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Файл конфигурации не найден");
@@ -11330,6 +12648,11 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             post(cancel_freeze_scan),
         )
         .route("/api/nfqws2/diagnostics/trace", post(trace_site))
+        .route("/api/community-strategies", get(get_community_strategies))
+        .route(
+            "/api/community-strategies/provider",
+            post(set_community_provider),
+        )
         .route("/api/nfqws2/strategies/pick", post(start_strategy_pick))
         .route(
             "/api/nfqws2/strategies/pick/multi",
@@ -11356,6 +12679,14 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             post(preview_freeze_strategy),
         )
         .route(
+            "/api/nfqws2/diagnostics/freeze-scan/join-preview",
+            post(preview_freeze_profile_join),
+        )
+        .route(
+            "/api/nfqws2/diagnostics/freeze-scan/join",
+            post(apply_freeze_profile_join),
+        )
+        .route(
             "/api/nfqws2/strategies/apply",
             post(apply_confirmed_strategy),
         )
@@ -11380,6 +12711,16 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
             get(get_snapshots).post(create_snapshot_api),
         )
         .route("/api/change-history", get(get_change_history))
+        .route("/api/change-history/undo-last", post(undo_last_change))
+        .route("/api/change-history/initial", post(restore_initial_history))
+        .route(
+            "/api/change-history/{id}/diff",
+            get(get_change_history_diff),
+        )
+        .route(
+            "/api/change-history/{id}/revert",
+            post(revert_change_history),
+        )
         .route(
             "/api/profiles",
             get(get_profiles).put(save_runtime_profiles),
@@ -11486,6 +12827,7 @@ async fn main() {
         update_lock: Mutex::new(()),
         ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
+        managed_asn_refresh_lock: Mutex::new(()),
         monitoring_lock: Arc::new(Mutex::new(())),
         site_trace_controls: Mutex::new(HashMap::new()),
         site_trace_runner: Arc::new(router_site_trace_runner),
@@ -11502,6 +12844,8 @@ async fn main() {
     start_ui_update_checker(state.clone());
     start_monitoring_scheduler(state.clone());
     start_snapshot_scheduler(state.clone());
+    start_change_history_scheduler(state.clone());
+    start_managed_asn_scheduler(state.clone());
     let web_root = std::env::var_os("NFQWS2_UI_WEB_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/opt/share/nfqws2-ui/current/public"));
@@ -13060,6 +14404,7 @@ mod tests {
             update_lock: Mutex::new(()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
+            managed_asn_refresh_lock: Mutex::new(()),
             monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: Arc::new(router_site_trace_runner),
@@ -13192,6 +14537,69 @@ mod tests {
         assert_eq!(preview.host, "site.example");
     }
 
+    #[test]
+    fn freeze_join_preview_requires_verified_asn_and_builds_scoped_config_diff() {
+        let mut scan = confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost);
+        scan.results[0].address = Some("8.8.8.8".parse().unwrap());
+        scan.results[0].asn = freeze_diagnostic::AsnVerification::Verified { asn: 15169 };
+        let config = "NFQWS_ARGS_CUSTOM=\"--filter-tcp=443 --filter-l7=tls --payload=tls_client_hello --ipset=lists/ipset.list --lua-desync=hostfakesplit:repeats=4:tcp_ts=-600000:tcp_md5:host=ya.ru\"\nNFQWS_ARGS_UDP=\"\"\nNFQWS_ARGS_QUIC=\"\"\nNFQWS_ARGS_IPSET=\"\"\nNFQWS_ARGS=\"\"\nNFQWS_EXTRA_ARGS=\"\"\n";
+        let lists = HashMap::from([("lists/ipset.list".to_owned(), "8.8.8.0/24\n".to_owned())]);
+        let prefixes = vec!["8.8.8.0/24".to_owned()];
+        let preview =
+            build_freeze_profile_join_preview(&scan, 0, config, &lists, &prefixes).unwrap();
+        assert_eq!(preview.asn, 15169);
+        assert_eq!(preview.profile_index, 1);
+        assert_eq!(preview.list_id, "ipset_as15169.list");
+        assert!(
+            preview
+                .proposed_content
+                .contains("--ipset=lists/ipset_as15169.list")
+        );
+        assert!(preview.original_content.contains("NFQWS_ARGS_CUSTOM"));
+
+        scan.results[0].asn = freeze_diagnostic::AsnVerification::Unavailable;
+        assert!(build_freeze_profile_join_preview(&scan, 0, config, &lists, &prefixes).is_err());
+
+        scan.results[0].asn = freeze_diagnostic::AsnVerification::Verified { asn: 15169 };
+        scan.results[0].found_strategy.as_mut().unwrap().reused_from =
+            Some("another.example".into());
+        assert!(build_freeze_profile_join_preview(&scan, 0, config, &lists, &prefixes).is_err());
+    }
+
+    #[tokio::test]
+    async fn freeze_join_routes_reject_missing_scan_without_creating_config_or_list_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+        let app = api_router(test_state(dir.path().to_path_buf()), dir.path().join("web"));
+        for (uri, body) in [
+            (
+                "/api/nfqws2/diagnostics/freeze-scan/join-preview",
+                serde_json::json!({"operationId": operation_id, "resultIndex": 0}),
+            ),
+            (
+                "/api/nfqws2/diagnostics/freeze-scan/join",
+                serde_json::json!({"operationId": operation_id, "resultIndex": 0, "expectedRevision": "stale"}),
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(uri)
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        }
+        assert!(!dir.path().join("freeze-diagnostic-operations").exists());
+        assert!(!dir.path().join("nfqws2.conf").exists());
+        assert!(!dir.path().join("lists/ipset_as15169.list").exists());
+    }
+
     fn test_state_with_trace_runner(
         data_dir: PathBuf,
         runner: Arc<SiteTraceRunner>,
@@ -13206,6 +14614,7 @@ mod tests {
             update_lock: Mutex::new(()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
+            managed_asn_refresh_lock: Mutex::new(()),
             monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: runner,
@@ -14258,6 +15667,177 @@ mod tests {
         assert_eq!(tokio::fs::read(config).await.unwrap(), original);
     }
 
+    #[tokio::test]
+    async fn freeze_join_transaction_rolls_back_config_and_removes_only_its_new_list() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--filter-tcp=80,443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let list = dir.path().join("ipset_as15169.list");
+        let sibling = dir.path().join("ipset_as64500.list");
+        let list_content = "# AS15169 managed by nfqws2-ui via RIPEstat\n8.8.8.0/24\n";
+        tokio::fs::write(&list, list_content).await.unwrap();
+        let mut managed = ManagedAsnListStore::default();
+        managed.register(ManagedAsnList::new(
+            15169,
+            "ipset_as15169.list",
+            1,
+            list_content.as_bytes(),
+        ));
+        managed.save(&state.data_dir).unwrap();
+        tokio::fs::write(&sibling, "192.0.2.0/24\n").await.unwrap();
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let restart_counter = restart_count.clone();
+
+        let result = apply_freeze_join_transaction(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            &list,
+            &state.data_dir,
+            15169,
+            move || {
+                let attempt = restart_counter.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        Err("candidate restart failed".to_string())
+                    } else {
+                        Ok("restored service restarted".to_string())
+                    }
+                }
+            },
+            || async { Ok(()) },
+        )
+        .await;
+
+        let error = result.unwrap_err();
+        assert!(error.contains("Исходный конфиг восстановлен"));
+        assert_eq!(restart_count.load(Ordering::SeqCst), 2);
+        assert_eq!(tokio::fs::read(&config).await.unwrap(), original);
+        assert!(!list.exists(), "only the newly-created ASN list is removed");
+        assert_eq!(
+            tokio::fs::read_to_string(sibling).await.unwrap(),
+            "192.0.2.0/24\n"
+        );
+        assert!(
+            ManagedAsnListStore::load(&state.data_dir)
+                .entries
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn freeze_join_transaction_keeps_registered_list_after_verified_apply() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        let replacement = "NFQWS_ARGS=--filter-tcp=80,443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let list = dir.path().join("ipset_as15169.list");
+        let list_content = "# AS15169 managed by nfqws2-ui via RIPEstat\n8.8.8.0/24\n";
+        tokio::fs::write(&list, list_content).await.unwrap();
+        let mut managed = ManagedAsnListStore::default();
+        managed.register(ManagedAsnList::new(
+            15169,
+            "ipset_as15169.list",
+            1,
+            list_content.as_bytes(),
+        ));
+        managed.save(&state.data_dir).unwrap();
+        let restart_count = Arc::new(AtomicUsize::new(0));
+        let restart_counter = restart_count.clone();
+        let verify_count = Arc::new(AtomicUsize::new(0));
+        let verify_counter = verify_count.clone();
+
+        let applied = apply_freeze_join_transaction(
+            &state,
+            ConfigWrite {
+                content: replacement.into(),
+                revision: revision(original),
+            },
+            &list,
+            &state.data_dir,
+            15169,
+            move || {
+                restart_counter.fetch_add(1, Ordering::SeqCst);
+                async { Ok("service restarted".to_string()) }
+            },
+            move || {
+                verify_counter.fetch_add(1, Ordering::SeqCst);
+                async { Ok(()) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(applied.message.contains("service restarted"));
+        assert_eq!(restart_count.load(Ordering::SeqCst), 1);
+        assert_eq!(verify_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            tokio::fs::read(&config).await.unwrap(),
+            replacement.as_bytes()
+        );
+        assert!(list.exists());
+        assert_eq!(
+            ManagedAsnListStore::load(&state.data_dir)
+                .entries
+                .iter()
+                .map(|entry| entry.asn)
+                .collect::<Vec<_>>(),
+            vec![15169]
+        );
+    }
+
+    #[tokio::test]
+    async fn freeze_join_transaction_conflict_removes_list_without_restart_or_config_write() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let original = b"NFQWS_ARGS=--filter-tcp=443\n";
+        tokio::fs::write(&config, original).await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config.clone()));
+        let list = dir.path().join("ipset_as15169.list");
+        tokio::fs::write(&list, "8.8.8.0/24\n").await.unwrap();
+        let restarted = Arc::new(AtomicBool::new(false));
+        let restart_flag = restarted.clone();
+
+        let result = apply_freeze_join_transaction(
+            &state,
+            ConfigWrite {
+                content: "NFQWS_ARGS=--filter-tcp=80,443\n".into(),
+                revision: "stale-revision".into(),
+            },
+            &list,
+            &state.data_dir,
+            15169,
+            move || {
+                restart_flag.store(true, Ordering::SeqCst);
+                async { Ok("unexpected restart".to_string()) }
+            },
+            || async { Ok(()) },
+        )
+        .await;
+
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Файл изменился после загрузки")
+        );
+        assert!(!restarted.load(Ordering::SeqCst));
+        assert_eq!(tokio::fs::read(&config).await.unwrap(), original);
+        assert!(!list.exists());
+    }
+
     #[test]
     fn strategy_apply_verifies_target_once_and_only_previously_healthy_peers() {
         let store = MonitoringStore {
@@ -14559,6 +16139,290 @@ mod tests {
                 .unwrap(),
             original
         );
+    }
+
+    #[tokio::test]
+    async fn change_history_endpoint_scans_external_edits_and_revision_checks_list_revert() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--filter-tcp=443\n")
+            .await
+            .unwrap();
+        let list = lists.join("user.list");
+        tokio::fs::write(&list, "one.example\n").await.unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config));
+        let app = api_router(state, dir.path().join("web"));
+
+        let baseline = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            body_json(baseline).await["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        tokio::fs::write(&list, "one.example\ntwo.example\n")
+            .await
+            .unwrap();
+        let scanned = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let items = body_json(scanned).await["items"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let change = items
+            .iter()
+            .find(|item| item["file"] == "user.list")
+            .unwrap();
+        assert_eq!(change["source"], "вне интерфейса");
+        assert_eq!(change["addedLines"], 1);
+        let id = change["id"].as_str().unwrap();
+
+        let diff = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/change-history/{id}/diff"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body_json(diff).await["from"], "one.example\n");
+
+        tokio::fs::write(&list, "external-newer.example\n")
+            .await
+            .unwrap();
+        let conflict = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/change-history/{id}/revert"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            tokio::fs::read_to_string(&list).await.unwrap(),
+            "external-newer.example\n"
+        );
+        tokio::fs::write(&list, "one.example\ntwo.example\n")
+            .await
+            .unwrap();
+
+        let reverted = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/change-history/{id}/revert"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(reverted.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(list).await.unwrap(),
+            "one.example\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn change_history_initial_restore_preserves_files_created_after_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--filter-tcp=443\n")
+            .await
+            .unwrap();
+        tokio::fs::write(lists.join("user.list"), "one.example\n")
+            .await
+            .unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config));
+        let app = api_router(state, dir.path().join("web"));
+        let baseline = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            body_json(baseline).await["items"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+
+        tokio::fs::write(lists.join("user.list"), "changed.example\n")
+            .await
+            .unwrap();
+        tokio::fs::write(lists.join("new.list"), "new.example\n")
+            .await
+            .unwrap();
+        let scanned = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body_json(scanned).await["canRestoreInitial"], true);
+
+        let restored = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/change-history/initial")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(restored.status(), StatusCode::OK);
+        let response_body = body_json(restored).await;
+        assert!(
+            response_body["message"]
+                .as_str()
+                .unwrap()
+                .contains("восстановлено")
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(lists.join("user.list"))
+                .await
+                .unwrap(),
+            "one.example\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(lists.join("new.list"))
+                .await
+                .unwrap(),
+            "new.example\n"
+        );
+        assert!(
+            response_body["changed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|path| {
+                    path.as_str()
+                        .is_some_and(|value| value.ends_with("/lists/user.list"))
+                })
+        );
+    }
+
+    #[tokio::test]
+    async fn change_history_undo_last_restores_all_lists_in_the_latest_ui_batch_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=--filter-tcp=443\n")
+            .await
+            .unwrap();
+        let first = lists.join("first.list");
+        let second = lists.join("second.list");
+        tokio::fs::write(&first, "before-first.example\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&second, "before-second.example\n")
+            .await
+            .unwrap();
+        let state_dir = dir.path().join("state");
+        let state = test_state_with_config(state_dir.clone(), Some(config.clone()));
+        let app = api_router(state, dir.path().join("web"));
+
+        let _ = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        tokio::fs::write(&first, "after-first.example\n")
+            .await
+            .unwrap();
+        tokio::fs::write(&second, "after-second.example\n")
+            .await
+            .unwrap();
+        let events =
+            change_history::scan(&state_dir, &config, "интерфейс", "двойное изменение").unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].batch, events[1].batch);
+
+        let before = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body_json(before).await["canUndoLast"], true);
+        let undone = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/change-history/undo-last")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(first).await.unwrap(),
+            "before-first.example\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(second).await.unwrap(),
+            "before-second.example\n"
+        );
+        let after = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/change-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(body_json(after).await["canUndoLast"], false);
     }
 
     #[tokio::test]
@@ -15747,6 +17611,62 @@ mod tests {
         assert!(ids.contains(&"google.list"));
         assert!(!ids.contains(&"nested/ignored.list"));
         assert!(!ids.contains(&"notes.txt"));
+    }
+
+    #[tokio::test]
+    async fn list_index_exposes_managed_asn_refresh_health_for_the_matching_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(
+            &config,
+            "NFQWS_ARGS_CUSTOM=--ipset=lists/ipset_as15169.list\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(list_dir.join("ipset_as15169.list"), "8.8.8.0/24\n")
+            .await
+            .unwrap();
+        let state = test_state_with_config(dir.path().join("state"), Some(config));
+        let mut managed = ManagedAsnListStore::default();
+        let mut feed = ManagedAsnList::new(15169, "ipset_as15169.list", 1, b"8.8.8.0/24\n");
+        feed.last_attempt_date = Some("2026-10-27".into());
+        feed.last_success_date = Some("2026-10-26".into());
+        feed.last_error = Some("RIPEstat не ответил".into());
+        managed.register(feed);
+        managed.save(&state.data_dir).unwrap();
+        let app = api_router(state, dir.path().join("web"));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let report = body_json(response).await;
+        let file = report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["id"] == "ipset_as15169.list")
+            .unwrap();
+        assert_eq!(file["managedAsn"]["asn"], 15169);
+        assert_eq!(file["managedAsn"]["prefixCount"], 1);
+        assert_eq!(file["managedAsn"]["lastError"], "RIPEstat не ответил");
+        assert_eq!(file["managedAsn"]["lastSuccessDate"], "2026-10-26");
+    }
+
+    #[test]
+    fn managed_asn_scheduler_accepts_only_iso_local_dates() {
+        assert!(valid_iso_local_date("2026-10-27"));
+        assert!(!valid_iso_local_date("10/27/2026"));
+        assert!(!valid_iso_local_date("2026-1-27"));
+        assert!(!valid_iso_local_date("2026-10-2x"));
     }
 
     #[tokio::test]

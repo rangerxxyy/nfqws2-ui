@@ -38,6 +38,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('overflow-wrap:anywhere');
   });
 
+  it('shows daily ASN list refresh state and errors beside the selected list', () => {
+    expect(template).toContain('id="listAutoUpdateStatus"');
+    expect(panelSource).toContain('summary.managedAsn');
+    expect(panelSource).toContain('обновляется ежедневно');
+    expect(panelSource).toContain('lastError');
+    expect(panelSource).toContain('lastSuccessDate');
+    expect(panelSource).toContain('lastAttemptDate');
+    expect(panelSource).toContain('автообновление остановлено');
+  });
+
   it('keeps the profile name field compact and the constructor mode switch in the heading', () => {
     expect(panelSource).toContain("nameField.className = 'runtime-profile-name-field'");
     expect(panelSource).toContain("id = 'runtimeProfileModeToggle'");
@@ -70,6 +80,21 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(valueRule).toMatch(/border-radius:\.24rem/);
     expect(valueRule).toMatch(/height:1\.2rem/);
     expect(valueRule).not.toMatch(/margin-left:/);
+  });
+
+  it('provides a dedicated ASN join preview with explicit confirmation flow', () => {
+    expect(template).toContain('id="freezeJoinPreviewPanel"');
+    expect(template).toContain('data-action-click="applyFreezeJoin"');
+    expect(panelSource).toContain('nfqwsDiagnostics.freezeJoinPreview(operationId, index)');
+    expect(panelSource).toContain("requestDangerousConfirmation('Добавить ASN-сеть в профиль?'");
+    expect(panelSource).toContain('nfqwsDiagnostics.applyFreezeJoin(operationId, Number(resultIndex), expectedRevision)');
+    expect(panelSource).toContain("joinButton.dataset.actionClick = 'previewFreezeJoin'");
+  });
+
+  it('keeps the selected shared Lua function visibly highlighted in the themed picker', () => {
+    expect(styledSelectSource).toContain("menu.dataset.profileFunctionPicker = 'true'");
+    expect(panelStyles).toContain(".styled-select-menu[data-profile-function-picker='true'] .styled-select-option[aria-selected='true']");
+    expect(panelStyles).toContain('var(--accent-color,#3b82f6) 16%');
   });
 
   it('keeps strategy rows and long parameter chips within a responsive grid', () => {
@@ -496,7 +521,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(picker).not.toContain('md:grid-cols-5');
     expect(picker).toContain('id="strategyRepeatsSelect"');
     expect(picker).toContain('id="strategyStopAfterFirst"');
-    expect(picker).not.toContain('id="strategyIncludeCommunity"');
+    expect(picker).toContain('id="strategyIncludeCommunity"');
     expect(picker).toContain('id="strategyIncludeOtherHistory"');
     expect(picker).toContain('id="strategyRefineLighter"');
     expect(picker).toContain('Искать более лёгкий вариант');
@@ -704,12 +729,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('catch (error) {\n    const message = error instanceof Error ? error.message');
     expect(panelSource).toContain("monitoringHostsRunning.has(site.host) ? 'Проверяем…'");
     expect(panelStyles).toContain('.monitor-site-card { min-width:0;');
-    expect(template).not.toContain('navBtn-community');
-    expect(template).not.toContain('tabContent-community');
+    expect(template).toContain('navBtn-community');
+    expect(template).toContain('tabContent-community');
     expect(template).not.toContain('asnNumber');
-    expect(backendSource).not.toContain('/api/nfqws2/strategies/community');
+    expect(backendSource).toContain('/api/community-strategies');
     expect(backendSource).not.toContain('/api/nfqws2/asn-prefixes');
-    expect(panelSource).not.toContain('includeCommunity');
+    expect(panelSource).toContain('includeCommunity');
     expect(template).toMatch(/id="navBtn-autotune" class="(?![^"]*hidden)[^"]*side-nav-btn/);
     expect(template).toContain('data-action-click="startStrategyPick"');
     expect(template).toContain('id="tabContent-diagnostic16k"');
@@ -773,6 +798,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('.put(save_runtime_profiles)');
     expect(backendSource).toContain('NFQWS_ARGS_CUSTOM');
     expect(backendSource).toContain('"/api/change-history"');
+    expect(backendSource).toContain('"/api/change-history/{id}/diff"');
+    expect(backendSource).toContain('"/api/change-history/{id}/revert"');
+    expect(backendSource).toContain('"/api/change-history/undo-last"');
+    expect(backendSource).toContain('"/api/change-history/initial"');
+    expect(template).toContain('id="changeHistoryUndoLast"');
+    expect(template).toContain('id="changeHistoryRestoreInitial"');
+    expect(panelSource).toContain("diffButton.textContent = 'Что изменилось'");
+    expect(panelSource).toContain('nfqwsChangeHistory.diff(id)');
+    expect(panelSource).toContain('nfqwsChangeHistory.revert(id)');
     expect(panelSource).toContain('nfqwsLogs.get(source)');
     expect(panelSource).toContain('shouldPollLogs(sectionVisible, autoRefresh, logRequestPending)');
     expect(template).toContain('id="logsAutoRefresh"');
@@ -795,8 +829,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('<main class="flex-1 min-h-0 overflow-y-auto');
   });
 
-  it('does not show third-party project names in the panel copy', () => {
-    expect(template.toLowerCase()).not.toContain('zemidala');
+  it('links the community strategy source transparently', () => {
+    expect(template).toContain('https://github.com/zemidala/nfqws2-strategies');
   });
 
   it('keeps the panel structure and exposes the two settings subsections', () => {
@@ -1243,6 +1277,20 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('id="navBtn-trace"');
     expect(template).toContain('id="tabContent-trace"');
     expect(template).toContain('data-action-click="runSiteTrace"');
+  });
+
+  it('provides a compact community strategies page backed by the provider ASN and the Zemidala repository', () => {
+    expect(template).toContain('id="tabContent-community"');
+    expect(template).toContain('id="navBtn-community"');
+    expect(template).toContain('id="communityProviderAsn"');
+    expect(template).toContain('id="communityStrategiesList"');
+    expect(template).toContain('zemidala/nfqws2-strategies');
+    expect(appSource).toContain('strategyIncludeCommunity');
+    expect(panelSource).toContain('nfqwsCommunityStrategies.list(detect, force)');
+    expect(panelSource).toContain("dataset.actionClick = 'testCommunityStrategy'");
+    expect(backendSource).toContain('/api/community-strategies');
+    expect(backendSource).toContain('include_community');
+    expect(panelStyles).toContain('.community-strategy-row');
   });
 
   it('polls the router-side trace operation and exposes graceful stop', () => {

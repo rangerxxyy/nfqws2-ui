@@ -18,6 +18,7 @@ export type MultiSiteDomainResult = { host: string; eligible: boolean; baselineR
 export type MultiSiteCandidateResult = { candidate: StrategyPickResult['candidate']; openedDomains: number; domains: MultiSiteDomainResult[] };
 export type StrategyPickOperation = { id: string; host: string; hosts?: string[]; protocol: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'no_match' | 'site_unblocked' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: StrategyPickResult[]; multiSiteBaseline?: MultiSiteBaselineResult[]; multiSiteResults?: MultiSiteCandidateResult[]; message: string; updatedAt: number };
 export type StrategyPickPreview = { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickResult['candidate']; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
+export type FreezeProfileJoinPreview = { operationId: string; resultIndex: number; asn: number; profileIndex: number; profileName: string; listId: string; prefixCount: number; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
 export type FreezeStrategyMatch = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; reusedFrom: string | null };
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
 export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
@@ -26,7 +27,13 @@ export type ForeignConfigCheckOperation = { id: string; state: 'queued' | 'runni
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
 export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = string;
-export type NfqwsListSummary = { id: NfqwsListId; path: string; readable: boolean; writable: boolean };
+export type NfqwsListSummary = {
+  id: NfqwsListId;
+  path: string;
+  readable: boolean;
+  writable: boolean;
+  managedAsn?: { asn: number; prefixCount: number; lastAttemptDate: string | null; lastSuccessDate: string | null; lastError: string | null; paused: boolean; pending: boolean };
+};
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
 export type MonitoringProbeStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type MonitoringProbeReport = { host: string; summary: string; current: { status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null }; steps: MonitoringProbeStep[] };
@@ -78,7 +85,12 @@ export type NfqwsLuaStandardGroup = { name: string; arguments: string[] };
 export type NfqwsCliOptionInfo = { name: string; syntax: string; description: string; global: boolean; takesValue: boolean };
 export type NfqwsCliCatalog = { options: NfqwsCliOptionInfo[]; l7: string[]; payloads: string[]; full?: boolean };
 export type NfqwsLuaCatalogResponse = { functions: NfqwsLuaFunctionInfo[]; standardGroups: NfqwsLuaStandardGroup[]; cli?: NfqwsCliCatalog };
-export type ChangeHistoryEntry = { id: string; ts: number; version: string | null; reason: string; note: string; changedFiles: string[] };
+export type ChangeHistoryEntry = { id: string; batch?: string; undoOf?: string | null; ts: number; file: string; path: string; source: 'интерфейс' | 'вне интерфейса' | 'обновление пакета' | 'откат'; note: string; from: string | null; to: string | null; addedLines: number; removedLines: number };
+export type ChangeHistoryDiff = { from: string | null; to: string | null; current: string | null };
+export type ChangeHistoryOverview = { items: ChangeHistoryEntry[]; initialAt: number | null; canRestoreInitial: boolean; canUndoLast: boolean };
+export type CommunityTarget = { host?: string; asn?: number };
+export type CommunityStrategy = { id: string; asn: number; provider: string; proto: 'tls' | 'http'; steps: string[]; targets: CommunityTarget[]; reports: number; fails: number; lastFail: string; issues: number[]; first: string; last: string; nfqws2: string; name: string; fresh: boolean; skipped: boolean };
+export type CommunityStrategiesResponse = { asn: number | null; provider: string; fetchedAt: number | null; error: string | null; total: number | null; providers: number | null; items: CommunityStrategy[]; repo: string; page: string; mine: string | null };
 export type LogSource = 'nfqws2-ui' | 'nfqws2';
 export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: 'standard' | 'compact' | 'dense' | 'wide' | 'right' | 'top' | 'tiles' | 'simplified'; accent: 'blue' | 'cyan' | 'emerald' | 'amber' | 'rose' | 'violet'; statusBar: 'standard' | 'minimal' | 'compact' | 'stacked' | 'reverse'; remindWindowsTcpTimestamps: boolean };
 export type PanelAuthStatus = { enabled: boolean; hasPassword: boolean; authenticated: boolean; rememberDays: number };
@@ -180,7 +192,16 @@ export const nfqwsProfiles = {
 };
 
 export const nfqwsChangeHistory = {
-  list: () => api<{ items: ChangeHistoryEntry[] }>('/api/change-history'),
+  list: () => api<ChangeHistoryOverview>('/api/change-history'),
+  diff: (id: string) => api<ChangeHistoryDiff>(`/api/change-history/${encodeURIComponent(id)}/diff`),
+  revert: (id: string) => api<{ ok: boolean; message: string }>(`/api/change-history/${encodeURIComponent(id)}/revert`, { method: 'POST' }),
+  undoLast: () => api<{ ok: boolean; message: string }>('/api/change-history/undo-last', { method: 'POST' }),
+  restoreInitial: () => api<{ changed: string[]; message: string }>('/api/change-history/initial', { method: 'POST' }),
+};
+
+export const nfqwsCommunityStrategies = {
+  list: (detect = false, force = false) => api<CommunityStrategiesResponse>(`/api/community-strategies?detect=${detect}&force=${force}`),
+  setProvider: (asn: number | null, name: string) => api<{ asn: number | null; name: string }>('/api/community-strategies/provider', { method: 'POST', body: JSON.stringify({ asn, name }) }),
 };
 
 export const nfqwsLogs = {
@@ -236,14 +257,16 @@ export const nfqwsDiagnostics = {
   freezeScanStart: (extraHosts: string[], probeShortUploads = false) => api<FreezeScanOperation>('/api/nfqws2/diagnostics/freeze-scan', { method: 'POST', body: JSON.stringify({ extraHosts, probeShortUploads }) }),
   freezeScanStatus: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}`),
   freezeScanCancel: (id: string) => api<FreezeScanOperation>(`/api/nfqws2/diagnostics/freeze-scan/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
-  strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended' | 'full' | 'custom', repeats = 3, customSteps?: string[][], stopAfterFirstConfirmed = false, includeOtherHistory = false, refineLighter = false) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode, repeats, stopAfterFirstConfirmed, includeOtherHistory, refineLighter, ...(customSteps ? { customSteps } : {}) }) }),
-  strategyMultiStart: (hosts: string[], protocol: 'http' | 'https', repeats = 3, includeOtherHistory = true) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick/multi', { method: 'POST', body: JSON.stringify({ hosts, protocol, repeats, includeOtherHistory }) }),
+  strategyStart: (host: string, protocol: 'http' | 'https', mode: 'quick' | 'extended' | 'full' | 'custom', repeats = 3, customSteps?: string[][], stopAfterFirstConfirmed = false, includeOtherHistory = false, refineLighter = false, includeCommunity = false) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick', { method: 'POST', body: JSON.stringify({ host, protocol, mode, repeats, stopAfterFirstConfirmed, includeOtherHistory, refineLighter, includeCommunity, ...(customSteps ? { customSteps } : {}) }) }),
+  strategyMultiStart: (hosts: string[], protocol: 'http' | 'https', repeats = 3, includeOtherHistory = true, includeCommunity = false) => api<StrategyPickOperation>('/api/nfqws2/strategies/pick/multi', { method: 'POST', body: JSON.stringify({ hosts, protocol, repeats, includeOtherHistory, includeCommunity }) }),
   strategyStatus: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}`),
   strategyCancel: (id: string) => api<StrategyPickOperation>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
   strategyHistory: () => api<StrategyPickOperation[]>('/api/nfqws2/strategies/pick/history'),
   clearStrategyHistory: () => api<{ removed: number }>('/api/nfqws2/strategies/pick/history', { method: 'DELETE' }),
   strategyPreview: (id: string, candidateIndex: number) => api<StrategyPickPreview>(`/api/nfqws2/strategies/pick/operations/${encodeURIComponent(id)}/preview`, { method: 'POST', body: JSON.stringify({ candidateIndex }) }),
   freezeStrategyPreview: (id: string, resultIndex: number) => api<StrategyPickPreview>('/api/nfqws2/strategies/preview', { method: 'POST', body: JSON.stringify({ source: 'freezeScan', operationId: id, candidateIndex: resultIndex }) }),
+  freezeJoinPreview: (operationId: string, resultIndex: number) => api<FreezeProfileJoinPreview>('/api/nfqws2/diagnostics/freeze-scan/join-preview', { method: 'POST', body: JSON.stringify({ operationId, resultIndex }) }),
+  applyFreezeJoin: (operationId: string, resultIndex: number, expectedRevision: string) => api<{ config: ConfigResponse; message: string }>('/api/nfqws2/diagnostics/freeze-scan/join', { method: 'POST', body: JSON.stringify({ operationId, resultIndex, expectedRevision }) }),
   applyStrategy: (source: 'strategyPick' | 'freezeScan', operationId: string, candidateIndex: number, expectedRevision: string) => api<{ config: ConfigResponse; message: string }>('/api/nfqws2/strategies/apply', { method: 'POST', body: JSON.stringify({ source, operationId, candidateIndex, expectedRevision }) }),
   foreignConfigStart: (configs: { name: string; source: string; content?: string; url?: string }[], hosts: string[], repeats = 3) => api<ForeignConfigCheckOperation>('/api/nfqws2/diagnostics/config-check', { method: 'POST', body: JSON.stringify({ configs, hosts, repeats }) }),
   foreignConfigStatus: (id: string) => api<ForeignConfigCheckOperation>(`/api/nfqws2/diagnostics/config-check/operations/${encodeURIComponent(id)}`),

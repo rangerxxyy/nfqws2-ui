@@ -343,6 +343,7 @@ export default function App() {
                 <span className={"flex items-center gap-3"}><span className={"text-violet-300"}>⇄</span><span>Проверка конфигурации</span></span>
                 <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300"}>.conf</span>
               </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["community"])} id={"navBtn-community"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"flex items-center gap-3"}><span className={"text-teal-300"}>◎</span><span>Стратегии сообщества</span></span><span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-teal-500/15 text-teal-300"}>ASN</span></button>
               {"\n\n            "}
               {"\n            "}
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["monitor"])} id={"navBtn-monitor"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
@@ -403,7 +404,7 @@ export default function App() {
             {[['configuration', 'Конфигурация'], ['site-check', 'Проверка сайта'], ['tuning', 'Подбор'], ['monitoring', 'Мониторинг'], ['lists', 'Списки'], ['system', 'Система']].map(([group, label], index) => <button key={group} type={"button"} data-simplified-group={group} data-action-click={"switchSimplifiedNavGroup"} data-args={JSON.stringify([group])} aria-pressed={index === 0 ? "true" : "false"} className={"simplified-nav-button"}>{label}</button>)}
           </div>
           <div className={"simplified-nav-pages"} role={"group"} aria-label={"Страницы группы"}>
-            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['diagnostic16k', 'Диагностика 16 КБ'], ['configCheck', 'Проверка конфигурации'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
+            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['diagnostic16k', 'Диагностика 16 КБ'], ['configCheck', 'Проверка конфигурации'], ['community', 'Стратегии сообщества'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
           </div>
         </nav>
         {"\n\n      "}
@@ -800,6 +801,7 @@ export default function App() {
                 <span id={"currentListFilePath"} className={"font-mono text-xs px-3 py-1 rounded-lg bg-slate-950 text-sky-400 border border-slate-800"}>
                   {"Список не выбран"}
                 </span>
+                <span id={"listAutoUpdateStatus"} className={"hidden text-xs font-medium text-slate-400"} aria-live={"polite"}></span>
                 {"\n              "}
                 {"\n            "}
               </div>
@@ -1006,6 +1008,10 @@ export default function App() {
                     <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
                     <span>Стратегии из истории других сайтов</span>
                   </label>
+                  <label htmlFor={"strategyIncludeCommunity"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                    <input id={"strategyIncludeCommunity"} type={"checkbox"} className={"mt-0.5 accent-teal-500"} />
+                    <span>Добавить проверенные стратегии сообщества</span>
+                  </label>
                   <p className={"strategy-option-help"}>Подходящие варианты будут загружены из каталога и проверены отдельными запросами.</p>
                 </div>
               </div>
@@ -1148,6 +1154,12 @@ export default function App() {
               <p className={"text-xs font-medium text-slate-300"}>Профиль ограничен этим доменом. Перед применением проверьте diff; будет создана резервная копия, затем nfqws2 перезапустится.</p>
               <button id={"applyFreezeStrategyButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>Применить и перезапустить</button>
             </section>
+            <section id={"freezeJoinPreviewPanel"} className={"hidden rounded-2xl border border-emerald-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>
+              <div><h3 className={"text-sm font-bold text-white"}>Добавление ASN-сети в профиль</h3><p id={"freezeJoinPreviewSummary"} className={"mt-1 text-sm font-medium text-slate-200"}></p></div>
+              <div id={"freezeJoinPreviewDiff"} className={"max-h-72 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
+              <p className={"text-xs font-medium text-slate-300"}>Будет создан новый статический IP-список на основе RIPEstat и добавлена ссылка в выбранный профиль. Перед записью конфигурация проверяется и сохраняется резервная копия.</p>
+              <div className={"flex flex-wrap gap-2"}><button id={"applyFreezeJoinButton"} data-action-click={"applyFreezeJoin"} disabled className={"w-fit rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 disabled:cursor-wait disabled:opacity-60"}>Добавить и перезапустить</button><button data-action-click={"closeFreezeJoinPreview"} className={"rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-slate-500"}>Закрыть</button></div>
+            </section>
             <p className={"text-xs leading-relaxed text-slate-400"}>Проверки идут по очереди. Возможный сетевой обрыв не доказывает блокировку DPI; служба nfqws2 и домашний трафик не меняются.</p>
           </div>
         </section>
@@ -1255,6 +1267,16 @@ export default function App() {
             </div><p id={"aboutCopyStatus"} className={"mt-2 text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p><p className={"mt-3 text-xs text-slate-500"}><code>nfqws2-ui-ctl</code> — отдельная команда панели rangerxxyy; штатное управление nfqws2 не меняется.</p></div>
           </section>
         </section>
+        <section id={"tabContent-community"} className={"hidden view-animate space-y-3"}>
+          <div className={"flex flex-wrap items-end justify-between gap-2"}><div><h1 className={"text-lg font-bold text-white"}>Стратегии сообщества</h1><p className={"mt-0.5 text-xs text-slate-400"}>Подсказки для сети вашего провайдера из открытой базы Zemidala. Перед применением каждая стратегия проходит отдельную проверку на роутере.</p></div><a id={"communityDatabaseLink"} href={"https://github.com/zemidala/nfqws2-strategies"} target={"_blank"} rel={"noreferrer"} className={"text-xs font-medium text-blue-300 hover:text-blue-200"}>База сообщества ↗</a></div>
+          <section className={"ui-card rounded-xl p-3 sm:p-4"}>
+            <div className={"flex flex-wrap items-center justify-between gap-2"}><div><p className={"text-xs text-slate-400"}>Ваш провайдер</p><p id={"communityProviderSummary"} className={"mt-0.5 text-sm font-semibold text-slate-100"}>Провайдер не выбран</p></div><div className={"flex flex-wrap gap-1.5"}><button type={"button"} data-action-click={"detectCommunityProvider"} className={"backup-action"}>Определить автоматически</button><button type={"button"} data-action-click={"refreshCommunityStrategies"} className={"backup-action"}>Обновить</button></div></div>
+            <div className={"mt-2 grid gap-2 sm:grid-cols-[9rem_minmax(0,1fr)_auto]"}><label className={"text-[11px] text-slate-400"}>ASN<input id={"communityProviderAsn"} inputMode={"numeric"} placeholder={"например, 12389"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100"} /></label><label className={"text-[11px] text-slate-400"}>Название провайдера<input id={"communityProviderName"} maxLength={120} placeholder={"необязательно"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100"} /></label><button type={"button"} data-action-click={"saveCommunityProvider"} className={"backup-action self-end"}>Сохранить</button></div>
+            <p id={"communityDatabaseSummary"} className={"mt-2 text-[11px] text-slate-500"} role={"status"} aria-live={"polite"}>База будет загружена при открытии раздела.</p><p id={"communityDatabaseError"} className={"hidden mt-1 text-xs text-amber-300"} role={"status"} aria-live={"polite"}></p>
+          </section>
+          <label className={"block max-w-md text-[11px] text-slate-400"}>Сайт для проверки, если в стратегии нет целевого домена<input id={"communityTestHost"} autoCapitalize={"none"} spellCheck={false} placeholder={"example.com"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-slate-100"} /></label>
+          <div id={"communityStrategiesList"} className={"grid gap-2"}></div>
+        </section>
         <section id={"tabContent-profiles"} className={"hidden view-animate space-y-4"}>
           <div className={"flex flex-wrap items-center justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Конструктор стратегий</h1><p className={"mt-1 text-sm text-slate-400"}>Настройка профилей nfqws2 из раздела конфигурации.</p></div><div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"pasteRuntimeProfile"} className={"backup-action"}>Вставить чужой</button><button type={"button"} data-action-click={"addRuntimeProfile"} className={"backup-action"}>＋ Свой профиль</button><button type={"button"} data-action-click={"saveRuntimeProfiles"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Применить изменения</button></div></div>
           <section className={"ui-card max-w-[90rem] rounded-xl p-3 sm:p-4"}>
@@ -1274,8 +1296,19 @@ export default function App() {
           </section>
         </section>
         <section id={"tabContent-changes"} className={"hidden view-animate space-y-4"}>
-          <div><h1 className={"text-xl font-bold text-white"}>Журнал изменений</h1><p className={"mt-1 text-sm text-slate-400"}>История сравнивает отпечатки файлов в сохранённых снимках конфигурации и списков.</p></div>
-          <section className={"ui-card max-w-5xl rounded-xl p-4 sm:p-5"}><div className={"flex flex-wrap gap-2"}><input id={"changeHistorySearch"} type={"search"} placeholder={"Фильтр по подписи или файлу"} className={"min-w-[14rem] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} data-action-input={"filterChangeHistory"} /><button type={"button"} data-action-click={"refreshChangeHistory"} className={"backup-action"}>Обновить</button></div><p id={"changeHistoryStatus"} className={"my-3 text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p><div id={"changeHistoryList"} className={"grid gap-2"}></div></section>
+          <div className={"flex flex-wrap items-center justify-between gap-2"}>
+            <div><h1 className={"text-xl font-bold text-white"}>История изменений</h1><p className={"mt-0.5 text-xs text-slate-400"}>Конфигурация и списки · в том числе изменения вне панели</p></div>
+            <div className={"flex flex-wrap gap-1.5"}>
+              <button id={"changeHistoryUndoLast"} type={"button"} disabled={true} data-action-click={"requestUndoLastChange"} className={"backup-action"}>↶ Отменить последнее</button>
+              <button id={"changeHistoryRestoreInitial"} type={"button"} disabled={true} data-action-click={"requestRestoreInitialHistory"} className={"backup-action"}>⟲ Вернуть как при установке</button>
+              <button type={"button"} data-action-click={"refreshChangeHistory"} className={"backup-action"} aria-label={"Обновить историю"} title={"Обновить"}>↻</button>
+            </div>
+          </div>
+          <section className={"ui-card max-w-5xl rounded-xl p-3 sm:p-4"}>
+            <div className={"flex flex-wrap gap-2"}><input id={"changeHistorySearch"} type={"search"} placeholder={"Фильтр по файлу или подписи"} className={"min-w-[14rem] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} data-action-input={"filterChangeHistory"} /></div>
+            <p id={"changeHistoryStatus"} className={"my-2 text-xs text-slate-400"} role={"status"} aria-live={"polite"}></p>
+            <div id={"changeHistoryList"} className={"grid gap-1"}></div>
+          </section>
         </section>
         <section id={"tabContent-logs"} className={"hidden view-animate space-y-4"}>
           <div><h1 className={"text-xl font-bold text-white"}>Журнал</h1><p className={"mt-1 text-sm text-slate-400"}>Логи читает backend на роутере ограниченным хвостом. Автообновление можно приостановить, пока вы читаете журнал.</p></div>
@@ -1462,6 +1495,17 @@ export default function App() {
         <h3 id={"operationConfirmTitle"} className={"text-base font-bold text-white"}>Подтвердите действие</h3>
         <p id={"operationConfirmMessage"} className={"mt-2 text-sm leading-6 text-slate-300 whitespace-pre-wrap"}></p>
         <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelOperationConfirmation"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"confirmOperationConfirmation"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Продолжить</button></div>
+      </section>
+    </div>
+    <div id={"communityShareModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[82] hidden items-center justify-center p-4"}>
+      <section className={"w-full max-w-xl rounded-xl border border-slate-700 bg-[#0b101b] p-4 shadow-2xl"} role={"dialog"} aria-modal={"true"} aria-labelledby={"communityShareTitle"}>
+        <h3 id={"communityShareTitle"} className={"text-base font-bold text-white"}>Поделиться проверенной стратегией</h3>
+        <p className={"mt-1 text-xs leading-5 text-slate-400"}>Откроется заполненная публичная форма GitHub. Проверьте данные и отправьте её самостоятельно. IP-адрес роутера не передаётся.</p>
+        <div className={"mt-3 grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)]"}><label className={"text-[11px] text-slate-400"}>ASN провайдера<input id={"communityShareAsn"} inputMode={"numeric"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"} /></label><label className={"text-[11px] text-slate-400"}>Провайдер<input id={"communityShareProvider"} maxLength={120} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"} /></label></div>
+        <label className={"mt-2 block text-[11px] text-slate-400"}>Сайт, на котором стратегия проверена<input id={"communityShareHost"} className={"mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-2 py-1.5 text-sm text-slate-100"} /></label>
+        <pre id={"communitySharePreview"} className={"mt-3 max-h-40 overflow-auto rounded-lg border border-slate-800 bg-slate-950 p-2.5 font-mono text-[11px] leading-4 text-slate-300 whitespace-pre-wrap break-all"}></pre>
+        <p id={"communityShareStatus"} className={"mt-1 text-[11px] text-amber-300"} role={"status"} aria-live={"polite"}></p>
+        <div className={"mt-3 flex justify-end gap-2"}><button type={"button"} data-action-click={"closeCommunityShare"} className={"backup-action"}>Отмена</button><button type={"button"} data-action-click={"submitCommunityShare"} className={"rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500"}>Открыть форму GitHub</button></div>
       </section>
     </div>
     <div id={"profileImportDialog"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[75] hidden items-center justify-center p-4"}>

@@ -233,6 +233,7 @@ function installOne(select: HTMLSelectElement) {
   if (select.classList.contains('profile-function-select')) trigger.dataset.profileFunctionPicker = 'true';
   const menu = document.createElement('div');
   menu.className = 'styled-select-menu';
+  if (select.classList.contains('profile-function-select')) menu.dataset.profileFunctionPicker = 'true';
   menu.id = `${trigger.id}-listbox`;
   menu.setAttribute('role', 'listbox');
   menu.hidden = true;

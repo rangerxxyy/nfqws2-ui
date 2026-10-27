@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
   it('notifies the app when an authenticated API request returns 401', async () => {
@@ -84,6 +84,20 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe(`/api/nfqws2/diagnostics/freeze-scan/operations/${started.id}/cancel`);
   });
 
+  it('previews and confirms adding an ASN IP list to a compatible profile', async () => {
+    const preview = { operationId: '0123456789abcdef0123456789abcdef', resultIndex: 0, asn: 15169, profileIndex: 2, profileName: 'Домашний IP', listId: 'ipset_as15169.list', prefixCount: 42, originalRevision: 'rev-a', originalContent: 'old config', proposedContent: 'new config', summary: 'preview' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ config: { file: 'nfqws2.conf', content: 'new config', revision: 'rev-b' }, message: 'applied' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsDiagnostics.freezeJoinPreview(preview.operationId, preview.resultIndex)).resolves.toEqual(preview);
+    await nfqwsDiagnostics.applyFreezeJoin(preview.operationId, preview.resultIndex, preview.originalRevision);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/freeze-scan/join-preview');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ operationId: preview.operationId, resultIndex: 0 });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/nfqws2/diagnostics/freeze-scan/join');
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ operationId: preview.operationId, resultIndex: 0, expectedRevision: 'rev-a' });
+  });
+
   it('starts, polls and stops a background router-side site trace through Rust', async () => {
     const operation = { id: '0123456789abcdef0123456789abcdef', state: 'queued', stage: 'queued', message: 'Трассировка поставлена в очередь', report: null, updatedAt: 100 };
     const fetchMock = vi.fn()
@@ -114,16 +128,28 @@ describe('API client used by the source-based panel', () => {
     expect(await nfqwsDiagnostics.strategyStatus(started.id)).toMatchObject({ state: 'running', current: 'multisplit' });
     expect(await nfqwsDiagnostics.strategyCancel(started.id)).toMatchObject({ state: 'stopping' });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeOtherHistory: true, refineLighter: true, customSteps: [['--lua-desync=multisplit:pos=1']] });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com', protocol: 'https', mode: 'custom', repeats: 4, stopAfterFirstConfirmed: true, includeOtherHistory: true, refineLighter: true, includeCommunity: false, customSteps: [['--lua-desync=multisplit:pos=1']] });
+  });
+
+  it('loads and stores provider-specific community strategy settings', async () => {
+    const response = { asn: 12389, provider: 'ISP', fetchedAt: 100, error: null, total: 15, providers: 11, items: [], repo: 'https://github.com/zemidala/nfqws2-strategies', page: 'page', mine: 'mine' };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"asn":12389,"name":"ISP"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsCommunityStrategies.list()).resolves.toEqual(response);
+    await expect(nfqwsCommunityStrategies.setProvider(12389, 'ISP')).resolves.toEqual({ asn: 12389, name: 'ISP' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/community-strategies?detect=false&force=false');
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ asn: 12389, name: 'ISP' });
   });
 
   it('starts a shared strategy pick for a bounded list of sites', async () => {
     const queued = { id: '0123456789abcdef0123456789abcdef', host: 'one.example, two.example', hosts: ['one.example', 'two.example'], protocol: 'https', state: 'queued', stage: 'queued', current: null, done: 0, total: 12, results: [], multiSiteBaseline: [], multiSiteResults: [], message: 'queued', updatedAt: 100 };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(queued), { status: 202 }));
     vi.stubGlobal('fetch', fetchMock);
-    await expect(nfqwsDiagnostics.strategyMultiStart(['one.example', 'two.example'], 'https', 4, true)).resolves.toMatchObject({ hosts: ['one.example', 'two.example'] });
+    await expect(nfqwsDiagnostics.strategyMultiStart(['one.example', 'two.example'], 'https', 4, true, true)).resolves.toMatchObject({ hosts: ['one.example', 'two.example'] });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/multi');
-    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ hosts: ['one.example', 'two.example'], protocol: 'https', repeats: 4, includeOtherHistory: true });
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ hosts: ['one.example', 'two.example'], protocol: 'https', repeats: 4, includeOtherHistory: true, includeCommunity: true });
   });
 
   it('starts, polls, and cancels a foreign configuration comparison', async () => {
@@ -165,6 +191,30 @@ describe('API client used by the source-based panel', () => {
     await expect(nfqwsDiagnostics.clearStrategyHistory()).resolves.toEqual({ removed: 3 });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/strategies/pick/history');
     expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('DELETE');
+  });
+
+  it('loads change-history entries with diffs and invokes backend rollback actions', async () => {
+    const entry = { id: 'event-1', ts: 100, file: 'nfqws2.conf', path: '/opt/etc/nfqws2/nfqws2.conf', source: 'интерфейс', note: 'сохранение', from: 'old', to: 'new', addedLines: 1, removedLines: 0 };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [entry], initialAt: 50, canRestoreInitial: true, canUndoLast: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ from: 'old', to: 'new', current: 'new' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"ok":true,"message":"rolled back"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"ok":true,"message":"undone"}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"ok":true,"message":"initial"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await nfqwsChangeHistory.list()).toMatchObject({ items: [entry], canRestoreInitial: true, canUndoLast: true });
+    expect(await nfqwsChangeHistory.diff(entry.id)).toEqual({ from: 'old', to: 'new', current: 'new' });
+    await nfqwsChangeHistory.revert(entry.id);
+    await nfqwsChangeHistory.undoLast();
+    await nfqwsChangeHistory.restoreInitial();
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      '/api/change-history',
+      '/api/change-history/event-1/diff',
+      '/api/change-history/event-1/revert',
+      '/api/change-history/undo-last',
+      '/api/change-history/initial',
+    ]);
+    expect(fetchMock.mock.calls.slice(2).map(([, init]) => (init as RequestInit).method)).toEqual(['POST', 'POST', 'POST']);
   });
 
   it('requests a backend-generated strategy preview by persisted operation and candidate index', async () => {
@@ -321,7 +371,7 @@ describe('API client used by the source-based panel', () => {
       .mockResolvedValueOnce(new Response('{"profiles":[{"id":"custom-1","index":1,"name":"Свой профиль 1","source":"NFQWS_ARGS_CUSTOM","editable":true,"args":["--filter-tcp=443"],"filters":["--filter-tcp=443"],"protocols":[],"payloads":[],"lists":[],"steps":[]}],"customArgs":"--filter-tcp=443","revision":"rev"}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"config":{"file":"/opt/etc/nfqws2/nfqws2.conf","content":"NFQWS_ARGS_CUSTOM=\\\"--filter-tcp=80\\\"\\n","revision":"next"},"message":"Профили применены"}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"deleted":true}', { status: 200 }))
-      .mockResolvedValueOnce(new Response('{"items":[{"id":"snap-1","ts":2,"version":"1.1.0","reason":"apply","note":"","changedFiles":["nfqws2.conf"]}]}', { status: 200 }))
+      .mockResolvedValueOnce(new Response('{"items":[{"id":"event-1","ts":2,"file":"nfqws2.conf","path":"/opt/etc/nfqws2/nfqws2.conf","source":"интерфейс","note":"apply","from":"old","to":"new","addedLines":1,"removedLines":0}],"initialAt":1,"canRestoreInitial":true,"canUndoLast":true}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"content":"line"}', { status: 200 }))
       .mockResolvedValueOnce(new Response('{"cleared":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -338,7 +388,7 @@ describe('API client used by the source-based panel', () => {
     await nfqwsLogs.clear('nfqws2-ui');
     expect(listed.profiles[0]?.editable).toBe(true);
     expect(saved.message).toBe('Профили применены');
-    expect(history.items[0]?.version).toBe('1.1.0');
+    expect(history.items[0]?.file).toBe('nfqws2.conf');
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       '/api/profiles', '/api/profiles', '/api/snapshots/snap-1', '/api/change-history', '/api/logs?source=nfqws2-ui&tail=20', '/api/logs/clear',
     ]);

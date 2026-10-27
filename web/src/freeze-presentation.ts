@@ -27,3 +27,18 @@ export function freezeCanApplyToHost(input: {
     && input.foundStrategy.attempts >= 3
     && input.foundStrategy.successes >= 3;
 }
+
+export function freezeCanOfferProfileJoin(input: {
+  targetKind: string;
+  asnVerified: boolean;
+  freezeDetected: boolean;
+  foundStrategy: { attempts: number; successes: number; reusedFrom?: string | null } | null;
+}): boolean {
+  return input.targetKind === 'user_host'
+    && input.asnVerified
+    && input.freezeDetected
+    && input.foundStrategy !== null
+    && input.foundStrategy.reusedFrom == null
+    && input.foundStrategy.attempts >= 3
+    && input.foundStrategy.successes >= 3;
+}

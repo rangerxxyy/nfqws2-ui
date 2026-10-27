@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { freezeMeasurementDetails, freezeRowPresentation, freezeCanApplyToHost } from './freeze-presentation';
+import { freezeMeasurementDetails, freezeRowPresentation, freezeCanApplyToHost, freezeCanOfferProfileJoin } from './freeze-presentation';
 
 describe('freeze scan row presentation', () => {
   it('keeps direct and nfqws2 measurements available in one compact disclosure', () => {
@@ -31,5 +31,14 @@ describe('freeze scan row presentation', () => {
     expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3, reusedFrom: 'other.example' } })).toBe(false);
     expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'pinned_address', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(false);
     expect(freezeCanApplyToHost({ state: 'partial', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 2 } })).toBe(false);
+  });
+
+  it('offers ASN profile joining only for a verified user-host freeze result with a fresh confirmed strategy', () => {
+    expect(freezeCanOfferProfileJoin({ targetKind: 'user_host', asnVerified: true, freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(true);
+    expect(freezeCanOfferProfileJoin({ targetKind: 'host_reference', asnVerified: true, freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(false);
+    expect(freezeCanOfferProfileJoin({ targetKind: 'user_host', asnVerified: false, freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 } })).toBe(false);
+    expect(freezeCanOfferProfileJoin({ targetKind: 'user_host', asnVerified: true, freezeDetected: false, foundStrategy: { attempts: 3, successes: 3 } })).toBe(false);
+    expect(freezeCanOfferProfileJoin({ targetKind: 'user_host', asnVerified: true, freezeDetected: true, foundStrategy: { attempts: 3, successes: 2 } })).toBe(false);
+    expect(freezeCanOfferProfileJoin({ targetKind: 'user_host', asnVerified: true, freezeDetected: true, foundStrategy: { attempts: 3, successes: 3, reusedFrom: 'other.example' } })).toBe(false);
   });
 });

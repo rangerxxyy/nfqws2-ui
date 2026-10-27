@@ -2,7 +2,7 @@ import { diagnosisRows } from './diagnosis-layout';
 import { parseCustomStrategies } from './custom-strategy-input';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
-import { freezeCanApplyToHost, freezeMeasurementDetails, freezeRowPresentation } from './freeze-presentation';
+import { freezeCanApplyToHost, freezeCanOfferProfileJoin, freezeMeasurementDetails, freezeRowPresentation } from './freeze-presentation';
 import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
@@ -11,7 +11,7 @@ import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, 
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -33,7 +33,7 @@ import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSetting
 import { navigationGroupForRoute } from './navigation';
 import { isValidNetworkInterfaceName } from './network-interface';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['supportReport'] as const;
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
@@ -63,6 +63,9 @@ let activeTraceOperationId: string | null = null;
 let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
 let strategyTargetMode: 'single' | 'multi' = 'single';
+let communityStrategies: CommunityStrategiesResponse | null = null;
+let communityLoading = false;
+let pendingCommunityShare: { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickOperation['results'][number] } | null = null;
 let configScrollFramePending = false;
 type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
 let foreignConfigInputs: ForeignConfigInput[] = [];
@@ -73,6 +76,7 @@ let activeFreezeScanId: string | null = null;
 const freezeStrategyApplyPending = new Set<string>();
 const freezeStrategyApplyDone = new Set<string>();
 let activeStrategyPreview: { source: 'strategyPick' | 'freezeScan'; operationId: string; candidateIndex: number; revision: string; panel: 'autotune' | 'freeze' } | null = null;
+let activeFreezeJoinPreview: FreezeProfileJoinPreview | null = null;
 let restartInProgress = false;
 let availableReleases: PanelRelease[] = [];
 let selectedReleaseTag: string | null = null;
@@ -301,10 +305,157 @@ function showRoute(route: Route) {
   syncNavigationLayout(route);
   if (route === 'lists') void loadList(activeListId);
   if (route === 'profiles') void loadProfiles();
+  if (route === 'community') void loadCommunityStrategies(false, false);
   if (route === 'snapshots') void loadBackups();
   if (route === 'changes') void loadChangeHistory();
   if (route === 'logs') { void loadLogs(); startLogPolling(); } else stopLogPolling();
   if (route === 'about') void loadAboutStatus();
+}
+
+function renderCommunityStrategies(data: CommunityStrategiesResponse) {
+  const provider = $('#communityProviderSummary');
+  if (provider) provider.textContent = data.asn ? `AS${data.asn}${data.provider ? ` · ${data.provider}` : ''}` : 'Провайдер не выбран';
+  const asnInput = $('#communityProviderAsn');
+  const nameInput = $('#communityProviderName');
+  if (asnInput instanceof HTMLInputElement) asnInput.value = data.asn ? String(data.asn) : '';
+  if (nameInput instanceof HTMLInputElement) nameInput.value = data.provider;
+  const summary = $('#communityDatabaseSummary');
+  if (summary) summary.textContent = `${data.total ?? '—'} стратегий · ${data.providers ?? '—'} провайдеров${data.fetchedAt ? ` · база обновлена ${new Date(data.fetchedAt * 1000).toLocaleString()}` : ''}`;
+  const error = $('#communityDatabaseError');
+  if (error) { error.textContent = data.error ?? ''; error.classList.toggle('hidden', !data.error); }
+  const host = $('#communityStrategiesList');
+  if (!host) return;
+  host.replaceChildren();
+  const groups = [
+    { proto: 'tls', title: 'HTTPS / TLS' },
+    { proto: 'http', title: 'HTTP' },
+  ] as const;
+  for (const group of groups) {
+    const items = data.items.filter((item) => item.proto === group.proto);
+    const section = document.createElement('section'); section.className = 'community-protocol-group';
+    const title = document.createElement('h2'); title.className = 'community-protocol-title'; title.textContent = `${group.title} · ${items.length}`; section.append(title);
+    if (!items.length) { const empty = document.createElement('p'); empty.className = 'community-empty'; empty.textContent = data.asn ? 'Для этого провайдера пока нет стратегий.' : 'Определите или укажите ASN провайдера.'; section.append(empty); }
+    for (const item of items) {
+      const row = document.createElement('article'); row.className = 'community-strategy-row';
+      const details = document.createElement('div'); details.className = 'community-strategy-details';
+      const name = document.createElement('strong'); name.className = 'community-strategy-name'; name.textContent = item.name || item.steps.map((step) => step.replace('--lua-desync=', '').split(':')[0]).join(' + ');
+      const meta = document.createElement('p'); meta.className = 'community-strategy-meta';
+      const targets = item.targets.slice(0, 6).map((target) => [target.host, target.asn ? `AS${target.asn}` : ''].filter(Boolean).join(' · ')).filter(Boolean);
+      meta.textContent = `${targets.length ? targets.join(' · ') : 'сайт не указан'} · подтверждений ${item.reports} · не сработала ${item.fails}${item.last ? ` · проверена ${item.last}` : ''}`;
+      details.append(name, meta);
+      const code = document.createElement('code'); code.className = 'community-strategy-code'; code.textContent = item.steps.join('\n'); details.append(code);
+      const actions = document.createElement('div'); actions.className = 'community-strategy-actions';
+      const test = document.createElement('button'); test.type = 'button'; test.className = 'backup-action'; test.dataset.actionClick = 'testCommunityStrategy'; test.dataset.args = JSON.stringify([item.id]); test.textContent = 'Проверить';
+      const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'backup-action'; copy.dataset.actionClick = 'copyCommunityStrategy'; copy.dataset.args = JSON.stringify([item.id]); copy.textContent = 'Копировать';
+      actions.append(test, copy); row.append(details, actions); section.append(row);
+    }
+    host.append(section);
+  }
+}
+
+async function loadCommunityStrategies(detect = false, force = false) {
+  if (communityLoading) return;
+  communityLoading = true;
+  const refresh = $('[data-action-click="refreshCommunityStrategies"]');
+  if (refresh instanceof HTMLButtonElement) { refresh.disabled = true; refresh.textContent = 'Обновление…'; }
+  setText('#communityDatabaseError', '');
+  setText('#communityDatabaseSummary', detect ? 'Определяю ASN и загружаю базу…' : 'Загружаю базу…');
+  try { communityStrategies = await nfqwsCommunityStrategies.list(detect, force); renderCommunityStrategies(communityStrategies); }
+  catch (error) { setText('#communityDatabaseError', error instanceof Error ? error.message : 'Не удалось загрузить стратегии сообщества.'); $('#communityDatabaseError')?.classList.remove('hidden'); }
+  finally { communityLoading = false; if (refresh instanceof HTMLButtonElement) { refresh.disabled = false; refresh.textContent = 'Обновить'; } }
+}
+
+async function saveCommunityProvider() {
+  const asn = $('#communityProviderAsn'); const name = $('#communityProviderName');
+  if (!(asn instanceof HTMLInputElement) || !(name instanceof HTMLInputElement)) return;
+  const parsed = asn.value.trim() ? Number(asn.value.trim()) : null;
+  if (parsed !== null && (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 4_294_967_295)) return toast('Укажите корректный номер ASN.', 'error');
+  try { await nfqwsCommunityStrategies.setProvider(parsed, name.value.trim()); await loadCommunityStrategies(false, true); toast('Провайдер сохранён.'); }
+  catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить провайдера.', 'error'); }
+}
+
+function findCommunityStrategy(id: string) { return communityStrategies?.items.find((item) => item.id === id); }
+async function testCommunityStrategy(id: string) {
+  const item = findCommunityStrategy(id); if (!item) return toast('Стратегия больше не доступна. Обновите список.', 'error');
+  const target = item.targets.find((candidate) => candidate.host)?.host;
+  const host = $<HTMLInputElement>('#communityTestHost')?.value.trim() || target;
+  if (!host) return toast('Введите домен для проверки этой стратегии.', 'error');
+  const input = $('#scanCustomHost'); const protocol = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect'); const custom = $('#strategyCustomSteps'); const repeats = $('#strategyRepeatsSelect');
+  if (input instanceof HTMLInputElement) input.value = host;
+  if (protocol instanceof HTMLSelectElement) protocol.value = item.proto === 'http' ? 'http' : 'https';
+  if (mode instanceof HTMLSelectElement) { mode.value = 'custom'; mode.dispatchEvent(new Event('change', { bubbles: true })); }
+  if (custom instanceof HTMLTextAreaElement) custom.value = item.steps.join(' ');
+  if (repeats instanceof HTMLSelectElement) repeats.value = '3';
+  strategyTargetMode = 'single';
+  setStrategyTargetMode('single');
+  showRoute('autotune');
+  await startStrategyPick();
+}
+async function copyCommunityStrategy(id: string) {
+  const item = findCommunityStrategy(id); if (!item) return;
+  try { await navigator.clipboard.writeText(item.steps.join('\n')); toast('Стратегия скопирована.'); }
+  catch { toast('Буфер обмена недоступен.', 'error'); }
+}
+
+async function openCommunityShare(operationId: string, candidateIndex: number) {
+  try {
+    const operation = await nfqwsDiagnostics.strategyStatus(operationId);
+    const candidate = operation.results[candidateIndex];
+    if (!candidate || (!candidate.confirmed && !candidate.candidate.source.includes('Стратегии сообщества'))) return toast('Публиковать можно только подтверждённую стратегию или результат теста стратегии сообщества.', 'error');
+    if (operation.hosts && operation.hosts.length > 1) return toast('Общий результат для нескольких сайтов нельзя отправить как проверку одного сайта.', 'error');
+    pendingCommunityShare = { operationId, candidateIndex, host: operation.host, protocol: operation.protocol === 'http' ? 'http' : 'https', candidate };
+    let provider = communityStrategies;
+    if (!provider?.asn) {
+      try { provider = await nfqwsCommunityStrategies.list(true, false); communityStrategies = provider; }
+      catch { /* Provider fields remain editable in the share form. */ }
+    }
+    const asn = $('#communityShareAsn'); const name = $('#communityShareProvider'); const host = $('#communityShareHost');
+    if (asn instanceof HTMLInputElement) asn.value = provider?.asn ? String(provider.asn) : '';
+    if (name instanceof HTMLInputElement) name.value = provider?.provider ?? '';
+    if (host instanceof HTMLInputElement) host.value = operation.host;
+    const dialog = $('#communityShareModal');
+    renderCommunitySharePreview();
+    for (const field of ['#communityShareAsn', '#communityShareProvider', '#communityShareHost']) {
+      $(field)?.addEventListener('input', renderCommunitySharePreview);
+    }
+    setText('#communityShareStatus', 'Публичный issue содержит выбранные ниже ASN, провайдера, сайт, протокол и параметры стратегии. IP не передаётся.');
+    if (dialog) openAppModal(dialog, '#communityShareAsn');
+  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить результат проверки.', 'error'); }
+}
+
+function renderCommunitySharePreview() {
+  if (!pendingCommunityShare) return;
+  const asn = $<HTMLInputElement>('#communityShareAsn')?.value.trim() || '—';
+  const provider = $<HTMLInputElement>('#communityShareProvider')?.value.trim() || '';
+  const host = $<HTMLInputElement>('#communityShareHost')?.value.trim() || 'не указан';
+  const candidate = pendingCommunityShare.candidate;
+  const proto = pendingCommunityShare.protocol === 'http' ? 'http' : 'tls';
+  const preview = $('#communitySharePreview');
+  if (preview) preview.textContent = [`Провайдер: AS${asn}${provider ? ` · ${provider}` : ''}`, `Протокол: ${proto}`, `Сайт: ${host}`, `Результат: ${candidate.successes}/${candidate.attempts}`, '', ...candidate.candidate.steps].join('\n');
+}
+
+function submitCommunityShare() {
+  if (!pendingCommunityShare) return;
+  const asn = $('#communityShareAsn'); const provider = $('#communityShareProvider'); const host = $('#communityShareHost');
+  if (!(asn instanceof HTMLInputElement) || !(provider instanceof HTMLInputElement) || !(host instanceof HTMLInputElement)) return;
+  const asnValue = asn.value.trim().replace(/^AS/i, '');
+  if (!/^\d{1,10}$/.test(asnValue) || Number(asnValue) < 1 || Number(asnValue) > 4_294_967_295) { setText('#communityShareStatus', 'Укажите корректный ASN провайдера.'); asn.focus(); return; }
+  const share = pendingCommunityShare;
+  const candidate = share.candidate;
+  const proto = share.protocol === 'http' ? 'http' : 'tls';
+  const outcome = candidate.confirmed ? 'works' : 'fails';
+  const tries = candidate.confirmed ? candidate.attempts : Math.max(candidate.attempts, candidate.successes + 1);
+  const query = new URLSearchParams({
+    template: 'strategy.yml',
+    title: `${outcome === 'fails' ? 'Не сработала' : candidate.candidate.source.includes('Стратегии сообщества') ? 'Подтверждаю' : 'Новая стратегия'} · AS${asnValue} · ${proto} · ${host.value.trim() || candidate.candidate.name}`,
+    outcome, asn: asnValue, provider: provider.value.trim(), proto,
+    target_host: host.value.trim(), target_asn: '', strategy: candidate.candidate.steps.join('\n'),
+    result: `${candidate.successes}/${tries}`, nfqws2: status?.service.version ?? '', ui: status?.panel.version ?? '',
+  });
+  void nfqwsCommunityStrategies.setProvider(Number(asnValue), provider.value.trim()).catch(() => {});
+  window.open(`https://github.com/zemidala/nfqws2-strategies/issues/new?${query.toString()}`, '_blank', 'noopener,noreferrer');
+  const modal = $('#communityShareModal'); if (modal) closeAppModal(modal);
+  pendingCommunityShare = null;
 }
 let snapshotOverview: SnapshotOverview | null = null;
 let logPollingTimer: number | null = null;
@@ -342,6 +493,7 @@ function closeAppModalRoot(root: HTMLElement) {
     case 'profileImportDialog': cancelProfileImport(); break;
     case 'updateModalBackdrop': closeUpdateModal(); break;
     case 'diffModalBackdrop': closeAppModal(root); break;
+    case 'communityShareModal': closeAppModal(root); pendingCommunityShare = null; break;
   }
 }
 function trapAppModalFocus(event: KeyboardEvent) {
@@ -365,6 +517,7 @@ function closeAppModalOnBackdrop(event: MouseEvent) {
   if (root?.dataset.modalOpen === 'true') closeAppModalRoot(root);
 }
 let changeHistoryCache: ChangeHistoryEntry[] = [];
+let changeHistoryCanRestoreInitial = false;
 let runtimeProfilesState: NfqwsProfilesResponse | null = null;
 let runtimeProfileLuaCatalog: NfqwsLuaFunctionInfo[] = [];
 let runtimeProfileLuaStandardGroups: NfqwsLuaStandardGroup[] = [];
@@ -1252,25 +1405,116 @@ async function confirmDangerousOperation() {
 }
 async function loadChangeHistory(query = '') {
   const host = $('#changeHistoryList'); if (!host) return;
-  const status = $('#changeHistoryStatus'); if (status) status.textContent = 'Загружаем историю снимков…';
+  const status = $('#changeHistoryStatus'); if (status) status.textContent = 'Загружаем историю…';
   try {
-    changeHistoryCache = (await nfqwsChangeHistory.list()).items;
+    const result = await nfqwsChangeHistory.list();
+    changeHistoryCache = result.items;
+    changeHistoryCanRestoreInitial = result.canRestoreInitial;
+    const initial = $('#changeHistoryRestoreInitial');
+    if (initial instanceof HTMLButtonElement) initial.disabled = !result.canRestoreInitial;
+    const undo = $('#changeHistoryUndoLast');
+    if (undo instanceof HTMLButtonElement) undo.disabled = !result.canUndoLast;
     renderChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? query);
   } catch (error) { if (status) status.textContent = error instanceof Error ? error.message : 'Не удалось загрузить журнал изменений.'; }
 }
 function renderChangeHistory(query = '') {
   const host = $('#changeHistoryList'); if (!host) return;
   const needle = query.trim().toLocaleLowerCase();
-  const visible = changeHistoryCache.filter((item) => !needle || [item.version ?? '', item.reason, item.note, ...item.changedFiles].join(' ').toLocaleLowerCase().includes(needle));
+  const visible = changeHistoryCache.filter((item) => !needle || [item.file, item.source, item.note, item.path].join(' ').toLocaleLowerCase().includes(needle));
   host.replaceChildren();
-  for (const item of visible) {
-    const row = document.createElement('article'); row.className = 'backup-row';
-    const title = document.createElement('strong'); title.className = 'block text-sm text-white'; title.textContent = item.note || snapshotReason(item.reason);
-    const meta = document.createElement('span'); meta.className = 'mt-1 block text-xs text-slate-400'; meta.textContent = `${new Date(item.ts * 1000).toLocaleString()} · ${item.version ? `версия UI ${item.version}` : 'версия UI не указана'} · снимок ${item.id}`;
-    const files = document.createElement('p'); files.className = 'mt-2 break-all text-xs text-slate-300'; files.textContent = item.changedFiles.length ? `Изменено: ${item.changedFiles.join(', ')}` : 'Нет предыдущего снимка для сравнения';
-    row.append(title, meta, files); host.append(row);
+  if (!visible.length) {
+    const empty = document.createElement('p'); empty.className = 'px-2 py-5 text-center text-xs text-slate-400';
+    empty.textContent = changeHistoryCache.length ? 'Нет событий по этому фильтру.' : 'Изменений пока нет. Изменения вне панели появятся при следующей проверке журнала.';
+    host.append(empty);
   }
-  setText('#changeHistoryStatus', `${visible.length} событий · история построена по изменениям хэшей файлов в снимках.`);
+  let previousDay = '';
+  for (const item of visible) {
+    const date = new Date(item.ts * 1000);
+    const dayKey = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+    if (dayKey !== previousDay) {
+      const day = document.createElement('h3'); day.className = 'change-history-day';
+      day.textContent = date.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+      host.append(day); previousDay = dayKey;
+    }
+    const row = document.createElement('article'); row.className = 'change-history-row';
+    const summary = document.createElement('div'); summary.className = 'change-history-summary';
+    const time = document.createElement('time'); time.className = 'change-history-time'; time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const details = document.createElement('div');
+    const title = document.createElement('strong'); title.className = 'change-history-file'; title.textContent = item.file === 'nfqws2.conf' ? 'Конфигурация' : item.file;
+    const meta = document.createElement('p'); meta.className = 'change-history-meta'; meta.textContent = `${item.note || item.source} · ${item.source}`;
+    details.append(title, meta);
+    const delta = document.createElement('span'); delta.className = 'change-history-delta';
+    const added = document.createElement('span'); added.className = 'text-emerald-300'; added.textContent = `+${item.addedLines}`;
+    const removed = document.createElement('span'); removed.className = 'text-rose-300'; removed.textContent = ` −${item.removedLines}`;
+    delta.append(added, removed, document.createTextNode(' строк'));
+    summary.append(time, details, delta);
+
+    const actions = document.createElement('div'); actions.className = 'change-history-actions';
+    const diffButton = document.createElement('button'); diffButton.type = 'button'; diffButton.className = 'backup-action'; diffButton.textContent = 'Что изменилось'; diffButton.dataset.actionClick = 'toggleChangeHistoryDiff'; diffButton.dataset.args = JSON.stringify([item.id, { source: 'self' }]);
+    const revertButton = document.createElement('button'); revertButton.type = 'button'; revertButton.className = 'backup-action'; revertButton.textContent = 'Откатить'; revertButton.dataset.actionClick = 'requestRevertChangeHistory'; revertButton.dataset.args = JSON.stringify([item.id]);
+    actions.append(diffButton, revertButton);
+    const diff = document.createElement('pre'); diff.className = 'change-history-diff'; diff.hidden = true; diff.dataset.historyDiff = item.id;
+    row.append(summary, actions, diff); host.append(row);
+  }
+  setText('#changeHistoryStatus', `${visible.length} ${pluralize(visible.length, 'изменение', 'изменения', 'изменений')} · хранится до 500 событий`);
+}
+function changedHistoryLines(from: string | null, to: string | null) {
+  const count = (value: string | null) => {
+    const counts = new Map<string, number>();
+    for (const line of (value ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)) counts.set(line, (counts.get(line) ?? 0) + 1);
+    return counts;
+  };
+  const before = count(from); const after = count(to);
+  const removed: string[] = []; const added: string[] = [];
+  for (const [line, n] of before) for (let index = (after.get(line) ?? 0); index < n; index += 1) removed.push(line);
+  for (const [line, n] of after) for (let index = (before.get(line) ?? 0); index < n; index += 1) added.push(line);
+  return { removed, added };
+}
+async function toggleChangeHistoryDiff(id: string, button: HTMLButtonElement) {
+  const diff = button.closest('.change-history-row')?.querySelector<HTMLElement>('[data-history-diff]');
+  if (!(diff instanceof HTMLElement)) return;
+  diff.hidden = !diff.hidden;
+  button.setAttribute('aria-expanded', String(!diff.hidden));
+  if (diff.hidden || diff.dataset.loaded === 'true') return;
+  diff.textContent = 'Загружаем diff…';
+  try {
+    const result = await nfqwsChangeHistory.diff(id);
+    const changes = changedHistoryLines(result.from, result.to);
+    diff.replaceChildren();
+    for (const [kind, lines] of [['removed', changes.removed], ['added', changes.added]] as const) {
+      for (const line of lines.slice(0, 200)) {
+        const entry = document.createElement('span'); entry.className = kind; entry.textContent = `${kind === 'added' ? '+ ' : '− '}${line.slice(0, 1200)}${line.length > 1200 ? '…' : ''}\n`; diff.append(entry);
+      }
+      if (lines.length > 200) { const more = document.createElement('span'); more.textContent = `…ещё ${lines.length - 200} строк`; diff.append(more); }
+    }
+    if (!diff.childElementCount) diff.textContent = 'Текстовые строки не изменились.';
+    if (result.current !== result.to) { const warning = document.createElement('span'); warning.className = 'block border-t border-amber-700/50 pt-2 text-amber-300'; warning.textContent = 'Текущий файл отличается от этой записи. Откат будет отклонён при конфликте.'; diff.append(warning); }
+    diff.dataset.loaded = 'true';
+  } catch (error) { diff.textContent = error instanceof Error ? error.message : 'Не удалось загрузить diff.'; }
+}
+function requestRevertChangeHistory(id: string) {
+  const item = changeHistoryCache.find((entry) => entry.id === id); if (!item) return;
+  requestDangerousConfirmation('Откатить это изменение?', `Файл «${item.file}» вернётся к состоянию до «${item.note || item.source}». Перед изменением будет создан резервный снимок.`, async () => {
+    try { const result = await nfqwsChangeHistory.revert(id); toast(result.message); await refreshAfterHistoryRestore(); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось откатить изменение.', 'error'); await loadChangeHistory(); }
+  });
+}
+function requestUndoLastChange() {
+  requestDangerousConfirmation('Отменить последнее изменение?', 'Будет отменена последняя запись, которую ещё можно отменить. Перед восстановлением создастся резервный снимок.', async () => {
+    try { const result = await nfqwsChangeHistory.undoLast(); toast(result.message); await refreshAfterHistoryRestore(); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось отменить последнее изменение.', 'error'); await loadChangeHistory(); }
+  });
+}
+function requestRestoreInitialHistory() {
+  if (!changeHistoryCanRestoreInitial) return;
+  requestDangerousConfirmation('Вернуть состояние на начало истории?', 'Конфигурация и исходные списки вернутся к моменту, когда журнал впервые зафиксировал исходное состояние. Списки, созданные позже, сохранятся. Перед восстановлением создастся полный резервный снимок.', async () => {
+    try { const result = await nfqwsChangeHistory.restoreInitial(); toast(result.message); await refreshAfterHistoryRestore(); }
+    catch (error) { toast(error instanceof Error ? error.message : 'Не удалось вернуть исходное состояние.', 'error'); }
+  });
+}
+async function refreshAfterHistoryRestore() {
+  await Promise.all([loadChangeHistory(), loadConfig(), fetchStatus(), loadBackups()]);
+  if (activeListId) await loadList(activeListId);
 }
 async function loadLogs() {
   if (logRequestPending) return;
@@ -2212,6 +2456,7 @@ async function loadList(id: NfqwsListId) {
     }
     if (!summary) {
       activeList = null;
+      $('#listAutoUpdateStatus')?.classList.add('hidden');
       const editor = $('#listEditorTextarea');
       if (editor instanceof HTMLTextAreaElement) { editor.value = ''; editor.placeholder = 'Файл отсутствует; панель не создаёт списки автоматически.'; }
       setText('#currentListFilePath', 'Файл не найден');
@@ -2221,6 +2466,23 @@ async function loadList(id: NfqwsListId) {
     const result = await nfqwsLists.get(id);
     activeList = result;
     activeListId = id;
+    const autoStatus = $('#listAutoUpdateStatus');
+    if (autoStatus instanceof HTMLElement) {
+      const managed = summary.managedAsn;
+      autoStatus.classList.toggle('hidden', !managed);
+      if (managed) {
+        autoStatus.className = `text-xs font-medium ${managed.paused || managed.lastError ? 'text-amber-300' : 'text-slate-400'}`;
+        const lastSuccess = managed.lastSuccessDate ? `обновлён ${managed.lastSuccessDate}` : 'ещё не обновлялся';
+        const lastAttempt = managed.lastAttemptDate ? ` · попытка ${managed.lastAttemptDate}` : '';
+        autoStatus.textContent = managed.paused
+          ? `AS${managed.asn} · автообновление остановлено: ${managed.lastError || 'список изменён вручную'} · ${lastSuccess}`
+          : managed.pending
+            ? `AS${managed.asn} · завершается обновление списка · ${lastSuccess}`
+            : managed.lastError
+              ? `AS${managed.asn} · ошибка ежедневного обновления${lastAttempt}: ${managed.lastError}; список сохранён, ${lastSuccess}`
+              : `AS${managed.asn} · ${managed.prefixCount} ${pluralize(managed.prefixCount, 'префикс', 'префикса', 'префиксов')} · ${lastSuccess} · обновляется ежедневно`;
+      }
+    }
     selectedListRows.clear();
     const editor = $('#listEditorTextarea');
     if (editor instanceof HTMLTextAreaElement) { editor.value = result.content; editor.placeholder = ''; }
@@ -3018,6 +3280,16 @@ function renderStrategyPick(operation: StrategyPickOperation) {
       preview.textContent = 'Предпросмотр и применение Strategy #1';
       card.append(preview);
     }
+    const communityResult = result.candidate.source.includes('Стратегии сообщества');
+    const terminalResult = ['complete', 'partial', 'cancelled', 'failed', 'no_match'].includes(operation.state);
+    if ((!operation.hosts || operation.hosts.length <= 1) && (result.confirmed || (communityResult && terminalResult))) {
+      const share = document.createElement('button');
+      share.type = 'button'; share.className = 'backup-action ml-2';
+      share.dataset.actionClick = 'openCommunityShare';
+      share.dataset.args = JSON.stringify([operation.id, index]);
+      share.textContent = communityResult ? (result.confirmed ? 'Подтвердить для сообщества' : 'Сообщить: не сработала') : 'Поделиться';
+      card.append(share);
+    }
     container.append(card);
   });
 }
@@ -3088,6 +3360,69 @@ async function previewFreezeStrategy(operationId: string, resultIndex: string) {
     panel?.classList.add('hidden');
     toast(error instanceof Error ? error.message : 'Предпросмотр стратегии недоступен.', 'error');
   }
+}
+
+async function previewFreezeJoin(operationId: string, resultIndex: string) {
+  const index = Number(resultIndex);
+  if (!Number.isInteger(index) || index < 0) return toast('Индекс проверенной сети некорректен.', 'error');
+  const panel = $('#freezeJoinPreviewPanel');
+  const summary = $('#freezeJoinPreviewSummary');
+  const diff = $('#freezeJoinPreviewDiff');
+  const apply = $('#applyFreezeJoinButton');
+  if (!panel || !summary || !diff || !(apply instanceof HTMLButtonElement)) return;
+  activeFreezeJoinPreview = null;
+  panel.classList.remove('hidden');
+  summary.textContent = 'Проверяю ASN, выбранный профиль и текущую конфигурацию…';
+  diff.textContent = '';
+  apply.disabled = true;
+  try {
+    const preview = await nfqwsDiagnostics.freezeJoinPreview(operationId, index);
+    activeFreezeJoinPreview = preview;
+    summary.textContent = `AS${preview.asn} · ${preview.prefixCount} префиксов · ${preview.listId} · профиль #${preview.profileIndex} «${preview.profileName}». ${preview.summary}`;
+    const before = preview.originalContent.split(/\r?\n/);
+    const after = preview.proposedContent.split(/\r?\n/);
+    const maxLines = Math.max(before.length, after.length);
+    for (let lineIndex = 0; lineIndex < maxLines; lineIndex += 1) {
+      if (before[lineIndex] === after[lineIndex]) continue;
+      const row = document.createElement('div');
+      row.className = 'grid gap-1 border-b border-slate-800 py-2 last:border-0 sm:grid-cols-2';
+      const oldLine = document.createElement('code'); oldLine.className = 'whitespace-pre-wrap break-all text-rose-200'; oldLine.textContent = before[lineIndex] === undefined ? '− (нет строки)' : `− ${before[lineIndex]}`;
+      const newLine = document.createElement('code'); newLine.className = 'whitespace-pre-wrap break-all text-emerald-200'; newLine.textContent = after[lineIndex] === undefined ? '+ (удалено)' : `+ ${after[lineIndex]}`;
+      row.append(oldLine, newLine); diff.append(row);
+    }
+    if (!diff.childElementCount) diff.textContent = 'Изменений в конфигурации нет.';
+    apply.disabled = false;
+    apply.dataset.args = JSON.stringify([preview.operationId, String(preview.resultIndex), preview.originalRevision]);
+  } catch (error) {
+    activeFreezeJoinPreview = null;
+    panel.classList.add('hidden');
+    toast(error instanceof Error ? error.message : 'Добавление ASN-сети для этого результата недоступно.', 'error');
+  }
+}
+
+function closeFreezeJoinPreview() {
+  activeFreezeJoinPreview = null;
+  $('#freezeJoinPreviewPanel')?.classList.add('hidden');
+}
+
+function applyFreezeJoin(operationId: string, resultIndex: string, expectedRevision: string) {
+  const preview = activeFreezeJoinPreview;
+  if (!preview || preview.operationId !== operationId || preview.resultIndex !== Number(resultIndex) || preview.originalRevision !== expectedRevision) {
+    return toast('Предпросмотр устарел. Откройте его заново.', 'error');
+  }
+  requestDangerousConfirmation('Добавить ASN-сеть в профиль?', `В профиль #${preview.profileIndex} «${preview.profileName}» будет добавлен список ${preview.listId} с ${preview.prefixCount} префиксами для AS${preview.asn}. Конфигурация будет проверена, сохранена в резервную копию и применена с перезапуском nfqws2.`, async () => {
+    const button = $('#applyFreezeJoinButton');
+    if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Применяю…'; }
+    try {
+      const applied = await nfqwsDiagnostics.applyFreezeJoin(operationId, Number(resultIndex), expectedRevision);
+      closeFreezeJoinPreview();
+      toast(applied.message || 'Список ASN добавлен в профиль.', 'success');
+      await Promise.all([loadConfig(), loadProfiles()]);
+    } catch (error) {
+      if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Добавить и перезапустить'; }
+      toast(error instanceof Error ? error.message : 'Не удалось добавить ASN-сеть в профиль.', 'error');
+    }
+  });
 }
 
 async function applyFreezeStrategyOneClick(operationId: string, resultIndex: string) {
@@ -3270,6 +3605,7 @@ async function pollStrategyPick(id: string, notifyOnCompletion = true) {
 async function startStrategyPick() {
   if (strategyPickRunning) return;
   const input = $('#scanCustomHost'); const proto = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect'); const repeatsInput = $('#strategyRepeatsSelect'); const customInput = $('#strategyCustomSteps');
+  const includeCommunity = ($('#strategyIncludeCommunity') as HTMLInputElement | null)?.checked ?? false;
   if (strategyTargetMode === 'multi') {
     const list = $('#strategyMultiHostList');
     if (!(list instanceof HTMLTextAreaElement)) return toast('Поле списка сайтов недоступно.', 'error');
@@ -3283,7 +3619,7 @@ async function startStrategyPick() {
     const applyButton = $('#applyStrategyPickButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
     try {
       const includeHistory = ($('#strategyIncludeOtherHistory') as HTMLInputElement | null)?.checked ?? true;
-      const operation = await nfqwsDiagnostics.strategyMultiStart(hosts, protocol, repeats, includeHistory);
+      const operation = await nfqwsDiagnostics.strategyMultiStart(hosts, protocol, repeats, includeHistory, includeCommunity);
       activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
       await pollStrategyPick(operation.id);
     } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить многосайтовый подбор.', 'error'); }
@@ -3306,7 +3642,7 @@ async function startStrategyPick() {
   activeStrategyPreview = null;
   const applyButton = $('#applyStrategyPickButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
   try {
-    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeOtherHistory, refineLighter);
+    const operation = await nfqwsDiagnostics.strategyStart(input.value.trim(), protocol, selectedMode, repeats, selectedMode === 'custom' ? customSteps : undefined, stopAfterFirst, includeOtherHistory, refineLighter, includeCommunity);
     activeStrategyPickId = operation.id; localStorage.setItem(STRATEGY_PICK_STORAGE, operation.id);
     await pollStrategyPick(operation.id);
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось запустить автоподбор', 'error'); }
@@ -3501,6 +3837,16 @@ function renderFreezeScan(operation: FreezeScanOperation) {
         button.textContent = button.disabled ? 'Проверяю и применяю…' : 'Применить к сайту';
         button.title = 'Проверенный вариант добавляется только этому домену; при ошибке конфигурация откатывается';
         cell.append(button);
+      }
+      if (index === 2 && freezeCanOfferProfileJoin({ targetKind: result.targetKind, asnVerified: result.asn.state === 'verified', freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
+        const joinButton = document.createElement('button');
+        joinButton.type = 'button';
+        joinButton.className = 'mt-2 ml-2 rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-1.5 text-xs font-bold text-blue-100 transition hover:bg-blue-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
+        joinButton.dataset.actionClick = 'previewFreezeJoin';
+        joinButton.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
+        joinButton.textContent = 'В профиль';
+        joinButton.title = 'Проверить, можно ли безопасно добавить ASN-сеть в существующий профиль';
+        cell.append(joinButton);
       }
       row.append(cell);
     });
@@ -3892,7 +4238,19 @@ function bindPrototypeActions() {
     saveRuntimeProfiles: () => void saveRuntimeProfiles(),
     refreshProfiles: () => void loadProfiles(),
     refreshChangeHistory: () => void loadChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
+    openCommunityShare: (operationId: string, candidateIndex: string) => void openCommunityShare(operationId, Number(candidateIndex)),
+    submitCommunityShare: () => submitCommunityShare(),
+    closeCommunityShare: () => { const modal = $('#communityShareModal'); if (modal) closeAppModal(modal); pendingCommunityShare = null; },
+    detectCommunityProvider: () => void loadCommunityStrategies(true, true),
+    refreshCommunityStrategies: () => void loadCommunityStrategies(false, true),
+    saveCommunityProvider: () => void saveCommunityProvider(),
+    testCommunityStrategy: (id: string) => void testCommunityStrategy(id),
+    copyCommunityStrategy: (id: string) => void copyCommunityStrategy(id),
     filterChangeHistory: () => renderChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
+    toggleChangeHistoryDiff: (id: string, button: HTMLButtonElement) => void toggleChangeHistoryDiff(id, button),
+    requestRevertChangeHistory: (id: string) => requestRevertChangeHistory(id),
+    requestUndoLastChange: () => requestUndoLastChange(),
+    requestRestoreInitialHistory: () => requestRestoreInitialHistory(),
     refreshLogs: () => void loadLogs(),
     filterLogs: () => renderLogs(),
     changeLogSource: (source: LogSource) => { currentLogSource = source === 'nfqws2' ? 'nfqws2' : 'nfqws2-ui'; logRequestPending = false; void loadLogs(); },
@@ -3960,6 +4318,9 @@ function bindPrototypeActions() {
     copyStrategyResult: (text: string, button: HTMLButtonElement) => copyStrategyText(text, button),
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
     previewFreezeStrategy: (operationId: string, index: string) => void previewFreezeStrategy(operationId, index),
+    previewFreezeJoin: (operationId: string, index: string) => void previewFreezeJoin(operationId, index),
+    applyFreezeJoin: (operationId: string, index: string, revision: string) => void applyFreezeJoin(operationId, index, revision),
+    closeFreezeJoinPreview: () => closeFreezeJoinPreview(),
     applyFreezeStrategyOneClick: (operationId: string, index: string) => void applyFreezeStrategyOneClick(operationId, index),
     applyStrategyPick: (source: string, operationId: string, index: string, revision: string) => void applyStrategyPick(source, operationId, index, revision),
     runFreezeScan: () => void startFreezeScan(),

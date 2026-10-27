@@ -139,17 +139,6 @@ pub struct SnapshotOverview {
     pub remote: SnapshotRemoteState,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SnapshotHistoryEntry {
-    pub id: String,
-    pub ts: u64,
-    pub version: Option<String>,
-    pub reason: String,
-    pub note: String,
-    pub changed_files: Vec<String>,
-}
-
 pub fn snapshot_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("snapshots")
 }
@@ -524,43 +513,6 @@ pub fn delete_local_snapshot(data_dir: &Path, id: &str) -> Result<(), String> {
         store.items.remove(index);
     }
     save_store(data_dir, &store)
-}
-
-pub fn change_history(data_dir: &Path, limit: usize) -> Vec<SnapshotHistoryEntry> {
-    let mut items = load_store(data_dir).items;
-    items.sort_by_key(|item| item.ts);
-    let mut previous = std::collections::BTreeMap::new();
-    let mut entries = Vec::with_capacity(items.len());
-    for item in items {
-        let mut changed_files: Vec<_> = item
-            .files
-            .iter()
-            .filter(|(name, hash)| previous.get(*name) != Some(*hash))
-            .map(|(name, _)| name.clone())
-            .collect();
-        changed_files.extend(
-            previous
-                .keys()
-                .filter(|name| !item.files.contains_key(*name))
-                .cloned(),
-        );
-        changed_files.sort();
-        changed_files.dedup();
-        previous = item.files.clone();
-        entries.push(SnapshotHistoryEntry {
-            id: item.id,
-            ts: item.ts,
-            version: item.version,
-            reason: item.reason,
-            note: item.note,
-            changed_files,
-        });
-    }
-    entries
-        .into_iter()
-        .rev()
-        .take(limit.clamp(1, 500))
-        .collect()
 }
 
 pub fn list_snapshots(data_dir: &Path) -> SnapshotOverview {
@@ -981,7 +933,7 @@ mod manual_operations_tests {
     }
 
     #[test]
-    fn refuses_deleting_pinned_snapshots_and_lists_hash_changes_newest_first() {
+    fn refuses_deleting_pinned_snapshots() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(snapshot_dir(dir.path())).unwrap();
         fs::write(snapshot_dir(dir.path()).join("3.tar.gz"), b"one").unwrap();
@@ -1000,13 +952,10 @@ mod manual_operations_tests {
         )
         .unwrap();
         assert!(delete_local_snapshot(dir.path(), "3").is_err());
-        let history = change_history(dir.path(), 20);
-        assert_eq!(history[1].changed_files, vec!["a", "b"]);
-        assert_eq!(history[2].changed_files, vec!["a"]);
     }
 
     #[test]
-    fn change_history_keeps_snapshot_versions_and_accepts_legacy_items_without_one() {
+    fn snapshot_items_keep_legacy_data_without_version() {
         let dir = tempdir().unwrap();
         let legacy: SnapshotItem = serde_json::from_str(
             r#"{"id":"legacy","ts":1,"reason":"вручную","note":"старый","size":3,"files":{},"local":true,"remote":false,"pinned":false}"#,
@@ -1024,8 +973,8 @@ mod manual_operations_tests {
         )
         .unwrap();
 
-        let history = change_history(dir.path(), 20);
-        assert_eq!(history[0].version.as_deref(), Some("1.1.0"));
-        assert_eq!(history[1].version, None);
+        let stored = load_store(dir.path());
+        assert_eq!(stored.items[1].version.as_deref(), Some("1.1.0"));
+        assert_eq!(stored.items[0].version, None);
     }
 }
