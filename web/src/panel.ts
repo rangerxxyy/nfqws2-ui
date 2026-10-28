@@ -2552,6 +2552,7 @@ async function saveConfigAndApply() {
   if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
   const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
   const draft = editor.value;
+  if (sameConfigText(draft, config.content)) return toast('Конфигурация не изменена.');
   setBusy(true);
   let validation: ConfigValidationResponse;
   try {
@@ -2598,6 +2599,9 @@ async function saveConfigAndApply() {
     return;
   }
   await applyValidatedConfig();
+}
+function sameConfigText(left: string, right: string) {
+  return left.replace(/\r\n?/g, '\n') === right.replace(/\r\n?/g, '\n');
 }
 async function serviceAction(action: 'start' | 'stop' | 'restart') {
   if (busy) return;
