@@ -613,9 +613,50 @@ fn parse_frame(frame: &[u8], link_type: u32) -> Result<Option<ParsedFrame>, &'st
                 <[u8; 16]>::try_from(&frame[network_offset + 24..network_offset + 40])
                     .map_err(|_| "Некорректный IPv6 destination")?,
             );
-            let transport = frame[network_offset + 6];
+            let mut transport = frame[network_offset + 6];
             let ttl = frame[network_offset + 7];
             network_offset += 40;
+            let mut extension_count = 0usize;
+            loop {
+                let extension_len = match transport {
+                    // Hop-by-Hop, Routing, Destination Options, Mobility, HIP, Shim6.
+                    0 | 43 | 60 | 135 | 139 | 140 => {
+                        if end < network_offset + 2 {
+                            return Err("IPv6 extension заголовок обрезан");
+                        }
+                        (usize::from(frame[network_offset + 1]) + 1) * 8
+                    }
+                    // Authentication Header uses 32-bit words, including the first two.
+                    51 => {
+                        if end < network_offset + 2 {
+                            return Err("IPv6 extension AH заголовок обрезан");
+                        }
+                        (usize::from(frame[network_offset + 1]) + 2) * 4
+                    }
+                    44 => 8,
+                    // ESP is encrypted; No Next Header has no transport payload.
+                    50 | 59 => return Ok(None),
+                    _ => break,
+                };
+                extension_count += 1;
+                if extension_count > 8 {
+                    return Err("Слишком много IPv6 extension заголовков (лимит 8)");
+                }
+                let extension_end = network_offset
+                    .checked_add(extension_len)
+                    .filter(|extension_end| *extension_end <= end)
+                    .ok_or("IPv6 extension заголовок выходит за границы пакета")?;
+                let next = frame[network_offset];
+                if transport == 44 {
+                    let fragment =
+                        u16::from_be_bytes([frame[network_offset + 2], frame[network_offset + 3]]);
+                    if fragment & 0xfff8 != 0 || fragment & 1 != 0 {
+                        return Err("Фрагментированный IPv6 пакет пропущен");
+                    }
+                }
+                transport = next;
+                network_offset = extension_end;
+            }
             (IpAddr::V6(src), IpAddr::V6(dst), ttl, transport, end)
         }
         _ => return Ok(None),
@@ -1060,6 +1101,30 @@ mod tests {
         frame
     }
 
+    fn ipv6_tcp_frame(seq: u32, payload: &[u8], extensions: &[(u8, Vec<u8>)]) -> Vec<u8> {
+        let extension_len: usize = extensions.iter().map(|(_, bytes)| bytes.len()).sum();
+        let mut frame = vec![0u8; 14 + 40 + extension_len + 20];
+        frame[12..14].copy_from_slice(&0x86ddu16.to_be_bytes());
+        frame[14] = 0x60;
+        frame[18..20].copy_from_slice(&((extension_len + 20 + payload.len()) as u16).to_be_bytes());
+        frame[20] = extensions.first().map(|(kind, _)| *kind).unwrap_or(6);
+        frame[21] = 64;
+        frame[22..38].copy_from_slice(&Ipv6Addr::LOCALHOST.octets());
+        frame[38..54].copy_from_slice(&"2001:db8::1".parse::<Ipv6Addr>().unwrap().octets());
+        let mut offset = 54;
+        for (_, bytes) in extensions {
+            frame[offset..offset + bytes.len()].copy_from_slice(bytes);
+            offset += bytes.len();
+        }
+        frame[offset..offset + 2].copy_from_slice(&12345u16.to_be_bytes());
+        frame[offset + 2..offset + 4].copy_from_slice(&443u16.to_be_bytes());
+        frame[offset + 4..offset + 8].copy_from_slice(&seq.to_be_bytes());
+        frame[offset + 12] = 0x50;
+        frame[offset + 13] = 0x18;
+        frame.extend_from_slice(payload);
+        frame
+    }
+
     fn client_hello_sni(host: &str) -> Vec<u8> {
         let mut extensions = Vec::new();
         let mut sni = Vec::new();
@@ -1117,6 +1182,93 @@ mod tests {
         assert_eq!(parsed.packets[0].payload_len, 5);
         assert_eq!(parsed.packets[0].frame_hex, hex::encode(frame));
         assert_eq!(parsed.packets[0].evidence, "CAPTURE OBSERVED");
+    }
+
+    #[test]
+    fn extracts_ipv6_tcp_after_hop_by_hop_and_destination_options() {
+        let extensions = [
+            (0, vec![60, 0, 0, 0, 0, 0, 0, 0]),
+            (60, vec![6, 0, 0, 0, 0, 0, 0, 0]),
+        ];
+        let frame = ipv6_tcp_frame(77, b"v6", &extensions);
+        let parsed = analyze_pcap("ipv6.pcap", &pcap_with_frames(&[frame], false, false)).unwrap();
+
+        assert_eq!(parsed.packets.len(), 1);
+        assert_eq!(parsed.packets[0].source, "::1");
+        assert_eq!(parsed.packets[0].destination, "2001:db8::1");
+        assert_eq!(parsed.packets[0].tcp_sequence, Some(77));
+        assert_eq!(parsed.packets[0].payload_len, 2);
+    }
+
+    #[test]
+    fn skips_non_atomic_ipv6_fragments_and_rejects_truncated_extensions() {
+        let fragment = [(44, vec![6, 0, 0, 1, 0, 0, 0, 0])];
+        let parsed = analyze_pcap(
+            "fragment.pcap",
+            &pcap_with_frames(&[ipv6_tcp_frame(1, b"x", &fragment)], false, false),
+        )
+        .unwrap();
+        assert_eq!(parsed.packets[0].protocol, "Другой");
+
+        let malformed = [(0, vec![6, 255, 0, 0, 0, 0, 0, 0])];
+        let parsed = analyze_pcap(
+            "truncated-extension.pcap",
+            &pcap_with_frames(&[ipv6_tcp_frame(1, b"x", &malformed)], false, false),
+        )
+        .unwrap();
+        assert_eq!(parsed.packets[0].protocol, "Другой");
+        assert!(parsed.warnings[0].contains("IPv6 extension"));
+    }
+
+    #[test]
+    fn parses_atomic_ipv6_fragment_and_authentication_header_with_a_bounded_chain() {
+        let atomic_fragment = [(44, vec![6, 0, 0, 0, 0, 0, 0, 0])];
+        let ah = [(51, vec![6, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])];
+        for extensions in [&atomic_fragment[..], &ah[..]] {
+            let parsed = analyze_pcap(
+                "ipv6-extension.pcap",
+                &pcap_with_frames(&[ipv6_tcp_frame(9, b"ok", extensions)], false, false),
+            )
+            .unwrap();
+            assert_eq!(parsed.packets[0].protocol, "TCP");
+            assert_eq!(parsed.packets[0].tcp_sequence, Some(9));
+        }
+
+        let mut excessive = vec![(60, vec![60, 0, 0, 0, 0, 0, 0, 0]); 9];
+        excessive[8].1[0] = 6;
+        let parsed = analyze_pcap(
+            "ipv6-extension-limit.pcap",
+            &pcap_with_frames(&[ipv6_tcp_frame(1, b"x", &excessive)], false, false),
+        )
+        .unwrap();
+        assert_eq!(parsed.packets[0].protocol, "Другой");
+        assert!(parsed.warnings[0].contains("лимит 8"));
+    }
+
+    #[test]
+    fn arbitrary_bounded_frames_never_panic_in_link_and_ip_parsing() {
+        let link_types = [1, 12, 101, 228, 229];
+        let mut state = 0x9e37_79b9u32;
+        for case in 0..4096usize {
+            let length = case % 320;
+            let mut frame = vec![0u8; length];
+            for byte in &mut frame {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                *byte = state as u8;
+            }
+            if frame.len() >= 14 && case % 4 == 0 {
+                frame[12..14].copy_from_slice(&0x86ddu16.to_be_bytes());
+                if frame.len() >= 54 {
+                    frame[14] = 0x60;
+                    let payload_len = (frame.len() - 54).min(u16::MAX as usize) as u16;
+                    frame[18..20].copy_from_slice(&payload_len.to_be_bytes());
+                    frame[20] = [0, 43, 44, 51, 60, 6][case % 6];
+                }
+            }
+            let _ = parse_frame(&frame, link_types[case % link_types.len()]);
+        }
     }
 
     #[test]
