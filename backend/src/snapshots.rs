@@ -8,6 +8,8 @@ use std::{
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(unix)]
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 pub const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ARCHIVE_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
@@ -142,12 +144,44 @@ pub struct SnapshotOverview {
     pub settings: SnapshotSettings,
     pub directory: String,
     pub total_bytes: u64,
+    pub available_bytes: Option<u64>,
+    pub max_archive_bytes: u64,
     pub local_count: usize,
     pub remote: SnapshotRemoteState,
 }
 
 pub fn snapshot_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("snapshots")
+}
+
+#[cfg(any(unix, test))]
+fn available_bytes_from_blocks(blocks: u64, block_size: u64) -> u64 {
+    blocks.saturating_mul(block_size)
+}
+
+#[cfg(unix)]
+fn filesystem_available_bytes(path: &Path) -> Option<u64> {
+    let path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `statvfs` writes its result to the valid initialized output struct;
+    // the NUL-terminated path remains alive for the duration of the call.
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return None;
+    }
+    let block_size = if stats.f_frsize == 0 {
+        stats.f_bsize
+    } else {
+        stats.f_frsize
+    };
+    Some(available_bytes_from_blocks(
+        stats.f_bavail as u64,
+        block_size as u64,
+    ))
+}
+
+#[cfg(not(unix))]
+fn filesystem_available_bytes(_path: &Path) -> Option<u64> {
+    None
 }
 pub fn settings_path(data_dir: &Path) -> PathBuf {
     snapshot_dir(data_dir).join("settings.json")
@@ -547,12 +581,20 @@ pub fn list_snapshots(data_dir: &Path) -> SnapshotOverview {
         .filter(|item| item.local)
         .map(|item| item.size)
         .sum();
+    let snapshots_path = snapshot_dir(data_dir);
+    let filesystem_path = if snapshots_path.is_dir() {
+        snapshots_path.as_path()
+    } else {
+        data_dir
+    };
     let remote = remote_overview(data_dir, &store, &settings);
     SnapshotOverview {
         items: store.items.into_iter().rev().collect(),
         settings,
         directory: snapshot_dir(data_dir).display().to_string(),
         total_bytes,
+        available_bytes: filesystem_available_bytes(filesystem_path),
+        max_archive_bytes: MAX_ARCHIVE_BYTES as u64,
         local_count,
         remote,
     }
@@ -929,6 +971,29 @@ mod manual_operations_tests {
         )
         .unwrap();
         assert_eq!(load_settings(dir.path()).max_local_mib, 16_384);
+    }
+
+    #[test]
+    fn available_filesystem_space_uses_available_blocks_without_overflow() {
+        assert_eq!(available_bytes_from_blocks(12, 4096), 49_152);
+        assert_eq!(available_bytes_from_blocks(u64::MAX, 4096), u64::MAX);
+        assert_eq!(available_bytes_from_blocks(12, 0), 0);
+    }
+
+    #[test]
+    fn snapshot_overview_exposes_available_space_and_archive_limit_in_camel_case() {
+        let dir = tempdir().unwrap();
+        let overview = list_snapshots(dir.path());
+        let json = serde_json::to_value(overview).unwrap();
+        assert_eq!(json["maxArchiveBytes"], 64 * 1024 * 1024);
+        assert!(json.get("availableBytes").is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_available_space_for_the_snapshot_filesystem() {
+        let dir = tempdir().unwrap();
+        assert!(filesystem_available_bytes(dir.path()).is_some());
     }
 
     #[test]

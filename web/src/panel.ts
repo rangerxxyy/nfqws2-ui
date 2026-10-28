@@ -36,6 +36,7 @@ import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSetting
 import { configLuaArgumentEntries } from './config-diagnostics';
 import { navigationGroupForRoute } from './navigation';
 import { isValidNetworkInterfaceName, orderNetworkInterfaces } from './network-interface';
+import { snapshotFreeSpaceState } from './snapshot-storage';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
 export const UNAVAILABLE_PANEL_ROUTES = ['supportReport'] as const;
@@ -629,6 +630,14 @@ function renderBackups(data: SnapshotOverview) {
   setText('#snapshotStorageStatus', data.totalBytes > snapshotLimitBytes
     ? `Лимит превышен на ${formatBytes(data.totalBytes - snapshotLimitBytes)}. Закреплённые копии и копии, ожидающие отправки на NAS, автоматически не удаляются.`
     : `Лимит ${data.settings.maxLocalMib} МиБ. При превышении удаляются старейшие незакреплённые копии.`);
+  const freeSpaceState = snapshotFreeSpaceState(data.availableBytes, data.maxArchiveBytes);
+  setText('#snapshotDiskSpaceStatus', freeSpaceState === 'unknown'
+    ? 'Свободное место на разделе снимков определить не удалось.'
+    : freeSpaceState === 'low'
+      ? `На разделе свободно ${formatBytes(data.availableBytes!)} — меньше максимального размера архива (${formatBytes(data.maxArchiveBytes)}). Новый снимок может не поместиться.`
+      : `Свободно на разделе снимков: ${formatBytes(data.availableBytes!)}.`);
+  $('#snapshotDiskSpaceStatus')?.classList.toggle('text-amber-300', freeSpaceState === 'low');
+  $('#snapshotDiskSpaceStatus')?.classList.toggle('text-slate-400', freeSpaceState !== 'low');
   setText('#snapshotDirectory', data.directory);
   setValue('#snapshotAutoEnabled', String(data.settings.autoEnabled), true);
   const automaticSnapshots = $<HTMLInputElement>('#snapshotAutoEnabled'); if (automaticSnapshots) automaticSnapshots.disabled = false;

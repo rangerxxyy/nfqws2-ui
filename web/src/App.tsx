@@ -1323,6 +1323,7 @@ export default function App() {
               <button type={"button"} data-action-click={"saveSnapshotRetention"} className={"rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500"}>Сохранить ограничения</button>
             </div>
             <p id={"snapshotStorageStatus"} className={"mt-2 text-[11px] text-slate-400"} role={"status"} aria-live={"polite"}>Лимит хранения снимков загружается…</p>
+            <p id={"snapshotDiskSpaceStatus"} className={"mt-1 text-[11px] text-slate-400"} role={"status"} aria-live={"polite"}>Свободное место на разделе снимков загружается…</p>
             <p id={"backupStatus"} className={"mt-2 text-[11px] text-slate-400"} role={"status"} aria-live={"polite"}>Снимки загружаются с роутера…</p><p id={"snapshotDirectory"} className={"mt-0.5 break-all font-mono text-[10px] text-slate-500"}></p><div id={"backupList"} className={"mt-2 grid gap-1.5"}></div>
           </section>
         </section>

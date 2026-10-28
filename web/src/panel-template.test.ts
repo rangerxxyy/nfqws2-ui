@@ -35,6 +35,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('data.totalBytes > snapshotLimitBytes');
   });
 
+  it('shows available router filesystem space and warns below the maximum archive size', () => {
+    expect(template).toContain('id="snapshotDiskSpaceStatus"');
+    expect(panelSource).toContain('snapshotFreeSpaceState(data.availableBytes, data.maxArchiveBytes)');
+    expect(panelSource).toContain('меньше максимального размера архива');
+  });
+
   it('keeps list tabs compact and offers a delayed explanation', () => {
     for (const filename of ['user.list', 'exclude.list', 'auto.list', 'ipset.list', 'ipset_exclude.list']) {
       expect(template).toContain(`<code>${filename}</code>`);
