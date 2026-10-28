@@ -1041,7 +1041,8 @@ export default function App() {
                       <span>Свои параметры · для режима «Своя стратегия»</span>
                     </summary>
                     <div className={"pt-2"}>
-                      <textarea id={"strategyCustomSteps"} rows={3} spellCheck={false} aria-label={"Параметры своей стратегии"} placeholder={"одна стратегия на строку, например:\n--lua-desync=multisplit:pos=1,midsld\n--lua-desync=fakedsplit:pos=1"} className={"w-full resize-y bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono leading-5 text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"}></textarea>
+                      <div id={"strategyCustomStepsEditor"} className={"strategy-custom-editor"}></div>
+                      <textarea id={"strategyCustomSteps"} hidden aria-hidden={"true"} tabIndex={-1}></textarea>
                       <p className={"mt-1 text-xs leading-5 text-slate-400"}>Каждая строка — отдельный вариант. Несколько --lua-desync в одной строке — шаги одного варианта; \ в конце строки продолжает его на следующей.</p>
                       <p className={"mt-1 text-xs leading-5 text-slate-400"}>Разрешены только параметры --lua-desync.</p>
                       <button type={"button"} data-action-click={"copyStrategyParams"} data-value-source={"self"} className={"strategy-copy-button mt-2 rounded-md border border-slate-700 px-2.5 py-1 text-xs font-semibold text-slate-300 transition-colors hover:border-blue-500 hover:text-blue-200"}>Копировать</button>
@@ -1333,7 +1334,7 @@ export default function App() {
 {"\n  "}
     <div id={"updateModalBackdrop"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4"}>
       {"\n    "}
-      <div role={"dialog"} aria-modal={"true"} aria-labelledby={"updateModalTitle"} tabIndex={-1} className={"bg-[#0b101b] border border-slate-800 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl view-animate"}>
+      <div role={"dialog"} aria-modal={"true"} aria-labelledby={"updateModalTitle"} tabIndex={-1} className={"bg-[#0b101b] border border-slate-800 rounded-2xl max-w-[47rem] w-full max-h-[90dvh] flex flex-col overflow-hidden shadow-2xl view-animate"}>
         {"\n      \n      "}
         <div className={"px-6 pt-5 pb-4 flex items-center justify-between"}>
           {"\n        "}
@@ -1345,7 +1346,7 @@ export default function App() {
               {"\n          "}
             </svg>
             {"\n          "}
-            <h3 id={"updateModalTitle"} className={"text-lg sm:text-xl font-bold text-white tracking-tight"}>
+            <h3 id={"updateModalTitle"} className={"text-lg sm:text-xl font-semibold text-white tracking-tight"}>
               {"Обновление nfqws2-UI"}
             </h3>
             {"\n        "}
@@ -1372,12 +1373,11 @@ export default function App() {
           {"\n\n        "}
           <div className={"flex items-center gap-2"}>
             {"\n          "}
-            <span id={"updatePickerAutoRefresh"} className={"text-xs text-slate-400"}>Проверка списка каждые 2 минуты</span>
-            <span id={"updateRepoSlug"} className={"px-3 py-1 rounded-full bg-[#111827] border border-slate-700/80 text-xs font-mono font-bold text-slate-200"}>
+            <span id={"updateRepoSlug"} className={"px-3 py-1 rounded-full bg-[#111827] border border-slate-700/80 text-xs font-mono font-medium text-slate-200"}>
               {"\n            rangerxxyy/nfqws2-ui\n          "}
             </span>
             {"\n          "}
-            <span className={"px-2.5 py-1 rounded-full bg-[#064e3b] text-[#34d399] text-xs font-bold"}>
+            <span className={"px-2.5 py-1 rounded-full bg-[#064e3b] text-[#34d399] text-xs font-medium"}>
               {"\n            GitHub\n          "}
             </span>
             {"\n        "}
@@ -1385,7 +1385,7 @@ export default function App() {
           {"\n      "}
         </div>
         {"\n\n      "}
-        <div id={"updateVersionsList"} className={"px-6 py-2 max-h-[410px] overflow-y-auto space-y-2.5"}></div>
+        <div id={"updateVersionsList"} className={"px-6 py-2 max-h-[min(31.25rem,55dvh)] overflow-y-auto space-y-2.5"}></div>
         {"\n\n      "}
         <div id={"updateInstallProgressBox"} className={"hidden px-6 pt-3"}>
           {"\n        "}
@@ -1411,7 +1411,7 @@ export default function App() {
         {"\n\n      "}
         <div className={"p-6 pt-4"}>
           {"\n        "}
-          <button id={"confirmUpdateInstallBtn"} data-action-click={"installSelectedRelease"} className={"w-full py-3 rounded-xl bg-[#1d4ed8] hover:bg-[#2563eb] text-white font-bold text-sm transition-all shadow-lg shadow-blue-600/25 active:scale-[0.99]"}>
+          <button id={"confirmUpdateInstallBtn"} data-action-click={"installSelectedRelease"} className={"w-full py-2 rounded-xl bg-[#1d4ed8] hover:bg-[#2563eb] text-white font-medium text-sm transition-all active:scale-[0.99]"}>
             {"\n          Установить\n        "}
           </button>
           {"\n      "}

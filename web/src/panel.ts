@@ -25,7 +25,7 @@ import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
 import { diagnosisProgressState, isSkippedDiagnosisStep, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
-import { canShowToast, CORE_UPDATE_CHECK_INTERVAL_MS, coreUpdateNoticePresentation, lifecycleMessage, shouldCheckCoreUpdate, toastCardsToDismiss, toastPresentation } from './notifications';
+import { canShowToast, CORE_UPDATE_CHECK_INTERVAL_MS, UPDATE_STATUS_POLL_INTERVAL_MS, coreUpdateNoticePresentation, lifecycleMessage, shouldCheckCoreUpdate, toastCardsToDismiss, toastPresentation } from './notifications';
 import { podkopWarningPresentation } from './podkop-warning';
 import { shouldPollLogs } from './log-polling';
 import { shouldFollowLogTail } from './log-scroll';
@@ -103,11 +103,23 @@ const UPDATE_PICKER_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
 let updatePickerRefreshTimer: number | null = null;
 let updatePickerRequestPending = false;
 let installedCoreTag: string | null = null;
+let strategyCustomCodeEditor: ReturnType<typeof mountConfigArgumentEditor> | null = null;
 let uiUpdateStatusPolling = false;
 let uiUpdateNoticeOpenedTag: string | null = null;
 const UPDATE_NOTICE_KEY = 'nfqws2-ui-update-notice';
 const UI_UPDATE_DISMISSED_TAG_KEY = 'nfqws2-ui-update-dismissed-tag';
 const CORE_UPDATE_DISMISSED_TAG_KEY = 'nfqws2-core-update-dismissed-tag';
+function strategyCustomText(): string {
+  const input = $('#strategyCustomSteps');
+  return strategyCustomCodeEditor?.state.doc.toString() ?? (input instanceof HTMLTextAreaElement ? input.value : '');
+}
+function setStrategyCustomText(value: string): void {
+  const input = $('#strategyCustomSteps');
+  if (input instanceof HTMLTextAreaElement) input.value = value;
+  if (strategyCustomCodeEditor && strategyCustomCodeEditor.state.doc.toString() !== value) {
+    strategyCustomCodeEditor.dispatch({ changes: { from: 0, to: strategyCustomCodeEditor.state.doc.length, insert: value } });
+  }
+}
 const LIST_DISPLAY_NAMES: Partial<Record<NfqwsListId, string>> = {
   'user.list': 'Пользовательские домены',
   'auto.list': 'Домены для автообучения',
@@ -458,7 +470,7 @@ async function testCommunityStrategy(id: string) {
   if (input instanceof HTMLInputElement) input.value = host;
   if (protocol instanceof HTMLSelectElement) protocol.value = item.proto === 'http' ? 'http' : 'https';
   if (mode instanceof HTMLSelectElement) { mode.value = 'custom'; mode.dispatchEvent(new Event('change', { bubbles: true })); }
-  if (custom instanceof HTMLTextAreaElement) custom.value = item.steps.join(' ');
+  if (custom instanceof HTMLTextAreaElement) setStrategyCustomText(item.steps.join(' '));
   if (repeats instanceof HTMLSelectElement) repeats.value = '3';
   strategyTargetMode = 'single';
   setStrategyTargetMode('single');
@@ -3025,10 +3037,13 @@ function renderDiagnosisProgress(container: HTMLElement, host: string, activeSta
   detail.textContent = latestStep ? `${latestStep.detail}${addresses.length ? ` · IP: ${addresses.join(', ')}` : ''}` : `Начинаю проверку ${host}`;
   copy.append(title, detail); overview.append(spinner, copy); container.replaceChildren(overview);
   const checks = document.createElement('section'); checks.className = 'diagnosis-checks diagnosis-live-checks ui-card rounded-2xl';
-  const heading = document.createElement('h3'); heading.className = 'diagnosis-checks-title'; heading.textContent = 'Что проверено'; checks.append(heading);
+  const header = document.createElement('div'); header.className = 'diagnosis-checks-header';
+  const heading = document.createElement('h3'); heading.className = 'diagnosis-checks-title'; heading.textContent = 'Что проверено';
+  const hostLabel = document.createElement('span'); hostLabel.className = 'diagnosis-checks-host'; hostLabel.textContent = host; header.append(heading, hostLabel); checks.append(header);
   const list = document.createElement('div'); list.setAttribute('role', 'list');
   const finished = new Set(completed.keys()); if (finished.has('doh')) finished.add('dns');
-  for (const stage of SITE_DIAGNOSIS_STAGES) {
+  const stages: { id: string; label: string }[] = [...SITE_DIAGNOSIS_STAGES, { id: 'route', label: 'Маршрут роутера' }, { id: 'lists', label: 'Доменные списки и IP' }];
+  for (const stage of stages) {
     const dns = stage.id === 'dns' ? completed.get('dns') : undefined;
     const doh = stage.id === 'dns' ? completed.get('doh') : undefined;
     const step = dns && doh ? { ...dns, status: doh.status !== 'ok' && dns.status === 'ok' ? 'warning' as const : dns.status, detail: `${dns.detail} · ${doh.detail}` } : dns ?? completed.get(stage.id) ?? (stage.id === 'dns' ? doh : undefined);
@@ -3965,7 +3980,7 @@ async function startStrategyPick() {
   const refineLighter = ($('#strategyRefineLighter') as HTMLInputElement | null)?.checked ?? false;
   if (!Number.isInteger(repeats) || repeats < 2 || repeats > 5) return toast('Число повторов должно быть от 2 до 5.', 'error');
   let customSteps: string[][] = [];
-  try { customSteps = customInput instanceof HTMLTextAreaElement ? parseCustomStrategies(customInput.value) : []; }
+  try { customSteps = customInput instanceof HTMLTextAreaElement ? parseCustomStrategies(strategyCustomText()) : []; }
   catch (error) { return toast(error instanceof Error ? error.message : 'Не удалось прочитать собственные стратегии.', 'error'); }
   if (selectedMode === 'custom' && customSteps.length === 0) return toast('Добавьте хотя бы один параметр --lua-desync=…', 'error');
   const container = $('#autotuneStrategiesList'); container?.replaceChildren();
@@ -4306,7 +4321,7 @@ function renderReleases() {
     header.setAttribute('aria-controls', `release-notes-${CSS.escape(release.tag)}`);
     header.className = 'release-version-header';
     const title = document.createElement('span');
-    title.className = 'block text-sm font-bold text-slate-100';
+    title.className = 'block text-sm font-medium text-slate-100';
     title.textContent = release.tag;
     header.append(title);
     if (updateTarget === 'core' && release.tag === installedCoreTag) {
@@ -4350,7 +4365,7 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
   updatePickerRefreshTimer = window.setInterval(() => {
     const currentModal = $('#updateModalBackdrop');
     if (document.visibilityState !== 'visible' || currentModal?.dataset.modalOpen !== 'true' || updatePolling) return;
-    void loadUpdatePickerReleases(true, true);
+    void loadUpdatePickerReleases(false, true);
   }, UPDATE_PICKER_REFRESH_INTERVAL_MS);
 }
 
@@ -4673,7 +4688,7 @@ function bindPrototypeActions() {
     copyStrategyParams: (button: HTMLButtonElement) => {
       const input = $('#strategyCustomSteps');
       if (!(input instanceof HTMLTextAreaElement)) return;
-      copyStrategyText(input.value, button);
+      copyStrategyText(strategyCustomText(), button);
     },
     copyStrategyResult: (text: string, button: HTMLButtonElement) => copyStrategyText(text, button),
     previewStrategyPick: (index: string) => void previewStrategyPick(index),
@@ -4837,6 +4852,13 @@ function bindPrototypeActions() {
 
 function boot() {
   initializeAppearanceSettings();
+  const strategyCustomState = $('#strategyCustomSteps');
+  const strategyCustomHost = $('#strategyCustomStepsEditor');
+  if (strategyCustomState instanceof HTMLTextAreaElement && strategyCustomHost instanceof HTMLElement) {
+    strategyCustomCodeEditor = mountConfigArgumentEditor(strategyCustomHost, strategyCustomState.value, (value) => {
+      strategyCustomState.value = value;
+    }, 'Параметры своей стратегии', 'одна стратегия на строку, например: --lua-desync=multisplit:pos=1,midsld');
+  }
   const configState = $('#nfqwsConfTextarea');
   const configHost = $('#configCodeEditor');
   if (configState instanceof HTMLTextAreaElement && configHost instanceof HTMLElement) {
@@ -4916,7 +4938,7 @@ function boot() {
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();
   void refreshUiUpdateStatus();
-  window.setInterval(() => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); }, 5 * 60 * 1000);
+  window.setInterval(() => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); }, UPDATE_STATUS_POLL_INTERVAL_MS);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); });
   void refreshCoreUpdateStatus();
   window.setInterval(() => { if (document.visibilityState === 'visible') void refreshCoreUpdateStatus(); }, CORE_UPDATE_CHECK_INTERVAL_MS);

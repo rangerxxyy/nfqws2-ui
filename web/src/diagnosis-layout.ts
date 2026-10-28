@@ -36,6 +36,6 @@ export function diagnosisRows(report: SiteDiagnosticReport): DiagnosisRow[] {
     rows.push({id:'quic',label:q.method === 'http3' ? 'QUIC · HTTP/3' : 'QUIC · UDP 443',kind:comparisonVerdict(q.direct,q.current).kind,
       detail:`${describe('Напрямую',q.direct)}\n${describe('Сейчас',q.current)}`,metrics:'',note:quicExplanation(q.method,q.http3Advertised)});
   } else rows.push(row('quic','QUIC · HTTP/3'));
-  for (const [id,label] of [['route','Маршрут роутера'],['lists','Доменные списки и IP']]) if (step(id)) rows.push(row(id,label,step(id)));
+  for (const [id,label] of [['route','Маршрут роутера'],['lists','Доменные списки и IP']]) rows.push(row(id,label,step(id)));
   return rows;
 }

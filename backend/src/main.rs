@@ -58,9 +58,9 @@ const MAX_CONFIG_BYTES: usize = 512 * 1024;
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
-const UI_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
+const UI_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 const UI_RELEASE_ERROR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-const CORE_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
+const CORE_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 const CORE_RELEASE_ERROR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CONFIG_APPLY_MONITOR_BASELINE_TTL: std::time::Duration =
     std::time::Duration::from_secs(4 * 60 * 60);
@@ -17620,8 +17620,8 @@ mod tests {
     }
 
     #[test]
-    fn update_release_catalogs_refresh_every_four_hours_and_have_proxy_fallbacks() {
-        let expected = std::time::Duration::from_secs(4 * 60 * 60);
+    fn update_release_catalogs_refresh_every_two_minutes_and_have_proxy_fallbacks() {
+        let expected = std::time::Duration::from_secs(2 * 60);
         assert_eq!(UI_RELEASE_CACHE_TTL, expected);
         assert_eq!(CORE_RELEASE_CACHE_TTL, expected);
 
@@ -17641,7 +17641,7 @@ mod tests {
     }
 
     #[test]
-    fn ui_release_cache_expires_after_four_hours_and_backs_off_errors_for_ten_minutes() {
+    fn ui_release_cache_expires_after_two_minutes_and_backs_off_errors_for_ten_minutes() {
         let now = 2_000_000_000_u64;
         let entry = UiReleaseCacheEntry {
             checked_at: now - UI_RELEASE_CACHE_TTL.as_secs(),
@@ -17766,7 +17766,7 @@ mod tests {
     }
 
     #[test]
-    fn core_release_status_cache_expires_after_four_hours_and_is_architecture_scoped() {
+    fn core_release_status_cache_expires_after_two_minutes_and_is_architecture_scoped() {
         let now = 2_000_000_000_u64;
         let entry = CoreReleaseCacheEntry {
             checked_at: now - CORE_RELEASE_CACHE_TTL.as_secs(),

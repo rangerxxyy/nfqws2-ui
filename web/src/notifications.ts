@@ -1,8 +1,9 @@
 export type ToastTone = 'success' | 'error';
 export type LifecycleEvent = 'start' | 'stop' | 'restart' | 'panel-update' | 'core-update';
 export const TOAST_DEDUPLICATION_WINDOW_MS = 5500;
-// Match XKeen UI's five-minute status tick; release catalogs remain cached by the backend.
-export const CORE_UPDATE_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+// Poll local update status and refresh backend release caches every two minutes.
+export const UPDATE_STATUS_POLL_INTERVAL_MS = 2 * 60 * 1000;
+export const CORE_UPDATE_CHECK_INTERVAL_MS = UPDATE_STATUS_POLL_INTERVAL_MS;
 
 export function shouldCheckCoreUpdate(now: number, lastCheckedAt: number): boolean {
   return now - lastCheckedAt >= CORE_UPDATE_CHECK_INTERVAL_MS;

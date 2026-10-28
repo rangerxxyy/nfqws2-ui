@@ -742,7 +742,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(codeEditorSource).toContain('fontVariantLigatures: \'none\'');
     expect(codeEditorSource).toContain('"liga" 0, "clig" 0, "calt" 0');
     expect(codeEditorSource).toContain("'.cm-activeLine': { backgroundColor: 'transparent' }");
-    expect(panelStyles).toContain('.config-code-editor ::selection { background:transparent !important; color:inherit !important; }');
+    expect(panelStyles).toContain('.config-code-editor ::selection, .config-argument-code-editor ::selection, .strategy-custom-editor ::selection { background:transparent !important; color:inherit !important; }');
     expect(codeEditorSource).toContain('update.docChanged || update.viewportChanged');
     expect(codeEditorSource).toContain('.cm-selectionBackground');
     expect(codeEditorSource).toContain('isLargeConfigDocumentLength(view.state.doc.length)');
@@ -1064,6 +1064,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.diagnosis-progress-spinner');
   });
 
+  it('keeps the live diagnosis checklist aligned with the final checklist', () => {
+    const liveRows = panelSource.slice(panelSource.indexOf('function renderDiagnosisProgress('), panelSource.indexOf('function renderSiteDiagnosis('));
+    expect(liveRows).toContain("diagnosis-checks-header");
+    expect(liveRows).toContain("diagnosis-checks-host");
+    expect(liveRows).toContain("'Маршрут роутера'");
+    expect(liveRows).toContain("'Доменные списки и IP'");
+    expect(panelStyles).toMatch(/\.diagnosis-results \.diagnosis-live-checks \.diagnosis-row\s*\{[^}]*padding\s*:\s*\.42rem 0/);
+    expect(panelStyles).toContain('.diagnosis-results .diagnosis-checks { min-height:28rem; }');
+    expect(panelStyles).toContain('.diagnosis-results .diagnosis-checks { min-height:0; }');
+  });
+
   it('separates diagnosis duration from the result text in live and final rows', () => {
     const liveRow = panelSource.slice(panelSource.indexOf('function renderDiagnosisProgress('), panelSource.indexOf('function renderSiteDiagnosis('));
     const finalRow = panelSource.slice(panelSource.indexOf('function renderSiteDiagnosis('), panelSource.indexOf('async function runSiteDiagnosis('));
@@ -1126,7 +1137,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(codeEditorSource).toContain('.cm-selectionBackground');
     expect(codeEditorSource).toContain("lineHeight: compact ? '1.25rem' : '1.5'");
     expect(panelStyles).toContain('.config-code-editor .cm-selectionBackground');
-    expect(panelStyles).toContain('::selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent); }');
+    expect(panelStyles).toContain('::selection { background:#2d4f8e; color:inherit; }');
+    expect(panelStyles).toContain('[data-theme="light"] ::selection { background:#dbeafe; color:inherit; }');
+    expect(panelStyles).not.toContain('.cm-gutters { border-right:');
     expect(panelStyles).not.toContain('color:transparent !important; -webkit-text-fill-color:transparent !important;');
     expect(panelSource).not.toContain('highlight.innerHTML = input.value');
     expect(panelStyles).not.toContain('selection:bg-blue-500/30');
@@ -1184,7 +1197,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(modeTile).toContain('<summary');
     expect(modeTile).toContain('text-xs leading-5 text-slate-400');
     expect(modeTile).toContain('id={"strategyCustomSteps"}');
-    expect(modeTile).toContain('text-xs font-mono leading-5 text-white');
+    expect(modeTile).toContain('id={"strategyCustomStepsEditor"}');
+    expect(panelSource).toContain("mountConfigArgumentEditor(strategyCustomHost");
+    expect(panelSource).toContain('strategyCustomCodeEditor');
     expect(appSource).not.toMatch(/<div id=\{"strategyCustomInputPanel"\}[^>]*md:col-span-2/);
     expect(modeTile).toContain('data-action-click={"copyStrategyParams"}');
     expect(panelSource).toContain('copyStrategyParams:');
@@ -1391,9 +1406,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('const result = await nfqwsUpdates.coreReleases(forceRefresh)');
     expect(panelSource).toContain('await loadUpdatePickerReleases(true)');
     expect(panelSource).toContain('UPDATE_PICKER_REFRESH_INTERVAL_MS = 2 * 60 * 1000');
-    expect(panelSource).toContain('void loadUpdatePickerReleases(true, true)');
+    expect(panelSource).toContain('void loadUpdatePickerReleases(false, true)');
     expect(panelSource).toContain('stopUpdatePickerAutoRefresh(); closeAppModal');
-    expect(template).toContain('Проверка списка каждые 2 минуты');
+    expect(template).not.toContain('Проверка списка каждые 2 минуты');
     expect(backendSource).toContain('load_cached_core_releases(&state, &architecture, query.force)');
     expect(backendSource).toContain('Query(query): Query<CoreReleaseQuery>');
     expect(panelSource).not.toContain("if (updateTarget !== 'ui') return");
@@ -1417,13 +1432,26 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('checks UI updates in the background and provides a persistent dismissible notice', () => {
     expect(panelSource).toContain("nfqwsUpdates.uiStatus()");
-    expect(panelSource).toContain("window.setInterval(() => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); }, 5 * 60 * 1000)");
+    expect(panelSource).toContain("window.setInterval(() => { if (document.visibilityState === 'visible') void refreshUiUpdateStatus(); }, UPDATE_STATUS_POLL_INTERVAL_MS)");
     expect(panelSource).toContain("dataset.actionClick = 'openLatestUiUpdate'");
     expect(panelSource).toContain("dataset.actionClick = 'dismissUiUpdateNotice'");
     expect(panelStyles).toContain('.version-pill.update-available');
     expect(panelStyles).toContain('.ui-update-notice');
     expect(panelSource).toContain("document.createElementNS('http://www.w3.org/2000/svg', 'svg')");
     expect(panelStyles).toContain('.ui-update-notice > button { margin-left: 26px;');
+  });
+
+  it('keeps update polling quiet in the modal and uses a regular-weight install button', () => {
+    expect(appSource).not.toContain('Проверка списка каждые 2 минуты');
+    const modal = appSource.slice(appSource.indexOf('id={"updateModalBackdrop"}'), appSource.indexOf('id={"diffModalBackdrop"}'));
+    expect(modal).not.toContain('font-bold text-sm transition-all shadow-lg shadow-blue-600/25');
+    expect(modal).toContain('font-medium text-sm');
+    expect(modal).toContain('max-h-[90dvh] flex flex-col');
+    expect(modal).toContain('max-h-[min(31.25rem,55dvh)]');
+    expect(modal).toContain('max-w-[47rem]');
+    expect(modal).toContain('w-full py-2 rounded-xl');
+    expect(panelSource).toContain("title.className = 'block text-sm font-medium text-slate-100'");
+    expect(modal).toContain('font-semibold text-white tracking-tight');
   });
 
   it('shows the confirmed update result after a cache-fresh page reload', () => {
@@ -1690,6 +1718,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toContain('config-argument-highlight');
     expect(panelSource).not.toContain('focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20');
     expect(panelStyles).toContain('.config-argument-editor:focus-within { border-color:var(--accent-border');
+    expect(codeEditorSource).toContain("backgroundColor: 'var(--cm-selection) !important'");
+    expect(codeEditorSource).toContain("borderRight: 'none'");
+    expect(panelStyles).toContain('.config-code-editor .cm-editor, .config-argument-code-editor .cm-editor, .strategy-custom-editor .cm-editor { --cm-selection:#2d4f8e; }');
+    expect(panelStyles).toContain('[data-theme="light"] .config-code-editor .cm-editor, [data-theme="light"] .config-argument-code-editor .cm-editor, [data-theme="light"] .strategy-custom-editor .cm-editor { --cm-selection:#dbeafe; }');
+    expect(panelStyles).toContain('.config-code-editor ::selection, .config-argument-code-editor ::selection, .strategy-custom-editor ::selection { background:transparent !important; color:inherit !important; }');
+    expect(panelStyles).toContain('::selection { background:#2d4f8e; color:inherit; }');
   });
 
   it('uses the selected accent for custom select focus and active choices in both themes', () => {
