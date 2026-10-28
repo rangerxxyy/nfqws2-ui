@@ -26,6 +26,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toMatch(/\b(?:window\.)?prompt\s*\(/);
   });
 
+  it('exposes snapshot retention limits and saves the local storage budget', () => {
+    expect(template).toContain('id="snapshotMaxLocalMib"');
+    expect(template).toContain('id="snapshotMaxCount"');
+    expect(template).toContain('id="snapshotDays"');
+    expect(template).toContain('data-action-click="saveSnapshotRetention"');
+    expect(panelSource).toContain("maxLocalMib: number('#snapshotMaxLocalMib', current.maxLocalMib)");
+    expect(panelSource).toContain('data.totalBytes > snapshotLimitBytes');
+  });
+
   it('keeps list tabs compact and offers a delayed explanation', () => {
     for (const filename of ['user.list', 'exclude.list', 'auto.list', 'ipset.list', 'ipset_exclude.list']) {
       expect(template).toContain(`<code>${filename}</code>`);

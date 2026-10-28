@@ -12,6 +12,7 @@ use std::{
 pub const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ARCHIVE_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 2048;
+const MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +60,8 @@ pub struct SnapshotSettings {
     pub max_count: usize,
     #[serde(default = "default_max_days")]
     pub max_days: u64,
+    #[serde(default = "default_max_local_mib")]
+    pub max_local_mib: u64,
     #[serde(default)]
     pub remote: SnapshotRemoteSettings,
 }
@@ -69,6 +72,9 @@ fn default_max_count() -> usize {
 fn default_max_days() -> u64 {
     30
 }
+fn default_max_local_mib() -> u64 {
+    512
+}
 
 impl Default for SnapshotSettings {
     fn default() -> Self {
@@ -76,6 +82,7 @@ impl Default for SnapshotSettings {
             auto_enabled: true,
             max_count: 50,
             max_days: 30,
+            max_local_mib: default_max_local_mib(),
             remote: SnapshotRemoteSettings::default(),
         }
     }
@@ -172,6 +179,7 @@ pub fn save_settings(data_dir: &Path, settings: &SnapshotSettings) -> Result<(),
     let mut value = settings.clone();
     value.max_count = value.max_count.clamp(5, 500);
     value.max_days = value.max_days.clamp(1, 3650);
+    value.max_local_mib = value.max_local_mib.clamp(320, 16_384);
     value.remote.port = value.remote.port.clamp(1, u16::MAX);
     value.remote.keep_local = value.remote.keep_local.clamp(1, 50);
     write_private_json(&settings_path(data_dir), &value)
@@ -459,6 +467,12 @@ fn prune(data_dir: &Path, store: &mut SnapshotStore) {
         settings.max_count.clamp(5, 500)
     };
     let mut local_count = store.items.iter().filter(|item| item.local).count();
+    let mut local_bytes = store
+        .items
+        .iter()
+        .filter(|item| item.local)
+        .fold(0u64, |sum, item| sum.saturating_add(item.size));
+    let max_local_bytes = settings.max_local_mib.saturating_mul(MIB);
     let mut remove = Vec::new();
     for (index, item) in store.items.iter().enumerate() {
         if !item.local
@@ -470,9 +484,11 @@ fn prune(data_dir: &Path, store: &mut SnapshotStore) {
         }
         let too_old = !settings.remote.enabled && now.saturating_sub(item.ts) > max_age;
         let over_count = local_count > max_count;
-        if too_old || over_count {
+        let over_storage = local_bytes > max_local_bytes;
+        if too_old || over_count || over_storage {
             remove.push(index);
             local_count = local_count.saturating_sub(1);
+            local_bytes = local_bytes.saturating_sub(item.size);
         }
     }
     for index in remove.into_iter().rev() {
@@ -889,6 +905,69 @@ mod manual_operations_tests {
         save_settings(dir.path(), &settings).unwrap();
         assert!(!load_settings(dir.path()).auto_enabled);
         assert!(!is_due_daily(dir.path()));
+    }
+
+    #[test]
+    fn snapshot_storage_budget_has_a_legacy_default_and_safe_bounds() {
+        let dir = tempdir().unwrap();
+        assert_eq!(load_settings(dir.path()).max_local_mib, 512);
+        save_settings(
+            dir.path(),
+            &SnapshotSettings {
+                max_local_mib: 1,
+                ..SnapshotSettings::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(load_settings(dir.path()).max_local_mib, 320);
+        save_settings(
+            dir.path(),
+            &SnapshotSettings {
+                max_local_mib: 100_000,
+                ..SnapshotSettings::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(load_settings(dir.path()).max_local_mib, 16_384);
+    }
+
+    #[test]
+    fn retention_enforces_local_storage_budget_but_keeps_pinned_snapshots() {
+        let dir = tempdir().unwrap();
+        let settings = SnapshotSettings {
+            max_local_mib: 512,
+            ..SnapshotSettings::default()
+        };
+        save_settings(dir.path(), &settings).unwrap();
+        let mut items = Vec::new();
+        for index in 1..=8 {
+            let mut snapshot = item(&index.to_string(), index as u64, &[]);
+            snapshot.size = 90 * 1024 * 1024;
+            snapshot.pinned = index == 1;
+            items.push(snapshot);
+        }
+        save_store(
+            dir.path(),
+            &SnapshotStore {
+                items,
+                last_daily_date: None,
+            },
+        )
+        .unwrap();
+
+        apply_retention(dir.path()).unwrap();
+
+        let stored = load_store(dir.path());
+        assert_eq!(
+            stored
+                .items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["1", "5", "6", "7", "8"]
+        );
+        assert!(stored.items[0].pinned);
+        assert!(stored.items.iter().map(|item| item.size).sum::<u64>() <= 512 * 1024 * 1024);
     }
 
     #[test]

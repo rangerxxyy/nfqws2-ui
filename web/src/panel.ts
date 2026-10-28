@@ -624,7 +624,11 @@ function setRuntimeProfileLabelOverride(id: string, label: string) {
 function renderBackups(data: SnapshotOverview) {
   const host = $('#backupList'); if (!host) return;
   snapshotOverview = data;
-  setText('#snapshotCount', `${data.localCount} ${pluralize(data.localCount, 'снимок', 'снимка', 'снимков')} · ${formatBytes(data.totalBytes)}`);
+  setText('#snapshotCount', `${data.localCount} ${pluralize(data.localCount, 'снимок', 'снимка', 'снимков')} · ${formatBytes(data.totalBytes)} из ${data.settings.maxLocalMib} МиБ`);
+  const snapshotLimitBytes = data.settings.maxLocalMib * 1024 * 1024;
+  setText('#snapshotStorageStatus', data.totalBytes > snapshotLimitBytes
+    ? `Лимит превышен на ${formatBytes(data.totalBytes - snapshotLimitBytes)}. Закреплённые копии и копии, ожидающие отправки на NAS, автоматически не удаляются.`
+    : `Лимит ${data.settings.maxLocalMib} МиБ. При превышении удаляются старейшие незакреплённые копии.`);
   setText('#snapshotDirectory', data.directory);
   setValue('#snapshotAutoEnabled', String(data.settings.autoEnabled), true);
   const automaticSnapshots = $<HTMLInputElement>('#snapshotAutoEnabled'); if (automaticSnapshots) automaticSnapshots.disabled = false;
@@ -632,7 +636,7 @@ function renderBackups(data: SnapshotOverview) {
     ? 'Автокопии включены: перед изменениями в панели и ежедневно в 04:05.'
     : 'Автокопии выключены. Восстановление снимка всё ещё создаёт страховочную копию.');
   setText('#snapshotRemoteStatus', !data.remote.tool ? 'На роутере нет SSH-клиента' : data.remote.error ? `Ошибка отправки: ${data.remote.error}` : data.remote.on ? `Включено · на NAS ${data.remote.stored} · ждут отправки ${data.remote.pending}` : 'Отправка выключена — снимки хранятся на роутере');
-  setValue('#snapshotDays', String(data.settings.maxDays)); setValue('#snapshotMaxCount', String(data.settings.maxCount));
+  setValue('#snapshotDays', String(data.settings.maxDays)); setValue('#snapshotMaxCount', String(data.settings.maxCount)); setValue('#snapshotMaxLocalMib', String(data.settings.maxLocalMib));
   setValue('#snapshotRemoteEnabled', String(data.settings.remote.enabled), true); setValue('#snapshotRemoteHost', data.settings.remote.host); setValue('#snapshotRemotePort', String(data.settings.remote.port)); setValue('#snapshotRemoteUser', data.settings.remote.user); setValue('#snapshotRemoteDir', data.settings.remote.dir); setValue('#snapshotRemoteKeep', String(data.settings.remote.keepLocal));
   setText('#snapshotPublicKey', data.remote.publicKey);
   const command = $('#snapshotSetupCommand'); if (command instanceof HTMLTextAreaElement) command.value = data.remote.setupCommand;
@@ -689,11 +693,11 @@ async function restoreSnapshotFile(input: HTMLInputElement) {
 function readSnapshotSettings() {
   const current = snapshotOverview?.settings; if (!current) throw new Error('Сначала загрузите настройки снимков.');
   const number = (selector: string, fallback: number) => Number.parseInt(($<HTMLInputElement>(selector)?.value ?? ''), 10) || fallback;
-  return { ...current, autoEnabled: ($<HTMLInputElement>('#snapshotAutoEnabled')?.checked ?? current.autoEnabled), maxDays: number('#snapshotDays', current.maxDays), maxCount: number('#snapshotMaxCount', current.maxCount), remote: { ...current.remote, enabled: ($<HTMLInputElement>('#snapshotRemoteEnabled')?.checked ?? false), host: $<HTMLInputElement>('#snapshotRemoteHost')?.value.trim() ?? '', port: number('#snapshotRemotePort', current.remote.port), user: $<HTMLInputElement>('#snapshotRemoteUser')?.value.trim() ?? '', dir: $<HTMLInputElement>('#snapshotRemoteDir')?.value.trim() ?? '', keepLocal: number('#snapshotRemoteKeep', current.remote.keepLocal) } };
+  return { ...current, autoEnabled: ($<HTMLInputElement>('#snapshotAutoEnabled')?.checked ?? current.autoEnabled), maxDays: number('#snapshotDays', current.maxDays), maxCount: number('#snapshotMaxCount', current.maxCount), maxLocalMib: number('#snapshotMaxLocalMib', current.maxLocalMib), remote: { ...current.remote, enabled: ($<HTMLInputElement>('#snapshotRemoteEnabled')?.checked ?? false), host: $<HTMLInputElement>('#snapshotRemoteHost')?.value.trim() ?? '', port: number('#snapshotRemotePort', current.remote.port), user: $<HTMLInputElement>('#snapshotRemoteUser')?.value.trim() ?? '', dir: $<HTMLInputElement>('#snapshotRemoteDir')?.value.trim() ?? '', keepLocal: number('#snapshotRemoteKeep', current.remote.keepLocal) } };
 }
 async function saveSnapshotSettings(remoteOnly = false) {
   const settings = readSnapshotSettings();
-  if (remoteOnly && snapshotOverview) { settings.maxDays = snapshotOverview.settings.maxDays; settings.maxCount = snapshotOverview.settings.maxCount; }
+  if (remoteOnly && snapshotOverview) { settings.maxDays = snapshotOverview.settings.maxDays; settings.maxCount = snapshotOverview.settings.maxCount; settings.maxLocalMib = snapshotOverview.settings.maxLocalMib; }
   await nfqwsSnapshots.saveSettings(settings); toast('Настройки резервных копий сохранены.'); await loadBackups();
 }
 async function toggleAutomaticSnapshots(enabled: boolean) {

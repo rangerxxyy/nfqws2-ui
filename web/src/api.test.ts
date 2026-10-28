@@ -367,6 +367,7 @@ describe('API client used by the source-based panel', () => {
       autoEnabled: false,
       maxCount: 50,
       maxDays: 30,
+      maxLocalMib: 512,
       remote: { enabled: false, host: '', port: 22, user: '', dir: '', keepLocal: 5 },
     });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/snapshots/settings');
