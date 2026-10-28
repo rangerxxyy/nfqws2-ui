@@ -1124,6 +1124,7 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('keeps selection painting inside the active editor layer', () => {
     expect(codeEditorSource).toContain('.cm-selectionBackground');
+    expect(codeEditorSource).toContain("lineHeight: compact ? '1.25rem' : '1.5'");
     expect(panelStyles).toContain('.config-code-editor .cm-selectionBackground');
     expect(panelStyles).toContain('::selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent); }');
     expect(panelStyles).not.toContain('color:transparent !important; -webkit-text-fill-color:transparent !important;');

@@ -39,6 +39,7 @@ import { EditorView } from '@codemirror/view';
 import { navigationGroupForRoute } from './navigation';
 import { isValidNetworkInterfaceSelection, networkInterfaceChoices } from './network-interface';
 import { snapshotFreeSpaceState } from './snapshot-storage';
+import { formatListProfileUsageStatus, listValidationNotice } from './list-profile-usage';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'appearance' | 'about';
 let status: StatusResponse | null = null;
@@ -2714,10 +2715,11 @@ async function loadList(id: NfqwsListId) {
       const usageTitle = !discovered ? '' : discovered.usageKnown === false
         ? '\nНе удалось проверить, какие профили используют список.'
         : usages.length === 0 ? discovered.validationRequired === false
-          ? '\nНе подключён: формат списка не проверяется при сохранении.'
+          ? '\nНе подключён ни к одному профилю.'
           : '\nНе используется ни одним разобранным профилем.'
           : `\nИспользуют: ${usages.map((usage) => `#${usage.profileIndex} ${usage.profileName} (${listUsageRoleLabel(usage.role)})`).join(', ')}`;
-      candidate.title = discovered ? `${tabId ? listDisplayName(tabId) : 'Список'} — ${discovered.path}${usageTitle}` : 'Файл не найден ни по ссылке конфигурации, ни в штатном каталоге lists';
+      const validationNotice = listValidationNotice(discovered?.validationRequired);
+      candidate.title = discovered ? `${tabId ? listDisplayName(tabId) : 'Список'} — ${discovered.path}${usageTitle}${validationNotice ? `\n${validationNotice}` : ''}` : 'Файл не найден ни по ссылке конфигурации, ни в штатном каталоге lists';
     }
     if (!summary) {
       activeList = null;
@@ -2761,12 +2763,11 @@ async function loadList(id: NfqwsListId) {
     const usageStatus = $('#listProfileUsageStatus');
     if (usageStatus) {
       const usages = summary.usedBy ?? [];
-      usageStatus.textContent = summary.usageKnown === false
-        ? 'Использование в профилях неизвестно: конфигурацию не удалось безопасно разобрать.'
-        : usages.length === 0 ? summary.validationRequired === false
-          ? 'Не подключён ни к одному профилю. Формат списка не проверяется при сохранении.'
-          : 'Не используется ни одним разобранным профилем.'
-          : `Используют: ${usages.map((usage) => `#${usage.profileIndex} ${usage.profileName} · ${listUsageRoleLabel(usage.role)}`).join('; ')}`;
+      usageStatus.textContent = formatListProfileUsageStatus({
+        usageKnown: summary.usageKnown,
+        validationRequired: summary.validationRequired,
+        usages: usages.map((usage) => `#${usage.profileIndex} ${usage.profileName} · ${listUsageRoleLabel(usage.role)}`),
+      });
       usageStatus.classList.toggle('text-amber-300', summary.usageKnown === false);
       usageStatus.classList.toggle('text-slate-400', summary.usageKnown !== false);
     }
