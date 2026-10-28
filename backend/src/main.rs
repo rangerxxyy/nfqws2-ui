@@ -4,7 +4,10 @@ use axum::{
     extract::{DefaultBodyLimit, Query, State},
     http::{HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
-    response::{Html, IntoResponse, Response},
+    response::{
+        Html, IntoResponse, Response,
+        sse::{Event, KeepAlive, Sse},
+    },
     routing::{get, post},
 };
 use nfqws2_ui::change_history;
@@ -17,7 +20,7 @@ use nfqws2_ui::freeze_diagnostic;
 use nfqws2_ui::freeze_profile_join;
 use nfqws2_ui::interception_status::{self, InterceptionStatus};
 use nfqws2_ui::managed_asn_lists::{self, ManagedAsnList, ManagedAsnListStore};
-use nfqws2_ui::site_diagnostics::{self, DiagnosticStep};
+use nfqws2_ui::site_diagnostics::{self, DiagnosticProgress, DiagnosticReport, DiagnosticStep};
 use nfqws2_ui::site_trace;
 use nfqws2_ui::strategy_picker::{self, StrategyMode, StrategyProtocol};
 use nfqws2_ui::transfer_diagnostic;
@@ -5617,7 +5620,12 @@ async fn diagnose_site(
             );
         }
     };
-    if let Some(config) = config_path_for_state(&state) {
+    append_diagnostic_list_check(&state, &mut report).await;
+    Json(report).into_response()
+}
+
+async fn append_diagnostic_list_check(state: &AppState, report: &mut DiagnosticReport) {
+    if let Some(config) = config_path_for_state(state) {
         let lists_started = Instant::now();
         let active_args = active_process_arguments().unwrap_or_default();
         let candidates = diagnostic_list_candidates(&config, &active_args);
@@ -5660,7 +5668,51 @@ async fn diagnose_site(
             http_code: None,
         });
     }
-    Json(report).into_response()
+}
+
+async fn diagnose_site_stream(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<SiteDiagnosticRequest>,
+) -> Response {
+    let host = match site_diagnostics::normalize_site_target(&request.host) {
+        Ok(host) => host,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
+    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
+        return error(
+            StatusCode::CONFLICT,
+            "Проверка сайта уже выполняется; дождитесь результата",
+        );
+    };
+    let binary = discover_system_paths()
+        .map(|paths| paths.binary.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    tokio::spawn(async move {
+        let _guard = guard;
+        let progress_tx = tx.clone();
+        let mut report = site_diagnostics::diagnose_with_progress(
+            host,
+            binary,
+            move |progress: DiagnosticProgress| {
+                let event = serde_json::json!({"type":"progress", "progress":progress});
+                let _ = progress_tx.send(Event::default().data(event.to_string()));
+            },
+        )
+        .await;
+        append_diagnostic_list_check(&state, &mut report).await;
+        let event = serde_json::json!({"type":"complete", "report":report});
+        let _ = tx.send(Event::default().data(event.to_string()));
+    });
+    let events = futures_util::stream::unfold(rx, |mut receiver| async move {
+        receiver
+            .recv()
+            .await
+            .map(|event| (Ok::<Event, std::convert::Infallible>(event), receiver))
+    });
+    Sse::new(events)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 async fn resolve_monitoring_policy_route(state: &AppState) -> MonitoringPolicyRoute {
@@ -13692,6 +13744,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/format", post(format_config))
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
+        .route(
+            "/api/nfqws2/diagnostics/site/stream",
+            post(diagnose_site_stream),
+        )
         .route(
             "/api/nfqws2/diagnostics/support-report",
             post(build_support_report),

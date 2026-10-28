@@ -1130,35 +1130,41 @@ export default function App() {
         {"\n      "}
         {"\n      "}
         {"\n      "}
-        <section id={"tabContent-diagnostic16k"} className={"hidden view-animate space-y-3"}>
-          <div className={"ui-card rounded-2xl p-3 sm:p-3.5 space-y-2"}>
-            <div>
-              <h2 className={"text-base font-bold text-white"}>Обрыв на 16 КБ</h2>
-              <p className={"mt-0.5 text-xs leading-relaxed text-slate-300"}>Сравниваем передачу напрямую и через nfqws2. Результаты и пояснения открываются по запросу.</p>
+        <section id={"tabContent-diagnostic16k"} className={"hidden freeze-scan-page view-animate space-y-3"}>
+          <div className={"freeze-scan-page-title"}><h1 className={"text-xl font-bold text-white"}>Обрыв на 16 КБ</h1></div>
+          <section className={"ui-card freeze-scan-intro-card rounded-2xl p-4 sm:p-5 space-y-3"}>
+            <div className={"space-y-2"}>
+              <p className={"freeze-scan-intro-copy text-sm leading-relaxed text-slate-200"}>Некоторые провайдеры замирают после первых 16–20 КБ соединения с зарубежными хостингами. Обычные стратегии не всегда помогают: для такой сети подберём имя сайта для fake-SNI, которое пропускает провайдер.</p>
+              <p className={"text-sm leading-relaxed text-slate-300"}>По очереди сравниваем соединения напрямую и через nfqws2. Если обрыв подтверждён, имя проверяется на адресах всей сети, а не только на одном сайте.</p>
             </div>
-            <div className={"flex flex-col sm:flex-row sm:items-end gap-2"}>
-              <label htmlFor={"freezeScanHostsInput"} className={"min-w-0 flex-1 space-y-1 text-xs font-semibold text-slate-200"}>
-                <span>Свои сайты <span className={"font-medium text-slate-400"}>(необязательно)</span></span>
-                <input id={"freezeScanHostsInput"} type={"text"} placeholder={"example.com, video.example"} autoCapitalize={"none"} spellCheck={false} className={"w-full bg-[#060a12] border border-slate-700 rounded-lg px-3 py-1.5 text-sm font-mono text-white placeholder:text-slate-500"} />
+            <div className={"freeze-scan-form"}>
+              <label htmlFor={"freezeScanHostsInput"} className={"freeze-scan-host-field text-sm font-semibold text-slate-200"}>
+                <span>Свои сайты</span>
+                <input id={"freezeScanHostsInput"} type={"text"} placeholder={"через запятую, например king.hr (необязательно)"} autoCapitalize={"none"} spellCheck={false} />
               </label>
-              <button data-action-click={"runFreezeScan"} className={"px-3.5 py-1.5 rounded-lg bg-blue-600 text-sm text-white font-semibold"}>Запустить пробу</button>
-              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden px-3 py-1.5 rounded-lg border border-rose-500/30 text-sm text-rose-200"}>Остановить</button>
-            </div>
-            <label className={"flex items-start gap-2 text-xs text-slate-300"}><input id={"freezeScanUploadProbe"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} /><span><strong>Проверить короткие POST-ответы (до 64 КБ)</strong><small className={"mt-0.5 block text-slate-400"}>Только для введённых доменов: сервер получит тестовое тело. Отказ POST сам по себе не означает обрыв передачи.</small></span></label>
-            <p id={"freezeScanStatus"} className={"hidden text-sm font-semibold text-blue-200"} role={"status"} aria-live={"polite"}></p>
-            <div id={"freezeScanProgress"} className={"hidden rounded-xl border border-blue-400/25 bg-blue-500/5 p-4"} role={"status"} aria-live={"polite"}>
-              <div className={"flex items-center justify-between gap-3"}>
-                <strong id={"freezeScanProgressTitle"} className={"text-sm font-bold text-blue-100"}></strong>
-                <span id={"freezeScanProgressPercent"} className={"shrink-0 text-xs font-bold tabular-nums text-blue-200"}></span>
+              <div className={"freeze-scan-launch-row"}>
+                <button data-action-click={"runFreezeScan"} className={"freeze-scan-start-button"}>▷ Запустить пробу</button>
+                <span className={"freeze-scan-safety-note text-sm text-slate-300"}>Обычно занимает 2–10 минут. Проверка использует отдельные соединения роутера и не меняет ваш трафик.</span>
               </div>
-              <div className={"mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"}>
-                <div id={"freezeScanProgressBar"} className={"h-full rounded-full bg-blue-400 transition-[width] duration-300"}></div>
-              </div>
-              <p id={"freezeScanProgressDetail"} className={"mt-2 text-xs leading-relaxed text-slate-300"}></p>
-              <ol id={"freezeScanProgressSteps"} className={"mt-3 grid gap-2 sm:grid-cols-3"}></ol>
+              <label className={"freeze-scan-post-option text-sm text-slate-300"}><input id={"freezeScanUploadProbe"} type={"checkbox"} /><span><strong>Проверить короткие POST-ответы (до 64 КБ)</strong><small>Только для введённых доменов: сервер получит тестовое тело. Отказ POST сам по себе не доказывает обрыв передачи.</small></span></label>
             </div>
+          </section>
+          <p id={"freezeScanStatus"} className={"hidden sr-only"} role={"status"} aria-live={"polite"}></p>
+          <div id={"freezeScanProgress"} className={"hidden freeze-scan-running-card"}>
+            <div className={"freeze-scan-running-topline"}>
+              <span className={"freeze-scan-spinner"} aria-hidden={"true"}></span>
+              <strong id={"freezeScanProgressTitle"}></strong>
+              <span id={"freezeScanProgressCount"} className={"freeze-scan-progress-count"}></span>
+              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden freeze-scan-stop-button"}>Остановить</button>
+            </div>
+            <div className={"freeze-scan-progress-track"} role={"progressbar"} aria-label={"Ход проверки"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><div id={"freezeScanProgressBar"}></div></div>
+            <p id={"freezeScanProgressDetail"}></p>
+          </div>
             <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-3 py-2 text-sm font-bold leading-snug"} role={"status"} aria-live={"polite"}></p>
-            <div id={"freezeScanResults"} className={"hidden overflow-x-auto rounded-xl border border-slate-800"}></div>
+            <section id={"freezeScanResults"} className={"hidden freeze-scan-results-panel"}>
+              <div className={"freeze-scan-results-heading"}><h3>Сети</h3><span id={"freezeScanNetworkCount"}></span></div>
+              <div id={"freezeScanRows"} className={"freeze-scan-network-list"} role={"list"} aria-label={"Результаты по сетям"}></div>
+            </section>
             <section id={"freezeApplyPreviewPanel"} className={"hidden rounded-2xl border border-blue-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>
               <div>
                 <h3 className={"text-sm font-bold text-white"}>Применение к проверенному сайту</h3>
@@ -1174,8 +1180,7 @@ export default function App() {
               <p className={"text-xs font-medium text-slate-300"}>Будет создан новый статический IP-список на основе RIPEstat и добавлена ссылка в выбранный профиль. Перед записью конфигурация проверяется и сохраняется резервная копия.</p>
               <div className={"flex flex-wrap gap-2"}><button id={"applyFreezeJoinButton"} data-action-click={"applyFreezeJoin"} disabled className={"w-fit rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 disabled:cursor-wait disabled:opacity-60"}>Добавить и перезапустить</button><button data-action-click={"closeFreezeJoinPreview"} className={"rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-slate-500"}>Закрыть</button></div>
             </section>
-            <p className={"text-xs leading-relaxed text-slate-400"}>Проверки идут по очереди. Возможный сетевой обрыв не доказывает блокировку DPI; служба nfqws2 и домашний трафик не меняются.</p>
-          </div>
+            <p className={"text-xs leading-relaxed text-slate-400"}>Возможный обрыв сам по себе не доказывает блокировку DPI.</p>
         </section>
         <section id={"tabContent-configCheck"} className={"hidden view-animate space-y-4"}>
           <div className={"ui-card rounded-2xl p-4 sm:p-5 space-y-4"}>

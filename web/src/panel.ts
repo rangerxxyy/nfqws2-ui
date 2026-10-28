@@ -12,7 +12,7 @@ import { highlightConfigLine } from './config-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -24,7 +24,7 @@ import { communityProviderLabel, visibleCommunityProtocols } from './community-p
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
-import { diagnosisQueueMarker, diagnosisQueueState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { diagnosisProgressState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, CORE_UPDATE_CHECK_INTERVAL_MS, coreUpdateNoticePresentation, lifecycleMessage, shouldCheckCoreUpdate, toastCardsToDismiss, toastPresentation } from './notifications';
 import { podkopWarningPresentation } from './podkop-warning';
 import { shouldPollLogs } from './log-polling';
@@ -1572,8 +1572,9 @@ function renderChangeHistory(query = '') {
     const diffButton = document.createElement('button'); diffButton.type = 'button'; diffButton.className = 'backup-action'; diffButton.textContent = 'Что изменилось'; diffButton.dataset.actionClick = 'toggleChangeHistoryDiff'; diffButton.dataset.args = JSON.stringify([item.id, { source: 'self' }]);
     const revertButton = document.createElement('button'); revertButton.type = 'button'; revertButton.className = 'backup-action'; revertButton.textContent = 'Откатить'; revertButton.dataset.actionClick = 'requestRevertChangeHistory'; revertButton.dataset.args = JSON.stringify([item.id]);
     actions.append(diffButton, revertButton);
+    details.append(actions);
     const diff = document.createElement('pre'); diff.className = 'change-history-diff'; diff.hidden = true; diff.dataset.historyDiff = item.id;
-    row.append(summary, actions, diff); host.append(row);
+    row.append(summary, diff); host.append(row);
   }
   setText('#changeHistoryStatus', `${visible.length} ${pluralize(visible.length, 'изменение', 'изменения', 'изменений')} · хранится до 500 событий`);
 }
@@ -2926,35 +2927,40 @@ function diagnosisIcon(kind: Presentation['kind']): HTMLElement {
   icon.textContent = kind === 'success' ? '✓' : kind === 'failure' ? '×' : '!';
   icon.setAttribute('role', 'img'); icon.setAttribute('aria-label', kind === 'success' ? 'Ответ получен' : kind === 'failure' ? 'Ошибка проверки' : 'Результат не определён'); return icon;
 }
-function renderDiagnosisQueue(container: HTMLElement, stages: Array<{ id: string; label: string }>, activeIndex: number, results?: ReturnType<typeof diagnosisRows>) {
-  const resultsReceived = results !== undefined;
-  const section = document.createElement('section'); section.className = 'diagnosis-queue ui-card rounded-2xl';
-  section.setAttribute('aria-label', 'Этапы проверки сайта');
-  const title = document.createElement('h3'); title.className = 'diagnosis-checks-title';
-  title.textContent = activeIndex < 0 ? 'Этапы проверки' : resultsReceived && activeIndex >= stages.length ? 'Проверки завершены · результаты по этапам' : 'Проверка сайта';
-  section.append(title);
-  const list = document.createElement('ul'); list.className = 'diagnosis-queue-list';
-  stages.forEach((stage, index) => {
-    const state = diagnosisQueueState(index, activeIndex, resultsReceived);
-    const result = results?.find((item) => item.id === stage.id);
-    const row = document.createElement('li');
-    row.className = `diagnosis-queue-step is-${state}${result ? ` is-result-${result.kind}` : ''}`;
-    row.setAttribute('aria-current', state === 'active' ? 'step' : 'false');
-    const marker = document.createElement('span'); marker.className = 'diagnosis-queue-marker'; marker.setAttribute('aria-hidden', 'true');
-    marker.textContent = diagnosisQueueMarker(state, result?.kind);
-    const label = document.createElement('span'); label.textContent = stage.label;
-    const status = document.createElement('small'); status.textContent = state === 'active' ? (resultsReceived ? 'Выполняется' : 'Проверка') : state === 'pending' ? 'Ожидает' : result?.kind === 'failure' ? 'Ошибка' : result?.kind === 'unknown' ? 'Не определено' : 'Готово';
-    row.append(marker, label, status); list.append(row);
-  });
-  section.append(list);
-  if (!resultsReceived && activeIndex >= 0) {
-    const note = document.createElement('p'); note.className = 'diagnosis-queue-note';
-    note.textContent = 'Проверка выполняется на роутере. Подтверждённые результаты появятся после ответа.';
-    section.append(note);
+function renderDiagnosisProgress(container: HTMLElement, host: string, activeStage: string, completed: Map<string, SiteDiagnosticStep>, addresses: string[], latestStep: SiteDiagnosticStep | null) {
+  const active = SITE_DIAGNOSIS_STAGES.find((stage) => stage.id === activeStage);
+  const overview = document.createElement('section'); overview.className = 'diagnosis-overview diagnosis-progress-overview'; overview.setAttribute('role', 'status');
+  const spinner = document.createElement('span'); spinner.className = 'diagnosis-progress-spinner'; spinner.setAttribute('aria-hidden', 'true');
+  const copy = document.createElement('div'); copy.className = 'diagnosis-overview-copy';
+  const title = document.createElement('h3'); title.className = 'diagnosis-overview-title'; title.textContent = `Проверка выполняется · ${active?.label ?? 'завершение'}`;
+  const detail = document.createElement('p'); detail.className = 'diagnosis-overview-detail';
+  detail.textContent = latestStep ? `${latestStep.detail}${addresses.length ? ` · IP: ${addresses.join(', ')}` : ''}` : `Начинаю проверку ${host}`;
+  copy.append(title, detail); overview.append(spinner, copy); container.replaceChildren(overview);
+  const checks = document.createElement('section'); checks.className = 'diagnosis-checks diagnosis-live-checks ui-card rounded-2xl';
+  const heading = document.createElement('h3'); heading.className = 'diagnosis-checks-title'; heading.textContent = 'Что проверено'; checks.append(heading);
+  const list = document.createElement('div'); list.setAttribute('role', 'list');
+  const finished = new Set(completed.keys()); if (finished.has('doh')) finished.add('dns');
+  for (const stage of SITE_DIAGNOSIS_STAGES) {
+    const dns = stage.id === 'dns' ? completed.get('dns') : undefined;
+    const doh = stage.id === 'dns' ? completed.get('doh') : undefined;
+    const step = dns && doh ? { ...dns, status: doh.status !== 'ok' && dns.status === 'ok' ? 'warning' as const : dns.status, detail: `${dns.detail} · ${doh.detail}` } : dns ?? completed.get(stage.id) ?? (stage.id === 'dns' ? doh : undefined);
+    const state = diagnosisProgressState(stage.id, activeStage, finished);
+    const row = document.createElement('div'); row.className = `diagnosis-row diagnosis-row-live is-${state}${step ? ` diagnosis-${step.status === 'ok' ? 'success' : step.status === 'error' ? 'failure' : 'unknown'}` : ''}`; row.setAttribute('role', 'listitem');
+    if (state === 'active') {
+      const marker = document.createElement('span'); marker.className = 'diagnosis-progress-spinner diagnosis-progress-spinner-small'; marker.setAttribute('aria-hidden', 'true'); row.append(marker);
+    } else {
+      const icon = diagnosisIcon(step ? step.status === 'ok' ? 'success' : step.status === 'error' ? 'failure' : 'unknown' : 'unknown');
+      if (!step) { icon.textContent = '·'; icon.setAttribute('aria-label', 'Ожидает'); }
+      row.append(icon);
+    }
+    const label = document.createElement('h4'); label.className = 'diagnosis-row-label'; label.textContent = stage.label; row.append(label);
+    const body = document.createElement('div'); body.className = 'diagnosis-row-body';
+    const result = document.createElement('p'); result.className = 'diagnosis-row-detail'; result.textContent = step?.detail ?? (state === 'active' ? 'Выполняется сейчас…' : 'Ожидает'); body.append(result);
+    if (step?.durationMs !== null && step?.durationMs !== undefined) { const timing = document.createElement('p'); timing.className = 'diagnosis-row-metrics'; timing.textContent = `${step.durationMs} мс`; body.append(timing); }
+    row.append(body); list.append(row);
   }
-  container.replaceChildren(section);
+  checks.append(list); container.append(checks);
 }
-const waitForDiagnosisAnimation = () => new Promise<void>((resolve) => window.setTimeout(resolve, 280));
 function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticReport) {
   container.replaceChildren();
   const verdict = comparisonVerdict(report.direct, report.current);
@@ -2993,21 +2999,16 @@ async function runSiteDiagnosis() {
   if (!input.value.trim()) return toast('Введите домен или публичный IPv4 для проверки.', 'error');
   diagnosisRunning = true; input.disabled = true; button.disabled = true;
   button.textContent = 'Проверяем…'; container.replaceChildren();
-  const stages = SITE_DIAGNOSIS_STAGES.map(({ id, label }) => ({ id, label }));
-  renderDiagnosisQueue(container, stages, -1);
   const toastHost = $('#toastWrapper');
   const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
-  await waitForDiagnosisAnimation();
+  const completed = new Map<string, SiteDiagnosticStep>();
+  let latestStep: SiteDiagnosticStep | null = null;
+  renderDiagnosisProgress(container, input.value.trim(), 'dns', completed, [], latestStep);
   try {
-    const report = await nfqwsDiagnostics.site(input.value);
-    const resultRows = diagnosisRows(report);
-    const stages = resultRows.map(({ id, label }) => ({ id, label }));
-    for (let index = 0; index < stages.length; index += 1) {
-      renderDiagnosisQueue(container, stages, index, resultRows);
-      await waitForDiagnosisAnimation();
-      renderDiagnosisQueue(container, stages, index + 1, resultRows);
-    }
-    container.replaceChildren();
+    const report = await nfqwsDiagnostics.siteStream(input.value, (progress) => {
+      if (progress.step) { completed.set(progress.step.id, progress.step); latestStep = progress.step; }
+      renderDiagnosisProgress(container, input.value.trim(), progress.activeStage, completed, progress.addresses, latestStep);
+    });
     renderSiteDiagnosis(container, report);
     closeProgress();
     toast(`Проверка ${report.host} завершена: ${report.summary}`);
@@ -3981,25 +3982,12 @@ function renderFreezeScan(operation: FreezeScanOperation) {
     if (active) {
       const view = freezeProgressPresentation(operation);
       setText('#freezeScanProgressTitle', view.headline);
-      setText('#freezeScanProgressPercent', `${view.percent}%`);
+      setText('#freezeScanProgressCount', view.count);
       setText('#freezeScanProgressDetail', view.detail);
       const bar = $('#freezeScanProgressBar');
-      if (bar instanceof HTMLElement) bar.style.width = `${view.percent}%`;
-      const steps = $('#freezeScanProgressSteps');
-      if (steps) {
-        steps.replaceChildren();
-        view.steps.forEach((step, index) => {
-          const item = document.createElement('li');
-          item.className = `freeze-progress-step rounded-lg border px-2.5 py-2 text-xs ${step.state}`;
-          item.dataset.state = step.state;
-          const number = document.createElement('span');
-          number.className = 'mr-2 inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] font-bold';
-          number.textContent = step.state === 'complete' ? '✓' : String(index + 1);
-          const label = document.createElement('span');
-          label.textContent = step.label;
-          item.append(number, label);
-          steps.append(item);
-        });
+      if (bar instanceof HTMLElement) {
+        bar.style.width = `${view.percent}%`;
+        bar.parentElement?.setAttribute('aria-valuenow', String(view.percent));
       }
     }
   }
@@ -4021,82 +4009,85 @@ function renderFreezeScan(operation: FreezeScanOperation) {
       summary.classList.add('hidden');
     }
   }
-  const container = $('#freezeScanResults');
-  if (!container) return;
+  const container = $('#freezeScanRows');
+  const resultsPanel = $('#freezeScanResults');
+  if (!container || !resultsPanel) return;
   const resultsSignature = JSON.stringify({ state: operation.state, results: operation.results });
   if (container.dataset.resultsSignature === resultsSignature) return;
   container.dataset.resultsSignature = resultsSignature;
   container.replaceChildren();
-  if (!operation.results.length) { container.classList.add('hidden'); return; }
-  container.classList.remove('hidden');
-  const table = document.createElement('table'); table.className = 'freeze-scan-table w-full text-left text-sm';
-  const head = document.createElement('thead'); head.className = 'bg-slate-900/80 text-xs uppercase text-slate-300';
-  const headerRow = document.createElement('tr');
-  const labels = ['Сеть', 'Проверенный IP / ASN', 'Результат'];
-  for (const title of labels) { const cell = document.createElement('th'); cell.className = 'px-3 py-3 font-bold'; cell.textContent = title; headerRow.append(cell); }
-  head.append(headerRow); table.append(head);
-  const body = document.createElement('tbody'); body.className = 'divide-y divide-slate-800 text-slate-200';
+  if (!operation.results.length) { resultsPanel.classList.add('hidden'); return; }
+  resultsPanel.classList.remove('hidden');
+  setText('#freezeScanNetworkCount', `${operation.results.length} ${pluralize(operation.results.length, 'сеть проверена', 'сети проверены', 'сетей проверено')}`);
   for (const [resultIndex, result] of operation.results.entries()) {
     const presentation = freezeRowPresentation({ freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, directOk: result.direct.ok, currentOk: result.current.ok, directClassification: result.direct.classification, currentClassification: result.current.classification });
-    const row = document.createElement('tr'); row.className = `freeze-result-row freeze-result-${presentation.tone} align-top hover:bg-slate-900/50`;
+    const row = document.createElement('article'); row.className = `freeze-scan-network-row freeze-result-${presentation.tone}`;
+    row.setAttribute('role', 'listitem');
     row.dataset.resultTone = presentation.tone;
-    const cells = [
-      freezeRowIdentity(result),
-      `${result.address ?? 'адрес не найден'}\n${result.asn.state === 'verified' ? `AS${result.asn.asn} · подтверждён` : result.asn.state === 'changed' ? `ASN изменился: ожидался AS${result.asn.expected}, сейчас AS${result.asn.actual}` : 'ASN не подтверждён'}`,
-      '',
-    ];
-    cells.forEach((value, index) => {
-      const cell = document.createElement('td'); cell.dataset.label = labels[index];
-      cell.className = `whitespace-pre-line px-3 py-2.5 leading-snug ${index === 2 ? 'freeze-result-summary font-bold' : 'font-semibold text-white'}`;
-      if (index === 2) {
-        const badge = document.createElement('span');
-        badge.className = 'freeze-result-badge inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-bold';
-        badge.textContent = presentation.label;
-        badge.setAttribute('role', 'status');
-        const facts = freezeRowDetails(result);
-        cell.append(badge);
-        if (facts.details || result.direct || result.current) {
-          const disclosure = document.createElement('details');
-          disclosure.className = 'freeze-result-details mt-1.5 text-xs font-medium';
-          const summary = document.createElement('summary');
-          summary.textContent = 'Замеры и детали';
-          const content = document.createElement('span');
-          content.className = 'mt-1 block whitespace-pre-line';
-          const measurements = freezeMeasurementDetails(freezeMeasurementLabel(result.direct), freezeMeasurementLabel(result.current));
-          content.textContent = [measurements, facts.details].filter(Boolean).join('\n');
-          disclosure.append(summary, content);
-          cell.append(disclosure);
-        }
-      } else {
-        cell.textContent = value;
-      }
-      const applyKey = `${operation.id}:${resultIndex}`;
-      if (index === 2 && !freezeStrategyApplyDone.has(applyKey) && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'mt-2 rounded-lg border border-emerald-400/40 bg-emerald-500/15 px-3 py-1.5 text-xs font-bold text-emerald-100 transition hover:bg-emerald-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300';
-        button.dataset.actionClick = 'applyFreezeStrategyOneClick';
-        button.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
-        button.disabled = freezeStrategyApplyPending.has(applyKey);
-        button.textContent = button.disabled ? 'Проверяю и применяю…' : 'Применить к сайту';
-        button.title = 'Проверенный вариант добавляется только этому домену; при ошибке конфигурация откатывается';
-        cell.append(button);
-      }
-      if (index === 2 && freezeCanOfferProfileJoin({ targetKind: result.targetKind, asnVerified: result.asn.state === 'verified', freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
-        const joinButton = document.createElement('button');
-        joinButton.type = 'button';
-        joinButton.className = 'mt-2 ml-2 rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-1.5 text-xs font-bold text-blue-100 transition hover:bg-blue-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300';
-        joinButton.dataset.actionClick = 'previewFreezeJoin';
-        joinButton.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
-        joinButton.textContent = 'В профиль';
-        joinButton.title = 'Проверить, можно ли безопасно добавить ASN-сеть в существующий профиль';
-        cell.append(joinButton);
-      }
-      row.append(cell);
-    });
-    body.append(row);
+    const network = document.createElement('div');
+    network.className = 'freeze-result-network';
+    const [networkName, networkEndpoint] = freezeRowIdentity(result).split('\n', 2);
+    const label = document.createElement('strong');
+    label.textContent = networkName || result.label;
+    network.append(label);
+    if (networkEndpoint) {
+      const endpoint = document.createElement('span');
+      endpoint.className = 'freeze-result-host';
+      endpoint.textContent = networkEndpoint;
+      network.append(endpoint);
+    }
+    row.append(network);
+
+    const verifiedNetwork = document.createElement('div');
+    verifiedNetwork.className = 'freeze-result-address';
+    verifiedNetwork.textContent = `${result.address ?? 'адрес не найден'}\n${result.asn.state === 'verified' ? `AS${result.asn.asn} · подтверждён` : result.asn.state === 'changed' ? `ASN изменился: ожидался AS${result.asn.expected}, сейчас AS${result.asn.actual}` : 'ASN не подтверждён'}`;
+    row.append(verifiedNetwork);
+
+    const outcome = document.createElement('div');
+    outcome.className = 'freeze-result-outcome';
+    const badge = document.createElement('span');
+    badge.className = 'freeze-result-badge';
+    badge.textContent = presentation.label;
+    badge.setAttribute('role', 'status');
+    outcome.append(badge);
+    const facts = freezeRowDetails(result);
+    if (facts.details || result.direct || result.current) {
+      const disclosure = document.createElement('details');
+      disclosure.className = 'freeze-result-details';
+      const summary = document.createElement('summary');
+      summary.textContent = 'Замеры и детали';
+      const content = document.createElement('span');
+      content.className = 'freeze-result-detail-content';
+      const measurements = freezeMeasurementDetails(freezeMeasurementLabel(result.direct), freezeMeasurementLabel(result.current));
+      content.textContent = [measurements, facts.details].filter(Boolean).join('\n');
+      disclosure.append(summary, content);
+      outcome.append(disclosure);
+    }
+    const applyKey = `${operation.id}:${resultIndex}`;
+    if (!freezeStrategyApplyDone.has(applyKey) && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'freeze-action-button';
+      button.dataset.actionClick = 'applyFreezeStrategyOneClick';
+      button.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
+      button.disabled = freezeStrategyApplyPending.has(applyKey);
+      button.textContent = button.disabled ? 'Проверяю и применяю…' : 'Применить к сайту';
+      button.title = 'Проверенный вариант добавляется только этому домену; при ошибке конфигурация откатывается';
+      outcome.append(button);
+    }
+    if (freezeCanOfferProfileJoin({ targetKind: result.targetKind, asnVerified: result.asn.state === 'verified', freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
+      const joinButton = document.createElement('button');
+      joinButton.type = 'button';
+      joinButton.className = 'freeze-action-button freeze-action-join';
+      joinButton.dataset.actionClick = 'previewFreezeJoin';
+      joinButton.dataset.args = JSON.stringify([operation.id, String(resultIndex)]);
+      joinButton.textContent = 'В профиль';
+      joinButton.title = 'Проверить, можно ли безопасно добавить ASN-сеть в существующий профиль';
+      outcome.append(joinButton);
+    }
+    row.append(outcome);
+    container.append(row);
   }
-  table.append(body); container.append(table);
 }
 
 async function pollFreezeScan(id: string) {
@@ -4130,8 +4121,9 @@ async function startFreezeScan() {
   const uploadProbe = $('#freezeScanUploadProbe');
   const probeShortUploads = uploadProbe instanceof HTMLInputElement && uploadProbe.checked;
   if (extraHosts.length > 20) return toast('Можно добавить не более 20 своих доменов.', 'error');
-  const results = $('#freezeScanResults');
+  const results = $('#freezeScanRows');
   results?.replaceChildren();
+  $('#freezeScanResults')?.classList.add('hidden');
   $('#freezeApplyPreviewPanel')?.classList.add('hidden');
   activeStrategyPreview = null;
   const applyButton = $('#applyFreezeStrategyButton'); if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;

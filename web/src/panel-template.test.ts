@@ -141,6 +141,18 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.list-toolbar-button:disabled');
   });
 
+  it('places change-history actions directly under the changed filename', () => {
+    const renderStart = panelSource.indexOf('function renderChangeHistory(');
+    const renderEnd = panelSource.indexOf('\nfunction changedHistoryLines', renderStart);
+    const renderSource = panelSource.slice(renderStart, renderEnd);
+
+    expect(renderSource).toContain('details.append(actions)');
+    expect(renderSource).toContain('row.append(summary, diff)');
+    expect(renderSource).not.toContain('row.append(summary, actions, diff)');
+    expect(panelStyles).toMatch(/\.change-history-actions\s*\{\s*display:\s*flex;\s*flex-wrap:\s*wrap;\s*justify-content:\s*flex-start;/);
+    expect(panelStyles).not.toContain('.change-history-actions { justify-content: flex-start; margin-left: 3.4rem; }');
+  });
+
   it('shows the actual nfqws2 argument variable under every profile heading', () => {
     expect(panelSource).toContain("getRuntimeProfileConstructorTarget(profile)?.source");
     expect(panelSource).toContain("Пользовательский профиль · ${argumentVariable}");
@@ -228,6 +240,18 @@ describe('TSX panel with optional server-side authentication', () => {
     const dialogClass = template.match(/id="updateModalBackdrop"[^>]*class="([^"]+)"/)?.[1] ?? '';
     expect(toastClass.split(' ')).toContain('z-[40]');
     expect(dialogClass.split(' ')).toContain('z-50');
+  });
+
+  it('renders the compact 16 KB scan form, progress card, and responsive network list', () => {
+    const diagnostic = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-configCheck"'));
+    expect(diagnostic).toContain('id="freezeScanProgressCount"');
+    expect(diagnostic).toContain('id="freezeScanNetworkCount"');
+    expect(diagnostic).toContain('id="freezeScanRows"');
+    expect(diagnostic).toContain('role="list"');
+    expect(diagnostic).toContain('aria-valuemax="100"');
+    expect(diagnostic).toContain('class="freeze-scan-start-button"');
+    expect(panelStyles).toContain('.freeze-scan-network-row');
+    expect(panelStyles).toContain('@media (max-width: 700px)');
   });
 
   it('opens the full configuration editor first and separates configuration settings', () => {
@@ -602,25 +626,35 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(picker).toContain('Расширенный · каталог blockcheck2');
     expect(panelSource).toContain("value.split(/\\r?\\n/)");
     expect(picker).toContain('min-h-[180px] 2xl:h-[360px]');
-    expect(diagnostic16k).toContain('flex flex-col sm:flex-row');
-    expect(diagnostic16k).toContain('min-w-0 flex-1');
+    expect(diagnostic16k).toContain('freeze-scan-form');
+    expect(diagnostic16k).toContain('freeze-scan-host-field');
+    expect(diagnostic16k).toContain('freeze-scan-safety-note');
+    expect(diagnostic16k).toContain('freeze-scan-running-card');
     expect(diagnostic16k).toContain('id="freezeScanHostsInput"');
     expect(diagnostic16k).toContain('Запустить пробу');
     expect(diagnostic16k).toContain('id="freezeScanSummary"');
     expect(diagnostic16k).toContain('id="freezeScanProgress"');
-    expect(diagnostic16k).toContain('id="freezeScanProgressSteps"');
+    expect(diagnostic16k).toContain('id="freezeScanProgressCount"');
+    const progressStart = diagnostic16k.indexOf('id="freezeScanProgress"');
+    const progressEnd = diagnostic16k.indexOf('</div>', diagnostic16k.indexOf('id="freezeScanProgressDetail"'));
+    expect(diagnostic16k.indexOf('id="freezeScanCancel"')).toBeGreaterThan(progressStart);
+    expect(diagnostic16k.indexOf('id="freezeScanCancel"')).toBeLessThan(progressEnd);
     expect(diagnostic16k).toContain('id="freezeScanResults"');
-    expect(diagnostic16k).toContain('p-3 sm:p-3.5 space-y-2');
-    expect(diagnostic16k).toContain('py-1.5 rounded-lg bg-blue-600 text-sm');
-    expect(panelStyles).toContain('#tabContent-diagnostic16k .freeze-scan-table th,');
-    expect(panelStyles).toContain('padding: .45rem .6rem;');
-    expect(panelStyles).toContain('padding: 0.5rem 0.6rem;');
+    expect(diagnostic16k).toContain('freeze-scan-intro-card');
+    expect(diagnostic16k).toContain('freeze-scan-start-button');
+    expect(panelStyles).toContain('#tabContent-diagnostic16k .freeze-scan-network-row');
+    expect(panelStyles).toMatch(/grid-template-columns:\s*minmax\(12rem,1\.1fr\) minmax\(8rem,\.65fr\) minmax\(14rem,2fr\)/);
+    expect(panelStyles).toContain('.freeze-result-host');
+    expect(panelStyles).toContain('.freeze-scan-host-field input:focus-visible');
+    expect(panelStyles).toContain('@media (max-width: 700px)');
     expect(diagnostic16k.match(/data-action-click="runFreezeScan"/g)).toHaveLength(1);
     expect(diagnostic16k.match(/data-action-click="cancelFreezeScan"/g)).toHaveLength(1);
     expect(diagnostic16k).not.toContain('transferDomainInput');
     expect(diagnostic16k).not.toContain('Диагностика передачи данных');
     expect(panelSource).toContain('freezeScanStart');
-    expect(panelSource).toContain('freeze-scan-table');
+    expect(panelSource).toContain('freeze-scan-network-row');
+    expect(panelSource).toContain("row.setAttribute('role', 'listitem')");
+    expect(panelSource).not.toContain("document.createElement('table')");
     expect(panelSource).toContain('function syncConfigWordWrap(enabled: boolean)');
     expect(panelSource).toContain('wrapConfigLines: enabled');
     expect(panelSource).toContain('const { wrapConfigLines: _wrapConfigLines, ...routerSettings } = settings;');
@@ -645,7 +679,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.freeze-result-details summary');
     expect(panelStyles).toContain('prefers-reduced-motion: reduce');
     expect(panelSource).toContain("status.setAttribute('aria-busy'");
-    expect(panelSource).toContain("cell.dataset.label = labels[index]");
+    expect(panelSource).toContain("row.setAttribute('role', 'listitem')");
+    expect(panelSource).toContain("document.createElement('article')");
+    expect(panelSource).not.toContain("document.createElement('table')");
     expect(panelSource).toContain('cancelFreezeScan');
   });
 
@@ -985,17 +1021,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(updates).toContain('id="updateUiButton"');
   });
 
-  it('shows the diagnosis checklist before its request and replays results in order', () => {
-    expect(panelSource).toContain('const stages = SITE_DIAGNOSIS_STAGES.map');
-    expect(panelSource).toContain('renderDiagnosisQueue(container, stages, -1)');
+  it('streams real site diagnosis results into the checklist as each probe completes', () => {
     const diagnosisRequest = panelSource.slice(panelSource.indexOf('async function runSiteDiagnosis()'), panelSource.indexOf('function renderTraceReport('));
-    expect(diagnosisRequest).not.toContain('setInterval');
-    expect(panelSource).toContain('for (let index = 0; index < stages.length; index += 1)');
-    expect(panelSource).toContain('await waitForDiagnosisAnimation()');
-    expect(panelSource).toContain('Подтверждённые результаты появятся после ответа');
-    expect(panelStyles).toContain('.diagnosis-queue-note');
-    expect(panelStyles).toContain('.diagnosis-queue-step.is-active');
-    expect(panelStyles).toContain('.diagnosis-queue-step.is-result-failure');
+    expect(diagnosisRequest).toContain('nfqwsDiagnostics.siteStream(input.value');
+    expect(diagnosisRequest).toContain('renderDiagnosisProgress(container');
+    expect(diagnosisRequest).not.toContain('waitForDiagnosisAnimation');
+    expect(panelStyles).toContain('.diagnosis-live-checks .diagnosis-row.is-active');
+    expect(panelStyles).toContain('.diagnosis-progress-spinner');
   });
 
   it('styles checkbox inputs while keeping their native keyboard semantics', () => {

@@ -18,7 +18,7 @@ use tokio::{
     time::timeout,
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticStep {
     pub id: String,
@@ -65,6 +65,14 @@ pub struct DiagnosticReport {
     pub direct: DiagnosticStep,
     pub current: DiagnosticStep,
     pub quic: Option<QuicComparison>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticProgress {
+    pub active_stage: String,
+    pub step: Option<DiagnosticStep>,
+    pub addresses: Vec<IpAddr>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1287,6 +1295,54 @@ fn has_http3_feature(version_output: &[u8]) -> bool {
         .any(|feature| feature.eq_ignore_ascii_case("HTTP3"))
 }
 
+async fn complete_doh_progress<F>(
+    task: &mut Option<tokio::task::JoinHandle<(DiagnosticStep, Vec<IpAddr>)>>,
+    steps: &mut Vec<DiagnosticStep>,
+    addresses: &[IpAddr],
+    active_stage: &str,
+    progress: &mut F,
+) -> Vec<IpAddr>
+where
+    F: FnMut(DiagnosticProgress) + Send,
+{
+    let Some(task) = task.take() else {
+        return Vec::new();
+    };
+    let (mut doh, reference) = task.await.unwrap_or_else(|_| {
+        (
+            DiagnosticStep::new(
+                "doh",
+                "unavailable",
+                "DoH-проверяющий процесс завершился до ответа",
+            ),
+            Vec::new(),
+        )
+    });
+    if !reference.is_empty()
+        && !addresses.is_empty()
+        && !addresses.iter().any(|ip| reference.contains(ip))
+    {
+        doh.status = "warning";
+        doh.detail.push_str(
+            ". Ответы отличаются; это возможно у CDN и само по себе не доказывает подмену DNS",
+        );
+    }
+    steps.push(doh.clone());
+    progress(DiagnosticProgress {
+        active_stage: active_stage.into(),
+        step: Some(doh),
+        addresses: addresses.to_vec(),
+    });
+    if let Some(dns) = steps.iter().find(|step| step.id == "dns") {
+        progress(DiagnosticProgress {
+            active_stage: active_stage.into(),
+            step: Some(dns.clone()),
+            addresses: addresses.to_vec(),
+        });
+    }
+    reference
+}
+
 async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
     if host == "example.com" {
         return DiagnosticStep::new(
@@ -1307,8 +1363,26 @@ async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
 }
 
 pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
+    diagnose_with_progress(host, binary, |_| {}).await
+}
+
+pub async fn diagnose_with_progress<F>(
+    host: String,
+    binary: String,
+    mut progress: F,
+) -> DiagnosticReport
+where
+    F: FnMut(DiagnosticProgress) + Send,
+{
     let literal_ip = host.parse::<IpAddr>().ok();
-    let (mut steps, mut addresses, reference) = if let Some(ip) = literal_ip {
+    progress(DiagnosticProgress {
+        active_stage: "dns".into(),
+        step: None,
+        addresses: Vec::new(),
+    });
+    let mut doh_task = None;
+    let mut early_tcp = None;
+    let (mut steps, mut addresses, mut reference) = if let Some(ip) = literal_ip {
         let skipped_dns = DiagnosticStep::new(
             "dns",
             "unavailable",
@@ -1319,42 +1393,51 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
             "unavailable",
             "Сверка с DoH доступна только для доменного имени",
         );
+        progress(DiagnosticProgress {
+            active_stage: "tcp".into(),
+            step: Some(skipped_dns.clone()),
+            addresses: vec![ip],
+        });
+        progress(DiagnosticProgress {
+            active_stage: "tcp".into(),
+            step: Some(skipped_doh.clone()),
+            addresses: vec![ip],
+        });
         (vec![skipped_dns, skipped_doh], vec![ip], Vec::new())
     } else {
         let dns_started = Instant::now();
-        let (system, (mut reference_step, reference)) = tokio::join!(
-            timeout(Duration::from_secs(4), lookup_host(format!("{host}:443"))),
-            dns_reference(&host)
-        );
-        let mut system_addresses = match system {
+        let doh_host = host.clone();
+        doh_task = Some(tokio::spawn(async move { dns_reference(&doh_host).await }));
+        let system = timeout(Duration::from_secs(4), lookup_host(format!("{host}:443"))).await;
+        let mut resolved = match system {
             Ok(Ok(addresses)) => addresses
                 .map(|address| address.ip())
                 .take(16)
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
-        system_addresses.sort();
-        system_addresses.dedup();
-        let addresses = system_addresses
+        resolved.sort();
+        resolved.dedup();
+        let addresses = resolved
             .iter()
             .copied()
             .filter(|ip| public_ip(*ip))
             .collect::<Vec<_>>();
         let mut dns = DiagnosticStep::new(
             "dns",
-            if system_addresses.is_empty() {
+            if resolved.is_empty() {
                 "error"
             } else if addresses.is_empty() {
                 "warning"
             } else {
                 "ok"
             },
-            if system_addresses.is_empty() {
+            if resolved.is_empty() {
                 "Системный DNS не вернул адреса".into()
             } else {
                 format!(
                     "DNS роутера: {}",
-                    system_addresses
+                    resolved
                         .iter()
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
@@ -1363,16 +1446,24 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
             },
         );
         dns.record_elapsed(dns_started);
-        if !reference.is_empty()
-            && !addresses.is_empty()
-            && !addresses.iter().any(|ip| reference.contains(ip))
+        progress(DiagnosticProgress {
+            active_stage: "tcp".into(),
+            step: Some(dns.clone()),
+            addresses: addresses.clone(),
+        });
+        if addresses
+            .iter()
+            .any(|address| matches!(address, IpAddr::V4(_)))
         {
-            reference_step.status = "warning";
-            reference_step.detail.push_str(
-                ". Ответы отличаются; это возможно у CDN и само по себе не доказывает подмену DNS",
-            );
+            let tcp = tcp_step(&addresses).await;
+            progress(DiagnosticProgress {
+                active_stage: "current".into(),
+                step: Some(tcp.clone()),
+                addresses: addresses.clone(),
+            });
+            early_tcp = Some(tcp);
         }
-        (vec![dns, reference_step], addresses, reference)
+        (vec![dns], addresses, Vec::new())
     };
     let mut limitations = vec![
         if literal_ip.is_some() {
@@ -1382,8 +1473,18 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         },
         "«Как сейчас» — обычный маршрут самого роутера. В режиме «только устройства политики» этот трафик может идти мимо nfqws2; результат не доказывает выбор профиля для клиентских устройств.".into(),
     ];
+    if addresses.is_empty() {
+        reference =
+            complete_doh_progress(&mut doh_task, &mut steps, &addresses, "tcp", &mut progress)
+                .await;
+    }
     if addresses.is_empty() && !reference.is_empty() {
         addresses.clone_from(&reference);
+        progress(DiagnosticProgress {
+            active_stage: "tcp".into(),
+            step: steps.iter().find(|step| step.id == "dns").cloned(),
+            addresses: addresses.clone(),
+        });
         limitations.push("Для HTTP-проб использованы адреса DoH: системный DNS не дал публичного адреса (возможен FakeIP).".into());
     }
     let reverse_dns = if literal_ip.is_some() {
@@ -1395,6 +1496,19 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         IpAddr::V4(ip) => Some(*ip),
         _ => None,
     }) else {
+        complete_doh_progress(
+            &mut doh_task,
+            &mut steps,
+            &addresses,
+            "complete",
+            &mut progress,
+        )
+        .await;
+        progress(DiagnosticProgress {
+            active_stage: "complete".into(),
+            step: None,
+            addresses: addresses.clone(),
+        });
         return DiagnosticReport {
             host,
             addresses,
@@ -1407,8 +1521,20 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
             quic: None,
         };
     };
-    let (tcp, current, route, advertised) = tokio::join!(
-        tcp_step(&addresses),
+    let tcp = if let Some(tcp) = early_tcp.take() {
+        tcp
+    } else {
+        tcp_step(&addresses).await
+    };
+    steps.push(tcp.clone());
+    if literal_ip.is_some() || steps.iter().any(|step| step.id == "doh") {
+        progress(DiagnosticProgress {
+            active_stage: "current".into(),
+            step: Some(tcp),
+            addresses: addresses.clone(),
+        });
+    }
+    let (current, route, advertised) = tokio::join!(
         probe("current", &host, ip.into(), 443, false),
         route_step(ip.into()),
         async {
@@ -1419,26 +1545,79 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
             }
         }
     );
-    steps.extend([tcp, route]);
-    let direct = match bypass_probe(ip, 443, ProbeTransport::Tcp, async {
-        let direct = probe_scoped("direct", &host, ip.into(), 443, false, true).await;
+    progress(DiagnosticProgress {
+        active_stage: "direct".into(),
+        step: Some(current.clone()),
+        addresses: addresses.clone(),
+    });
+    progress(DiagnosticProgress {
+        active_stage: "direct".into(),
+        step: Some(route.clone()),
+        addresses: addresses.clone(),
+    });
+    steps.push(route);
+    let direct_host = host.clone();
+    let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel();
+    let direct_probe = bypass_probe(ip, 443, ProbeTransport::Tcp, async move {
+        let direct = probe_scoped("direct", &direct_host, ip.into(), 443, false, true).await;
+        let _ = direct_tx.send(direct.clone());
         let sni = if literal_ip.is_some() {
             None
         } else {
-            Some(sni_step(&host, ip.into()).await)
+            Some(sni_step(&direct_host, ip.into()).await)
         };
         (direct, sni)
-    })
-    .await
-    {
+    });
+    tokio::pin!(direct_probe);
+    let mut direct_step_emitted = false;
+    let direct_result = loop {
+        tokio::select! {
+            biased;
+            step = direct_rx.recv(), if !direct_step_emitted => {
+                if let Some(step) = step {
+                    progress(DiagnosticProgress { active_stage: if literal_ip.is_some() { "http" } else { "sni" }.into(), step: Some(step), addresses: addresses.clone() });
+                    direct_step_emitted = true;
+                } else {
+                    direct_step_emitted = true;
+                }
+            },
+            result = &mut direct_probe => break result,
+        }
+    };
+    let direct = match direct_result {
         Ok((direct, sni)) => {
+            if !direct_step_emitted {
+                progress(DiagnosticProgress {
+                    active_stage: if sni.is_some() { "sni" } else { "http" }.into(),
+                    step: Some(direct.clone()),
+                    addresses: addresses.clone(),
+                });
+            }
             if let Some(sni) = sni {
+                progress(DiagnosticProgress {
+                    active_stage: "http".into(),
+                    step: Some(sni.clone()),
+                    addresses: addresses.clone(),
+                });
                 steps.push(sni);
             }
             direct
         }
         Err(message) => {
             let direct = DiagnosticStep::new("direct", "unavailable", message);
+            progress(DiagnosticProgress {
+                active_stage: "complete".into(),
+                step: Some(direct.clone()),
+                addresses: addresses.clone(),
+            });
+            complete_doh_progress(
+                &mut doh_task,
+                &mut steps,
+                &addresses,
+                "complete",
+                &mut progress,
+            )
+            .await;
             return DiagnosticReport {
                 summary: diagnosis_summary(&direct, &current).into(),
                 host,
@@ -1460,9 +1639,30 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
     )
     .await
     {
-        Ok(http) => steps.push(http),
+        Ok(http) => {
+            progress(DiagnosticProgress {
+                active_stage: "quic".into(),
+                step: Some(http.clone()),
+                addresses: addresses.clone(),
+            });
+            steps.push(http);
+        }
         Err(message) => {
-            steps.push(DiagnosticStep::new("http", "unavailable", message));
+            let http = DiagnosticStep::new("http", "unavailable", message);
+            progress(DiagnosticProgress {
+                active_stage: "complete".into(),
+                step: Some(http.clone()),
+                addresses: addresses.clone(),
+            });
+            steps.push(http);
+            complete_doh_progress(
+                &mut doh_task,
+                &mut steps,
+                &addresses,
+                "complete",
+                &mut progress,
+            )
+            .await;
             return DiagnosticReport {
                 summary: diagnosis_summary(&direct, &current).into(),
                 host,
@@ -1477,15 +1677,51 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
         }
     }
     let quic = if literal_ip.is_some() {
-        steps.push(DiagnosticStep::new(
+        let skipped = DiagnosticStep::new(
             "quic",
             "unavailable",
             "Проверка QUIC по IP пропущена: для неё требуется доменное имя и TLS SNI",
-        ));
+        );
+        progress(DiagnosticProgress {
+            active_stage: "complete".into(),
+            step: Some(skipped.clone()),
+            addresses: addresses.clone(),
+        });
+        steps.push(skipped);
         None
     } else {
-        Some(quic_comparison(&host, ip, &binary, advertised).await)
+        let comparison = quic_comparison(&host, ip, &binary, advertised).await;
+        let status = if comparison.direct.status == "ok" {
+            "ok"
+        } else if comparison.current.status == "ok" {
+            "warning"
+        } else {
+            "error"
+        };
+        let step = DiagnosticStep::new(
+            "quic",
+            status,
+            format!(
+                "Напрямую: {} · сейчас: {}",
+                comparison.direct.detail, comparison.current.detail
+            ),
+        );
+        progress(DiagnosticProgress {
+            active_stage: "complete".into(),
+            step: Some(step.clone()),
+            addresses: addresses.clone(),
+        });
+        steps.push(step);
+        Some(comparison)
     };
+    complete_doh_progress(
+        &mut doh_task,
+        &mut steps,
+        &addresses,
+        "complete",
+        &mut progress,
+    )
+    .await;
     let summary = diagnosis_summary(&direct, &current).into();
     DiagnosticReport {
         host,
@@ -1503,6 +1739,46 @@ pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn streamed_dns_reference_updates_are_emitted_as_completed_steps() {
+        let address: IpAddr = "8.8.8.8".parse().unwrap();
+        let doh_address = address;
+        let mut task = Some(tokio::spawn(async move {
+            (
+                DiagnosticStep::new("doh", "ok", "DoH ответил"),
+                vec![doh_address],
+            )
+        }));
+        let mut steps = vec![DiagnosticStep::new("dns", "ok", "DNS ответил")];
+        let mut events = Vec::new();
+
+        let reference = complete_doh_progress(
+            &mut task,
+            &mut steps,
+            &[address],
+            "complete",
+            &mut |event| events.push(event),
+        )
+        .await;
+
+        assert_eq!(reference, vec![address]);
+        assert_eq!(
+            steps
+                .iter()
+                .map(|step| step.id.as_str())
+                .collect::<Vec<_>>(),
+            ["dns", "doh"]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|event| event.step.as_ref().map(|step| step.id.as_str()))
+                .collect::<Vec<_>>(),
+            ["doh", "dns"]
+        );
+        assert!(events.iter().all(|event| event.active_stage == "complete"));
+    }
 
     #[test]
     fn diagnosis_summary_does_not_label_missing_or_http_errors_as_open() {

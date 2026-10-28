@@ -10,6 +10,7 @@ export type ConfigValidationDiagnostic = { severity: 'error' | 'warning'; code: 
 export type ConfigValidationResponse = { valid: boolean; diagnostics: ConfigValidationDiagnostic[]; checks: { parser: 'passed' | 'failed'; installedBinary: 'not_run' } };
 export type SiteDiagnosticStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
 export type SiteDiagnosticReport = { host: string; addresses: string[]; reverseDns?: Array<{ address: string; names: string[]; resolver: string | null; detail: string }>; steps: SiteDiagnosticStep[]; summary: string; limitations: string[]; direct: SiteDiagnosticStep; current: SiteDiagnosticStep; quic: null | { direct: SiteDiagnosticStep; current: SiteDiagnosticStep; method: 'quic_initial' | 'http3'; http3Advertised: boolean | null } };
+export type SiteDiagnosticProgress = { activeStage: string; step: SiteDiagnosticStep | null; addresses: string[] };
 export type SiteTracePhase = { state: 'complete' | 'error' | 'unavailable'; ok: boolean | null; code: number | null; durationMs: number | null; diagnosticClassification?: string | null; reason: string };
 export type SiteTraceReport = { host: string; address: string | null; withoutNfqws2: SiteTracePhase; withNfqws2: SiteTracePhase; traceLines: string[]; traceTruncated: boolean; traceHostname: string | null; traceProfile: string | null; traceActions: string[]; traceWarnings: string[]; summary: string };
 export type SiteTraceOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; message: string; report: SiteTraceReport | null; updatedAt: number };
@@ -138,6 +139,48 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return await readApiResponse(response) as T;
 }
 
+async function streamSiteDiagnosis(host: string, onProgress: (progress: SiteDiagnosticProgress) => void): Promise<SiteDiagnosticReport> {
+  const response = await fetch('/api/nfqws2/diagnostics/site/stream', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    credentials: 'same-origin', body: JSON.stringify({ host }),
+  });
+  if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('nfqws-auth-expired'));
+  if (!response.ok) {
+    const payload = await readApiResponse(response) as { error?: string };
+    throw new ApiError(response.status, payload.error ?? `HTTP ${response.status}`);
+  }
+  if (!response.body) throw new ApiError(response.status, 'Сервер не открыл поток результатов проверки');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let report: SiteDiagnosticReport | null = null;
+  const consume = (block: string) => {
+    const data = block.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n');
+    if (!data) return;
+    const event = JSON.parse(data) as { type: string; progress?: SiteDiagnosticProgress; report?: SiteDiagnosticReport; error?: string };
+    if (event.type === 'progress' && event.progress) onProgress(event.progress);
+    else if (event.type === 'complete' && event.report) report = event.report;
+    else if (event.type === 'error') throw new Error(event.error ?? 'Диагностика завершилась с ошибкой');
+  };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      let boundary = buffer.search(/\r?\n\r?\n/);
+      while (boundary >= 0) {
+        const block = buffer.slice(0, boundary);
+        const separator = buffer.slice(boundary).match(/^\r?\n\r?\n/)?.[0].length ?? 2;
+        buffer = buffer.slice(boundary + separator);
+        consume(block);
+        boundary = buffer.search(/\r?\n\r?\n/);
+      }
+      if (done) break;
+    }
+  } finally { reader.releaseLock(); }
+  if (!report) throw new ApiError(response.status, 'Поток проверки завершился без итогового отчёта');
+  return report;
+}
+
 export const nfqwsLists = {
   index: () => api<{ files: NfqwsListSummary[] }>('/api/nfqws2/lists'),
   get: (id: NfqwsListId) => api<NfqwsListResponse>(`/api/nfqws2/lists/${encodeURIComponent(id)}`),
@@ -248,6 +291,7 @@ export const nfqwsDiagnostics = {
   site: (host: string) => api<SiteDiagnosticReport>('/api/nfqws2/diagnostics/site', {
     method: 'POST', body: JSON.stringify({ host }),
   }),
+  siteStream: streamSiteDiagnosis,
   monitor: (hosts: string[]) => api<MonitoringProbeReport[]>('/api/nfqws2/diagnostics/monitor', {
     method: 'POST', body: JSON.stringify({ hosts }),
   }),

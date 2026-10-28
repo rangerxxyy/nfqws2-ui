@@ -59,6 +59,27 @@ describe('API client used by the source-based panel', () => {
     });
   });
 
+  it('streams site diagnosis steps before returning the final report', async () => {
+    const progress = { activeStage: 'tcp', step: { id: 'dns', status: 'ok', detail: 'DNS: 203.0.113.8', durationMs: 8, httpCode: null }, addresses: ['203.0.113.8'] };
+    const report = { host: 'example.com', addresses: ['203.0.113.8'], reverseDns: [], steps: [], summary: 'Завершено', limitations: [], direct: { id: 'direct', status: 'ok', detail: 'HTTP 200', durationMs: 20, httpCode: 200 }, current: { id: 'current', status: 'ok', detail: 'HTTP 200', durationMs: 21, httpCode: 200 }, quic: null };
+    const encoder = new TextEncoder();
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'progress', progress })}\n\n`));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'complete', report })}\n\n`));
+        controller.close();
+      },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const observed: unknown[] = [];
+
+    await expect(nfqwsDiagnostics.siteStream('example.com', (event) => observed.push(event))).resolves.toEqual(report);
+
+    expect(observed).toEqual([progress]);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/site/stream');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com' });
+  });
+
   it('persists the selected appearance layout and palette with the standard status bar', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"saved":true}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
