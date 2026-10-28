@@ -657,8 +657,9 @@ html.list-editor-fullscreen-open { overflow:hidden; }
 @media (prefers-reduced-motion: reduce) { .config-editor-icon-button { transition:none; } .config-editor-fullscreen { animation:none; } }
 .conf-syntax-highlight { z-index:0; color:#e2e8f0; white-space:pre-wrap; overflow-wrap:break-word; word-break:break-word; tab-size:4; line-height:1.68; pointer-events:none; user-select:none; -webkit-user-select:none; }
 .conf-editor-input { z-index:1; background:transparent !important; color:transparent !important; -webkit-text-fill-color:transparent !important; caret-color:var(--accent-color,#60a5fa); white-space:pre-wrap; overflow-wrap:break-word; word-break:break-word; tab-size:4; line-height:1.68; }
-*::selection, *::-moz-selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent) !important; color:inherit !important; }
-.conf-editor-input::selection, .conf-editor-input::-moz-selection, .config-argument-input::selection, .config-argument-input::-moz-selection { color:transparent !important; -webkit-text-fill-color:transparent !important; background:color-mix(in srgb,var(--accent-color,#60a5fa) 32%,transparent) !important; }
+*::selection, *::-moz-selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent) !important; }
+.conf-editor-input::selection, .config-argument-input::selection { color:transparent !important; -webkit-text-fill-color:transparent !important; background:color-mix(in srgb,var(--accent-color,#60a5fa) 32%,transparent) !important; }
+.conf-editor-input::-moz-selection, .config-argument-input::-moz-selection { color:transparent !important; background:color-mix(in srgb,var(--accent-color,#60a5fa) 32%,transparent) !important; }
 .conf-token-comment { color:#6ee7b7; }
 .conf-token-variable { color:#7dd3fc; }
 .conf-token-flag { color:#c4b5fd; }

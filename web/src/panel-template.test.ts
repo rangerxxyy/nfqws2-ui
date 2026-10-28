@@ -1101,7 +1101,9 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('keeps text selection visible and prevents syntax overlays from selecting duplicate text', () => {
     expect(panelStyles).toContain('*::selection, *::-moz-selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent) !important;');
-    expect(panelStyles).toContain('.conf-editor-input::selection, .conf-editor-input::-moz-selection, .config-argument-input::selection, .config-argument-input::-moz-selection { color:transparent !important;');
+    expect(panelStyles).toContain('.conf-editor-input::selection, .config-argument-input::selection { color:transparent !important;');
+    expect(panelStyles).toContain('.conf-editor-input::-moz-selection, .config-argument-input::-moz-selection { color:transparent !important;');
+    expect(panelStyles).not.toContain('*::selection, *::-moz-selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent) !important; color:inherit !important;');
     expect(panelStyles).toContain('user-select:none; -webkit-user-select:none;');
     expect(panelStyles).toContain('background:color-mix(in srgb,var(--accent-color,#60a5fa) 32%,transparent) !important;');
     expect(panelStyles).not.toContain('selection:bg-blue-500/30');
