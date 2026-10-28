@@ -4360,7 +4360,7 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
   const modal = $('#updateModalBackdrop');
   if (!modal) return;
   openAppModal(modal, '[data-action-click="closeUpdateModal"]');
-  await loadUpdatePickerReleases(true);
+  await loadUpdatePickerReleases(false);
   if (modal.dataset.modalOpen !== 'true') return;
   updatePickerRefreshTimer = window.setInterval(() => {
     const currentModal = $('#updateModalBackdrop');

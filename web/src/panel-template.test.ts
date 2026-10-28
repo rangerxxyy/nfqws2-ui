@@ -1400,11 +1400,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.release-retry-button');
   });
 
-  it('fetches fresh UI and core releases on open and refreshes automatically while the picker is visible', () => {
+  it('uses cached releases on open and refreshes automatically while the picker is visible', () => {
     expect(panelSource).toContain("list.textContent = 'Загружаю список версий…'");
     expect(panelSource).not.toContain('Загружаю версии из GitHub Releases…');
     expect(panelSource).toContain('const result = await nfqwsUpdates.coreReleases(forceRefresh)');
-    expect(panelSource).toContain('await loadUpdatePickerReleases(true)');
+    expect(panelSource).toContain('await loadUpdatePickerReleases(false)');
     expect(panelSource).toContain('UPDATE_PICKER_REFRESH_INTERVAL_MS = 2 * 60 * 1000');
     expect(panelSource).toContain('void loadUpdatePickerReleases(false, true)');
     expect(panelSource).toContain('stopUpdatePickerAutoRefresh(); closeAppModal');
