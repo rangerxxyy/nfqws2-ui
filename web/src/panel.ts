@@ -12,7 +12,7 @@ import { highlightConfigLine } from './config-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsPackageLeftovers, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PackageLeftover, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -36,10 +36,10 @@ import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileP
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { configLuaArgumentEntries } from './config-diagnostics';
 import { navigationGroupForRoute } from './navigation';
-import { isValidNetworkInterfaceSelection, orderNetworkInterfaces } from './network-interface';
+import { isValidNetworkInterfaceSelection, networkInterfaceChoices } from './network-interface';
 import { snapshotFreeSpaceState } from './snapshot-storage';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'packageLeftovers' | 'supportReport' | 'appearance' | 'about';
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'appearance' | 'about';
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
@@ -76,8 +76,6 @@ let communityStrategies: CommunityStrategiesResponse | null = null;
 let communityLoading = false;
 let communityAutoDetectionAttempted = false;
 let communityProviderEditing = false;
-let packageLeftoverItems: PackageLeftover[] = [];
-let packageLeftoversLoading = false;
 let pendingCommunityShare: { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickOperation['results'][number]; targetAsn: number | null } | null = null;
 let communityShareLookupGeneration = 0;
 let communityShareLookupTimer: number | null = null;
@@ -99,6 +97,9 @@ let selectedReleaseTag: string | null = null;
 let expandedReleaseTag: string | null = null;
 let updatePolling = false;
 let updateTarget: 'ui' | 'core' = 'ui';
+const UPDATE_PICKER_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+let updatePickerRefreshTimer: number | null = null;
+let updatePickerRequestPending = false;
 let installedCoreTag: string | null = null;
 let uiUpdateStatusPolling = false;
 let uiUpdateNoticeOpenedTag: string | null = null;
@@ -374,7 +375,6 @@ function showRoute(route: Route) {
   if (route === 'snapshots') void loadBackups();
   if (route === 'changes') void loadChangeHistory();
   if (route === 'logs') { void loadLogs(); startLogPolling(); } else stopLogPolling();
-  if (route === 'packageLeftovers') void loadPackageLeftovers();
   if (route === 'about') void loadAboutStatus();
 }
 
@@ -607,7 +607,6 @@ function closeAppModalRoot(root: HTMLElement) {
     case 'profileImportDialog': cancelProfileImport(); break;
     case 'updateModalBackdrop': closeUpdateModal(); break;
     case 'diffModalBackdrop': closeAppModal(root); break;
-    case 'packageLeftoverCompareModal': closeAppModal(root); break;
     case 'communityShareModal': closeAppModal(root); clearCommunityShare(); break;
   }
 }
@@ -1550,7 +1549,11 @@ function requestDangerousConfirmation(title: string, message: string, action: ()
   pendingConfirmationCancel = onCancel;
   const modal = $('#operationConfirmModal'); if (modal) openAppModal(modal, '#operationConfirmCancel');
 }
-function closeUpdateModal() { closeAppModal($('#updateModalBackdrop')); }
+function stopUpdatePickerAutoRefresh() {
+  if (updatePickerRefreshTimer !== null) window.clearInterval(updatePickerRefreshTimer);
+  updatePickerRefreshTimer = null;
+}
+function closeUpdateModal() { stopUpdatePickerAutoRefresh(); closeAppModal($('#updateModalBackdrop')); }
 function closeDangerousConfirmation(confirmed = false) {
   const onCancel = pendingConfirmationCancel; pendingConfirmation = null; pendingConfirmationCancel = null;
   if (!confirmed) onCancel?.();
@@ -1786,89 +1789,6 @@ function initializeAppearanceSettings() {
     appearanceSettings = saveAppearance(storage, { ...saved, wrapConfigLines: appearanceSettings.wrapConfigLines }); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
   }).catch(() => undefined);
 }
-function renderPackageLeftovers() {
-  const host = $('#packageLeftoversList');
-  const deleteAll = $('#deleteAllPackageLeftovers');
-  if (!host) return;
-  host.replaceChildren();
-  if (deleteAll instanceof HTMLButtonElement) deleteAll.classList.toggle('hidden', packageLeftoverItems.length === 0);
-  if (!packageLeftoverItems.length) {
-    const empty = document.createElement('p'); empty.className = 'py-4 text-sm text-slate-400';
-    empty.textContent = packageLeftoversLoading ? 'Проверяем разрешённые каталоги…' : 'Остатков обновления не найдено.'; host.append(empty); return;
-  }
-  for (const item of packageLeftoverItems) {
-    const row = document.createElement('article'); row.className = 'flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2.5';
-    const details = document.createElement('div'); details.className = 'min-w-0 flex-1';
-    const title = document.createElement('strong'); title.className = 'block break-all font-mono text-sm text-white'; title.textContent = item.name;
-    const meta = document.createElement('p'); meta.className = 'mt-1 text-xs text-slate-400';
-    const sourceState = !item.baseExists ? 'исходный файл отсутствует' : item.sameAsBase === null ? 'содержимое сравнить не удалось' : item.sameAsBase ? 'совпадает с исходным файлом' : 'отличается от исходного файла';
-    const modified = item.modifiedAt === null ? 'время неизвестно' : `изменён ${new Date(item.modifiedAt * 1000).toLocaleString()}`;
-    meta.textContent = `${formatBytes(item.sizeBytes)} · ${modified} · ${sourceState}`;
-    details.append(title, meta);
-    const actions = document.createElement('div'); actions.className = 'flex shrink-0 flex-wrap items-center gap-2';
-    const canCompare = item.baseExists && item.sameAsBase === false
-      && ((item.name === 'nfqws2.conf-opkg' || item.name === 'nfqws2.conf.apk-new')
-        || (item.name.startsWith('lists/') && item.base.endsWith('.list')));
-    if (canCompare) {
-      const compare = document.createElement('button'); compare.type = 'button'; compare.className = 'backup-action'; compare.textContent = 'Сравнить';
-      compare.dataset.actionClick = 'comparePackageLeftover'; compare.dataset.args = JSON.stringify([item.name]); actions.append(compare);
-    }
-    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'backup-action border-rose-700/50 text-rose-200 hover:bg-rose-950/40'; remove.textContent = 'Удалить'; remove.dataset.actionClick = 'requestDeletePackageLeftover'; remove.dataset.args = JSON.stringify([item.name]);
-    actions.append(remove); row.append(details, actions); host.append(row);
-  }
-}
-
-async function comparePackageLeftover(name: string) {
-  const modal = $('#packageLeftoverCompareModal');
-  const original = $('#packageLeftoverOriginal');
-  const candidate = $('#packageLeftoverCandidate');
-  if (!(modal instanceof HTMLElement) || !(original instanceof HTMLPreElement) || !(candidate instanceof HTMLPreElement)) return;
-  const item = packageLeftoverItems.find((entry) => entry.name === name);
-  if (!item || !item.baseExists || item.sameAsBase !== false) return;
-  setText('#packageLeftoverCompareSubtitle', `${item.name} ↔ ${item.base}`);
-  original.textContent = 'Загружаем исходную версию…'; candidate.textContent = 'Загружаем файл после обновления…';
-  openAppModal(modal);
-  try {
-    const comparison = await nfqwsPackageLeftovers.compare(name);
-    setText('#packageLeftoverCompareSubtitle', `${comparison.name} ↔ ${comparison.base}`);
-    original.textContent = comparison.originalContent || '(пустой файл)';
-    candidate.textContent = comparison.candidateContent || '(пустой файл)';
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Не удалось сравнить файлы.';
-    original.textContent = message; candidate.textContent = message;
-  }
-}
-
-async function loadPackageLeftovers() {
-  if (packageLeftoversLoading) return;
-  packageLeftoversLoading = true; setText('#packageLeftoversStatus', 'Проверяем каталоги nfqws2…'); renderPackageLeftovers();
-  try {
-    const result = await nfqwsPackageLeftovers.list(); packageLeftoverItems = result.items;
-    setText('#packageLeftoversStatus', `${result.items.length} ${pluralize(result.items.length, 'файл', 'файла', 'файлов')} · ${formatBytes(result.totalBytes)} можно освободить`);
-    renderPackageLeftovers();
-  } catch (error) {
-    setText('#packageLeftoversStatus', error instanceof Error ? error.message : 'Не удалось проверить файлы.');
-    packageLeftoverItems = []; renderPackageLeftovers();
-  } finally { packageLeftoversLoading = false; renderPackageLeftovers(); }
-}
-
-function requestDeletePackageLeftovers(names: string[]) {
-  const selected = [...new Set(names)].filter((name) => packageLeftoverItems.some((item) => item.name === name));
-  if (!selected.length) return;
-  const totalBytes = packageLeftoverItems.filter((item) => selected.includes(item.name)).reduce((total, item) => total + item.sizeBytes, 0);
-  requestDangerousConfirmation(
-    selected.length === 1 ? 'Удалить файл после обновления?' : 'Удалить файлы после обновления?',
-    `Будут удалены только ${selected.length === 1 ? 'этот найденный файл' : `эти ${selected.length} найденных файла(ов)`} с суффиксами -opkg/.apk-new (${formatBytes(totalBytes)}). Основные конфигурация и списки не изменятся.`,
-    async () => {
-      try {
-        const result = await nfqwsPackageLeftovers.delete(selected); packageLeftoverItems = result.items;
-        setText('#packageLeftoversStatus', `Удалено файлов: ${result.deleted ?? 0} · осталось ${result.items.length} (${formatBytes(result.totalBytes)})`);
-        renderPackageLeftovers(); toast('Найденные файлы обновления удалены.');
-      } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось удалить файлы.', 'error'); await loadPackageLeftovers(); }
-    },
-  );
-}
-
 async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
   try {
     const result = statusOverride ?? await nfqwsUpdates.uiStatus();
@@ -2419,21 +2339,10 @@ function updateQuickParameters(content: string, networkInterfaces: string[] = []
   const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
   if (interfaceSelect instanceof HTMLSelectElement) {
     const configured = configAssignmentValue(content, 'ISP_INTERFACE');
-    interfaceSelect.replaceChildren(new Option('Интерфейс не задан', '', !configured, true));
-    if (configured.trim().split(/\s+/).filter(Boolean).length > 1) {
-      interfaceSelect.add(new Option(`${configured} — задано в конфигурации`, configured));
-    }
-    const defaultSet = new Set(defaultInterfaces.filter((name) => name !== 'lo'));
-    for (const name of orderNetworkInterfaces(networkInterfaces, configured, defaultInterfaces)) {
-      const label = name === 'lo'
-        ? `${name} — петлевой интерфейс`
-        : defaultSet.has(name)
-        ? `${name} — маршрут по умолчанию`
-        : !networkInterfaces.includes(name) && name === configured ? `${name} — задан в конфигурации` : name;
-      interfaceSelect.add(new Option(label, name));
-    }
+    interfaceSelect.replaceChildren();
+    for (const name of networkInterfaceChoices(networkInterfaces, configured, defaultInterfaces)) interfaceSelect.add(new Option(name, name));
     interfaceSelect.add(new Option('Ввести имя вручную…', '__manual__'));
-    interfaceSelect.value = configured;
+    interfaceSelect.value = configured.trim();
     interfaceSelect.disabled = false;
     interfaceSelect.title = '';
     interfaceSelect.classList.remove('hidden');
@@ -4422,39 +4331,56 @@ function renderReleases() {
 }
 
 async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
+  stopUpdatePickerAutoRefresh();
   updateTarget = target;
   expandedReleaseTag = null;
   const modal = $('#updateModalBackdrop');
   if (!modal) return;
   openAppModal(modal, '[data-action-click="closeUpdateModal"]');
-  const refresh = $('#updatePickerRefresh');
-  if (refresh instanceof HTMLButtonElement) {
-    refresh.hidden = false;
-    refresh.disabled = true;
-  }
-  await loadUpdatePickerReleases(false);
+  await loadUpdatePickerReleases(true);
+  if (modal.dataset.modalOpen !== 'true') return;
+  updatePickerRefreshTimer = window.setInterval(() => {
+    const currentModal = $('#updateModalBackdrop');
+    if (document.visibilityState !== 'visible' || currentModal?.dataset.modalOpen !== 'true' || updatePolling) return;
+    void loadUpdatePickerReleases(true, true);
+  }, UPDATE_PICKER_REFRESH_INTERVAL_MS);
 }
 
-async function loadUpdatePickerReleases(forceRefresh: boolean) {
+async function loadUpdatePickerReleases(forceRefresh: boolean, preserveView = false) {
+  if (updatePickerRequestPending) return;
+  updatePickerRequestPending = true;
+  const previousSelection = selectedReleaseTag;
+  const previousExpansion = expandedReleaseTag;
   const list = $('#updateVersionsList');
-  if (list) list.textContent = 'Загружаю список версий…';
+  const previousScrollTop = list?.scrollTop ?? 0;
+  if (!preserveView && list) list.textContent = 'Загружаю список версий…';
   try {
     if (updateTarget === 'core') {
       const result = await nfqwsUpdates.coreReleases(forceRefresh);
       availableReleases = result.releases;
       installedCoreTag = result.installedTag;
-      if (result.warning) toast(result.warning, 'error');
+      if (result.warning && !preserveView) toast(result.warning, 'error');
     } else {
       const result = await nfqwsUpdates.releases(forceRefresh);
       availableReleases = result.releases;
       installedCoreTag = null;
-      renderUiUpdateNotice(result.updateStatus, true);
-      if (result.warning) toast(`Показан сохранённый список релизов: ${result.warning}`, 'error');
+      renderUiUpdateNotice(result.updateStatus, !preserveView);
+      if (result.warning && !preserveView) toast(`Показан сохранённый список релизов: ${result.warning}`, 'error');
     }
-    selectedReleaseTag = availableReleases[0]?.tag ?? null;
-    expandedReleaseTag = selectedReleaseTag;
+    selectedReleaseTag = preserveView && availableReleases.some((release) => release.tag === previousSelection)
+      ? previousSelection
+      : availableReleases[0]?.tag ?? null;
+    expandedReleaseTag = preserveView && availableReleases.some((release) => release.tag === previousExpansion)
+      ? previousExpansion
+      : selectedReleaseTag;
     renderReleases();
+    if (list) list.scrollTop = previousScrollTop;
   } catch (error) {
+    if (preserveView && availableReleases.length) {
+      const hint = $('#updatePickerHint');
+      if (hint) hint.textContent = 'Не удалось обновить список; показаны ранее загруженные версии.';
+      return;
+    }
     if (list) {
       list.replaceChildren();
       const message = document.createElement('p');
@@ -4465,18 +4391,8 @@ async function loadUpdatePickerReleases(forceRefresh: boolean) {
     }
     toast('Не удалось получить список версий из GitHub Releases.', 'error');
   } finally {
-    const refresh = $('#updatePickerRefresh');
-    if (refresh instanceof HTMLButtonElement) {
-      refresh.disabled = false;
-      refresh.textContent = 'Обновить';
-    }
+    updatePickerRequestPending = false;
   }
-}
-
-async function refreshUpdatePicker() {
-  const refresh = $('#updatePickerRefresh');
-  if (refresh instanceof HTMLButtonElement) { refresh.disabled = true; refresh.textContent = 'Обновляю…'; }
-  await loadUpdatePickerReleases(true);
 }
 
 async function installSelectedRelease() {
@@ -4546,33 +4462,6 @@ function copyStrategyText(text: string, button: HTMLButtonElement) {
   }).catch(() => toast('Буфер обмена недоступен', 'error'));
 }
 
-async function buildSupportReport() {
-  const anonymize = $('#supportReportAnonymize');
-  const textarea = $('#supportReportText');
-  const build = $('[data-action-click="buildSupportReport"]');
-  if (!(textarea instanceof HTMLTextAreaElement)) return;
-  if (build instanceof HTMLButtonElement) { build.disabled = true; build.textContent = 'Собираю…'; }
-  try {
-    const result = await nfqwsDiagnostics.supportReport(!(anonymize instanceof HTMLInputElement) || anonymize.checked);
-    textarea.value = result.text;
-    textarea.classList.remove('hidden');
-    $('#copySupportReport')?.classList.remove('hidden');
-    $('#downloadSupportReport')?.classList.remove('hidden');
-    toast('Отчёт собран. Отчёт никуда не отправляется автоматически — проверьте его перед отправкой.');
-  } catch (error) {
-    toast(error instanceof Error ? error.message : 'Не удалось собрать отчёт.', 'error');
-  } finally {
-    if (build instanceof HTMLButtonElement) { build.disabled = false; build.textContent = 'Собрать отчёт'; }
-  }
-}
-
-async function copySupportReport() {
-  const textarea = $('#supportReportText');
-  if (!(textarea instanceof HTMLTextAreaElement) || !textarea.value) return toast('Сначала соберите отчёт.', 'error');
-  try { await writeTextToClipboard(textarea.value); toast('Отчёт скопирован.'); }
-  catch { toast('Не удалось скопировать отчёт.', 'error'); }
-}
-
 async function copyConfigText() {
   const editor = $('#nfqwsConfTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return toast('Редактор конфигурации недоступен.', 'error');
@@ -4582,14 +4471,6 @@ async function copyConfigText() {
   } catch {
     toast('Не удалось скопировать конфигурацию. Проверьте разрешение на буфер обмена.', 'error');
   }
-}
-
-function downloadSupportReport() {
-  const textarea = $('#supportReportText');
-  if (!(textarea instanceof HTMLTextAreaElement) || !textarea.value) return toast('Сначала соберите отчёт.', 'error');
-  const url = URL.createObjectURL(new Blob([textarea.value], { type: 'text/plain;charset=utf-8' }));
-  const link = document.createElement('a'); link.href = url; link.download = 'nfqws2-ui-report.txt'; document.body.append(link); link.click(); link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function writeTextToClipboard(text: string) {
@@ -4726,11 +4607,6 @@ function bindPrototypeActions() {
     requestUndoLastChange: () => requestUndoLastChange(),
     requestRestoreInitialHistory: () => requestRestoreInitialHistory(),
     refreshLogs: () => void loadLogs(),
-    refreshPackageLeftovers: () => void loadPackageLeftovers(),
-    comparePackageLeftover: (name: string) => void comparePackageLeftover(name),
-    closePackageLeftoverCompare: () => closeAppModal($('#packageLeftoverCompareModal')),
-    requestDeletePackageLeftover: (name: string) => requestDeletePackageLeftovers([name]),
-    requestDeleteAllPackageLeftovers: () => requestDeletePackageLeftovers(packageLeftoverItems.map((item) => item.name)),
     filterLogs: () => renderLogs(),
     changeLogSource: (source: LogSource) => { currentLogSource = source === 'nfqws2' ? 'nfqws2' : 'nfqws2-ui'; logRequestPending = false; void loadLogs(); },
     toggleLogAutoRefresh: (enabled: boolean) => { setText('#logsAutoRefreshStatus', enabled ? 'Автообновление каждые 5 секунд' : 'Автообновление приостановлено'); },
@@ -4775,9 +4651,6 @@ function bindPrototypeActions() {
     openForeignConfigText: () => showForeignConfigForm('text'),
     openForeignConfigUrl: () => showForeignConfigForm('url'),
     openForeignConfigFile: () => openForeignConfigFile(),
-    buildSupportReport: () => void buildSupportReport(),
-    copySupportReport: () => void copySupportReport(),
-    downloadSupportReport: () => downloadSupportReport(),
     closeForeignConfigForms: () => closeForeignConfigForms(),
     addForeignConfigText: () => addForeignConfigText(),
     addForeignConfigUrl: () => addForeignConfigUrl(),
@@ -4879,10 +4752,9 @@ function bindPrototypeActions() {
     toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) closeAppModal(modal); else showDiff(); },
     resetDefaultConf: () => void loadConfig(),
     closeUpdateModal: () => closeUpdateModal(),
-    refreshUpdatePicker: () => void refreshUpdatePicker(),
     closeDiffModal: () => closeAppModal($('#diffModalBackdrop')),
     openUpdateModal: (target: 'ui' | 'core') => void openUpdatePicker(target),
-    retryUpdateList: () => void refreshUpdatePicker(),
+    retryUpdateList: () => void loadUpdatePickerReleases(true),
     openLatestUiUpdate: (tag: string) => { uiUpdateNoticeOpenedTag = tag; hideUiUpdateNotice(); void openUpdatePicker('ui'); },
     dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
     dismissCoreUpdateNotice: (tag: string) => { try { window.localStorage.setItem(CORE_UPDATE_DISMISSED_TAG_KEY, tag); } catch { /* The notice can still be closed for this page session. */ } hideCoreUpdateNotice(); },

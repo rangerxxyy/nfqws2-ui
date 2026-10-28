@@ -9,6 +9,8 @@ describe('navigationGroupForRoute', () => {
 
   it('keeps system tools under System', () => {
     expect(navigationGroupForRoute('snapshots')).toBe('system');
-    expect(navigationGroupForRoute('packageLeftovers')).toBe('system');
+    expect(navigationGroupForRoute('packageLeftovers')).toBeUndefined();
+    expect(navigationGroupForRoute('supportReport')).toBeUndefined();
+    expect(navigationGroupForRoute('diagnostic16k')).toBeUndefined();
   });
 });

@@ -335,10 +335,6 @@ export default function App() {
                 </span>
                 {"\n            "}
               </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["diagnostic16k"])} id={"navBtn-diagnostic16k"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>↔</span><span>Диагностика 16 КБ</span></span>
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"}>HTTPS</span>
-              </button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["configCheck"])} id={"navBtn-configCheck"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 <span className={"flex items-center gap-3"}><span className={"text-violet-300"}>⇄</span><span>Проверка конфигурации</span></span>
                 <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300"}>.conf</span>
@@ -383,8 +379,6 @@ export default function App() {
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["snapshots"])} id={"navBtn-snapshots"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-amber-300"}>◷</span><span>Резервные копии</span></button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["changes"])} id={"navBtn-changes"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-cyan-300"}>↺</span><span>Журнал изменений</span></button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["logs"])} id={"navBtn-logs"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-emerald-300"}>≡</span><span>Журнал</span></button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["packageLeftovers"])} id={"navBtn-packageLeftovers"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-amber-300"}>▤</span><span>Файлы после обновлений</span></button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["supportReport"])} id={"navBtn-supportReport"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}><span className={"text-violet-300"}>▤</span><span>Отчёт для помощи</span></button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["about"])} id={"navBtn-about"} className={"side-nav-btn w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
                 <svg className={"w-4 h-4 shrink-0 text-sky-400"} fill={"none"} stroke={"currentColor"} viewBox={"0 0 24 24"}><circle cx={"12"} cy={"12"} r={"9"} strokeWidth={"2"}></circle><path strokeLinecap={"round"} strokeWidth={"2"} d={"M12 11v5m0-8h.01"}></path></svg><span>О nfqws2-UI</span>
               </button>
@@ -406,7 +400,7 @@ export default function App() {
             {[['configuration', 'Конфигурация'], ['site-check', 'Проверка сайта'], ['tuning', 'Подбор'], ['monitoring', 'Мониторинг'], ['lists', 'Списки'], ['system', 'Система']].map(([group, label], index) => <button key={group} type={"button"} data-simplified-group={group} data-action-click={"switchSimplifiedNavGroup"} data-args={JSON.stringify([group])} aria-pressed={index === 0 ? "true" : "false"} className={"simplified-nav-button"}>{label}</button>)}
           </div>
           <div className={"simplified-nav-pages"} role={"group"} aria-label={"Страницы группы"}>
-            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['diagnostic16k', 'Диагностика 16 КБ'], ['configCheck', 'Проверка конфигурации'], ['community', 'Стратегии сообщества'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['packageLeftovers', 'Файлы после обновлений'], ['supportReport', 'Отчёт для помощи'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
+            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['configCheck', 'Проверка конфигурации'], ['community', 'Стратегии сообщества'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
           </div>
         </nav>
         {"\n\n      "}
@@ -537,8 +531,7 @@ export default function App() {
                       {"\n                  "}
                     </div>
                     <label htmlFor={"ispInterfaceSelect"} className={"sr-only"}>{"Интерфейс провайдера (ISP_INTERFACE)"}</label>
-                    <select id={"ispInterfaceSelect"} defaultValue={""} data-native-select={"true"} data-key={"ISP_INTERFACE"} data-action-change={"selectIspInterface"} data-args={JSON.stringify([{"source": "value"}])} className={"mt-1.5 w-full appearance-auto bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
-                      <option value={""}>{"Загрузка интерфейсов…"}</option>
+                    <select id={"ispInterfaceSelect"} defaultValue={""} data-placeholder={"Выберите интерфейс…"} data-key={"ISP_INTERFACE"} data-action-change={"selectIspInterface"} data-args={JSON.stringify([{"source": "value"}])} className={"mt-1.5 w-full styled-select-trigger bg-slate-900 border border-slate-700/90 rounded-lg px-2 py-1.5 text-xs font-mono font-bold text-white focus:outline-none focus:border-blue-500"}>
                     </select>
                     <div id={"ispInterfaceManualEntry"} className={"hidden mt-2"}>
                       <label htmlFor={"ispInterfaceManualInput"} className={"sr-only"}>{"Введите имя интерфейса ISP_INTERFACE"}</label>
@@ -1136,58 +1129,6 @@ export default function App() {
         {"\n      "}
         {"\n      "}
         {"\n      "}
-        <section id={"tabContent-diagnostic16k"} className={"hidden freeze-scan-page view-animate space-y-3"}>
-          <div className={"freeze-scan-page-title"}><h1 className={"text-xl font-bold text-white"}>Обрыв на 16 КБ</h1></div>
-          <section className={"ui-card freeze-scan-intro-card rounded-2xl p-4 sm:p-5 space-y-3"}>
-            <div className={"space-y-2"}>
-              <p className={"freeze-scan-intro-copy text-sm leading-relaxed text-slate-200"}>Некоторые провайдеры замирают после первых 16–20 КБ соединения с зарубежными хостингами. Обычные стратегии не всегда помогают: для такой сети подберём имя сайта для fake-SNI, которое пропускает провайдер.</p>
-              <p className={"text-sm leading-relaxed text-slate-300"}>По очереди сравниваем соединения напрямую и через nfqws2. Если обрыв подтверждён, имя проверяется на адресах всей сети, а не только на одном сайте.</p>
-            </div>
-            <div className={"freeze-scan-form"}>
-              <label htmlFor={"freezeScanHostsInput"} className={"freeze-scan-host-field text-sm font-semibold text-slate-200"}>
-                <span>Свои сайты</span>
-                <input id={"freezeScanHostsInput"} type={"text"} placeholder={"через запятую, например king.hr (необязательно)"} autoCapitalize={"none"} spellCheck={false} />
-              </label>
-              <div className={"freeze-scan-launch-row"}>
-                <button data-action-click={"runFreezeScan"} className={"freeze-scan-start-button"}>▷ Запустить пробу</button>
-                <span className={"freeze-scan-safety-note text-sm text-slate-300"}>Обычно занимает 2–10 минут. Проверка использует отдельные соединения роутера и не меняет ваш трафик.</span>
-              </div>
-              <label className={"freeze-scan-post-option text-sm text-slate-300"}><input id={"freezeScanUploadProbe"} type={"checkbox"} /><span><strong>Проверить короткие POST-ответы (до 64 КБ)</strong><small>Только для введённых доменов: сервер получит тестовое тело. Отказ POST сам по себе не доказывает обрыв передачи.</small></span></label>
-            </div>
-          </section>
-          <p id={"freezeScanStatus"} className={"hidden sr-only"} role={"status"} aria-live={"polite"}></p>
-          <div id={"freezeScanProgress"} className={"hidden freeze-scan-running-card"}>
-            <div className={"freeze-scan-running-topline"}>
-              <span className={"freeze-scan-spinner"} aria-hidden={"true"}></span>
-              <strong id={"freezeScanProgressTitle"}></strong>
-              <span id={"freezeScanProgressCount"} className={"freeze-scan-progress-count"}></span>
-              <button id={"freezeScanCancel"} data-action-click={"cancelFreezeScan"} className={"hidden freeze-scan-stop-button"}>Остановить</button>
-            </div>
-            <div className={"freeze-scan-progress-track"} role={"progressbar"} aria-label={"Ход проверки"} aria-valuemin={0} aria-valuemax={100} aria-valuenow={0}><div id={"freezeScanProgressBar"}></div></div>
-            <p id={"freezeScanProgressDetail"}></p>
-          </div>
-            <p id={"freezeScanSummary"} className={"hidden rounded-xl border px-3 py-2 text-sm font-bold leading-snug"} role={"status"} aria-live={"polite"}></p>
-            <section id={"freezeScanResults"} className={"hidden freeze-scan-results-panel"}>
-              <div className={"freeze-scan-results-heading"}><h3>Сети</h3><span id={"freezeScanNetworkCount"}></span></div>
-              <div id={"freezeScanRows"} className={"freeze-scan-network-list"} role={"list"} aria-label={"Результаты по сетям"}></div>
-            </section>
-            <section id={"freezeApplyPreviewPanel"} className={"hidden rounded-2xl border border-blue-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>
-              <div>
-                <h3 className={"text-sm font-bold text-white"}>Применение к проверенному сайту</h3>
-                <p id={"freezeApplyPreviewSummary"} className={"mt-1 text-sm font-medium text-slate-200"}></p>
-              </div>
-              <div id={"freezeApplyPreviewDiff"} className={"max-h-72 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
-              <p className={"text-xs font-medium text-slate-300"}>Профиль ограничен этим доменом. Перед применением проверьте diff; будет создана резервная копия, затем nfqws2 перезапустится.</p>
-              <button id={"applyFreezeStrategyButton"} data-action-click={"applyStrategyPick"} disabled className={"w-fit rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:cursor-wait disabled:opacity-60"}>Применить и перезапустить</button>
-            </section>
-            <section id={"freezeJoinPreviewPanel"} className={"hidden rounded-2xl border border-emerald-400/30 bg-slate-900/70 p-4 space-y-3"} aria-live={"polite"}>
-              <div><h3 className={"text-sm font-bold text-white"}>Добавление ASN-сети в профиль</h3><p id={"freezeJoinPreviewSummary"} className={"mt-1 text-sm font-medium text-slate-200"}></p></div>
-              <div id={"freezeJoinPreviewDiff"} className={"max-h-72 overflow-auto rounded-xl bg-[#060a12] p-3 font-mono text-xs"}></div>
-              <p className={"text-xs font-medium text-slate-300"}>Будет создан новый статический IP-список на основе RIPEstat и добавлена ссылка в выбранный профиль. Перед записью конфигурация проверяется и сохраняется резервная копия.</p>
-              <div className={"flex flex-wrap gap-2"}><button id={"applyFreezeJoinButton"} data-action-click={"applyFreezeJoin"} disabled className={"w-fit rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 disabled:cursor-wait disabled:opacity-60"}>Добавить и перезапустить</button><button data-action-click={"closeFreezeJoinPreview"} className={"rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-200 hover:border-slate-500"}>Закрыть</button></div>
-            </section>
-            <p className={"text-xs leading-relaxed text-slate-400"}>Возможный обрыв сам по себе не доказывает блокировку DPI.</p>
-        </section>
         <section id={"tabContent-configCheck"} className={"hidden view-animate space-y-4"}>
           <div className={"ui-card rounded-2xl p-4 sm:p-5 space-y-4"}>
             <div>
@@ -1346,23 +1287,6 @@ export default function App() {
           <div><h1 className={"text-xl font-bold text-white"}>Журнал</h1><p className={"mt-1 text-sm text-slate-400"}>Логи читает backend на роутере ограниченным хвостом. Автообновление можно приостановить, пока вы читаете журнал.</p></div>
           <section className={"ui-card rounded-xl p-4 sm:p-5"}><div className={"flex flex-wrap items-center gap-2"}><label className={"text-sm text-slate-300"} htmlFor={"logsSource"}>Источник</label><select id={"logsSource"} defaultValue={"nfqws2-ui"} data-action-change={"changeLogSource"} data-value-source={"value"} className={"rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"}><option value={"nfqws2-ui"}>nfqws2-UI</option><option value={"nfqws2"}>nfqws2</option></select><input id={"logsSearch"} type={"search"} placeholder={"Фильтр строк"} data-action-input={"filterLogs"} className={"min-w-[12rem] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} /><button type={"button"} data-action-click={"refreshLogs"} className={"backup-action"}>Обновить</button><button type={"button"} data-action-click={"downloadLogs"} className={"backup-action"}>Скачать</button><button type={"button"} data-action-click={"clearLogs"} className={"backup-action border-rose-700/60 text-rose-300 hover:bg-rose-950/40"}>Очистить</button><label className={"ml-auto inline-flex items-center gap-2 rounded-lg border border-slate-800 px-3 py-2 text-xs text-slate-300"}><input id={"logsAutoRefresh"} type={"checkbox"} defaultChecked={true} data-action-change={"toggleLogAutoRefresh"} data-value-source={"checked"} /><span>Автообновление</span></label></div><p id={"logsAutoRefreshStatus"} className={"mt-2 text-xs text-slate-500"} aria-live={"polite"}>Автообновление каждые 5 секунд</p><p id={"logsStatus"} className={"my-2 text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Журнал загружается…</p><pre id={"logsOutput"} className={"max-h-[70vh] overflow-auto rounded-lg border border-slate-800 bg-[#060a12] p-3 font-mono text-xs leading-5 text-slate-200 whitespace-pre-wrap break-all"}></pre></section>
         </section>
-        <section id={"tabContent-packageLeftovers"} className={"hidden view-animate space-y-4"}>
-          <div className={"flex flex-wrap items-center justify-between gap-2"}><div><h1 className={"text-xl font-bold text-white"}>Файлы после обновлений</h1><p className={"mt-1 text-sm text-slate-400"}>Проверка временных файлов package manager в конфигурации nfqws2 и каталоге списков.</p></div><button type={"button"} data-action-click={"refreshPackageLeftovers"} className={"backup-action"}>Обновить</button></div>
-          <section className={"ui-card max-w-5xl rounded-xl p-4 sm:p-5"}>
-            <p className={"text-sm leading-6 text-slate-300"}>Проверяются прямые файлы с суффиксами <code className={"text-amber-200"}>-opkg</code> и <code className={"text-amber-200"}>.apk-new</code> в каталоге nfqws2 и <code className={"text-amber-200"}>lists/</code>, как в Zemidala. Содержимое загружается только по нажатию «Сравнить» и для выбранных файлов. Удаление не затрагивает исходные конфигурацию и списки; такие файлы могут появиться снова после обновления.</p>
-            <div className={"mt-3 flex flex-wrap items-center justify-between gap-2 border-y border-slate-800 py-2"}><p id={"packageLeftoversStatus"} className={"text-sm text-slate-300"} role={"status"} aria-live={"polite"}>Нажмите «Обновить», чтобы проверить файлы.</p><button id={"deleteAllPackageLeftovers"} type={"button"} data-action-click={"requestDeleteAllPackageLeftovers"} className={"hidden rounded-lg border border-rose-700/50 px-3 py-2 text-sm font-medium text-rose-200 hover:bg-rose-950/40"}>Удалить все найденные</button></div>
-            <div id={"packageLeftoversList"} className={"mt-2 grid gap-2"}></div>
-          </section>
-        </section>
-        <section id={"tabContent-supportReport"} className={"hidden view-animate space-y-4"}>
-          <div><h1 className={"text-xl font-bold text-white"}>Отчёт для помощи</h1><p className={"mt-1 text-sm text-slate-400"}>Сводка состояния панели и nfqws2 для диагностики проблем.</p></div>
-          <section className={"ui-card rounded-xl p-4 sm:p-5 space-y-4"}>
-            <p className={"text-sm leading-6 text-slate-300"}>Отчёт содержит версии, состояние служб, предупреждения конфигурации и сводные сведения о списках и проверках. Содержимое конфигурации и списков, пароли и токен Telegram не включаются.</p>
-            <label className={"flex items-start gap-3 text-sm text-slate-300"}><input id={"supportReportAnonymize"} type={"checkbox"} defaultChecked={true} className={"mt-1 accent-violet-500"} /><span>Скрывать имена сайтов в отчёте</span></label>
-            <div className={"flex flex-wrap items-center gap-2"}><button type={"button"} data-action-click={"buildSupportReport"} className={"backup-action"}>Собрать отчёт</button><button id={"copySupportReport"} type={"button"} data-action-click={"copySupportReport"} className={"backup-action hidden"}>Копировать</button><button id={"downloadSupportReport"} type={"button"} data-action-click={"downloadSupportReport"} className={"backup-action hidden"}>Скачать .txt</button><span className={"text-xs text-slate-400"}>Отчёт не отправляется автоматически. Проверьте его перед передачей.</span></div>
-            <textarea id={"supportReportText"} aria-label={"Текст отчёта для помощи"} readOnly={true} className={"hidden min-h-80 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-200"}></textarea>
-          </section>
-        </section>
         <section id={"tabContent-about"} className={"hidden view-animate space-y-4"}>
           <header className={"about-header"}>
             <div><span className={"about-eyebrow"}>ИНФОРМАЦИЯ И ОБСЛУЖИВАНИЕ</span><h1>О nfqws2-UI</h1><p>Версия панели, обновления и полезные команды для роутера.</p></div>
@@ -1454,7 +1378,7 @@ export default function App() {
           {"\n\n        "}
           <div className={"flex items-center gap-2"}>
             {"\n          "}
-            <button id={"updatePickerRefresh"} type={"button"} data-action-click={"refreshUpdatePicker"} className={"rounded-lg border border-slate-700 px-2.5 py-1.5 text-xs font-semibold text-slate-300 hover:border-blue-500 hover:text-white disabled:opacity-50"}>Обновить</button>
+            <span id={"updatePickerAutoRefresh"} className={"text-xs text-slate-400"}>Проверка списка каждые 2 минуты</span>
             <span id={"updateRepoSlug"} className={"px-3 py-1 rounded-full bg-[#111827] border border-slate-700/80 text-xs font-mono font-bold text-slate-200"}>
               {"\n            rangerxxyy/nfqws2-ui\n          "}
             </span>
@@ -1523,14 +1447,6 @@ export default function App() {
       </div>
       {"\n  "}
     </div>
-    <div id={"packageLeftoverCompareModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4"}>
-      <div role={"dialog"} aria-modal={"true"} aria-labelledby={"packageLeftoverCompareTitle"} tabIndex={-1} className={"bg-[#0b101b] border border-slate-800 rounded-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden shadow-2xl view-animate flex flex-col"}>
-        <div className={"px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-3"}><div className={"min-w-0"}><h3 id={"packageLeftoverCompareTitle"} className={"text-base font-bold text-white"}>Сравнение файла после обновления</h3><p id={"packageLeftoverCompareSubtitle"} className={"mt-1 truncate text-xs text-slate-400"}></p></div><button type={"button"} data-action-click={"closePackageLeftoverCompare"} className={"backup-action shrink-0"}>Закрыть</button></div>
-        <div className={"grid min-h-0 flex-1 gap-px overflow-auto bg-slate-800 md:grid-cols-2"}><section className={"min-w-0 bg-[#080d17]"}><h4 className={"sticky top-0 border-b border-slate-800 bg-[#0b101b] px-4 py-2 text-sm font-semibold text-slate-200"}>Исходный файл</h4><pre id={"packageLeftoverOriginal"} className={"max-h-[70vh] overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-xs leading-5 text-slate-200"}></pre></section><section className={"min-w-0 bg-[#080d17]"}><h4 className={"sticky top-0 border-b border-slate-800 bg-[#0b101b] px-4 py-2 text-sm font-semibold text-amber-200"}>Файл после обновления</h4><pre id={"packageLeftoverCandidate"} className={"max-h-[70vh] overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-xs leading-5 text-slate-200"}></pre></section></div>
-      </div>
-    </div>
-{"\n\n  "}
-{"\n  "}
     <div id={"toastWrapper"} className={"fixed bottom-24 right-5 z-[40] space-y-2.5 pointer-events-none"}></div>
     <div id={"updateNoticeWrapper"} className={"fixed bottom-5 right-5 z-[60] grid gap-2.5 pointer-events-none"}></div>
     <div id={"configClearModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[70] hidden items-center justify-center p-4"}>

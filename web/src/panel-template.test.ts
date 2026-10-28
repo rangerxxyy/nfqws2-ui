@@ -26,19 +26,10 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('Список используется профилями {names}');
   });
 
-  it('exposes an on-demand package leftovers screen with explicit confirmation and constrained API calls', () => {
-    expect(template).toContain('id="navBtn-packageLeftovers"');
-    expect(template).toContain('id="tabContent-packageLeftovers"');
-    expect(template).toContain('id="deleteAllPackageLeftovers"');
-    expect(template).toContain('id="packageLeftoverCompareModal"');
-    expect(panelSource).toContain("compare.dataset.actionClick = 'comparePackageLeftover'");
-    expect(panelSource).toContain("if (route === 'packageLeftovers') void loadPackageLeftovers()");
-    expect(panelSource).toContain('nfqwsPackageLeftovers.delete(selected)');
-    expect(panelSource).toContain('requestDangerousConfirmation(');
-    expect(panelSource).toContain("item.sameAsBase === null ? 'содержимое сравнить не удалось'");
-    expect(backendSource).toContain('package_leftovers::list_package_leftovers');
-    expect(backendSource).toContain('package_leftovers::delete_package_leftovers');
-    expect(backendSource).toContain('package_leftovers::compare_package_leftover');
+  it('does not expose the deferred package leftovers tools in the current UI', () => {
+    expect(template).not.toContain('Файлы после обновлений');
+    expect(template).not.toContain('id="packageLeftoverCompareModal"');
+    expect(panelSource).not.toContain('loadPackageLeftovers');
   });
 
   it('offers inline profile renaming in the name field without a pencil or browser prompt', () => {
@@ -120,15 +111,6 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(valueRule).toMatch(/border-radius:\.24rem/);
     expect(valueRule).toMatch(/height:1\.2rem/);
     expect(valueRule).not.toMatch(/margin-left:/);
-  });
-
-  it('provides a dedicated ASN join preview with explicit confirmation flow', () => {
-    expect(template).toContain('id="freezeJoinPreviewPanel"');
-    expect(template).toContain('data-action-click="applyFreezeJoin"');
-    expect(panelSource).toContain('nfqwsDiagnostics.freezeJoinPreview(operationId, index)');
-    expect(panelSource).toContain("requestDangerousConfirmation('Добавить ASN-сеть в профиль?'");
-    expect(panelSource).toContain('nfqwsDiagnostics.applyFreezeJoin(operationId, Number(resultIndex), expectedRevision)');
-    expect(panelSource).toContain("joinButton.dataset.actionClick = 'previewFreezeJoin'");
   });
 
   it('keeps the selected shared Lua function visibly highlighted in the themed picker', () => {
@@ -273,16 +255,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(dialogClass.split(' ')).toContain('z-50');
   });
 
-  it('renders the compact 16 KB scan form, progress card, and responsive network list', () => {
-    const diagnostic = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-configCheck"'));
-    expect(diagnostic).toContain('id="freezeScanProgressCount"');
-    expect(diagnostic).toContain('id="freezeScanNetworkCount"');
-    expect(diagnostic).toContain('id="freezeScanRows"');
-    expect(diagnostic).toContain('role="list"');
-    expect(diagnostic).toContain('aria-valuemax="100"');
-    expect(diagnostic).toContain('class="freeze-scan-start-button"');
-    expect(panelStyles).toContain('.freeze-scan-network-row');
-    expect(panelStyles).toContain('@media (max-width: 700px)');
+  it('keeps the 16 KB diagnostic out of the navigation and panel template', () => {
+    expect(template).not.toContain('tabContent-diagnostic16k');
+    expect(template).not.toContain('navBtn-diagnostic16k');
   });
 
   it('opens the full configuration editor first and separates configuration settings', () => {
@@ -320,14 +295,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).not.toContain('navigator.clipboard.writeText(editor.value)');
   });
 
-  it('offers detected ISP interfaces and a final manual-entry option', () => {
+  it('offers themed ISP interface choices and a final manual-entry option', () => {
     expect(template).toContain('id="ispInterfaceSelect"');
-    expect(template).toContain('data-native-select="true"');
+    expect(template).not.toContain('data-native-select="true"');
+    expect(template).toContain('data-placeholder="Выберите интерфейс…"');
     expect(template).toContain('id="ispInterfaceManualInput"');
     expect(template).not.toContain('Интерфейсы не обнаружены; введите имя вручную.');
     expect(template).not.toContain('настроен, но не обнаружен');
-    expect(panelSource).toContain("new Option('Интерфейс не задан', '', !configured, true)");
-    expect(panelSource).toContain('orderNetworkInterfaces(networkInterfaces, configured, defaultInterfaces)');
+    expect(panelSource).not.toContain("new Option('Интерфейс не задан'");
+    expect(panelSource).toContain('networkInterfaceChoices(networkInterfaces, configured, defaultInterfaces)');
     expect(panelSource).toContain("new Option('Ввести имя вручную…', '__manual__')");
     expect(template).toContain('data-action-click="submitIspInterfaceManually"');
     expect(template).toContain('placeholder="Например, eth3 или pppoe-wan"');
@@ -447,9 +423,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(styledSelectSource).toContain('menu.style.width = `${width}px`');
     expect(styledSelectSource).toContain('current.menu.contains(target)');
     expect(panelStyles).toContain('.styled-select-menu { position: fixed;');
-    expect(panelStyles).toContain('border-radius: .375rem;');
-    expect(panelStyles).toContain('background: oklch(0.1666 0.0331 266.08);');
-    expect(panelStyles).toContain('background:rgba(59,130,246,.15); color:#60a5fa;');
+    expect(panelStyles).toContain('border-radius: .55rem;');
+    expect(panelStyles).toContain('background: var(--panel-surface,#111827);');
+    expect(panelStyles).toContain('var(--accent-color,#3b82f6) 15%');
   });
 
   it('keeps explanatory and data text readable across panel sections and themes', () => {
@@ -457,8 +433,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('html[data-theme="light"] { color-scheme: light; }');
     expect(panelStyles).toContain('backdrop-filter: blur(14px);');
     expect(panelStyles).toContain('animation: select-menu-in 150ms var(--ease-out) both;');
-    expect(panelStyles).toContain(".styled-select-option[aria-selected='true'] { background:transparent; color:#fff; font-weight:500; }");
-    expect(panelStyles).toContain(".styled-select-option[data-active='true'] { outline:none; background:rgba(59,130,246,.15); color:#60a5fa; }");
+    expect(panelStyles).toContain(".styled-select-option[aria-selected='true'] { background:color-mix(in srgb,var(--accent-color,#3b82f6) 10%,transparent); color:var(--accent-border,#bfdbfe); font-weight:650; }");
+    expect(panelStyles).toContain(".styled-select-option[data-active='true'] { outline:none; background:color-mix(in srgb,var(--accent-color,#3b82f6) 15%,transparent); color:var(--accent-border,#60a5fa); }");
     expect(panelStyles).toContain('.styled-select-menu[data-side=\'top\']');
     expect(styledSelectSource).toContain('styledSelectMenuSide');
     expect(styledSelectSource).toContain('state.activeIndex = -1;');
@@ -612,17 +588,10 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('candidate_average_ms: Option<u64>');
   });
 
-  it('exposes a privacy-first support report with manual copy and download actions', () => {
-    expect(template).toContain('id="navBtn-supportReport"');
-    expect(template).toContain('id="tabContent-supportReport"');
-    expect(template).toContain('Отчёт для помощи');
-    expect(template).toContain('id="supportReportAnonymize"');
-    expect(template).toContain('checked=""');
-    expect(template).toContain('data-action-click="buildSupportReport"');
-    expect(template).toContain('data-action-click="copySupportReport"');
-    expect(template).toContain('data-action-click="downloadSupportReport"');
-    expect(template).toContain('Отчёт не отправляется автоматически');
-    expect(panelSource).not.toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
+  it('does not expose the deferred support report tools in the current UI', () => {
+    expect(template).not.toContain('Отчёт для помощи');
+    expect(template).not.toContain('id="supportReportText"');
+    expect(panelSource).not.toContain('buildSupportReport');
   });
 
   it('styles the trace protocol picker and diagnosis helper text for clear reading', () => {
@@ -653,9 +622,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.mobile-list-editor');
   });
 
-  it('keeps the 16 KB diagnosis as one mobile-friendly test with one start and one cancel action', () => {
+  it('does not render the 16 KB diagnosis panel', () => {
     const picker = template.slice(template.indexOf('id="tabContent-autotune"'), template.indexOf('id="tabContent-monitor"'));
-    const diagnostic16k = template.slice(template.indexOf('id="tabContent-diagnostic16k"'), template.indexOf('id="tabContent-monitor"'));
     expect(picker).toContain('flex flex-col lg:flex-row');
     expect(picker).toContain('strategy-settings-grid');
     expect(picker).toContain('strategy-target-transport-row');
@@ -678,35 +646,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(picker).toContain('Расширенный · каталог blockcheck2');
     expect(panelSource).toContain("value.split(/\\r?\\n/)");
     expect(picker).toContain('min-h-[180px] 2xl:h-[360px]');
-    expect(diagnostic16k).toContain('freeze-scan-form');
-    expect(diagnostic16k).toContain('freeze-scan-host-field');
-    expect(diagnostic16k).toContain('freeze-scan-safety-note');
-    expect(diagnostic16k).toContain('freeze-scan-running-card');
-    expect(diagnostic16k).toContain('id="freezeScanHostsInput"');
-    expect(diagnostic16k).toContain('Запустить пробу');
-    expect(diagnostic16k).toContain('id="freezeScanSummary"');
-    expect(diagnostic16k).toContain('id="freezeScanProgress"');
-    expect(diagnostic16k).toContain('id="freezeScanProgressCount"');
-    const progressStart = diagnostic16k.indexOf('id="freezeScanProgress"');
-    const progressEnd = diagnostic16k.indexOf('</div>', diagnostic16k.indexOf('id="freezeScanProgressDetail"'));
-    expect(diagnostic16k.indexOf('id="freezeScanCancel"')).toBeGreaterThan(progressStart);
-    expect(diagnostic16k.indexOf('id="freezeScanCancel"')).toBeLessThan(progressEnd);
-    expect(diagnostic16k).toContain('id="freezeScanResults"');
-    expect(diagnostic16k).toContain('freeze-scan-intro-card');
-    expect(diagnostic16k).toContain('freeze-scan-start-button');
-    expect(panelStyles).toContain('#tabContent-diagnostic16k .freeze-scan-network-row');
-    expect(panelStyles).toMatch(/grid-template-columns:\s*minmax\(12rem,1\.1fr\) minmax\(8rem,\.65fr\) minmax\(14rem,2fr\)/);
+    expect(template).not.toContain('tabContent-diagnostic16k');
+    expect(template).not.toContain('freezeScanHostsInput');
+    expect(panelStyles).toContain('.freeze-result-address { min-width:0;');
+    expect(panelStyles).toContain('font-size:.86rem; font-variant-numeric:tabular-nums;');
     expect(panelStyles).toContain('.freeze-result-host');
-    expect(panelStyles).toContain('.freeze-scan-host-field input:focus-visible');
-    expect(panelStyles).toContain('@media (max-width: 700px)');
-    expect(diagnostic16k.match(/data-action-click="runFreezeScan"/g)).toHaveLength(1);
-    expect(diagnostic16k.match(/data-action-click="cancelFreezeScan"/g)).toHaveLength(1);
-    expect(diagnostic16k).not.toContain('transferDomainInput');
-    expect(diagnostic16k).not.toContain('Диагностика передачи данных');
-    expect(panelSource).toContain('freezeScanStart');
-    expect(panelSource).toContain('freeze-scan-network-row');
-    expect(panelSource).toContain("row.setAttribute('role', 'listitem')");
-    expect(panelSource).not.toContain("document.createElement('table')");
     expect(panelSource).toContain('function syncConfigWordWrap(enabled: boolean)');
     expect(panelSource).toContain('wrapConfigLines: enabled');
     expect(panelSource).toContain('const { wrapConfigLines: _wrapConfigLines, ...routerSettings } = settings;');
@@ -719,7 +663,6 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("status.classList.toggle('hidden', !active)");
     expect(panelSource).toContain('Замеры и детали');
     expect(panelSource).toContain('result.address ??');
-    expect(template).toContain('id="freezeApplyPreviewPanel"');
     expect(panelSource).toContain('freezeStrategyPreview');
     expect(panelSource).toContain('JSON.stringify({ state: operation.state, results: operation.results })');
     expect(panelSource).toContain('freezeCanApplyToHost');
@@ -929,8 +872,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('includeCommunity');
     expect(template).toMatch(/id="navBtn-autotune" class="(?![^"]*hidden)[^"]*side-nav-btn/);
     expect(template).toContain('data-action-click="startStrategyPick"');
-    expect(template).toContain('id="tabContent-diagnostic16k"');
-    expect(template).toContain('data-action-click="runFreezeScan"');
+    expect(template).not.toContain('id="tabContent-diagnostic16k"');
+    expect(template).not.toContain('data-action-click="runFreezeScan"');
     expect(panelSource).not.toContain('UNAVAILABLE_PANEL_ROUTES');
   });
 
@@ -1412,21 +1355,24 @@ describe('TSX panel with optional server-side authentication', () => {
   it('offers an in-place retry when a release list is empty or cannot be loaded', () => {
     expect(panelSource).toContain('function appendReleaseRetry(list: HTMLElement)');
     expect(panelSource).toContain("button.dataset.actionClick = 'retryUpdateList'");
-    expect(panelSource).toContain('retryUpdateList: () => void refreshUpdatePicker()');
-    expect(template).toContain('id="updatePickerRefresh"');
+    expect(panelSource).toContain('retryUpdateList: () => void loadUpdatePickerReleases(true)');
+    expect(template).not.toContain('updatePickerRefresh');
     expect(panelStyles).toContain('.release-retry-button');
   });
 
-  it('keeps a cached core release catalog on open and exposes manual refresh for both catalogs', () => {
+  it('fetches fresh UI and core releases on open and refreshes automatically while the picker is visible', () => {
     expect(panelSource).toContain("list.textContent = 'Загружаю список версий…'");
     expect(panelSource).not.toContain('Загружаю версии из GitHub Releases…');
     expect(panelSource).toContain('const result = await nfqwsUpdates.coreReleases(forceRefresh)');
-    expect(panelSource).toContain('refresh.hidden = false');
-    expect(panelSource).toContain('refresh.disabled = true');
+    expect(panelSource).toContain('await loadUpdatePickerReleases(true)');
+    expect(panelSource).toContain('UPDATE_PICKER_REFRESH_INTERVAL_MS = 2 * 60 * 1000');
+    expect(panelSource).toContain('void loadUpdatePickerReleases(true, true)');
+    expect(panelSource).toContain('stopUpdatePickerAutoRefresh(); closeAppModal');
+    expect(template).toContain('Проверка списка каждые 2 минуты');
     expect(backendSource).toContain('load_cached_core_releases(&state, &architecture, query.force)');
     expect(backendSource).toContain('Query(query): Query<CoreReleaseQuery>');
     expect(panelSource).not.toContain("if (updateTarget !== 'ui') return");
-    expect(panelSource).toContain('retryUpdateList: () => void refreshUpdatePicker()');
+    expect(panelSource).toContain('retryUpdateList: () => void loadUpdatePickerReleases(true)');
   });
 
   it('keeps About commands and copy actions from colliding at narrow widths', () => {
@@ -1502,6 +1448,16 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('labels the ISP interface quick setting consistently with the other base parameters', () => {
     expect(template).toMatch(/<span>ISP_INTERFACE<\/span>[\s\S]*?<span class="text-blue-400">WAN<\/span>[\s\S]*?<select id="ispInterfaceSelect"/);
+  });
+
+  it('removes the deferred package leftovers and support report sections from both navigation layouts', () => {
+    expect(template).not.toContain('id="navBtn-packageLeftovers"');
+    expect(template).not.toContain('id="navBtn-supportReport"');
+    expect(template).not.toContain('id="tabContent-packageLeftovers"');
+    expect(template).not.toContain('id="tabContent-supportReport"');
+    expect(template).not.toContain('data-simplified-route="packageLeftovers"');
+    expect(template).not.toContain('data-simplified-route="supportReport"');
+    expect(panelSource).not.toContain("if (route === 'packageLeftovers') void loadPackageLeftovers()");
   });
 
   it('keeps Lua script source browsing in the Scripts tab instead of duplicating paths in settings', () => {

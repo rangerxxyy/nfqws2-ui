@@ -8,7 +8,7 @@ type FreezeRowDetail = {
 
 export function freezeRowIdentity(result: FreezeRowIdentity): string {
   if (result.targetKind === 'pinned_address') return result.label;
-  const endpoint = `${result.host}${result.path === '/' ? '' : result.path}`;
+  const endpoint = result.host;
   return result.targetKind === 'user_host' ? endpoint : `${result.label}\n${endpoint}`;
 }
 

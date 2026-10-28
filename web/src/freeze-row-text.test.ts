@@ -7,9 +7,11 @@ describe('freeze row text', () => {
       .toBe('Hetzner');
   });
 
-  it('shows the actual host and path for host-based probes without an SNI label', () => {
+  it('shows only the hostname for host-based probes without an SNI label', () => {
     expect(freezeRowIdentity({ label: 'OVH', host: 'proof.ovh.net', path: '/files/1Mb.dat', targetKind: 'host_reference' }))
-      .toBe('OVH\nproof.ovh.net/files/1Mb.dat');
+      .toBe('OVH\nproof.ovh.net');
+    expect(freezeRowIdentity({ label: 'Amazon CloudFront', host: 'ip-ranges.amazonaws.com', path: '/ip-ranges.json', targetKind: 'host_reference' }))
+      .toBe('Amazon CloudFront\nip-ranges.amazonaws.com');
   });
 
   it('keeps strategy parameters and past attempts behind compact detail text', () => {

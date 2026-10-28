@@ -141,7 +141,7 @@ function refreshState(state: StyledSelectState) {
   const { select, trigger, menu } = state;
   trigger.disabled = select.matches(':disabled');
   trigger.setAttribute('aria-expanded', String(state.open));
-  trigger.textContent = selectedLabel(select) || 'Выберите вариант';
+  trigger.textContent = selectedLabel(select) || select.dataset.placeholder || 'Выберите вариант';
   trigger.classList.toggle('styled-select-trigger-open', state.open);
   menu.replaceChildren();
   const models = optionModels(select);

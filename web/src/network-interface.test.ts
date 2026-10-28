@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as networkInterface from './network-interface';
-import { isValidNetworkInterfaceName, isValidNetworkInterfaceSelection } from './network-interface';
+import { isValidNetworkInterfaceName, isValidNetworkInterfaceSelection, networkInterfaceChoices } from './network-interface';
 
 describe('network interface names', () => {
   it('accepts common Linux interface names', () => {
@@ -39,5 +39,18 @@ describe('network interface names', () => {
     const order = (networkInterface as unknown as { orderNetworkInterfaces?: (names: string[], configured?: string, defaults?: string[]) => string[] }).orderNetworkInterfaces;
     expect(order?.(['lo', 'eth3', 'pppoe-wan'], '', ['lo', 'eth3'])).toEqual(['eth3', 'pppoe-wan']);
     expect(order?.(['lo', 'eth3'], 'lo', ['lo', 'eth3'])).toEqual(['eth3', 'lo']);
+  });
+
+  it('offers common ISP interface names even when the router has not reported them', () => {
+    const choices = networkInterfaceChoices(['br-lan', 'eth3'], 'eth3', ['ppp0']);
+    expect(choices[0]).toBe('ppp0');
+    expect(choices[1]).toBe('eth3');
+    expect(choices).toEqual(expect.arrayContaining(['pppoe-wan', 'pppoe0', 'ppp0', 'eth0', 'eth1', 'wan', 'br-wan', 'br-lan']));
+    expect(choices).not.toContain('lo');
+    expect(new Set(choices).size).toBe(choices.length);
+  });
+
+  it('preserves a configured non-standard name in the popular choices', () => {
+    expect(networkInterfaceChoices([], 'uplink_custom')).toContain('uplink_custom');
   });
 });

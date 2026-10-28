@@ -9,7 +9,7 @@ export function isValidNetworkInterfaceSelection(value: string): boolean {
 
 // Common device names from OpenWrt/Keenetic layouts; these are only ordered
 // when the router actually reports them under /sys/class/net.
-const preferredNetworkInterfaces = ['eth0', 'eth1', 'eth2', 'eth3', 'eth4', 'eth0.2', 'eth1.2', 'eth2.2', 'ppp0', 'ppp1', 'pppoe0', 'pppoe-wan', 'wan', 'wan0', 'wwan0', 'usb0', 'br-wan'];
+const preferredNetworkInterfaces = ['eth0', 'eth1', 'eth2', 'eth3', 'eth4', 'eth0.2', 'eth1.2', 'eth2.2', 'ppp0', 'ppp1', 'pppoe', 'pppoe0', 'pppoe-wan', 'wan', 'wan0', 'wwan0', 'usb0', 'br-wan'];
 
 export function orderNetworkInterfaces(names: string[], configured = '', defaults: string[] = []): string[] {
   const remaining = new Set(names.filter((name) => name !== 'lo' && isValidNetworkInterfaceName(name)));
@@ -29,4 +29,16 @@ export function orderNetworkInterfaces(names: string[], configured = '', default
     if (remaining.delete(name)) ordered.push(name);
   }
   return [...ordered, ...[...remaining].sort((left, right) => left.localeCompare(right, 'en', { numeric: true, sensitivity: 'base' }))];
+}
+
+export function networkInterfaceChoices(names: string[], configured = '', defaults: string[] = []): string[] {
+  const known = orderNetworkInterfaces(names, configured, defaults);
+  const configuredValue = configured.trim();
+  const common = preferredNetworkInterfaces.filter((name) => name !== 'lo' && isValidNetworkInterfaceName(name));
+  return [...new Set([
+    ...known.filter((name) => defaults.includes(name)),
+    ...(configuredValue && isValidNetworkInterfaceSelection(configuredValue) ? [configuredValue] : []),
+    ...common,
+    ...known,
+  ])];
 }
