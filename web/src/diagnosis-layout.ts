@@ -1,6 +1,6 @@
 import type { SiteDiagnosticReport, SiteDiagnosticStep } from './api';
 import { comparisonVerdict, presentStep, quicExplanation, type Presentation } from './diagnosis-presenter';
-import { isSkippedDiagnosisStep } from './diagnosis-stages';
+import { isSkippedDiagnosisStep, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 export type DiagnosisRow = { id: string; label: string; kind: Presentation['kind']; detail: string; metrics: string; note?: string; inactive?: boolean };
 function row(id: string, label: string, step?: SiteDiagnosticStep): DiagnosisRow {
   return {id,label,kind: step ? presentStep(step).kind : 'unknown',inactive:!step || isSkippedDiagnosisStep(step),detail:step?.detail || 'Этап не выполнялся.',
@@ -8,7 +8,9 @@ function row(id: string, label: string, step?: SiteDiagnosticStep): DiagnosisRow
 }
 export function diagnosisRows(report: SiteDiagnosticReport): DiagnosisRow[] {
   const step = (id: string) => report.steps.find(item => item.id === id);
+  const label = (id: string) => SITE_DIAGNOSIS_STAGES.find(stage => stage.id === id)?.label ?? id;
   const dns = row('dns','Имя сайта · DNS',step('dns'));
+  dns.label = label('dns');
   const ipTarget = report.host.includes(':') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(report.host);
   if (ipTarget) {
     const records = report.reverseDns?.filter((record) => record.address === report.host) ?? report.reverseDns ?? [];
@@ -25,17 +27,17 @@ export function diagnosisRows(report: SiteDiagnosticReport): DiagnosisRow[] {
   const doh = step('doh');
   if (doh && !ipTarget) { dns.detail += ` ${doh.detail}`; if (doh.status !== 'ok' && dns.kind === 'success') dns.kind = 'unknown'; }
   const sniStep = step('sni');
-  const sni = row('sni','Проверка имени · SNI',sniStep);
+  const sni = row('sni',label('sni'),sniStep);
   if (!sniStep && (report.direct.status === 'ok' || report.direct.status === 'warning')) sni.detail = 'Не нужно: сайт отвечает напрямую.';
   else if (!sniStep && ipTarget) sni.detail = 'Не нужно: для проверки SNI требуется доменное имя.';
-  const rows = [dns,row('tcp','Соединение · TCP 443',step('tcp')),row('direct','Запрос мимо nfqws2',report.direct),
-    sni,row('http','Открытый HTTP · порт 80',step('http')),row('current','Как открывается сейчас',report.current)];
+  const rows = [dns,row('tcp',label('tcp'),step('tcp')),row('direct',label('direct'),report.direct),
+    sni,row('http',label('http'),step('http')),row('current',label('current'),report.current)];
   if (report.quic) {
     const q = report.quic;
     const describe = (label: string, result: SiteDiagnosticStep) => `${label}: ${presentStep(result).text}${result.httpCode === null ? '' : ` · HTTP ${result.httpCode}`}${result.durationMs === null ? '' : ` · ${result.durationMs} мс`}`;
-    rows.push({id:'quic',label:q.method === 'http3' ? 'QUIC · HTTP/3' : 'QUIC · UDP 443',kind:comparisonVerdict(q.direct,q.current).kind,
+    rows.push({id:'quic',label:label('quic'),kind:comparisonVerdict(q.direct,q.current).kind,
       detail:`${describe('Напрямую',q.direct)}\n${describe('Сейчас',q.current)}`,metrics:'',note:quicExplanation(q.method,q.http3Advertised)});
-  } else rows.push(row('quic','QUIC · HTTP/3'));
-  for (const [id,label] of [['route','Маршрут роутера'],['lists','Доменные списки и IP']]) rows.push(row(id,label,step(id)));
+  } else rows.push(row('quic',label('quic')));
+  for (const id of ['route','lists']) rows.push(row(id,label(id),step(id)));
   return rows;
 }

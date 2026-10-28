@@ -1411,7 +1411,7 @@ export default function App() {
         {"\n\n      "}
         <div className={"p-6 pt-4"}>
           {"\n        "}
-          <button id={"confirmUpdateInstallBtn"} data-action-click={"installSelectedRelease"} className={"w-full py-2 rounded-xl bg-[#1d4ed8] hover:bg-[#2563eb] text-white font-medium text-sm transition-all active:scale-[0.99]"}>
+          <button id={"confirmUpdateInstallBtn"} data-action-click={"installSelectedRelease"} className={"w-full py-2 rounded-lg bg-[#2645b0] hover:bg-[#3154c4] text-white font-normal text-sm transition-colors active:scale-[0.99]"}>
             {"\n          Установить\n        "}
           </button>
           {"\n      "}

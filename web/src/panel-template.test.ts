@@ -943,6 +943,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("'+ добавить фильтр UDP-порты'");
     expect(panelSource).toContain('appendProfileUdpFilter(target?.args ?? profile.args, port.value)');
     expect(panelSource).toContain("else if (runtimeProfileEditorMode === 'text')");
+    expect(panelSource).toContain("mountConfigArgumentEditor(textEditor, profile.args.join('\\n'");
     expect(panelSource).toContain('const components = profile.components ?? []');
     expect(panelSource).toContain('saveSettings(runtimeProfileManagedDraft');
     expect(panelSource).toContain("results.setAttribute('role', 'listbox')");
@@ -1068,11 +1069,10 @@ describe('TSX panel with optional server-side authentication', () => {
     const liveRows = panelSource.slice(panelSource.indexOf('function renderDiagnosisProgress('), panelSource.indexOf('function renderSiteDiagnosis('));
     expect(liveRows).toContain("diagnosis-checks-header");
     expect(liveRows).toContain("diagnosis-checks-host");
-    expect(liveRows).toContain("'Маршрут роутера'");
-    expect(liveRows).toContain("'Доменные списки и IP'");
+    expect(panelSource).toContain("const stages: { id: string; label: string }[] = [...SITE_DIAGNOSIS_STAGES]");
+    expect(panelStyles).toContain('.diagnosis-results .diagnosis-checks { height:28rem; max-height:28rem; overflow-y:auto;');
     expect(panelStyles).toMatch(/\.diagnosis-results \.diagnosis-live-checks \.diagnosis-row\s*\{[^}]*padding\s*:\s*\.42rem 0/);
-    expect(panelStyles).toContain('.diagnosis-results .diagnosis-checks { min-height:28rem; }');
-    expect(panelStyles).toContain('.diagnosis-results .diagnosis-checks { min-height:0; }');
+    expect(panelSource).toContain("import { diagnosisRows } from './diagnosis-layout'");
   });
 
   it('separates diagnosis duration from the result text in live and final rows', () => {
@@ -1445,11 +1445,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(appSource).not.toContain('Проверка списка каждые 2 минуты');
     const modal = appSource.slice(appSource.indexOf('id={"updateModalBackdrop"}'), appSource.indexOf('id={"diffModalBackdrop"}'));
     expect(modal).not.toContain('font-bold text-sm transition-all shadow-lg shadow-blue-600/25');
-    expect(modal).toContain('font-medium text-sm');
+    expect(modal).toContain('font-normal text-sm');
     expect(modal).toContain('max-h-[90dvh] flex flex-col');
     expect(modal).toContain('max-h-[min(31.25rem,55dvh)]');
     expect(modal).toContain('max-w-[47rem]');
-    expect(modal).toContain('w-full py-2 rounded-xl');
+    expect(modal).toContain('w-full py-2 rounded-lg');
     expect(panelSource).toContain("title.className = 'block text-sm font-medium text-slate-100'");
     expect(modal).toContain('font-semibold text-white tracking-tight');
   });

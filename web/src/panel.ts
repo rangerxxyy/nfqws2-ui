@@ -104,6 +104,7 @@ let updatePickerRefreshTimer: number | null = null;
 let updatePickerRequestPending = false;
 let installedCoreTag: string | null = null;
 let strategyCustomCodeEditor: ReturnType<typeof mountConfigArgumentEditor> | null = null;
+let runtimeProfileTextCodeEditor: ReturnType<typeof mountConfigArgumentEditor> | null = null;
 let uiUpdateStatusPolling = false;
 let uiUpdateNoticeOpenedTag: string | null = null;
 const UPDATE_NOTICE_KEY = 'nfqws2-ui-update-notice';
@@ -894,6 +895,7 @@ function markRuntimeProfilesDirty(id?: string, redraw = true) {
 function renderRuntimeProfiles() {
   const list = $('#profileList'); const editor = $('#profileEditor');
   if (!list || !editor || !runtimeProfilesState) return;
+  runtimeProfileTextCodeEditor?.destroy(); runtimeProfileTextCodeEditor = null;
   const previousEditorMode = editor.querySelector<HTMLElement>('#runtimeProfileModeToggle')?.dataset.mode as 'builder' | 'text' | undefined;
   const profiles = visibleRuntimeProfiles().map((profile) => ({ ...profile, name: profile.editable ? profile.name : runtimeProfileLabelOverrides()[profile.id] ?? profile.name }));
   const orderWarnings = profileOrderWarnings(profiles.map((profile) => profile.effectiveArgs ?? profile.args));
@@ -1249,11 +1251,9 @@ function renderRuntimeProfiles() {
     }
   } else if (runtimeProfileEditorMode === 'text') {
     const label = document.createElement('label'); label.className = 'mt-3 block text-xs font-semibold text-slate-300'; label.textContent = profile.editable ? 'Аргументы профиля · по одному на строку' : 'Аргументы штатной группы';
-    const textarea = document.createElement('textarea'); textarea.id = 'runtimeProfileArgs'; textarea.rows = Math.max(5, Math.min(12, profile.args.length + 2)); textarea.spellcheck = false;
-    textarea.className = 'mt-1.5 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100 focus:border-blue-500 focus:outline-none';
-    textarea.value = profile.args.join('\n');
-    textarea.addEventListener('input', () => storeRuntimeProfileArgs(profile.id, textarea.value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean), false));
-    label.append(textarea); editor.append(label);
+    const textEditor = document.createElement('div'); textEditor.id = 'runtimeProfileArgs'; textEditor.className = 'config-argument-code-editor mt-1.5 w-full resize-y overflow-auto rounded-lg border border-slate-700 bg-[#05080f]'; textEditor.style.height = `${Math.max(5, Math.min(12, profile.args.length + 2)) * 1.25}rem`;
+    runtimeProfileTextCodeEditor = mountConfigArgumentEditor(textEditor, profile.args.join('\n'), (value) => storeRuntimeProfileArgs(profile.id, value.split(/\s+/).map((arg) => arg.trim()).filter(Boolean), false), 'Аргументы профиля nfqws2', 'по одному аргументу на строку');
+    label.append(textEditor); editor.append(label);
   }
   if (profile.editable) {
     const tip = document.createElement('p'); tip.className = 'mt-2 text-xs leading-5 text-slate-500'; tip.textContent = '--new нельзя вводить в редактор отдельного профиля. Для named-профиля используйте --name=имя. Сохранение создаст резервную копию и перезапустит nfqws2 с проверкой и откатом при ошибке.'; editor.append(tip);
@@ -3042,7 +3042,7 @@ function renderDiagnosisProgress(container: HTMLElement, host: string, activeSta
   const hostLabel = document.createElement('span'); hostLabel.className = 'diagnosis-checks-host'; hostLabel.textContent = host; header.append(heading, hostLabel); checks.append(header);
   const list = document.createElement('div'); list.setAttribute('role', 'list');
   const finished = new Set(completed.keys()); if (finished.has('doh')) finished.add('dns');
-  const stages: { id: string; label: string }[] = [...SITE_DIAGNOSIS_STAGES, { id: 'route', label: 'Маршрут роутера' }, { id: 'lists', label: 'Доменные списки и IP' }];
+  const stages: { id: string; label: string }[] = [...SITE_DIAGNOSIS_STAGES];
   for (const stage of stages) {
     const dns = stage.id === 'dns' ? completed.get('dns') : undefined;
     const doh = stage.id === 'dns' ? completed.get('doh') : undefined;

@@ -13,6 +13,22 @@ it('places real direct/current results in the diagnostic sequence without invent
   expect(rows.find(row => row.id === 'route')).toMatchObject({ inactive: true, detail: 'Этап не выполнялся.' });
   expect(rows.find(row => row.id === 'lists')).toMatchObject({ inactive: true, detail: 'Этап не выполнялся.' });
 });
+it('uses the same stable row labels during progress and in the final report', () => {
+  const report: SiteDiagnosticReport = {host:'example.com',addresses:['203.0.113.9'],steps:[step('dns'),step('tcp')],direct:step('direct'),current:step('current'),quic:null,summary:'',limitations:[]};
+  const rows = diagnosisRows(report);
+  expect(rows.map(({ id }) => id)).toEqual(['dns','tcp','direct','sni','http','current','quic','route','lists']);
+  expect(rows.map(({ label }) => label)).toEqual([
+    'DNS-имя сайта',
+    'Соединение · TCP 443',
+    'Запрос мимо nfqws2',
+    'Проверка имени · SNI',
+    'Открытый HTTP · порт 80',
+    'Как открывается сейчас',
+    'QUIC · UDP 443',
+    'Маршрут роутера',
+    'Доменные списки и IP',
+  ]);
+});
 it('keeps QUIC transport and advertised HTTP3 separate and includes both paths', () => {
   const report: SiteDiagnosticReport = {host:'example.com',addresses:[],steps:[step('dns'),step('doh','warning')],direct:step('direct'),current:step('current'),quic:{direct:step('direct'),current:step('current','error'),method:'quic_initial',http3Advertised:true},summary:'',limitations:[]};
   const rows = diagnosisRows(report);

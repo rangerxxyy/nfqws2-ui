@@ -3,11 +3,11 @@ import { diagnosisProgressState, diagnosisQueueMarker, isSkippedDiagnosisStep, S
 
 describe('site diagnosis stage queue', () => {
   it('lists checks in their intended order before a request starts', () => {
-    expect(SITE_DIAGNOSIS_STAGES.map(({ id }) => id)).toEqual(['dns', 'tcp', 'direct', 'sni', 'http', 'current', 'quic']);
+    expect(SITE_DIAGNOSIS_STAGES.map(({ id }) => id)).toEqual(['dns', 'tcp', 'direct', 'sni', 'http', 'current', 'quic', 'route', 'lists']);
   });
   it('marks only results received from the backend complete and highlights the real current stage', () => {
     const completed = new Set(['dns']);
-    expect(SITE_DIAGNOSIS_STAGES.map(({ id }) => diagnosisProgressState(id, 'tcp', completed))).toEqual(['complete', 'active', 'pending', 'pending', 'pending', 'pending', 'pending']);
+    expect(SITE_DIAGNOSIS_STAGES.map(({ id }) => diagnosisProgressState(id, 'tcp', completed))).toEqual(['complete', 'active', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending']);
     completed.add('tcp');
     expect(diagnosisProgressState('tcp', 'direct', completed)).toBe('complete');
     expect(diagnosisProgressState('direct', 'direct', completed)).toBe('active');
