@@ -1,3 +1,5 @@
+import type { DpiLabAnalysis, DpiLabSavedExperiment } from './dpi-lab';
+
 export type Locale = 'ru' | 'en' | 'zh' | 'tr';
 export type StatusResponse = {
   service: { state: string; detail: string; checkedAt: number | null; version: string | null };
@@ -359,4 +361,20 @@ export const nfqwsUpdates = {
   installCore: (tag: string) => api<UpdateOperation>('/api/nfqws2/updates/install', {
     method: 'POST', body: JSON.stringify({ tag }),
   }),
+};
+
+function dpiLabCaptureUrl(path: string, file: File): string {
+  const name = file.name.split(/[\\/]/).pop()?.slice(0, 120) || 'capture.pcap';
+  return `${path}?${new URLSearchParams({ name })}`;
+}
+
+export const nfqwsDpiLab = {
+  analyze: (file: File) => api<DpiLabAnalysis>(dpiLabCaptureUrl('/api/nfqws2/dpi-lab/analyze', file), {
+    method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
+  }),
+  save: (file: File) => api<DpiLabSavedExperiment>(dpiLabCaptureUrl('/api/nfqws2/dpi-lab/experiments', file), {
+    method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
+  }),
+  list: () => api<{ items: DpiLabSavedExperiment[] }>('/api/nfqws2/dpi-lab/experiments'),
+  load: (id: string) => api<DpiLabAnalysis>(`/api/nfqws2/dpi-lab/experiments/${encodeURIComponent(id)}`),
 };

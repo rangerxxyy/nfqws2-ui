@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     body::{Body, Bytes},
-    extract::{DefaultBodyLimit, Query, State},
+    extract::{DefaultBodyLimit, Path as AxumPath, Query, State},
     http::{HeaderName, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
     response::{
@@ -16,6 +16,7 @@ use nfqws2_ui::community_strategies::{
 };
 use nfqws2_ui::config_document::{ConfigDocument, DiagnosticSeverity, validate_nfqws2_config};
 use nfqws2_ui::config_format::format_nfqws_config;
+use nfqws2_ui::dpi_lab;
 use nfqws2_ui::freeze_diagnostic;
 use nfqws2_ui::freeze_profile_join;
 use nfqws2_ui::interception_status::{self, InterceptionStatus};
@@ -113,6 +114,7 @@ struct AppState {
     interception_status_cache: Mutex<InterceptionStatusCache>,
     ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
+    dpi_lab_lock: Mutex<()>,
     managed_asn_refresh_lock: Mutex<()>,
     monitoring_lock: Arc<Mutex<()>>,
     site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -7905,6 +7907,72 @@ async fn fetch_external_config(url: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "Загруженный файл не является UTF-8 текстом".into())
 }
 
+#[derive(serde::Deserialize)]
+struct DpiLabCaptureQuery {
+    name: Option<String>,
+}
+
+fn dpi_lab_error_response(error: String) -> Response {
+    let status = if error.contains("лимит") || error.contains("больше 5000") {
+        StatusCode::PAYLOAD_TOO_LARGE
+    } else if error.contains("не удалось") || error.contains("Не удалось") {
+        StatusCode::INTERNAL_SERVER_ERROR
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (status, Json(serde_json::json!({"error": error}))).into_response()
+}
+
+async fn analyze_dpi_capture(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DpiLabCaptureQuery>,
+    body: Bytes,
+) -> Response {
+    let name = query.name.unwrap_or_else(|| "capture.pcap".into());
+    let _guard = state.dpi_lab_lock.lock().await;
+    match dpi_lab::analyze_pcap(&name, &body) {
+        Ok(analysis) => Json(analysis).into_response(),
+        Err(error) => dpi_lab_error_response(error.to_string()),
+    }
+}
+
+async fn save_dpi_experiment(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DpiLabCaptureQuery>,
+    body: Bytes,
+) -> Response {
+    let name = query.name.unwrap_or_else(|| "capture.pcap".into());
+    let _guard = state.dpi_lab_lock.lock().await;
+    match dpi_lab::save_experiment(&state.data_dir, &name, &body).await {
+        Ok(experiment) => (StatusCode::CREATED, Json(experiment)).into_response(),
+        Err(error) => dpi_lab_error_response(error),
+    }
+}
+
+async fn list_dpi_experiments(State(state): State<Arc<AppState>>) -> Response {
+    let _guard = state.dpi_lab_lock.lock().await;
+    match dpi_lab::list_experiments(&state.data_dir).await {
+        Ok(items) => Json(serde_json::json!({"items": items})).into_response(),
+        Err(error) => dpi_lab_error_response(error),
+    }
+}
+
+async fn get_dpi_experiment(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    let _guard = state.dpi_lab_lock.lock().await;
+    match dpi_lab::load_experiment(&state.data_dir, &id).await {
+        Ok(analysis) => Json(analysis).into_response(),
+        Err(error) if error.contains("не найден") => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": error})),
+        )
+            .into_response(),
+        Err(error) => dpi_lab_error_response(error),
+    }
+}
+
 async fn trace_site(
     State(state): State<Arc<AppState>>,
     Json(request): Json<SiteTraceRequest>,
@@ -14597,6 +14665,20 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
         .route(
+            "/api/nfqws2/dpi-lab/analyze",
+            post(analyze_dpi_capture).layer(DefaultBodyLimit::max(dpi_lab::MAX_PCAP_BYTES)),
+        )
+        .route(
+            "/api/nfqws2/dpi-lab/experiments",
+            get(list_dpi_experiments)
+                .post(save_dpi_experiment)
+                .layer(DefaultBodyLimit::max(dpi_lab::MAX_PCAP_BYTES)),
+        )
+        .route(
+            "/api/nfqws2/dpi-lab/experiments/{id}",
+            get(get_dpi_experiment),
+        )
+        .route(
             "/api/nfqws2/diagnostics/site/stream",
             post(diagnose_site_stream),
         )
@@ -14858,6 +14940,7 @@ async fn main() {
         interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
         ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
+        dpi_lab_lock: Mutex::new(()),
         managed_asn_refresh_lock: Mutex::new(()),
         monitoring_lock: Arc::new(Mutex::new(())),
         site_trace_controls: Mutex::new(HashMap::new()),
@@ -16647,6 +16730,7 @@ mod tests {
             interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
+            dpi_lab_lock: Mutex::new(()),
             managed_asn_refresh_lock: Mutex::new(()),
             monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
@@ -16865,6 +16949,7 @@ mod tests {
             interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
+            dpi_lab_lock: Mutex::new(()),
             managed_asn_refresh_lock: Mutex::new(()),
             monitoring_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
@@ -22370,5 +22455,130 @@ mod tests {
         assert!(script.truncated);
         assert_eq!(script.content.len(), 512 * 1024);
         assert!(original.starts_with(&script.content));
+    }
+
+    fn empty_classic_pcap() -> Vec<u8> {
+        let mut bytes = vec![0xd4, 0xc3, 0xb2, 0xa1];
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&[0; 8]);
+        bytes.extend_from_slice(&65_535u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes
+    }
+
+    #[tokio::test]
+    async fn dpi_lab_api_analyzes_saves_lists_and_reloads_captures() {
+        let dir = tempfile::tempdir().unwrap();
+        let capture = empty_classic_pcap();
+        let app = api_router(test_state(dir.path().join("data")), dir.path().join("web"));
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/dpi-lab/analyze?name=test.pcap")
+                    .header("content-type", "application/octet-stream")
+                    .body(Body::from(capture.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["capture"]["packetCount"], 0);
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/dpi-lab/experiments?name=..%2Fsecret.pcap")
+                    .header("content-type", "application/octet-stream")
+                    .body(Body::from(capture))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let saved = body_json(response).await;
+        assert_eq!(saved["name"], "secret.pcap");
+        let id = saved["id"].as_str().unwrap();
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/dpi-lab/experiments")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            body_json(response).await["items"].as_array().unwrap().len(),
+            1
+        );
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/nfqws2/dpi-lab/experiments/{id}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_json(response).await["capture"]["name"], "secret.pcap");
+
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/dpi-lab/analyze")
+                    .header("content-type", "application/octet-stream")
+                    .body(Body::from(vec![0u8; dpi_lab::MAX_PCAP_BYTES + 1]))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/dpi-lab/experiments/../../auth.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn dpi_lab_api_rejects_unauthenticated_access_when_panel_auth_is_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(
+            data.join("auth.json"),
+            r#"{"enabled":true,"passwordHash":"invalid","rememberDays":30,"sessions":[]}"#,
+        )
+        .unwrap();
+        let app = api_router(test_state(data), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/dpi-lab/experiments")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -310,6 +310,10 @@ export default function App() {
                 </span>
                 {"\n            "}
               </button>
+              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["dpiLab"])} id={"navBtn-dpiLab"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
+                <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>⌁</span><span>DPI Lab · анализ PCAP</span></span>
+                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"}>LAB</span>
+              </button>
               {"\n\n            "}
               {"\n            "}
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["trace"])} id={"navBtn-trace"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
@@ -400,7 +404,7 @@ export default function App() {
             {[['configuration', 'Конфигурация'], ['site-check', 'Проверка сайта'], ['tuning', 'Подбор'], ['monitoring', 'Мониторинг'], ['lists', 'Списки'], ['system', 'Система']].map(([group, label], index) => <button key={group} type={"button"} data-simplified-group={group} data-action-click={"switchSimplifiedNavGroup"} data-args={JSON.stringify([group])} aria-pressed={index === 0 ? "true" : "false"} className={"simplified-nav-button"}>{label}</button>)}
           </div>
           <div className={"simplified-nav-pages"} role={"group"} aria-label={"Страницы группы"}>
-            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['configCheck', 'Проверка конфигурации'], ['community', 'Стратегии сообщества'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
+            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['configCheck', 'Проверка конфигурации'], ['dpiLab', 'DPI Lab'], ['community', 'Стратегии сообщества'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
           </div>
         </nav>
         {"\n\n      "}
@@ -1281,6 +1285,53 @@ export default function App() {
         <section id={"tabContent-logs"} className={"hidden view-animate space-y-4"}>
           <div><h1 className={"text-xl font-bold text-white"}>Журнал</h1><p className={"mt-1 text-sm text-slate-400"}>Логи читает backend на роутере ограниченным хвостом. Автообновление можно приостановить, пока вы читаете журнал.</p></div>
           <section className={"ui-card rounded-xl p-4 sm:p-5"}><div className={"flex flex-wrap items-center gap-2"}><label className={"text-sm text-slate-300"} htmlFor={"logsSource"}>Источник</label><select id={"logsSource"} defaultValue={"nfqws2-ui"} data-action-change={"changeLogSource"} data-value-source={"value"} className={"rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"}><option value={"nfqws2-ui"}>nfqws2-UI</option><option value={"nfqws2"}>nfqws2</option></select><input id={"logsSearch"} type={"search"} placeholder={"Фильтр строк"} data-action-input={"filterLogs"} className={"min-w-[12rem] flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} /><button type={"button"} data-action-click={"refreshLogs"} className={"backup-action"}>Обновить</button><button type={"button"} data-action-click={"downloadLogs"} className={"backup-action"}>Скачать</button><button type={"button"} data-action-click={"clearLogs"} className={"backup-action border-rose-700/60 text-rose-300 hover:bg-rose-950/40"}>Очистить</button><label className={"ml-auto inline-flex items-center gap-2 rounded-lg border border-slate-800 px-3 py-2 text-xs text-slate-300"}><input id={"logsAutoRefresh"} type={"checkbox"} defaultChecked={true} data-action-change={"toggleLogAutoRefresh"} data-value-source={"checked"} /><span>Автообновление</span></label></div><p id={"logsAutoRefreshStatus"} className={"mt-2 text-xs text-slate-500"} aria-live={"polite"}>Автообновление каждые 5 секунд</p><p id={"logsStatus"} className={"my-2 text-xs text-slate-400"} role={"status"} aria-live={"polite"}>Журнал загружается…</p><pre id={"logsOutput"} className={"max-h-[70vh] overflow-auto rounded-lg border border-slate-800 bg-[#060a12] p-3 font-mono text-xs leading-5 text-slate-200 whitespace-pre-wrap break-all"}></pre></section>
+        </section>
+        <section id={"tabContent-dpiLab"} className={"hidden view-animate space-y-4"}>
+          <header className={"about-header"}>
+            <div><span className={"about-eyebrow"}>АНАЛИЗ ЗАХВАТОВ</span><h1>DPI Lab</h1><p>Загрузите classic PCAP: лаборатория покажет наблюдавшиеся кадры, TCP-реконструкцию и поля TLS ClientHello.</p></div>
+            <span className={"rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-mono text-cyan-200"}>PCAP · TCP · TLS</span>
+          </header>
+          <section className={"ui-card rounded-2xl p-4 sm:p-5 space-y-3"}>
+            <div className={"flex flex-wrap items-center gap-2"}>
+              <label htmlFor={"dpiLabCaptureFile"} className={"sr-only"}>Файл захвата classic PCAP</label>
+              <input id={"dpiLabCaptureFile"} type={"file"} accept={".pcap,.cap,application/vnd.tcpdump.pcap,application/octet-stream"} className={"min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-200"} />
+              <button type={"button"} data-action-click={"analyzeDpiCapture"} className={"btn-primary rounded-lg px-4 py-2 text-sm font-medium"}>Анализировать PCAP</button>
+              <button type={"button"} data-action-click={"saveDpiExperiment"} id={"dpiLabSaveButton"} disabled={true} className={"about-check-button disabled:cursor-not-allowed disabled:opacity-50"}>Сохранить эксперимент</button>
+            </div>
+            <p className={"text-xs leading-5 text-slate-400"}>Classic PCAP, до 2 МиБ и 5 000 пакетов. Файл обрабатывается локально на роутере панели и сохраняется только по вашему действию. PCAPNG, live capture и исполнение Lua пока не поддерживаются.</p>
+            <p id={"dpiLabStatus"} role={"status"} aria-live={"polite"} className={"text-sm text-slate-300"}>Захват ещё не выбран.</p>
+          </section>
+          <section id={"dpiLabAnalysis"} className={"hidden space-y-4"} aria-label={"Результаты анализа PCAP"}>
+            <div className={"ui-card rounded-xl p-4"}>
+              <div className={"flex flex-wrap items-start justify-between gap-2"}><div><h2 className={"font-semibold text-white"} id={"dpiLabCaptureName"}>—</h2><p className={"mt-1 text-xs text-slate-400"} id={"dpiLabCaptureSummary"}></p></div><span className={"evidence-badge evidence-observed"}>CAPTURE OBSERVED</span></div>
+              <div id={"dpiLabWarnings"} className={"mt-3 grid gap-1 text-sm text-amber-200"}></div>
+            </div>
+            <div className={"grid min-w-0 gap-4 xl:grid-cols-2"}>
+              <section className={"ui-card min-w-0 rounded-xl p-4"} aria-label={"Временная шкала пакетов"}>
+                <h2 className={"mb-3 font-semibold text-white"}>Packet Timeline · порядок захвата</h2>
+                <div id={"dpiLabPacketList"} className={"dpi-lab-packet-list"}></div>
+              </section>
+              <section className={"ui-card min-w-0 rounded-xl p-4"} aria-label={"Просмотр байтов пакета"}>
+                <h2 className={"font-semibold text-white"}>Byte Inspector · кадр целиком</h2>
+                <p id={"dpiLabPacketCaption"} className={"mt-1 text-xs text-slate-400"}>Выберите пакет на временной шкале.</p>
+                <div id={"dpiLabPacketBytes"} className={"mt-3 dpi-lab-byte-dump"}></div>
+              </section>
+            </div>
+            <div className={"grid min-w-0 gap-4 xl:grid-cols-2"}>
+              <section className={"ui-card min-w-0 rounded-xl p-4"} aria-label={"Реконструкция TCP"}>
+                <h2 className={"mb-3 font-semibold text-white"}>TCP Reassembly · по направлениям</h2>
+                <div id={"dpiLabFlowList"} className={"grid gap-2"}></div>
+              </section>
+              <section className={"ui-card min-w-0 rounded-xl p-4"} aria-label={"Поток и TLS ClientHello"}>
+                <h2 className={"font-semibold text-white"}>Поток и TLS Inspector</h2>
+                <div id={"dpiLabFlowDetails"} className={"mt-3 text-sm text-slate-300"}>Выберите TCP-направление.</div>
+              </section>
+            </div>
+          </section>
+          <section id={"dpiLabExperimentsSection"} className={"ui-card rounded-xl p-4"} aria-label={"Сохранённые эксперименты"}>
+            <div className={"flex flex-wrap items-center justify-between gap-2"}><h2 className={"font-semibold text-white"}>Сохранённые эксперименты</h2><button type={"button"} data-action-click={"refreshDpiExperiments"} className={"about-check-button"}>Загрузить список</button></div>
+            <div id={"dpiLabExperiments"} className={"mt-3 grid gap-2"}></div>
+          </section>
         </section>
         <section id={"tabContent-about"} className={"hidden view-animate space-y-4"}>
           <header className={"about-header"}>

@@ -1,4 +1,4 @@
-export type PanelRoute = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'appearance' | 'about';
+export type PanelRoute = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'configCheck' | 'dpiLab' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'appearance' | 'about';
 
 const ROUTE_GROUPS: Record<PanelRoute, string> = {
   conf: 'configuration',
@@ -6,6 +6,7 @@ const ROUTE_GROUPS: Record<PanelRoute, string> = {
   check: 'site-check',
   trace: 'site-check',
   configCheck: 'site-check',
+  dpiLab: 'site-check',
   autotune: 'tuning',
   monitor: 'monitoring',
   community: 'site-check',

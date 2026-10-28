@@ -13,4 +13,8 @@ describe('navigationGroupForRoute', () => {
     expect(navigationGroupForRoute('supportReport')).toBeUndefined();
     expect(navigationGroupForRoute('diagnostic16k')).toBeUndefined();
   });
+
+  it('places DPI Lab under diagnostics in both navigation layouts', () => {
+    expect(navigationGroupForRoute('dpiLab')).toBe('site-check');
+  });
 });

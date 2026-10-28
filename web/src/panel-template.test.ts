@@ -288,6 +288,14 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(codeEditorSource).toContain('basicSetup');
   });
 
+  it('applies the shared syntax palette to the NFQWS_ARGS and strategy text editors', () => {
+    expect(panelStyles).toContain('.config-code-editor .conf-token-flag');
+    expect(panelStyles).toContain('.config-argument-code-editor .conf-token-flag');
+    expect(panelStyles).toContain('.strategy-custom-editor .conf-token-flag');
+    expect(panelStyles).toContain('.config-argument-code-editor .conf-token-key');
+    expect(panelStyles).toContain('.strategy-custom-editor .conf-token-value');
+  });
+
   it('copies the current configuration with the secure-context fallback and only shows copy in the editor tab', () => {
     expect(template).toContain('id="copyConfigTextButton"');
     expect(template.indexOf('data-action-click="applyConfigAndRestart"')).toBeLessThan(template.indexOf('id="configSettingsPanel"'));
