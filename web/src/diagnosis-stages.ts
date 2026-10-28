@@ -1,3 +1,5 @@
+import type { SiteDiagnosticStep } from './api';
+
 export const SITE_DIAGNOSIS_STAGES = [
   { id: 'dns', label: 'Имя сайта · DNS' },
   { id: 'tcp', label: 'Соединение · TCP 443' },
@@ -7,6 +9,10 @@ export const SITE_DIAGNOSIS_STAGES = [
   { id: 'current', label: 'Как открывается сейчас' },
   { id: 'quic', label: 'QUIC · HTTP/3' },
 ] as const;
+
+export function isSkippedDiagnosisStep(step: SiteDiagnosticStep | null | undefined): boolean {
+  return step?.status === 'unavailable' && step.detail.trimStart().startsWith('Не нужно:');
+}
 
 export function diagnosisQueueMarker(state: 'complete' | 'active' | 'pending', resultKind?: 'success' | 'failure' | 'unknown'): string {
   if (state === 'active') return '…';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { diagnosisProgressState, diagnosisQueueMarker, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { diagnosisProgressState, diagnosisQueueMarker, isSkippedDiagnosisStep, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 
 describe('site diagnosis stage queue', () => {
   it('lists checks in their intended order before a request starts', () => {
@@ -17,5 +17,9 @@ describe('site diagnosis stage queue', () => {
     expect(diagnosisQueueMarker('active')).toBe('…');
     expect(diagnosisQueueMarker('complete', 'success')).toBe('✓');
     expect(diagnosisQueueMarker('complete', 'failure')).toBe('×');
+  });
+  it('recognizes checks intentionally skipped because they are not needed', () => {
+    expect(isSkippedDiagnosisStep({ id: 'sni', status: 'unavailable', detail: 'Не нужно: сайт отвечает напрямую', durationMs: null, httpCode: null })).toBe(true);
+    expect(isSkippedDiagnosisStep({ id: 'sni', status: 'unavailable', detail: 'Проверка недоступна: curl отсутствует', durationMs: null, httpCode: null })).toBe(false);
   });
 });

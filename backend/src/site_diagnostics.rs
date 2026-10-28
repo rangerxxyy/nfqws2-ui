@@ -1362,6 +1362,10 @@ async fn sni_step(host: &str, ip: IpAddr) -> DiagnosticStep {
     result
 }
 
+fn should_probe_sni(host: &str, direct: &DiagnosticStep) -> bool {
+    host != "example.com" && host.parse::<IpAddr>().is_err() && direct.status == "error"
+}
+
 pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
     diagnose_with_progress(host, binary, |_| {}).await
 }
@@ -1540,9 +1544,23 @@ where
         let direct = probe_scoped("direct", &direct_host, ip.into(), 443, false, true).await;
         let _ = direct_tx.send(direct.clone());
         let sni = if literal_ip.is_some() {
-            None
-        } else {
+            Some(DiagnosticStep::new(
+                "sni",
+                "unavailable",
+                "Не нужно: для проверки SNI требуется доменное имя.",
+            ))
+        } else if should_probe_sni(&direct_host, &direct) {
             Some(sni_step(&direct_host, ip.into()).await)
+        } else {
+            Some(DiagnosticStep::new(
+                "sni",
+                "unavailable",
+                if direct.status == "ok" || direct.status == "warning" {
+                    "Не нужно: сайт отвечает напрямую."
+                } else {
+                    "Не нужно: контрольное имя SNI совпадает с example.com."
+                },
+            ))
         };
         (direct, sni)
     });
@@ -1553,7 +1571,8 @@ where
             biased;
             step = direct_rx.recv(), if !direct_step_emitted => {
                 if let Some(step) = step {
-                    progress(DiagnosticProgress { active_stage: if literal_ip.is_some() { "http" } else { "sni" }.into(), step: Some(step), addresses: addresses.clone() });
+                    let active_stage = if should_probe_sni(&host, &step) { "sni" } else { "http" };
+                    progress(DiagnosticProgress { active_stage: active_stage.into(), step: Some(step), addresses: addresses.clone() });
                     direct_step_emitted = true;
                 } else {
                     direct_step_emitted = true;
@@ -1566,7 +1585,12 @@ where
         Ok((direct, sni)) => {
             if !direct_step_emitted {
                 progress(DiagnosticProgress {
-                    active_stage: if sni.is_some() { "sni" } else { "http" }.into(),
+                    active_stage: if should_probe_sni(&host, &direct) {
+                        "sni"
+                    } else {
+                        "http"
+                    }
+                    .into(),
                     step: Some(direct.clone()),
                     addresses: addresses.clone(),
                 });
@@ -1747,6 +1771,18 @@ mod tests {
         assert!(diagnosis_summary(&unavailable, &failed).contains("неполное"));
         let error = parse_curl("direct", 0, b"\nNFQWS2_DIAG|451|0.1|0.2|0.3|7");
         assert!(!probe_open(&error));
+    }
+
+    #[test]
+    fn sni_probe_is_only_needed_after_a_domain_connection_failure() {
+        let connected = DiagnosticStep::new("direct", "ok", "HTTP 200");
+        let http_error = DiagnosticStep::new("direct", "warning", "HTTP 404");
+        let failed = DiagnosticStep::new("direct", "error", "TLS handshake timed out");
+        assert!(!should_probe_sni("example.org", &connected));
+        assert!(!should_probe_sni("example.org", &http_error));
+        assert!(should_probe_sni("example.org", &failed));
+        assert!(!should_probe_sni("example.com", &failed));
+        assert!(!should_probe_sni("192.0.2.1", &failed));
     }
 
     #[test]

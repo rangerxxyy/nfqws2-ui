@@ -1,8 +1,9 @@
 import type { SiteDiagnosticReport, SiteDiagnosticStep } from './api';
 import { comparisonVerdict, presentStep, quicExplanation, type Presentation } from './diagnosis-presenter';
+import { isSkippedDiagnosisStep } from './diagnosis-stages';
 export type DiagnosisRow = { id: string; label: string; kind: Presentation['kind']; detail: string; metrics: string; note?: string; inactive?: boolean };
 function row(id: string, label: string, step?: SiteDiagnosticStep): DiagnosisRow {
-  return {id,label,kind: step ? presentStep(step).kind : 'unknown',inactive:!step,detail:step?.detail || 'Этап не выполнялся.',
+  return {id,label,kind: step ? presentStep(step).kind : 'unknown',inactive:!step || isSkippedDiagnosisStep(step),detail:step?.detail || 'Этап не выполнялся.',
     metrics: step ? [step.httpCode === null ? '' : `HTTP ${step.httpCode}`, step.durationMs === null ? '' : `${step.durationMs} мс`].filter(Boolean).join(' · ') : ''};
 }
 export function diagnosisRows(report: SiteDiagnosticReport): DiagnosisRow[] {
@@ -23,8 +24,12 @@ export function diagnosisRows(report: SiteDiagnosticReport): DiagnosisRow[] {
   }
   const doh = step('doh');
   if (doh && !ipTarget) { dns.detail += ` ${doh.detail}`; if (doh.status !== 'ok' && dns.kind === 'success') dns.kind = 'unknown'; }
+  const sniStep = step('sni');
+  const sni = row('sni','Проверка имени · SNI',sniStep);
+  if (!sniStep && (report.direct.status === 'ok' || report.direct.status === 'warning')) sni.detail = 'Не нужно: сайт отвечает напрямую.';
+  else if (!sniStep && ipTarget) sni.detail = 'Не нужно: для проверки SNI требуется доменное имя.';
   const rows = [dns,row('tcp','Соединение · TCP 443',step('tcp')),row('direct','Запрос мимо nfqws2',report.direct),
-    row('sni','Проверка имени · SNI',step('sni')),row('http','Открытый HTTP · порт 80',step('http')),row('current','Как открывается сейчас',report.current)];
+    sni,row('http','Открытый HTTP · порт 80',step('http')),row('current','Как открывается сейчас',report.current)];
   if (report.quic) {
     const q = report.quic;
     const describe = (label: string, result: SiteDiagnosticStep) => `${label}: ${presentStep(result).text}${result.httpCode === null ? '' : ` · HTTP ${result.httpCode}`}${result.durationMs === null ? '' : ` · ${result.durationMs} мс`}`;

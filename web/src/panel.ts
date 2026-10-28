@@ -24,7 +24,7 @@ import { communityProviderLabel, visibleCommunityProtocols } from './community-p
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
 import { decodeForeignConfigText } from './foreign-config-text';
-import { diagnosisProgressState, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
+import { diagnosisProgressState, isSkippedDiagnosisStep, SITE_DIAGNOSIS_STAGES } from './diagnosis-stages';
 import { canShowToast, CORE_UPDATE_CHECK_INTERVAL_MS, coreUpdateNoticePresentation, lifecycleMessage, shouldCheckCoreUpdate, toastCardsToDismiss, toastPresentation } from './notifications';
 import { podkopWarningPresentation } from './podkop-warning';
 import { shouldPollLogs } from './log-polling';
@@ -2945,12 +2945,14 @@ function renderDiagnosisProgress(container: HTMLElement, host: string, activeSta
     const doh = stage.id === 'dns' ? completed.get('doh') : undefined;
     const step = dns && doh ? { ...dns, status: doh.status !== 'ok' && dns.status === 'ok' ? 'warning' as const : dns.status, detail: `${dns.detail} · ${doh.detail}` } : dns ?? completed.get(stage.id) ?? (stage.id === 'dns' ? doh : undefined);
     const state = diagnosisProgressState(stage.id, activeStage, finished);
-    const row = document.createElement('div'); row.className = `diagnosis-row diagnosis-row-live is-${state}${step ? ` diagnosis-${step.status === 'ok' ? 'success' : step.status === 'error' ? 'failure' : 'unknown'}` : ''}`; row.setAttribute('role', 'listitem');
+    const skipped = isSkippedDiagnosisStep(step);
+    const row = document.createElement('div'); row.className = `diagnosis-row diagnosis-row-live is-${state}${skipped ? ' diagnosis-row-inactive' : ''}${step ? ` diagnosis-${step.status === 'ok' ? 'success' : step.status === 'error' ? 'failure' : 'unknown'}` : ''}`; row.setAttribute('role', 'listitem');
     if (state === 'active') {
       const marker = document.createElement('span'); marker.className = 'diagnosis-progress-spinner diagnosis-progress-spinner-small'; marker.setAttribute('aria-hidden', 'true'); row.append(marker);
     } else {
       const icon = diagnosisIcon(step ? step.status === 'ok' ? 'success' : step.status === 'error' ? 'failure' : 'unknown' : 'unknown');
-      if (!step) { icon.textContent = '·'; icon.setAttribute('aria-label', 'Ожидает'); }
+      if (skipped) { icon.textContent = '—'; icon.setAttribute('aria-label', 'Проверка не нужна'); }
+      else if (!step) { icon.textContent = '·'; icon.setAttribute('aria-label', 'Ожидает'); }
       row.append(icon);
     }
     const label = document.createElement('h4'); label.className = 'diagnosis-row-label'; label.textContent = stage.label; row.append(label);

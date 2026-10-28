@@ -30,6 +30,11 @@ it('shows resolved site IP addresses in the DNS row without an extra reverse DNS
   expect(rows.find(row => row.id === 'dns')).toMatchObject({label:'DNS-имя сайта'});
   expect(rows.find(row => row.id === 'dns')?.detail).toContain('IP-адрес: 203.0.113.9, 203.0.113.10');
 });
+it('marks SNI as intentionally skipped when the direct HTTPS request already responds', () => {
+  const report: SiteDiagnosticReport = {host:'example.com',addresses:['203.0.113.9'],steps:[step('dns'),step('tcp')],direct:{...step('direct'),httpCode:200},current:step('current'),quic:null,summary:'',limitations:[]};
+  const row = diagnosisRows(report).find(item => item.id === 'sni');
+  expect(row).toMatchObject({inactive:true,detail:'Не нужно: сайт отвечает напрямую.'});
+});
 it('shows PTR domain in the DNS site-name row when the target is an IP address', () => {
   const report: SiteDiagnosticReport = {host:'142.251.1.190',addresses:['142.251.1.190'],reverseDns:[
     {address:'142.251.1.190',names:['lga34s32-in-f14.1e100.net'],resolver:'nslookup',detail:'Найдено обратным DNS (nslookup)'},
