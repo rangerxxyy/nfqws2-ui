@@ -1223,24 +1223,6 @@ fn local_flow_hook(mut rule: Vec<String>, direction: &str, source: Ipv4Addr) -> 
     rule
 }
 
-async fn install_rules(
-    address: Ipv4Addr,
-    port: u16,
-    queue: Option<u16>,
-    token: &str,
-    policy_mark: Option<&str>,
-) -> Result<Vec<Vec<String>>, String> {
-    install_rules_for_transport(
-        address,
-        port,
-        queue,
-        token,
-        policy_mark,
-        ProbeTransport::Tcp,
-    )
-    .await
-}
-
 async fn install_rules_for_transport(
     address: Ipv4Addr,
     port: u16,
@@ -1796,6 +1778,40 @@ fn trace_summary(without_nfqws2: Option<bool>, with_nfqws2: Option<bool>) -> &'s
     }
 }
 
+fn trace_summary_for_mode(
+    mode: &TraceProbeMode,
+    without_nfqws2: Option<bool>,
+    with_nfqws2: Option<bool>,
+) -> &'static str {
+    if !matches!(mode, TraceProbeMode::Quic(_)) {
+        return trace_summary(without_nfqws2, with_nfqws2);
+    }
+    match (without_nfqws2, with_nfqws2) {
+        (Some(true), Some(true)) => "QUIC Initial ответил напрямую и через nfqws2",
+        (Some(false), Some(true)) => "QUIC Initial ответил только через nfqws2",
+        (Some(true), Some(false)) => "QUIC ответил напрямую, но не через nfqws2",
+        (Some(false), Some(false)) => "QUIC Initial не получил ответа ни в одном режиме",
+        _ => "Результат QUIC неопределён: один из этапов завершился технической ошибкой",
+    }
+}
+
+fn phase_from_probe_result(
+    mode: &TraceProbeMode,
+    result: (Option<u16>, Option<u64>, String, Option<String>),
+) -> TracePhase {
+    let (code, duration_ms, reason, classification) = result;
+    let mut phase = phase_from_http(code, duration_ms, reason);
+    if matches!(mode, TraceProbeMode::Quic(_)) {
+        // The synthetic success code is internal to the existing result pipeline;
+        // do not present it to the user as an HTTP response code.
+        phase.code = None;
+        phase.diagnostic_classification = Some("quic_initial".into());
+    } else {
+        phase.diagnostic_classification = classification;
+    }
+    phase
+}
+
 async fn stop_child(child: &mut Child) {
     let _ = child.start_kill();
     let _ = timeout(Duration::from_secs(2), child.wait()).await;
@@ -1872,6 +1888,22 @@ async fn probe_mode(
 ) -> Result<(Option<u16>, Option<u64>, String, Option<String>), String> {
     match mode {
         TraceProbeMode::PaddedHead => probe_padded_head(host, address, cancel).await,
+        TraceProbeMode::Quic(binary) => {
+            let packet = tokio::select! {
+                result = crate::quic_probe::generate(binary, host) => result?,
+                _ = wait_for_cancel(cancel) => return Err("Проверка QUIC остановлена".into()),
+            };
+            let result = tokio::select! {
+                result = crate::quic_probe::probe(&packet, address, true) => result,
+                _ = wait_for_cancel(cancel) => return Err("Проверка QUIC остановлена".into()),
+            };
+            Ok((
+                (result.status == "ok").then_some(200),
+                result.duration_ms,
+                result.detail,
+                None,
+            ))
+        }
         TraceProbeMode::Transfer(path, allow_upload_probe) => {
             let mut attempts = Vec::with_capacity(2);
             let mut expected_bytes = None;
@@ -1925,10 +1957,41 @@ async fn probe_mode(
     }
 }
 
+async fn wait_for_cancel(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::Acquire) {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 enum TraceProbeMode {
     Http(String),
+    Quic(String),
     PaddedHead,
     Transfer(String, bool),
+}
+
+impl TraceProbeMode {
+    fn for_protocol(protocol: &str, binary: &str) -> Self {
+        if protocol == "quic" {
+            Self::Quic(binary.to_owned())
+        } else {
+            Self::Http(protocol.to_owned())
+        }
+    }
+
+    fn port(&self) -> u16 {
+        match self {
+            Self::Http(protocol) if protocol == "http" => 80,
+            _ => 443,
+        }
+    }
+
+    fn transport(&self) -> ProbeTransport {
+        match self {
+            Self::Quic(_) => ProbeTransport::Udp,
+            _ => ProbeTransport::Tcp,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1946,7 +2009,7 @@ pub async fn run(
 ) -> TraceReport {
     run_inner(
         host,
-        TraceProbeMode::Http(proto.into()),
+        TraceProbeMode::for_protocol(proto, &binary),
         None,
         args,
         binary,
@@ -1966,7 +2029,7 @@ pub async fn run_with_progress(
 ) -> TraceReport {
     run_inner(
         host,
-        TraceProbeMode::Http(proto.into()),
+        TraceProbeMode::for_protocol(proto, &binary),
         None,
         args,
         binary,
@@ -1993,7 +2056,7 @@ pub async fn run_candidate(
 ) -> TraceReport {
     run_inner(
         host,
-        TraceProbeMode::Http(proto.into()),
+        TraceProbeMode::for_protocol(proto, &binary),
         None,
         args,
         binary,
@@ -2020,7 +2083,7 @@ pub async fn run_candidate_repeated(
 ) -> TraceReport {
     run_inner(
         host,
-        TraceProbeMode::Http(proto.into()),
+        TraceProbeMode::for_protocol(proto, &binary),
         None,
         args,
         binary,
@@ -2182,10 +2245,7 @@ async fn run_inner(
         candidate_attempts: Vec::new(),
         summary: String::new(),
     };
-    let port = match &mode {
-        TraceProbeMode::Http(proto) if proto == "http" => 80,
-        _ => 443,
-    };
+    let port = mode.port();
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -2261,7 +2321,16 @@ async fn run_inner(
         };
     } else {
         let (base_code, base_ms, base_reason, base_classification) =
-            match install_rules(address, port, None, &token, policy_mark.as_deref()).await {
+            match install_rules_for_transport(
+                address,
+                port,
+                None,
+                &token,
+                policy_mark.as_deref(),
+                mode.transport(),
+            )
+            .await
+            {
                 Ok(rules) => {
                     if cancel.load(Ordering::Acquire) {
                         let cleanup = remove_rules(&rules).await;
@@ -2296,8 +2365,10 @@ async fn run_inner(
                     return report;
                 }
             };
-        report.without_nfqws2 = phase_from_http(base_code, base_ms, base_reason);
-        report.without_nfqws2.diagnostic_classification = base_classification;
+        report.without_nfqws2 = phase_from_probe_result(
+            &mode,
+            (base_code, base_ms, base_reason, base_classification),
+        );
     }
     if report
         .without_nfqws2
@@ -2404,8 +2475,15 @@ async fn run_inner(
             }
         }
     }
-    let rules = match install_rules(address, port, Some(queue), &token, policy_mark.as_deref())
-        .await
+    let rules = match install_rules_for_transport(
+        address,
+        port,
+        Some(queue),
+        &token,
+        policy_mark.as_deref(),
+        mode.transport(),
+    )
+    .await
     {
         Ok(rules) => rules,
         Err(error) => {
@@ -2456,7 +2534,7 @@ async fn run_inner(
                 };
                 let phase = result
                     .as_ref()
-                    .map(|(code, ms, reason, _)| phase_from_http(*code, *ms, reason.clone()))
+                    .map(|result| phase_from_probe_result(&mode, result.clone()))
                     .unwrap_or_else(|reason| TracePhase::unavailable(reason.clone()));
                 let ok = phase.ok == Some(true);
                 report.candidate_attempts.push(phase);
@@ -2467,13 +2545,15 @@ async fn run_inner(
             stop_child(&mut child).await;
             report.with_nfqws2 = result
                 .map(|(code, ms, reason, classification)| {
-                    let mut phase = phase_from_http(
-                        code,
-                        ms.or(Some(started.elapsed().as_millis() as u64)),
-                        reason,
-                    );
-                    phase.diagnostic_classification = classification;
-                    phase
+                    phase_from_probe_result(
+                        &mode,
+                        (
+                            code,
+                            ms.or(Some(started.elapsed().as_millis() as u64)),
+                            reason,
+                            classification,
+                        ),
+                    )
                 })
                 .unwrap_or_else(TracePhase::unavailable);
         }
@@ -2526,7 +2606,8 @@ async fn run_inner(
         report.summary = "Трассировка остановлена; временный процесс и правила очищены".into();
         return report;
     }
-    report.summary = trace_summary(report.without_nfqws2.ok, report.with_nfqws2.ok).into();
+    report.summary =
+        trace_summary_for_mode(&mode, report.without_nfqws2.ok, report.with_nfqws2.ok).into();
     report
 }
 
@@ -2615,6 +2696,34 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quic_trace_mode_uses_udp_on_port_443() {
+        let mode = TraceProbeMode::for_protocol("quic", "nfqws2");
+        assert_eq!(mode.port(), 443);
+        assert!(matches!(mode.transport(), ProbeTransport::Udp));
+        assert!(matches!(mode, TraceProbeMode::Quic(_)));
+    }
+
+    #[test]
+    fn quic_trace_results_never_masquerade_as_http_statuses() {
+        let mode = TraceProbeMode::for_protocol("quic", "nfqws2");
+        let phase = phase_from_probe_result(
+            &mode,
+            (Some(200), Some(25), "QUIC Initial ответил".into(), None),
+        );
+        assert_eq!(phase.state, "complete");
+        assert_eq!(phase.ok, Some(true));
+        assert_eq!(phase.code, None);
+        assert_eq!(
+            phase.diagnostic_classification.as_deref(),
+            Some("quic_initial")
+        );
+        assert_eq!(
+            trace_summary_for_mode(&mode, Some(true), Some(false)),
+            "QUIC ответил напрямую, но не через nfqws2"
+        );
+    }
 
     #[tokio::test]
     async fn command_keeps_stderr_for_real_firewall_errors() {

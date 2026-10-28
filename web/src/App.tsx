@@ -982,11 +982,11 @@ export default function App() {
                 </label>
                 <label htmlFor={"strategyProtocolSelect"} className={"text-xs font-mono text-slate-400"}>
                   {"Транспорт"}
-                  <select id={"strategyProtocolSelect"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
-                    <option value={"https"}>HTTPS · TCP 443</option><option value={"http"}>HTTP · TCP 80</option>
+                  <select id={"strategyProtocolSelect"} data-action-change={"updateStrategyProtocol"} data-value-source={"value"} defaultValue={"https"} className={"mt-1.5 w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs sm:text-sm font-mono text-white focus:outline-none focus:border-blue-500"}>
+                    <option value={"https"}>HTTPS · TCP 443</option><option value={"http"}>HTTP · TCP 80</option><option value={"quic"}>QUIC · UDP 443</option>
                   </select>
                 </label>
-                <p className={"strategy-target-transport-help"}>{"QUIC Initial проверяется в разделе «Проверка сайта»; перебор QUIC-стратегий пока не подключён."}</p>
+                <p id={"strategyTransportHelp"} className={"strategy-target-transport-help"}>{"HTTP и HTTPS проверяются отдельно по TCP. Для нескольких сайтов доступно только создание общего TCP-профиля."}</p>
               </div>
 
               <div id={"strategyMultiTargetPanel"} className={"hidden strategy-multi-target-panel"}>
@@ -1012,7 +1012,7 @@ export default function App() {
                     <input id={"strategyStopAfterFirst"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
                     <span>Остановиться на первой подтверждённой стратегии</span>
                   </label>
-                  <label htmlFor={"strategyRefineLighter"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                  <label htmlFor={"strategyRefineLighter"} className={"strategy-refine-option flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
                     <input id={"strategyRefineLighter"} type={"checkbox"} className={"mt-0.5 accent-blue-500"} />
                     <span>Искать более лёгкий вариант после подтверждения
                       <span className={"mt-1 block text-[11px] font-normal leading-4 text-slate-400"}>Проверит варианты fake-шага отдельно, до 5 минут.</span>
@@ -1022,7 +1022,7 @@ export default function App() {
                     <input id={"strategyIncludeOtherHistory"} type={"checkbox"} defaultChecked={true} className={"mt-0.5 accent-blue-500"} />
                     <span>Стратегии из истории других сайтов</span>
                   </label>
-                  <label htmlFor={"strategyIncludeCommunity"} className={"flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
+                  <label htmlFor={"strategyIncludeCommunity"} className={"strategy-community-option flex cursor-pointer items-start gap-2 text-xs font-medium text-slate-200"}>
                     <input id={"strategyIncludeCommunity"} type={"checkbox"} className={"mt-0.5 accent-teal-500"} />
                     <span>Добавить проверенные стратегии сообщества</span>
                   </label>

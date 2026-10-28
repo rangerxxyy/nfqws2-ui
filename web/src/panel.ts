@@ -3407,7 +3407,7 @@ function renderStrategyPick(operation: StrategyPickOperation) {
     resultSummary.append(baseline);
   }
   if (!operation.results.length) {
-    if (operation.state === 'site_unblocked') resultTitle.textContent = 'Без обхода сайт уже отвечает';
+    if (operation.state === 'site_unblocked') resultTitle.textContent = operation.protocol === 'quic' ? 'QUIC уже отвечает напрямую' : 'Без обхода сайт уже отвечает';
     resultMeta.textContent = operation.total ? `Проверено ${operation.done} из ${operation.total} стратегий` : 'Стратегии не запускались';
     container.append(resultSummary);
     return;
@@ -3824,7 +3824,8 @@ async function startStrategyPick() {
     return;
   }
   if (!(input instanceof HTMLInputElement) || !input.value.trim()) return toast('Введите домен или публичный IPv4 для подбора.', 'error');
-  const protocol = proto instanceof HTMLSelectElement && ['http', 'https'].includes(proto.value) ? proto.value as 'http' | 'https' : 'https';
+  const protocol = proto instanceof HTMLSelectElement && ['http', 'https', 'quic'].includes(proto.value) ? proto.value as 'http' | 'https' | 'quic' : 'https';
+  if (protocol === 'quic' && isStrategyPickIpLiteral(input.value.trim())) return toast('QUIC-подбор требует доменное имя для TLS SNI. Укажите домен, например example.com.', 'error');
   const selectedMode = mode instanceof HTMLSelectElement && ['extended', 'full', 'custom'].includes(mode.value) ? mode.value as 'extended' | 'full' | 'custom' : 'quick';
   const repeats = repeatsInput instanceof HTMLSelectElement ? Number(repeatsInput.value) : 3;
   const stopAfterFirst = ($('#strategyStopAfterFirst') as HTMLInputElement | null)?.checked ?? false;
@@ -3851,9 +3852,40 @@ function setStrategyTargetMode(mode: string) {
   const multi = strategyTargetMode === 'multi';
   $('#strategyMultiTargetPanel')?.classList.toggle('hidden', !multi);
   $('.strategy-target-single-input')?.classList.toggle('hidden', multi);
+  $('.strategy-target-transport-row')?.classList.toggle('hidden', multi);
+  if (multi) {
+    const protocol = $('#strategyProtocolSelect');
+    if (protocol instanceof HTMLSelectElement && protocol.value === 'quic') protocol.value = 'https';
+  }
+  const protocol = $('#strategyProtocolSelect');
+  if (protocol instanceof HTMLSelectElement) updateStrategyProtocol(protocol.value);
   all<HTMLElement>('.strategy-mode-specific').forEach((control) => control.classList.toggle('hidden', multi));
   for (const id of ['strategyStopAfterFirst', 'strategyRefineLighter']) $('#'+id)?.closest('label')?.classList.toggle('hidden', multi);
   all<HTMLButtonElement>('[data-action-click="setStrategyTargetMode"]').forEach((button) => button.classList.toggle('active', button.dataset.arg === strategyTargetMode));
+}
+
+function isStrategyPickIpLiteral(host: string) {
+  const value = host.trim().replace(/^\[|\]$/g, '');
+  return value.includes(':') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value);
+}
+
+function updateStrategyProtocol(protocol: string) {
+  const quic = protocol === 'quic';
+  const mode = $('#strategyModeSelect');
+  if (mode instanceof HTMLSelectElement) {
+    for (const value of ['extended', 'full']) {
+      const option = mode.querySelector<HTMLOptionElement>(`option[value="${value}"]`);
+      if (option) option.disabled = quic;
+    }
+    if (quic && ['extended', 'full'].includes(mode.value)) mode.value = 'quick';
+    updateStrategyMode(mode.value);
+  }
+  $('.strategy-community-option')?.classList.toggle('hidden', quic);
+  $('.strategy-refine-option')?.classList.toggle('hidden', quic);
+  const help = $('#strategyTransportHelp');
+  if (help) help.textContent = quic
+    ? 'Проверяется ответ на QUIC Initial по UDP 443 для одного домена с TLS SNI. Берутся текущий профиль и ограниченный стандартный набор; TCP/HTTP не меняется.'
+    : 'HTTP и HTTPS проверяются отдельно по TCP. Для нескольких сайтов доступно только создание общего TCP-профиля.';
 }
 
 function extractPublicDomains(content: string) {
@@ -4251,7 +4283,11 @@ function updateStrategyMode(mode: string) {
   $('#strategyModeSelect')?.closest('.strategy-mode-tile')?.classList.toggle('strategy-mode-tile-custom', mode === 'custom');
   const help = $('#strategyModeHelp');
   if (!help) return;
-  help.textContent = ({
+  const quic = ($('#strategyProtocolSelect') as HTMLSelectElement | null)?.value === 'quic';
+  help.textContent = quic ? ({
+    quick: 'Для одного домена выполняются UDP-проверки QUIC Initial: текущий профиль и небольшой стандартный набор. Полный каталог отключён, чтобы не запускать масштабный перебор.',
+    custom: 'Проверяется только указанная вами стратегия для QUIC; остальные TCP-настройки профиля не меняются.',
+  } as Record<string, string>)[mode] ?? 'Выберите режим тестирования.' : ({
     quick: 'Текущий профиль и стандартный набор: до 12 HTTPS- или 4 HTTP-кандидатов до фильтра совместимости Lua. «Проверено X из Y» — стратегии, а не запросы; повторы указаны отдельно. Если первая попытка кандидата не удалась, лишние повторы пропускаются.',
     extended: 'Расширенный каталог blockcheck2: только совместимые с установленным nfqws2 варианты, проверка по одному.',
     full: 'Полный каталог blockcheck2 — около 3 000 вариантов. Проверка идёт по одному, занимает дольше; её можно остановить в любой момент.',
@@ -4511,6 +4547,7 @@ function bindPrototypeActions() {
     pickRandomMultiSites: () => void pickRandomMultiSites(),
     cancelStrategyPick: () => void cancelStrategyPick(),
     toggleStrategyCustomInput: (mode: string) => updateStrategyMode(mode),
+    updateStrategyProtocol: (protocol: string) => updateStrategyProtocol(protocol),
     copyStrategyParams: (button: HTMLButtonElement) => {
       const input = $('#strategyCustomSteps');
       if (!(input instanceof HTMLTextAreaElement)) return;
@@ -4670,6 +4707,7 @@ function boot() {
   document.documentElement.classList.add('dark');
   const initialStrategyMode = ($('#strategyModeSelect') as HTMLSelectElement | null)?.value ?? 'quick';
   updateStrategyMode(initialStrategyMode);
+  updateStrategyProtocol(($<HTMLSelectElement>('#strategyProtocolSelect'))?.value ?? 'https');
   setStrategyTargetMode('single');
   showPendingUpdateNotice();
   showRoute('conf');

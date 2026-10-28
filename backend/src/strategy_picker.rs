@@ -741,6 +741,11 @@ pub fn build_plan(
     available_functions: &HashSet<String>,
     available_blobs: &[String],
 ) -> StrategyPlan {
+    let mode = if protocol == StrategyProtocol::Quic {
+        StrategyMode::Quick
+    } else {
+        mode
+    };
     let mut candidates = Vec::new();
     let mut seen = HashSet::<Vec<String>>::new();
     for steps in configured_steps.iter().take(MAX_CANDIDATES) {
@@ -1127,7 +1132,7 @@ pub fn candidate_batch_argv(
 }
 
 /// Construct a domain- or IPv4-scoped profile for an explicitly selected,
-/// locally validated HTTP/HTTPS candidate. QUIC application needs its own runner.
+/// locally validated HTTP/HTTPS/QUIC candidate.
 pub fn build_domain_profile(
     host: &str,
     protocol: StrategyProtocol,
@@ -1148,7 +1153,14 @@ pub fn build_domain_profile(
             "--payload=tls_client_hello",
         ),
         StrategyProtocol::Quic => {
-            return Err("Применение QUIC-стратегии пока не поддерживается".into());
+            if normalized.parse::<std::net::IpAddr>().is_ok() {
+                return Err("Для QUIC нужен домен: в QUIC Initial требуется SNI".into());
+            }
+            (
+                "--filter-udp=443",
+                "--filter-l7=quic",
+                "--payload=quic_initial",
+            )
         }
     };
     let selector = match normalized.parse::<std::net::Ipv4Addr>() {
@@ -1220,7 +1232,7 @@ mod application_tests {
     }
 
     #[test]
-    fn refuses_unsafe_hosts_unknown_lua_and_quic_application_profiles() {
+    fn refuses_unsafe_hosts_and_unknown_lua_profiles() {
         let functions = HashSet::from(["multisplit".to_string()]);
         assert!(
             build_domain_profile(
@@ -1242,16 +1254,60 @@ mod application_tests {
             )
             .is_err()
         );
-        assert!(
+    }
+
+    #[test]
+    fn builds_domain_scoped_quic_profile_and_rejects_ip_targets() {
+        let functions = HashSet::from(["multisplit".to_string()]);
+        let steps = &["--lua-desync=multisplit:pos=1".into()];
+        assert_eq!(
             build_domain_profile(
                 "example.org",
                 StrategyProtocol::Quic,
-                &["--lua-desync=multisplit:pos=1".into()],
+                steps,
                 &functions,
                 &[],
             )
-            .is_err()
+            .unwrap(),
+            "--new --filter-udp=443 --filter-l7=quic --hostlist-domains=example.org --payload=quic_initial --lua-desync=multisplit:pos=1"
         );
+        assert!(
+            build_domain_profile("8.8.8.8", StrategyProtocol::Quic, steps, &functions, &[])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn quic_plan_is_bounded_to_the_quick_standard_set_even_in_full_mode() {
+        let functions = HashSet::from(["fake".into(), "udplen".into()]);
+        let blobs = ["fake_default_quic".to_string()];
+        let quick = build_plan(
+            StrategyProtocol::Quic,
+            StrategyMode::Quick,
+            &[],
+            &functions,
+            &blobs,
+        );
+        let full = build_plan(
+            StrategyProtocol::Quic,
+            StrategyMode::Full,
+            &[],
+            &functions,
+            &blobs,
+        );
+        assert_eq!(full.candidates, quick.candidates);
+        assert!(!full.candidates.is_empty());
+        assert!(full.candidates.iter().all(|candidate| {
+            candidate.steps.iter().all(|step| {
+                let function = step
+                    .strip_prefix("--lua-desync=")
+                    .unwrap()
+                    .split(':')
+                    .next()
+                    .unwrap();
+                ["fake", "udplen"].contains(&function)
+            })
+        }));
     }
 
     #[test]

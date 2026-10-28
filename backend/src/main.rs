@@ -1356,6 +1356,7 @@ fn build_strategy_pick_preview(
     let protocol = match operation.protocol.as_str() {
         "http" => StrategyProtocol::Http,
         "https" => StrategyProtocol::Https,
+        "quic" => StrategyProtocol::Quic,
         _ => return Err("Применение этой версии протокола не поддерживается".into()),
     };
     let result = operation
@@ -1374,6 +1375,51 @@ fn build_strategy_pick_preview(
             functions,
             blobs,
         );
+    }
+    if protocol == StrategyProtocol::Quic {
+        let profile = strategy_picker::build_domain_profile(
+            &operation.host,
+            protocol,
+            &result.candidate.steps,
+            functions,
+            blobs,
+        )?;
+        let document = ConfigDocument::parse(original_content)?;
+        let custom_args = document.literal_value("NFQWS_ARGS_CUSTOM")?;
+        let selector = format!("--hostlist-domains={}", operation.host);
+        if custom_args
+            .split_whitespace()
+            .any(|argument| argument == selector)
+        {
+            return Err(
+                "Для этого домена уже есть пользовательский профиль; сначала проверьте его вручную"
+                    .into(),
+            );
+        }
+        let proposed_content = document.append_literal_words("NFQWS_ARGS_CUSTOM", &profile)?;
+        let diagnostics = validate_nfqws2_config(&proposed_content)?;
+        if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+        {
+            return Err(
+                "Сформированный QUIC-профиль не прошёл статическую проверку конфигурации".into(),
+            );
+        }
+        if proposed_content.len() > MAX_CONFIG_BYTES {
+            return Err("Изменённая конфигурация превышает лимит размера".into());
+        }
+        return Ok(StrategyPickPreview {
+            operation_id: operation.id.clone(),
+            candidate_index,
+            host: operation.host.clone(),
+            protocol: operation.protocol.clone(),
+            candidate: result.candidate.clone(),
+            original_revision,
+            original_content: original_content.to_owned(),
+            proposed_content,
+            summary: "Будет добавлен отдельный QUIC-профиль UDP 443 в NFQWS_ARGS_CUSTOM только для выбранного домена. Остальные сайты и TCP-профили не меняются.".into(),
+        });
     }
     let _validated_profile = strategy_picker::build_domain_profile(
         &operation.host,
@@ -1817,7 +1863,8 @@ fn strategy_dry_run_argv(
     let protocol = match operation.protocol.as_str() {
         "http" => StrategyProtocol::Http,
         "https" => StrategyProtocol::Https,
-        _ => return Err("Для dry-run доступны только HTTP и HTTPS кандидаты".into()),
+        "quic" => StrategyProtocol::Quic,
+        _ => return Err("Для dry-run доступны только HTTP, HTTPS и QUIC кандидаты".into()),
     };
     let candidate = operation
         .results
@@ -2628,7 +2675,13 @@ async fn apply_confirmed_strategy(
         Ok(monitoring) => monitoring,
         Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
     };
-    let verify_hosts = strategy_apply_verification_hosts(&operation.host, &monitoring);
+    let verify_hosts = strategy_apply_verification_hosts_for_protocol(
+        &operation.host,
+        &operation.protocol,
+        &monitoring,
+    );
+    let verify_quic = operation.protocol == "quic";
+    let verification_binary = paths.binary.to_string_lossy().into_owned();
     let monitor_policy_route = resolve_monitoring_policy_route(&state).await;
     match apply_config_transaction_with_verification(
         &state,
@@ -2637,10 +2690,37 @@ async fn apply_confirmed_strategy(
         || {
             let monitor_policy_route = monitor_policy_route.clone();
             let verify_hosts = verify_hosts.clone();
+            let verification_binary = verification_binary.clone();
             async move {
                 verify_strategy_hosts_with(verify_hosts, move |host| {
                     let monitor_policy_route = monitor_policy_route.clone();
+                    let verification_binary = verification_binary.clone();
                     async move {
+                        if verify_quic {
+                            let addresses = site_diagnostics::public_ipv4_references(&host).await;
+                            let packet =
+                                nfqws2_ui::quic_probe::generate(&verification_binary, &host)
+                                    .await?;
+                            let mut last_detail =
+                                "QUIC Initial не получил подтверждённого ответа".to_owned();
+                            for address in addresses {
+                                let IpAddr::V4(address) = address else {
+                                    continue;
+                                };
+                                if !site_diagnostics::public_ip(IpAddr::V4(address)) {
+                                    continue;
+                                }
+                                let result =
+                                    nfqws2_ui::quic_probe::probe(&packet, address, true).await;
+                                if result.status == "ok" {
+                                    return Ok(());
+                                }
+                                last_detail = result.detail;
+                            }
+                            return Err(format!(
+                                "Проверка QUIC для {host} не прошла: {last_detail}"
+                            ));
+                        }
                         let report = check_monitoring_host(host, monitor_policy_route).await;
                         if report.current.status == "ok" {
                             Ok(())
@@ -8498,12 +8578,7 @@ async fn start_strategy_pick(
     let protocol = match request.protocol.as_deref().unwrap_or("https") {
         "http" => StrategyProtocol::Http,
         "https" => StrategyProtocol::Https,
-        "quic" => {
-            return error(
-                StatusCode::NOT_IMPLEMENTED,
-                "Перебор стратегий QUIC пока не поддерживается: доступна только отдельная проверка QUIC Initial, без проверки через тестовый nfqws2",
-            );
-        }
+        "quic" => StrategyProtocol::Quic,
         _ => {
             return error(
                 StatusCode::BAD_REQUEST,
@@ -8511,14 +8586,25 @@ async fn start_strategy_pick(
             );
         }
     };
+    if protocol == StrategyProtocol::Quic && host.parse::<std::net::IpAddr>().is_ok() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Для QUIC-подбора укажите домен: проверка QUIC Initial требует TLS SNI",
+        );
+    }
     let custom_mode = request.mode.as_deref() == Some("custom");
-    let mode = match request.mode.as_deref().unwrap_or("quick") {
+    let mut mode = match request.mode.as_deref().unwrap_or("quick") {
         "quick" => Some(StrategyMode::Quick),
         "extended" => Some(StrategyMode::Extended),
         "full" => Some(StrategyMode::Full),
         "custom" => Some(StrategyMode::Quick),
         _ => return error(StatusCode::BAD_REQUEST, "Неизвестный режим подбора"),
     };
+    if protocol == StrategyProtocol::Quic {
+        // QUIC only uses the small sequential candidate set. In particular,
+        // never route it into the HTTP full-catalog batch runner.
+        mode = Some(StrategyMode::Quick);
+    }
     if custom_mode && request.custom_steps.is_none() {
         return error(
             StatusCode::BAD_REQUEST,
@@ -8574,6 +8660,7 @@ async fn start_strategy_pick(
         strategy_picker::retain_custom_candidates(&mut plan);
     }
     if request.include_community
+        && protocol != StrategyProtocol::Quic
         && !custom_mode
         && let Some(asn) = community_strategies::read_provider_settings(&state.data_dir).asn
         && let Ok((items, _, _)) = community_strategies::load(&state.data_dir, asn, false).await
@@ -8606,7 +8693,8 @@ async fn start_strategy_pick(
             strategy_picker::insert_reusable_candidates(&mut plan, history, &functions, &blobs);
         }
     }
-    let include_catalog_sources = picker_mode_uses_catalog_candidates(custom_mode);
+    let include_catalog_sources =
+        protocol != StrategyProtocol::Quic && picker_mode_uses_catalog_candidates(custom_mode);
     let freeze_candidates = if include_catalog_sources {
         load_confirmed_freeze_candidates(&state.data_dir.join("freeze-diagnostic-operations")).await
     } else {
@@ -8723,6 +8811,27 @@ async fn start_strategy_pick(
                 .remove(&task_id);
             return;
         };
+        if quic_baseline_is_already_reachable(protocol, baseline_ok) {
+            if let Ok(mut current) = shared.lock() {
+                current.state = "site_unblocked".into();
+                current.stage = "baseline".into();
+                current.current = None;
+                current.done = 0;
+                current.total = 0;
+                current.message = format!(
+                    "QUIC Initial уже получил прямой ответ ({}); стратегии не перебирались",
+                    baseline_report.without_nfqws2.reason
+                );
+                current.updated_at = now_unix_seconds();
+                let _ = write_strategy_pick_operation_sync(&operation_dir, &current);
+            }
+            task_state
+                .strategy_pick_controls
+                .lock()
+                .await
+                .remove(&task_id);
+            return;
+        }
         if let Ok(mut current) = shared.lock() {
             current.stage = "baseline".into();
             current.message = match baseline_ok {
@@ -8878,7 +8987,7 @@ async fn start_strategy_pick(
                 let _ = write_strategy_pick_operation_sync(&result_dir, &operation);
             }
         };
-        let mut plan_result = if mode == Some(StrategyMode::Full) {
+        let mut plan_result = if strategy_uses_full_batch_runner(protocol, mode) {
             strategy_picker::run_full_candidates_with_batches_and_results(
                 plan,
                 control.clone(),
@@ -8907,7 +9016,8 @@ async fn start_strategy_pick(
             .await
         };
         let already_confirmed = plan_result.results.iter().any(|result| result.confirmed);
-        if !custom_mode
+        if protocol != StrategyProtocol::Quic
+            && !custom_mode
             && !matches!(
                 plan_result.state.as_str(),
                 "cancelled" | "failed" | "site_unblocked"
@@ -8975,6 +9085,17 @@ async fn start_strategy_pick(
             .remove(&task_id);
     });
     (StatusCode::ACCEPTED, Json(accepted_operation)).into_response()
+}
+
+fn quic_baseline_is_already_reachable(
+    protocol: StrategyProtocol,
+    baseline_ok: Option<bool>,
+) -> bool {
+    protocol == StrategyProtocol::Quic && baseline_ok == Some(true)
+}
+
+fn strategy_uses_full_batch_runner(protocol: StrategyProtocol, mode: Option<StrategyMode>) -> bool {
+    protocol != StrategyProtocol::Quic && mode == Some(StrategyMode::Full)
 }
 
 async fn get_strategy_pick_operation(
@@ -10387,6 +10508,18 @@ fn strategy_apply_verification_hosts(target: &str, monitoring: &MonitoringStore)
         }
     }
     hosts
+}
+
+fn strategy_apply_verification_hosts_for_protocol(
+    target: &str,
+    protocol: &str,
+    monitoring: &MonitoringStore,
+) -> Vec<String> {
+    if protocol == "quic" {
+        vec![target.to_owned()]
+    } else {
+        strategy_apply_verification_hosts(target, monitoring)
+    }
 }
 
 async fn verify_strategy_hosts_with<F, Fut>(hosts: Vec<String>, probe: F) -> Result<(), String>
@@ -15804,6 +15937,23 @@ mod tests {
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
             assert!(!dir.path().join("data/strategy-pick-operations").exists());
         }
+        let dir = tempfile::tempdir().unwrap();
+        let app = api_router(test_state(dir.path().join("data")), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/strategies/pick/multi")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"hosts": ["one.example", "two.example"], "protocol": "quic"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(!dir.path().join("data/strategy-pick-operations").exists());
     }
 
     fn confirmed_strategy_pick(
@@ -16066,14 +16216,43 @@ mod tests {
     }
 
     #[test]
-    fn strategy_preview_rejects_incomplete_unconfirmed_quic_and_out_of_range_results() {
+    fn strategy_dry_run_builds_a_udp_quic_candidate_profile() {
+        let operation = confirmed_strategy_pick("complete", "quic", true);
+        let active_args = vec![
+            "/opt/usr/bin/nfqws2".into(),
+            "--qnum=300".into(),
+            "--lua-init=@/opt/etc/nfqws2/lua/zapret-lib.lua".into(),
+            "--new".into(),
+            "--filter-tcp=443".into(),
+            "--lua-desync=old:pos=1".into(),
+        ];
+        let argv = strategy_dry_run_argv(
+            &operation,
+            0,
+            &active_args,
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .unwrap();
+        assert!(argv.iter().any(|argument| argument == "--filter-udp=443"));
+        assert!(argv.iter().any(|argument| argument == "--filter-l7=quic"));
+        assert!(
+            argv.iter()
+                .any(|argument| argument == "--payload=quic_initial")
+        );
+        assert!(argv.iter().any(|argument| argument == "--qnum=300"));
+        assert!(!argv.iter().any(|argument| argument == "--filter-tcp=443"));
+    }
+
+    #[test]
+    fn strategy_preview_rejects_incomplete_unconfirmed_and_out_of_range_results() {
         let original = "NFQWS_ARGS_CUSTOM=\"\"\n";
         let functions = HashSet::from(["multisplit".to_string()]);
         let revision = "rev".to_owned();
         for (operation, index) in [
             (confirmed_strategy_pick("complete", "https", false), 0),
             (confirmed_strategy_pick("running", "https", true), 0),
-            (confirmed_strategy_pick("complete", "quic", true), 0),
+            (confirmed_strategy_pick("complete", "quic", false), 0),
             (confirmed_strategy_pick("complete", "https", true), 1),
         ] {
             assert!(
@@ -16088,6 +16267,48 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn strategy_preview_applies_confirmed_quic_only_to_the_selected_domain() {
+        let preview = build_strategy_pick_preview(
+            &confirmed_strategy_pick("complete", "quic", true),
+            0,
+            "NFQWS_ARGS=\"--filter-tcp=443 --lua-desync=old:strategy=1\"\nNFQWS_ARGS_CUSTOM=\"\"\n",
+            "rev-quic".into(),
+            &HashSet::from(["multisplit".to_string()]),
+            &[],
+        )
+        .unwrap();
+
+        assert!(preview.proposed_content.contains("--filter-udp=443"));
+        assert!(preview.proposed_content.contains("--filter-l7=quic"));
+        assert!(preview.proposed_content.contains("--payload=quic_initial"));
+        assert!(
+            preview
+                .proposed_content
+                .contains("--hostlist-domains=example.com")
+        );
+        assert!(
+            preview
+                .proposed_content
+                .contains("NFQWS_ARGS=\"--filter-tcp=443 --lua-desync=old:strategy=1\"")
+        );
+        assert!(preview.summary.contains("только для выбранного домена"));
+
+        let mut duplicate = confirmed_strategy_pick("complete", "quic", true);
+        duplicate.host = "8.8.8.8".into();
+        assert!(
+            build_strategy_pick_preview(
+                &duplicate,
+                0,
+                "NFQWS_ARGS_CUSTOM=\"\"\n",
+                "rev-ip-quic".into(),
+                &HashSet::from(["multisplit".to_string()]),
+                &[],
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -17082,6 +17303,14 @@ mod tests {
 
         assert_eq!(
             strategy_apply_verification_hosts("target.example", &store),
+            vec!["target.example", "healthy.example"]
+        );
+        assert_eq!(
+            strategy_apply_verification_hosts_for_protocol("target.example", "quic", &store),
+            vec!["target.example"]
+        );
+        assert_eq!(
+            strategy_apply_verification_hosts_for_protocol("target.example", "https", &store),
             vec!["target.example", "healthy.example"]
         );
     }
@@ -18673,8 +18902,32 @@ mod tests {
         assert!(!data.join("strategy-pick-operations").exists());
     }
 
+    #[test]
+    fn quic_picker_keeps_serial_bounded_flow_and_skips_when_baseline_answers() {
+        assert!(!strategy_uses_full_batch_runner(
+            StrategyProtocol::Quic,
+            Some(StrategyMode::Full)
+        ));
+        assert!(strategy_uses_full_batch_runner(
+            StrategyProtocol::Https,
+            Some(StrategyMode::Full)
+        ));
+        assert!(quic_baseline_is_already_reachable(
+            StrategyProtocol::Quic,
+            Some(true)
+        ));
+        assert!(!quic_baseline_is_already_reachable(
+            StrategyProtocol::Quic,
+            Some(false)
+        ));
+        assert!(!quic_baseline_is_already_reachable(
+            StrategyProtocol::Quic,
+            None
+        ));
+    }
+
     #[tokio::test]
-    async fn full_mode_is_accepted_and_unknown_modes_and_quic_runs_are_rejected() {
+    async fn quic_picker_requires_a_domain_and_reaches_runtime_preconditions() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
         let app = api_router(test_state(data.clone()), dir.path().join("web"));
@@ -18713,7 +18966,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let response = app
+        let ip_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/nfqws2/strategies/pick")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"host":"8.8.8.8","protocol":"quic"}).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ip_response.status(), StatusCode::BAD_REQUEST);
+
+        let domain_response = app
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -18726,7 +18995,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(domain_response.status(), StatusCode::CONFLICT);
         assert!(!data.join("strategy-pick-operations").exists());
     }
 

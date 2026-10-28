@@ -571,10 +571,10 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(picker).toContain('flex flex-col lg:flex-row');
     expect(picker).toContain('strategy-settings-grid');
     expect(picker).toContain('strategy-target-transport-row');
-    expect(panelStyles).toContain('.strategy-target-transport-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(13rem,.62fr);');
+    expect(panelStyles).toContain('.strategy-target-transport-row:not(.hidden) { display:grid; grid-template-columns:minmax(0,1fr) minmax(13rem,.62fr);');
     expect(panelStyles).toContain('.autotune-settings-card { padding: .75rem 1rem; }');
     expect(panelStyles).toContain('.strategy-settings-grid { max-width: 980px; gap:.15rem; }');
-    expect(panelStyles).toContain('.strategy-settings-grid > div.strategy-setting-row { min-width:0; display:grid;');
+    expect(panelStyles).toContain('.strategy-settings-grid > div.strategy-setting-row:not(.hidden) { min-width:0; display:grid;');
     expect(panelStyles).toContain('border:0; background:transparent;');
     expect(picker).not.toContain('md:grid-cols-5');
     expect(picker).toContain('id="strategyRepeatsSelect"');
@@ -672,6 +672,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsDiagnostics.strategyMultiStart');
     expect(panelSource).toContain('operation.multiSiteResults');
     expect(panelSource).toContain('domain.successes}/${domain.attempts}');
+  });
+
+  it('offers single-site QUIC strategy picking with clear transport scope', () => {
+    expect(template).toContain('<option value="quic">QUIC · UDP 443</option>');
+    expect(panelSource).toContain('Проверяется ответ на QUIC Initial по UDP 443 для одного домена с TLS SNI');
+    expect(panelSource).toContain("['http', 'https', 'quic'].includes(proto.value)");
+    expect(panelSource).toContain('QUIC-подбор требует доменное имя');
+    expect(panelSource).toContain("operation.protocol === 'quic' ? 'QUIC уже отвечает напрямую'");
+    expect(panelStyles).toContain('.strategy-target-transport-row:not(.hidden)');
+    expect(panelStyles).toContain('.strategy-target-transport-row > label:not(.hidden)');
+    expect(panelStyles).toContain('.strategy-settings-grid > div.strategy-setting-row:not(.hidden)');
   });
 
   it('synchronizes config editor scrolling once per animation frame without rebuilding syntax highlighting', () => {
@@ -1452,10 +1463,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('stopSiteTrace:');
   });
 
-  it('does not advertise QUIC strategy picking until a real isolated QUIC runner exists', () => {
-    expect(template).not.toContain('<option value="quic">QUIC · UDP 443</option>');
-    expect(template).toContain('перебор QUIC-стратегий пока не подключён');
-    expect(backendSource).toContain('Перебор стратегий QUIC пока не поддерживается');
+  it('limits QUIC strategy selection to the single-site bounded runner', () => {
+    expect(template).toContain('<option value="quic">QUIC · UDP 443</option>');
+    expect(panelSource).toContain("if (multi) {");
+    expect(panelSource).toContain('if (protocol instanceof HTMLSelectElement) updateStrategyProtocol(protocol.value)');
+    expect(panelSource).toContain('if (option) option.disabled = quic');
+    expect(panelSource).toContain('QUIC-подбор требует доменное имя');
   });
 
   it('omits the profile reference panel to keep the strategy editor compact', () => {

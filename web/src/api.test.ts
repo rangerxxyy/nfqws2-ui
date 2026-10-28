@@ -184,6 +184,14 @@ describe('API client used by the source-based panel', () => {
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ host: 'example.com', protocol: 'https', mode: 'full' });
   });
 
+  it('starts a bounded QUIC strategy pick for a domain target', async () => {
+    const queued = { id: '0123456789abcdef0123456789abcdef', host: 'example.com', protocol: 'quic', state: 'queued', stage: 'queued', current: null, done: 0, total: 3, results: [], message: 'queued', updatedAt: 100 } as const;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(queued), { status: 202 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await nfqwsDiagnostics.strategyStart('example.com', 'quic', 'quick');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ host: 'example.com', protocol: 'quic', mode: 'quick' });
+  });
+
   it('loads persisted strategy-pick history from Rust', async () => {
     const history = [{ id: '0123456789abcdef0123456789abcdef', host: 'example.com', protocol: 'https', state: 'complete', stage: 'complete', current: null, done: 2, total: 2, results: [], message: 'complete', updatedAt: 100 }];
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(history), { status: 200 }));
