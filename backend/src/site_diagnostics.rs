@@ -1366,6 +1366,19 @@ fn should_probe_sni(host: &str, direct: &DiagnosticStep) -> bool {
     host != "example.com" && host.parse::<IpAddr>().is_err() && direct.status == "error"
 }
 
+fn sni_skip_detail(host: &str, direct: &DiagnosticStep) -> String {
+    if direct.status == "ok" || direct.status == "warning" {
+        "Не нужно: сайт отвечает напрямую.".into()
+    } else if host == "example.com" {
+        "Не нужно: контрольное имя SNI совпадает с example.com.".into()
+    } else {
+        format!(
+            "Прямой запрос не выполнен ({}); сравнение SNI не запускалось.",
+            direct.detail
+        )
+    }
+}
+
 pub async fn diagnose(host: String, binary: String) -> DiagnosticReport {
     diagnose_with_progress(host, binary, |_| {}).await
 }
@@ -1555,11 +1568,7 @@ where
             Some(DiagnosticStep::new(
                 "sni",
                 "unavailable",
-                if direct.status == "ok" || direct.status == "warning" {
-                    "Не нужно: сайт отвечает напрямую."
-                } else {
-                    "Не нужно: контрольное имя SNI совпадает с example.com."
-                },
+                sni_skip_detail(&direct_host, &direct),
             ))
         };
         (direct, sni)
@@ -1783,6 +1792,12 @@ mod tests {
         assert!(should_probe_sni("example.org", &failed));
         assert!(!should_probe_sni("example.com", &failed));
         assert!(!should_probe_sni("192.0.2.1", &failed));
+
+        let unavailable = DiagnosticStep::new("direct", "unavailable", "curl недоступен");
+        assert_eq!(
+            sni_skip_detail("example.org", &unavailable),
+            "Прямой запрос не выполнен (curl недоступен); сравнение SNI не запускалось."
+        );
     }
 
     #[test]
