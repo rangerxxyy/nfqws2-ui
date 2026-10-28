@@ -17,6 +17,10 @@ export function configEditorViewportHeight(visibleRows: number): string {
   return `calc(${rows} * 1.25rem + 1rem)`;
 }
 
+export function isLargeConfigDocumentLength(length: number): boolean {
+  return length > 200_000;
+}
+
 export function sameConfigText(left: string, right: string): boolean {
   return left.replace(/\r\n?/g, '\n') === right.replace(/\r\n?/g, '\n');
 }

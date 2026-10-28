@@ -656,6 +656,7 @@ html.list-editor-fullscreen-open { overflow:hidden; }
 .config-code-editor { height:100%; min-width:0; }
 .config-code-editor-state { position:absolute !important; width:1px !important; height:1px !important; overflow:hidden !important; clip-path:inset(50%) !important; white-space:nowrap !important; }
 .config-code-editor .cm-editor { height:100%; }
+.config-editor-large .cm-gutters { display:none !important; }
 .config-argument-code-editor .cm-editor { min-height:4.5rem; max-height:14rem; }
 .config-argument-code-editor .cm-scroller { max-height:14rem; }
 .config-argument-code-editor .cm-content { padding:.5rem .75rem; }

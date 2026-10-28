@@ -2,12 +2,13 @@ import { basicSetup } from 'codemirror';
 import { EditorView, Decoration, ViewPlugin, placeholder, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { Compartment, EditorState, type Range } from '@codemirror/state';
 import { highlightConfigLine } from './config-syntax';
+import { isLargeConfigDocumentLength } from './config-values';
 
 let configView: EditorView | null = null;
 const wrapping = new Compartment();
 
 function tokenDecorations(view: EditorView): DecorationSet {
-  if (view.state.doc.length > 200_000) return Decoration.none;
+  if (isLargeConfigDocumentLength(view.state.doc.length)) return Decoration.none;
   const decorations: Range<Decoration>[] = [];
   const parser = new DOMParser();
   for (let lineNo = 1; lineNo <= view.state.doc.lines; lineNo += 1) {
@@ -49,7 +50,10 @@ function createCodeEditor(host: HTMLElement, initialValue: string, onChange: (va
     options.placeholderText ? placeholder(options.placeholderText) : [],
     EditorView.contentAttributes.of({ 'aria-label': options.ariaLabel ?? 'Редактор конфигурации nfqws2', 'aria-multiline': 'true' }),
     EditorView.updateListener.of((update) => {
-      if (update.docChanged) onChange(update.state.doc.toString());
+      if (update.docChanged) {
+        host.classList.toggle('config-editor-large', isLargeConfigDocumentLength(update.state.doc.length));
+        onChange(update.state.doc.toString());
+      }
       else if (update.selectionSet) host.dispatchEvent(new Event('configselection'));
     }),
     EditorView.theme({
@@ -63,6 +67,7 @@ function createCodeEditor(host: HTMLElement, initialValue: string, onChange: (va
       '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent-color, #60a5fa)' },
     }),
   ];
+  host.classList.toggle('config-editor-large', isLargeConfigDocumentLength(initialValue.length));
   return new EditorView({
     parent: host,
     state: EditorState.create({

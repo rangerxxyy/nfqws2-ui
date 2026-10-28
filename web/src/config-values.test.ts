@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { configAssignmentValue, configDraftDisposition, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
+import { configAssignmentValue, configDraftDisposition, configEditorLayout, configEditorViewportHeight, configOutlineEntries, isLargeConfigDocumentLength, sameConfigText } from './config-values';
+
+describe('isLargeConfigDocumentLength', () => {
+  it('switches to the plain editor mode only above the 200 KB threshold', () => {
+    expect(isLargeConfigDocumentLength(200_000)).toBe(false);
+    expect(isLargeConfigDocumentLength(200_001)).toBe(true);
+  });
+});
 
 describe('sameConfigText', () => {
   it('treats CRLF and LF line endings as equivalent', () => {

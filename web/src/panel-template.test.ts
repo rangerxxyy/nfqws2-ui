@@ -737,7 +737,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(codeEditorSource).toContain('lineWrapping');
     expect(codeEditorSource).toContain('syntaxPlugin');
     expect(codeEditorSource).toContain('.cm-selectionBackground');
-    expect(codeEditorSource).toContain('doc.length > 200_000');
+    expect(codeEditorSource).toContain('isLargeConfigDocumentLength(view.state.doc.length)');
+    expect(codeEditorSource).toContain("host.classList.toggle('config-editor-large'");
+    expect(panelStyles).toContain('.config-editor-large .cm-gutters { display:none !important; }');
     expect(appSource).not.toContain('confSyntaxHighlight');
     expect(panelSource).toContain('setConfigCodeEditorContent(value)');
     expect(panelSource).toContain('selectConfigText(start, end < 0 ? content.length : end, warning.line ?? undefined)');
