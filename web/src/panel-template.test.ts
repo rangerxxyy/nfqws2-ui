@@ -322,18 +322,24 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('offers detected ISP interfaces and a final manual-entry option', () => {
     expect(template).toContain('id="ispInterfaceSelect"');
+    expect(template).toContain('data-native-select="true"');
     expect(template).toContain('id="ispInterfaceManualInput"');
     expect(template).not.toContain('Интерфейсы не обнаружены; введите имя вручную.');
     expect(template).not.toContain('настроен, но не обнаружен');
-    expect(panelSource).toContain("new Option('Выберите интерфейс', '', !configured, false)");
+    expect(panelSource).toContain("new Option('Интерфейс не задан', '', !configured, true)");
     expect(panelSource).toContain('orderNetworkInterfaces(networkInterfaces, configured, defaultInterfaces)');
     expect(panelSource).toContain("new Option('Ввести имя вручную…', '__manual__')");
+    expect(template).toContain('data-action-click="submitIspInterfaceManually"');
+    expect(template).toContain('placeholder="Например, eth3 или pppoe-wan"');
+    expect(panelSource).toContain("$('#ispInterfaceManualInput')?.addEventListener('keydown'");
     expect(panelSource).toContain('handleIspInterfaceSelection');
     expect(panelSource).toContain('updateIspInterfaceManually');
     expect(template).not.toContain('text-slate-400">WAN</span>');
     expect(panelSource).toContain('isValidNetworkInterfaceSelection(value)');
     expect(backendSource).toContain('default_network_interfaces: default_network_interfaces(');
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
+    const editorInput = panelSource.slice(panelSource.indexOf("$('#nfqwsConfTextarea')?.addEventListener('input'"), panelSource.indexOf("$('#listEditorTextarea')?.addEventListener('keydown'"));
+    expect(editorInput).toContain('updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces)');
   });
 
   it('keeps the community page free of the fallback host field and empty-result card', () => {
@@ -1101,6 +1107,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toMatch(/\.diagnosis-live-checks \.diagnosis-row-metrics\s*\{[^}]*border-left\s*:\s*1px solid/);
   });
 
+  it('keeps the full final diagnosis checklist compact enough to reduce page scrolling', () => {
+    expect(panelStyles).toMatch(/\.diagnosis-results \.diagnosis-checks-header\s*\{[^}]*padding\s*:\s*\.7rem 1\.1rem/);
+    expect(panelStyles).toMatch(/\.diagnosis-results \.diagnosis-row\s*\{[^}]*padding\s*:\s*\.42rem 0/);
+    expect(panelStyles).toMatch(/\.diagnosis-results \.diagnosis-row-note\s*\{[^}]*line-height\s*:\s*1\.4/);
+  });
+
   it('styles checkbox inputs while keeping their native keyboard semantics', () => {
     expect(panelStyles).toContain('input[type="checkbox"] {');
     expect(panelStyles).toContain('input[type="checkbox"]:checked::before');
@@ -1152,6 +1164,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).not.toContain('selection:bg-blue-500/30');
     expect(appSource).not.toContain('selection:bg-blue-500/30');
     expect(entrySource).not.toContain('selection:bg-blue-500/30');
+  });
+
+  it('keeps the accent focus halo off text editors and line-number gutters', () => {
+    expect(panelStyles).toContain('.mobile-list-editor textarea:focus,');
+    expect(panelStyles).toContain('.config-argument-editor .config-argument-input:focus { border-color:transparent; box-shadow:none; }');
   });
 
   it('uses the selected accent for config editor caret and structure focus states', () => {
@@ -1586,6 +1603,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('appendPodkopWarning(results, operation.podkopHosts)');
     expect(panelStyles).toContain('.podkop-route-warning');
     expect(panelStyles).toContain('[data-theme="light"] .podkop-route-warning');
+  });
+
+  it('lets users expand added file and text configs in a scrollable preview', () => {
+    expect(panelSource).toContain('if (item.content !== undefined)');
+    expect(panelSource).toContain("'Раскрыть' : 'Свернуть'");
+    expect(panelSource).toContain('setAttribute(\'aria-expanded\', String(!preview.hidden))');
+    expect(panelSource).toContain('foreign-config-preview');
+    expect(panelStyles).toContain('.foreign-config-preview { max-height:10rem;');
+    expect(panelStyles).toContain('overflow:auto;');
   });
 
   it('polls the router-side trace operation and exposes graceful stop', () => {

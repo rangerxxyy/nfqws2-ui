@@ -84,6 +84,7 @@ let communityShareLookupTimer: number | null = null;
 let configScrollFramePending = false;
 type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
 let foreignConfigInputs: ForeignConfigInput[] = [];
+const expandedForeignConfigPreviews = new WeakSet<ForeignConfigInput>();
 let activeForeignConfigCheckId: string | null = null;
 let foreignConfigCheckRunning = false;
 let freezeScanRunning = false;
@@ -2418,13 +2419,15 @@ function updateQuickParameters(content: string, networkInterfaces: string[] = []
   const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
   if (interfaceSelect instanceof HTMLSelectElement) {
     const configured = configAssignmentValue(content, 'ISP_INTERFACE');
-    interfaceSelect.replaceChildren(new Option('Выберите интерфейс', '', !configured, false));
+    interfaceSelect.replaceChildren(new Option('Интерфейс не задан', '', !configured, true));
     if (configured.trim().split(/\s+/).filter(Boolean).length > 1) {
       interfaceSelect.add(new Option(`${configured} — задано в конфигурации`, configured));
     }
-    const defaultSet = new Set(defaultInterfaces);
+    const defaultSet = new Set(defaultInterfaces.filter((name) => name !== 'lo'));
     for (const name of orderNetworkInterfaces(networkInterfaces, configured, defaultInterfaces)) {
-      const label = defaultSet.has(name)
+      const label = name === 'lo'
+        ? `${name} — петлевой интерфейс`
+        : defaultSet.has(name)
         ? `${name} — маршрут по умолчанию`
         : !networkInterfaces.includes(name) && name === configured ? `${name} — задан в конфигурации` : name;
       interfaceSelect.add(new Option(label, name));
@@ -2499,6 +2502,11 @@ function handleIspInterfaceSelection(value: string) {
   }
   manualEntry.classList.add('hidden');
   void updateConfigVariable('ISP_INTERFACE', value);
+}
+function submitIspInterfaceManually() {
+  const input = $('#ispInterfaceManualInput');
+  if (!(input instanceof HTMLInputElement)) return;
+  void updateIspInterfaceManually(input.value);
 }
 async function updateIspInterfaceManually(value: string) {
   await updateConfigVariable('ISP_INTERFACE', value);
@@ -3306,14 +3314,35 @@ function renderForeignConfigInputs() {
     const empty = document.createElement('p'); empty.className = 'text-sm text-slate-500'; empty.textContent = 'Добавьте конфиги текстом, ссылками или файлами .conf/.txt.'; list.append(empty); return;
   }
   foreignConfigInputs.forEach((item, index) => {
-    const row = document.createElement('div'); row.className = 'flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/35 px-3 py-2';
+    const row = document.createElement('div'); row.className = 'min-w-0 rounded-lg border border-slate-800 bg-slate-950/35 px-3 py-2';
+    const header = document.createElement('div'); header.className = 'flex min-w-0 items-center justify-between gap-3';
     const title = document.createElement('div'); title.className = 'min-w-0';
     const name = document.createElement('strong'); name.className = 'block truncate text-sm text-slate-200'; name.textContent = item.name;
     const source = document.createElement('span'); source.className = 'block truncate text-[11px] text-slate-500'; source.textContent = item.source === 'Ссылка' ? item.url ?? '' : `${item.source} · ${new TextEncoder().encode(item.content ?? '').length} байт`;
     title.append(name, source);
+    const actions = document.createElement('div'); actions.className = 'flex shrink-0 items-center gap-1.5';
+    if (item.content !== undefined) {
+      const preview = document.createElement('pre'); preview.className = 'foreign-config-preview'; preview.hidden = !expandedForeignConfigPreviews.has(item); preview.textContent = item.content;
+      const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-slate-500 hover:text-white'; toggle.textContent = preview.hidden ? 'Показать' : 'Скрыть';
+      toggle.setAttribute('aria-expanded', String(!preview.hidden));
+      toggle.setAttribute('aria-label', `${preview.hidden ? 'Раскрыть' : 'Свернуть'} конфиг ${item.name}`);
+      toggle.addEventListener('click', () => {
+        preview.hidden = !preview.hidden;
+        if (preview.hidden) expandedForeignConfigPreviews.delete(item);
+        else expandedForeignConfigPreviews.add(item);
+        toggle.textContent = preview.hidden ? 'Показать' : 'Скрыть';
+        toggle.setAttribute('aria-expanded', String(!preview.hidden));
+        toggle.setAttribute('aria-label', `${preview.hidden ? 'Раскрыть' : 'Свернуть'} конфиг ${item.name}`);
+      });
+      actions.append(toggle);
+      row.append(header, preview);
+    }
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'shrink-0 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-rose-400 hover:text-rose-200'; remove.textContent = 'Убрать';
     remove.addEventListener('click', () => { foreignConfigInputs.splice(index, 1); renderForeignConfigInputs(); });
-    row.append(title, remove); list.append(row);
+    actions.append(remove);
+    header.append(title, actions);
+    if (item.content === undefined) row.append(header);
+    list.append(row);
   });
 }
 
@@ -4793,6 +4822,7 @@ function bindPrototypeActions() {
     copyConfigText: () => void copyConfigText(),
     updateConfVariable: (key: string, value: string) => void updateConfigVariable(key, value),
     selectIspInterface: (value: string) => handleIspInterfaceSelection(value),
+    submitIspInterfaceManually: () => submitIspInterfaceManually(),
     updateIspInterfaceManually: (value: string) => void updateIspInterfaceManually(value),
     copySnippetToClipboard: (value: string | HTMLButtonElement) => void (async () => {
       const button = value instanceof HTMLButtonElement ? value : null;
@@ -4969,7 +4999,12 @@ function boot() {
     syncConfigLines();
     renderConfigOutline();
     const editor = $('#nfqwsConfTextarea');
-    if (editor instanceof HTMLTextAreaElement) updateQuickParameters(editor.value);
+    if (editor instanceof HTMLTextAreaElement) updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces);
+  });
+  $('#ispInterfaceManualInput')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    submitIspInterfaceManually();
   });
   $('#listEditorTextarea')?.addEventListener('keydown', (event) => {
     const shortcut = event as KeyboardEvent;

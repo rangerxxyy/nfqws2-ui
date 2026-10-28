@@ -811,6 +811,12 @@ html.list-editor-fullscreen-open { overflow:hidden; }
   border-color: var(--accent-border,#60a5fa);
   box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent-color,#3b82f6) 18%,transparent);
 }
+/* Text editors already have a visible frame; avoid drawing the generic focus halo
+   over the line-number gutter when selecting or editing text. */
+.mobile-list-editor textarea:focus,
+.mobile-code-editor .conf-editor-input:focus,
+.config-argument-editor .config-argument-input:focus { border-color:transparent; box-shadow:none; }
+.foreign-config-preview { max-height:10rem; margin:.55rem 0 0; overflow:auto; border:1px solid var(--border-subtle,#263247); border-radius:.5rem; background:var(--surface-base,#060a12); padding:.55rem .65rem; color:var(--text-secondary,#cbd5e1); font: .72rem/1.45 var(--font-mono,ui-monospace,monospace); white-space:pre; tab-size:4; }
 :where(button, a, summary) {
   transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease, border-color var(--dur-fast) ease,
     box-shadow var(--dur-fast) ease, opacity var(--dur-fast) ease, transform var(--dur-fast) var(--ease-out);
@@ -1767,6 +1773,11 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 .list-toolbar-menu > summary:hover,.list-toolbar-menu[open] > summary { border-color:#3b82f6; background:#172554; color:#dbeafe; }
 .list-toolbar-menu-items { position:absolute; top:calc(100% + .35rem); right:0; z-index:40; display:grid; min-width:13rem; gap:.35rem; border:1px solid #334155; border-radius:.7rem; background:#0b101b; padding:.5rem; box-shadow:0 12px 36px #0009; }
 .list-toolbar-menu-items button { text-align:left; }
+.diagnosis-results .diagnosis-checks-header { padding:.7rem 1.1rem; }
+.diagnosis-results .diagnosis-row { padding:.42rem 0; }
+.diagnosis-results .diagnosis-row-detail { line-height:1.4; }
+.diagnosis-results .diagnosis-row-metrics { line-height:1.3; }
+.diagnosis-results .diagnosis-row-note { margin-top:.2rem; line-height:1.4; }
 @media (min-width:768px) {
   .list-editor-toolbar-actions { flex-wrap:nowrap; gap:.3rem; }
    .list-editor-toolbar-actions > button:not(.config-editor-icon-button) { white-space:nowrap; padding:.45rem .55rem; font-size:.75rem; }

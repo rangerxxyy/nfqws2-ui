@@ -58,9 +58,9 @@ const MAX_CONFIG_BYTES: usize = 512 * 1024;
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
-const UI_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
+const UI_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 const UI_RELEASE_ERROR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-const CORE_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
+const CORE_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 const CORE_RELEASE_ERROR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CONFIG_APPLY_MONITOR_BASELINE_TTL: std::time::Duration =
     std::time::Duration::from_secs(4 * 60 * 60);
@@ -69,6 +69,7 @@ const GITHUB_RELEASES_API: &str =
     "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=10";
 const NFQWS2_RELEASES_API: &str =
     "https://api.github.com/repos/nfqws/nfqws2-keenetic/releases?per_page=10";
+const GITHUB_API_FALLBACKS: [&str; 2] = ["https://gh-proxy.com/", "https://ghfast.top/"];
 static UPDATE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn github_wget_candidates() -> [&'static str; 2] {
@@ -424,7 +425,13 @@ struct SupportReportRequest {
 
 struct SupportReportData {
     platform: String,
+    architecture: String,
     service_state: String,
+    core_version: Option<String>,
+    memory_used_bytes: Option<u64>,
+    memory_total_bytes: Option<u64>,
+    cpu_percent: Option<f64>,
+    interception_status: String,
     running_profiles: usize,
     monitored_sites: Vec<String>,
     monitoring_enabled: bool,
@@ -439,11 +446,31 @@ fn format_support_report(data: &SupportReportData) -> String {
     } else {
         format!("Сайты мониторинга: {}", data.monitored_sites.join(", "))
     };
+    let core_version = data.core_version.as_deref().unwrap_or("не определена");
+    let memory = match (data.memory_used_bytes, data.memory_total_bytes) {
+        (Some(used), Some(total)) => format!(
+            "{} / {} MiB",
+            used.saturating_add(512 * 1024) / (1024 * 1024),
+            total.saturating_add(512 * 1024) / (1024 * 1024)
+        ),
+        _ => "нет данных".to_owned(),
+    };
+    let cpu = data
+        .cpu_percent
+        .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+        .map(|value| format!("{value:.1}%"))
+        .unwrap_or_else(|| "нет данных".to_owned());
     format!(
-        "Отчёт для помощи · nfqws2-UI {}\nПлатформа: {}\nСлужба nfqws2: {}\nАктивных профилей: {}\nСтатическая проверка конфига: ошибок {}, предупреждений {}\nСписков: {}\nМониторинг: {}\n{}\n\nСодержимое конфига и списков, токен Telegram и подробный вывод команд в отчёт не включены. Сетевая проверка не запускалась.",
+        "Отчёт для помощи · nfqws2-UI {}\nПлатформа: {}\nАрхитектура: {}\nПанель: {}\nСлужба nfqws2: {}\nВерсия nfqws2: {}\nПамять: {}\nЗагрузка CPU: {}\nПравила перехвата: {}\nАктивных профилей: {}\nСтатическая проверка конфига: ошибок {}, предупреждений {}\nСписков: {}\nМониторинг: {}\n{}\n\nСодержимое конфига и списков, токен Telegram и подробный вывод команд в отчёт не включены. Сетевая проверка не запускалась.",
         env!("CARGO_PKG_VERSION"),
         data.platform,
+        data.architecture,
+        env!("CARGO_PKG_VERSION"),
         data.service_state,
+        core_version,
+        memory,
+        cpu,
+        data.interception_status,
         data.running_profiles,
         data.config_errors,
         data.config_warnings,
@@ -4061,7 +4088,40 @@ async fn spawn_github_wget_with_candidates(
     }))
 }
 
+fn github_release_api_candidates(url: &str) -> Vec<String> {
+    if !url.starts_with("https://api.github.com/repos/") {
+        return vec![url.to_owned()];
+    }
+    std::iter::once(url.to_owned())
+        .chain(
+            GITHUB_API_FALLBACKS
+                .iter()
+                .map(|proxy| format!("{proxy}{url}")),
+        )
+        .collect()
+}
+
 async fn fetch_github_url(url: &'static str) -> Result<String, String> {
+    let mut last_error = None;
+    for (index, candidate) in github_release_api_candidates(url).iter().enumerate() {
+        match fetch_github_url_once(candidate).await {
+            Ok(json) => {
+                if serde_json::from_str::<Vec<serde_json::Value>>(&json).is_err() {
+                    last_error = Some("GitHub Releases вернул некорректный JSON".to_owned());
+                    continue;
+                }
+                if index > 0 {
+                    tracing::warn!("GitHub Releases API responded through fallback route {index}");
+                }
+                return Ok(json);
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "GitHub Releases недоступен".into()))
+}
+
+async fn fetch_github_url_once(url: &str) -> Result<String, String> {
     let mut child = spawn_github_wget(url)
         .await
         .map_err(|error| format!("Не удалось запустить wget: {error}"))?;
@@ -4749,30 +4809,16 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
     let (service_state, detail) = service_status().await;
     let interception = cached_interception_status(&state, service_state).await;
     let core_version = installed_core_version(&state).await;
-    let meminfo = tokio::fs::read_to_string("/proc/meminfo").await.ok();
-    let (memory_used_bytes, memory_total_bytes) = meminfo
-        .as_deref()
-        .and_then(memory_usage_bytes)
-        .map_or((None, None), |(used, total)| (Some(used), Some(total)));
-    let cpu_percent = cpu_sample(&state).await;
-    let system = cached_keenetic_system_stats(&state)
-        .await
-        .unwrap_or(SystemInfo {
-            memory_total_bytes,
-            memory_used_bytes,
-            cpu_percent,
-            source: "proc",
-        });
+    let system = current_system_info(&state).await;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let checked_at = now;
     Json(StatusResponse {
         service: ServiceInfo {
             state: service_state,
             detail,
-            checked_at,
+            checked_at: now,
             version: core_version,
         },
         system,
@@ -4783,6 +4829,23 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
         interception,
     })
     .into_response()
+}
+
+async fn current_system_info(state: &AppState) -> SystemInfo {
+    let meminfo = tokio::fs::read_to_string("/proc/meminfo").await.ok();
+    let (memory_used_bytes, memory_total_bytes) = meminfo
+        .as_deref()
+        .and_then(memory_usage_bytes)
+        .map_or((None, None), |(used, total)| (Some(used), Some(total)));
+    let cpu_percent = cpu_sample(state).await;
+    cached_keenetic_system_stats(state)
+        .await
+        .unwrap_or(SystemInfo {
+            memory_total_bytes,
+            memory_used_bytes,
+            cpu_percent,
+            source: "proc",
+        })
 }
 
 async fn installed_core_version(state: &AppState) -> Option<String> {
@@ -4851,13 +4914,27 @@ async fn build_support_report(
         })
         .unwrap_or("не определена")
         .to_owned();
-    let service_state = match service_status().await.0 {
+    let service_state_value = service_status().await.0;
+    let service_state = match service_state_value {
         ServiceState::Running => "запущена",
         ServiceState::Stopped => "остановлена",
         ServiceState::Error => "ошибка",
         ServiceState::Unknown => "неизвестно",
     }
     .to_owned();
+    let core_version = installed_core_version(&state).await;
+    let system = current_system_info(&state).await;
+    let interception = cached_interception_status(&state, service_state_value).await;
+    let interception_status = match interception {
+        Some(status) if status.missing_hooks.is_empty() => "цепочки подключены".to_owned(),
+        Some(status) => format!("нет переходов: {}", status.missing_hooks.join(", ")),
+        None if service_state_value != ServiceState::Running => {
+            "проверка пропущена: служба не запущена".to_owned()
+        }
+        None => {
+            "не подтверждено: проверка недоступна или правила недавно перестраивались".to_owned()
+        }
+    };
     let running_profiles = active_process_snapshot()
         .map(|(_, args)| runtime_profiles(&args).len())
         .unwrap_or(0);
@@ -4909,7 +4986,13 @@ async fn build_support_report(
     let monitored_sites = support_site_labels(&monitoring.sites, request.hide_site_names);
     let report = format_support_report(&SupportReportData {
         platform,
+        architecture: std::env::consts::ARCH.to_owned(),
         service_state,
+        core_version,
+        memory_used_bytes: system.memory_used_bytes,
+        memory_total_bytes: system.memory_total_bytes,
+        cpu_percent: system.cpu_percent,
+        interception_status,
         running_profiles,
         monitored_sites,
         monitoring_enabled: monitoring.enabled,
@@ -15442,6 +15525,32 @@ mod tests {
     }
 
     #[test]
+    fn support_report_summarizes_router_resources_core_and_interception() {
+        let report = format_support_report(&SupportReportData {
+            platform: "Keenetic / Entware".into(),
+            architecture: "aarch64".into(),
+            service_state: "запущена".into(),
+            core_version: Some("1.3.2".into()),
+            memory_used_bytes: Some(256 * 1024 * 1024),
+            memory_total_bytes: Some(512 * 1024 * 1024),
+            cpu_percent: Some(12.5),
+            interception_status: "цепочки подключены".into(),
+            running_profiles: 3,
+            monitored_sites: vec!["сайт-1".into()],
+            monitoring_enabled: true,
+            config_errors: 0,
+            config_warnings: 2,
+            lists_count: 4,
+        });
+
+        assert!(report.contains("Архитектура: aarch64"));
+        assert!(report.contains("Версия nfqws2: 1.3.2"));
+        assert!(report.contains("Память: 256 / 512 MiB"));
+        assert!(report.contains("Загрузка CPU: 12.5%"));
+        assert!(report.contains("Правила перехвата: цепочки подключены"));
+    }
+
+    #[test]
     fn foreign_config_request_limits_match_zemidala() {
         assert!(validate_foreign_config_counts(1, 1).is_ok());
         assert!(validate_foreign_config_counts(10, 15).is_ok());
@@ -17489,7 +17598,28 @@ mod tests {
     }
 
     #[test]
-    fn ui_release_cache_expires_after_twelve_hours_and_backs_off_errors_for_ten_minutes() {
+    fn update_release_catalogs_refresh_every_four_hours_and_have_proxy_fallbacks() {
+        let expected = std::time::Duration::from_secs(4 * 60 * 60);
+        assert_eq!(UI_RELEASE_CACHE_TTL, expected);
+        assert_eq!(CORE_RELEASE_CACHE_TTL, expected);
+
+        let direct = "https://api.github.com/repos/example/project/releases?per_page=10";
+        assert_eq!(
+            github_release_api_candidates(direct),
+            vec![
+                direct.to_owned(),
+                format!("https://gh-proxy.com/{direct}"),
+                format!("https://ghfast.top/{direct}"),
+            ]
+        );
+        assert_eq!(
+            github_release_api_candidates("https://example.com/releases"),
+            vec!["https://example.com/releases"]
+        );
+    }
+
+    #[test]
+    fn ui_release_cache_expires_after_four_hours_and_backs_off_errors_for_ten_minutes() {
         let now = 2_000_000_000_u64;
         let entry = UiReleaseCacheEntry {
             checked_at: now - UI_RELEASE_CACHE_TTL.as_secs(),
@@ -17614,7 +17744,7 @@ mod tests {
     }
 
     #[test]
-    fn core_release_status_cache_expires_after_twelve_hours_and_is_architecture_scoped() {
+    fn core_release_status_cache_expires_after_four_hours_and_is_architecture_scoped() {
         let now = 2_000_000_000_u64;
         let entry = CoreReleaseCacheEntry {
             checked_at: now - CORE_RELEASE_CACHE_TTL.as_secs(),

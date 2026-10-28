@@ -23,15 +23,21 @@ describe('network interface names', () => {
     expect(isValidNetworkInterfaceSelection(Array.from({ length: 17 }, (_, index) => `eth${index}`).join(' '))).toBe(false);
   });
 
-  it('puts the configured interface and detected default-route uplinks first without inventing options', () => {
+  it('puts detected default-route uplinks before the current interface without inventing options', () => {
     const order = (networkInterface as unknown as { orderNetworkInterfaces?: (names: string[], configured?: string, defaults?: string[]) => string[] }).orderNetworkInterfaces;
     expect(order).toBeTypeOf('function');
     expect(order?.(['wlan0', 'br-lan', 'eth3', 'wg0', 'ppp0', 'eth0', 'eth1'], 'eth3', ['ppp0']))
-      .toEqual(['eth3', 'ppp0', 'eth0', 'eth1', 'br-lan', 'wg0', 'wlan0']);
+      .toEqual(['ppp0', 'eth3', 'eth0', 'eth1', 'br-lan', 'wg0', 'wlan0']);
     expect(order?.(['eth0', 'eth3', 'wan'], '', ['eth3']))
       .toEqual(['eth3', 'eth0', 'wan']);
     expect(order?.(['eth0', 'eth3', 'ppp0'], 'eth3 ppp0', ['eth0']))
-      .toEqual(['eth3', 'ppp0', 'eth0']);
+      .toEqual(['eth0', 'eth3', 'ppp0']);
     expect(order?.([], 'eth3')).toEqual(['eth3']);
+  });
+
+  it('does not offer loopback as a provider interface or mark it as an internet route', () => {
+    const order = (networkInterface as unknown as { orderNetworkInterfaces?: (names: string[], configured?: string, defaults?: string[]) => string[] }).orderNetworkInterfaces;
+    expect(order?.(['lo', 'eth3', 'pppoe-wan'], '', ['lo', 'eth3'])).toEqual(['eth3', 'pppoe-wan']);
+    expect(order?.(['lo', 'eth3'], 'lo', ['lo', 'eth3'])).toEqual(['eth3', 'lo']);
   });
 });
