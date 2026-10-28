@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { freezeMeasurementDetails, freezeRowPresentation, freezeCanApplyToHost, freezeCanOfferProfileJoin } from './freeze-presentation';
+import { freezeInConfigNote, freezeMeasurementDetails, freezeRowPresentation, freezeCanApplyToHost, freezeCanOfferProfileJoin } from './freeze-presentation';
 
 describe('freeze scan row presentation', () => {
   it('keeps direct and nfqws2 measurements available in one compact disclosure', () => {
@@ -16,6 +16,22 @@ describe('freeze scan row presentation', () => {
 
   it('keeps inconclusive and pending results neutral', () => {
     expect(freezeRowPresentation({ freezeDetected: false, foundStrategy: null, directOk: false, currentOk: true }).tone).toBe('neutral');
+  });
+
+  it('shows the active profile and suppresses duplicate application only for a confirmed route', () => {
+    const working = { state: 'working' as const, profiles: [{ index: 2, name: 'Video' }], route: { index: 2, name: 'Video' }, why: null };
+    expect(freezeInConfigNote(working)).toBe('Уже работает: профиль #2 «Video» принимает этот адрес с найденной стратегией.');
+    expect(freezeRowPresentation({ freezeDetected: true, foundStrategy: {}, directOk: false, currentOk: false, inConf: working }).label).toBe('Стратегия уже работает');
+    expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 }, inConfState: 'working' })).toBe(false);
+    expect(freezeCanApplyToHost({ state: 'complete', targetKind: 'user_host', freezeDetected: true, foundStrategy: { attempts: 3, successes: 3 }, inConfState: 'elsewhere' })).toBe(true);
+  });
+
+  it('explains when the same strategy exists but the route differs or cannot be proven', () => {
+    expect(freezeInConfigNote({ state: 'elsewhere', profiles: [{ index: 3, name: 'Video' }], route: { index: 1, name: 'General' }, why: 'профиль #1 перехватывает адрес' }))
+      .toBe('Найденный шаг есть в профиле #3 «Video», но сейчас адрес принимает профиль #1 «General»: профиль #1 перехватывает адрес.');
+    expect(freezeInConfigNote({ state: 'unknown', profiles: [], route: null, why: 'список недоступен' }))
+      .toBe('Маршрут не подтверждён: список недоступен.');
+    expect(freezeInConfigNote({ state: 'not_present', profiles: [], route: null, why: null })).toBeNull();
   });
 
   it('reports an incomplete POST separately from a 16 KB transfer interruption', () => {

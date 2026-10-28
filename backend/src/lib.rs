@@ -180,6 +180,42 @@ pub fn network_interface_names(sys_class_net: &std::path::Path) -> Vec<String> {
     names
 }
 
+pub fn default_network_interfaces(ipv4_routes: &str, ipv6_routes: &str) -> Vec<String> {
+    let mut routes = Vec::<(usize, u64, usize, String)>::new();
+    for (line_index, line) in ipv4_routes.lines().enumerate().skip(1) {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 7 || fields[1] != "00000000" {
+            continue;
+        }
+        let flags = u16::from_str_radix(fields[3], 16).unwrap_or_default();
+        if flags & 1 == 0 {
+            continue;
+        }
+        let metric = u64::from_str_radix(fields[6], 16).unwrap_or(u64::MAX);
+        routes.push((0, metric, line_index, fields[0].to_owned()));
+    }
+    for (line_index, line) in ipv6_routes.lines().enumerate() {
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() < 10 || !fields[0].bytes().all(|byte| byte == b'0') || fields[1] != "00" {
+            continue;
+        }
+        let flags = u32::from_str_radix(fields[8], 16).unwrap_or_default();
+        if flags & 1 == 0 {
+            continue;
+        }
+        let metric = u64::from_str_radix(fields[5], 16).unwrap_or(u64::MAX);
+        routes.push((1, metric, line_index, fields[9].to_owned()));
+    }
+    routes.sort_by_key(|(family, metric, line_index, _)| (*family, *metric, *line_index));
+    let mut interfaces = Vec::new();
+    for (_, _, _, interface) in routes {
+        if !interface.is_empty() && !interfaces.contains(&interface) {
+            interfaces.push(interface);
+        }
+    }
+    interfaces
+}
+
 pub fn process_matches(pid: u32, cmdline: &[u8], expected_binaries: &[&str]) -> bool {
     if pid == 0 || cmdline.is_empty() {
         return false;
@@ -404,6 +440,17 @@ mod tests {
 
         assert_eq!(network_interface_names(root.path()), ["br-lan", "wan0"]);
         assert!(network_interface_names(&root.path().join("missing")).is_empty());
+    }
+
+    #[test]
+    fn default_interface_discovery_orders_real_ipv4_and_ipv6_default_routes_by_metric() {
+        let ipv4 = "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\nwan0 00000000 0100000A 0003 0 0 00000014 00000000 0 0 0\neth0 00000000 0100000A 0003 0 0 00000005 00000000 0 0 0\nlan0 0000010A 00000000 0001 0 0 00000000 00FFFFFF 0 0 0\neth1 00000000 0100000A 0000 0 0 00000001 00000000 0 0 0\n";
+        let ipv6 = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 00000000000000000000000000000000 00000001 00000000 00000000 00000001 ppp0\n";
+        assert_eq!(
+            default_network_interfaces(ipv4, ipv6),
+            ["eth0", "wan0", "ppp0"]
+        );
+        assert!(default_network_interfaces("", "").is_empty());
     }
 
     #[test]

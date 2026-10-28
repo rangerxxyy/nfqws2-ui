@@ -305,7 +305,7 @@ fn is_joinable_target(
         })
 }
 
-fn normalize_strategy_step(step: &str) -> Option<String> {
+pub fn normalize_strategy_step(step: &str) -> Option<String> {
     let value = step.strip_prefix("--lua-desync=")?;
     if value.is_empty() || value.chars().any(char::is_whitespace) {
         return None;
@@ -344,53 +344,203 @@ fn normalize_strategy_step(step: &str) -> Option<String> {
     Some(normalized)
 }
 
-fn profile_may_match_address(
+pub fn first_matching_profile(
+    profiles: &[RuntimeProfile],
+    tested_host: &str,
+    tested_ip: IpAddr,
+    list_contents: &HashMap<String, String>,
+) -> Result<Option<usize>, String> {
+    for profile in profiles {
+        match profile_may_match_address(profile, tested_host, tested_ip, list_contents) {
+            Some(true) => return Ok(Some(profile.index)),
+            Some(false) => {}
+            None => {
+                return Err(format!(
+                    "не удалось однозначно проверить профиль #{} «{}»",
+                    profile.index, profile.name
+                ));
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub fn profile_exclusion_reason(
+    profile: &RuntimeProfile,
+    tested_host: &str,
+    tested_ip: IpAddr,
+    list_contents: &HashMap<String, String>,
+) -> Option<String> {
+    if profile
+        .args
+        .iter()
+        .any(|argument| argument.starts_with("--autohostlist"))
+        || !profile_matches_tls_443(&profile.args)
+        || !profile_include_matches(profile, tested_host, tested_ip, list_contents)?
+    {
+        return None;
+    }
+    for (flag, inline_flag, ip_list) in [
+        ("--ipset-exclude", "--ipset-exclude-ip", true),
+        ("--hostlist-exclude", "--hostlist-exclude-domains", false),
+    ] {
+        for path in option_values(&profile.args, flag)? {
+            let content = list_contents.get(path)?;
+            if content.lines().any(|line| {
+                crate::site_diagnostics::list_entry_matches(
+                    tested_host,
+                    &[tested_ip],
+                    line,
+                    ip_list,
+                )
+            }) {
+                return Some(format!("{flag}={path}"));
+            }
+        }
+        if inline_list_matches(&profile.args, inline_flag, tested_host, tested_ip, ip_list)? {
+            let value = option_values(&profile.args, inline_flag)?
+                .into_iter()
+                .flat_map(|value| value.split(','))
+                .find(|value| {
+                    crate::site_diagnostics::list_entry_matches(
+                        tested_host,
+                        &[tested_ip],
+                        value,
+                        ip_list,
+                    )
+                })?;
+            return Some(format!("{inline_flag}={value}"));
+        }
+    }
+    None
+}
+
+pub fn profile_may_match_address(
     profile: &RuntimeProfile,
     tested_host: &str,
     tested_ip: IpAddr,
     list_contents: &HashMap<String, String>,
 ) -> Option<bool> {
-    if profile.args.iter().any(|argument| {
-        argument.starts_with("--autohostlist")
-            || argument.starts_with("--ipset-ip")
-            || argument.starts_with("--ipset-exclude")
-            || argument.starts_with("--hostlist-exclude")
-    }) {
+    if profile
+        .args
+        .iter()
+        .any(|argument| argument.starts_with("--autohostlist"))
+    {
         return None;
     }
     if !profile_matches_tls_443(&profile.args) {
         return Some(false);
     }
+    if !profile_include_matches(profile, tested_host, tested_ip, list_contents)? {
+        return Some(false);
+    }
+    for (flag, inline_flag, ip_list) in [
+        ("--ipset-exclude", "--ipset-exclude-ip", true),
+        ("--hostlist-exclude", "--hostlist-exclude-domains", false),
+    ] {
+        for path in option_values(&profile.args, flag)? {
+            let content = list_contents.get(path)?;
+            if content.lines().any(|line| {
+                crate::site_diagnostics::list_entry_matches(
+                    tested_host,
+                    &[tested_ip],
+                    line,
+                    ip_list,
+                )
+            }) {
+                return Some(false);
+            }
+        }
+        if inline_list_matches(&profile.args, inline_flag, tested_host, tested_ip, ip_list)? {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+fn profile_include_matches(
+    profile: &RuntimeProfile,
+    tested_host: &str,
+    tested_ip: IpAddr,
+    list_contents: &HashMap<String, String>,
+) -> Option<bool> {
     let ipsets = option_values(&profile.args, "--ipset")?;
     let hostlists = option_values(&profile.args, "--hostlist")?;
-    if ipsets.is_empty() && hostlists.is_empty() {
-        return None;
+    let ipset_ips = option_values(&profile.args, "--ipset-ip")?;
+    let hostlist_domains = option_values(&profile.args, "--hostlist-domains")?;
+    let hostlist_auto = option_values(&profile.args, "--hostlist-auto")?;
+    let has_ip_filter = !ipsets.is_empty() || !ipset_ips.is_empty();
+    let has_host_filter =
+        !hostlists.is_empty() || !hostlist_domains.is_empty() || !hostlist_auto.is_empty();
+    let ip_matches = if has_ip_filter {
+        paths_match(ipsets, tested_host, tested_ip, true, list_contents)?
+            || inline_list_matches(&profile.args, "--ipset-ip", tested_host, tested_ip, true)?
+    } else {
+        true
+    };
+    if !ip_matches {
+        return Some(false);
     }
-    let ip_matches = if ipsets.is_empty() {
-        true
-    } else {
-        let mut found = false;
-        for path in ipsets {
-            let content = list_contents.get(path)?;
-            found |= content.lines().any(|line| {
-                crate::site_diagnostics::list_entry_matches(tested_host, &[tested_ip], line, true)
-            });
+    if !has_host_filter {
+        return Some(true);
+    }
+    let host_is_ip = tested_host.parse::<IpAddr>().is_ok();
+    if !hostlist_auto.is_empty() && !host_is_ip {
+        return Some(true);
+    }
+    let host_matches = paths_match(hostlists, tested_host, tested_ip, false, list_contents)?
+        || inline_list_matches(
+            &profile.args,
+            "--hostlist-domains",
+            tested_host,
+            tested_ip,
+            false,
+        )?;
+    Some(host_matches)
+}
+
+fn paths_match(
+    paths: Vec<&str>,
+    tested_host: &str,
+    tested_ip: IpAddr,
+    ip_list: bool,
+    list_contents: &HashMap<String, String>,
+) -> Option<bool> {
+    let mut found = false;
+    for path in paths {
+        let content = list_contents.get(path)?;
+        found |= content.lines().any(|line| {
+            crate::site_diagnostics::list_entry_matches(tested_host, &[tested_ip], line, ip_list)
+        });
+    }
+    Some(found)
+}
+
+fn inline_list_matches(
+    args: &[String],
+    flag: &str,
+    tested_host: &str,
+    tested_ip: IpAddr,
+    ip_list: bool,
+) -> Option<bool> {
+    let mut found = false;
+    for value in option_values(args, flag)? {
+        if value.is_empty() {
+            return None;
         }
-        found
-    };
-    let host_matches = if hostlists.is_empty() {
-        true
-    } else {
-        let mut found = false;
-        for path in hostlists {
-            let content = list_contents.get(path)?;
-            found |= content.lines().any(|line| {
-                crate::site_diagnostics::list_entry_matches(tested_host, &[], line, false)
-            });
+        for entry in value.split(',') {
+            if entry.is_empty() {
+                return None;
+            }
+            found |= crate::site_diagnostics::list_entry_matches(
+                tested_host,
+                &[tested_ip],
+                entry,
+                ip_list,
+            );
         }
-        found
-    };
-    Some(ip_matches && host_matches)
+    }
+    Some(found)
 }
 
 fn option_values<'a>(args: &'a [String], option: &str) -> Option<Vec<&'a str>> {
@@ -471,7 +621,8 @@ mod tests {
 
     use super::{
         address_is_in_prefixes, build_joined_config, create_list_exclusive, find_joinable_profile,
-        normalize_strategy_step, parse_announced_prefixes,
+        first_matching_profile, normalize_strategy_step, parse_announced_prefixes,
+        profile_exclusion_reason,
     };
 
     #[test]
@@ -606,6 +757,118 @@ mod tests {
             find_joinable_profile(&two_matches, "example.com", ip, step, &lists).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn first_matching_profile_respects_order_and_unrestricted_tls_profiles() {
+        let ip = "203.0.113.15".parse().unwrap();
+        let config = profile_config(
+            "--filter-tcp=443 --ipset=lists/first.list --lua-desync=fake:blob=first --new=second --filter-tcp=443 --ipset=lists/second.list --lua-desync=fake:blob=second",
+        );
+        let profiles = crate::runtime_profiles::from_config(&config, "route").unwrap();
+        let lists = HashMap::from([
+            ("lists/first.list".into(), "192.0.2.0/24\n".into()),
+            ("lists/second.list".into(), "203.0.113.0/24\n".into()),
+        ]);
+        assert_eq!(
+            first_matching_profile(&profiles.profiles, "example.com", ip, &lists).unwrap(),
+            Some(2)
+        );
+
+        let broad = profile_config(
+            "--filter-tcp=443 --filter-l7=tls --lua-desync=fake:blob=catchall --new=second --filter-tcp=443 --ipset=lists/second.list --lua-desync=fake:blob=second",
+        );
+        let profiles = crate::runtime_profiles::from_config(&broad, "route").unwrap();
+        assert_eq!(
+            first_matching_profile(&profiles.profiles, "example.com", ip, &lists).unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn first_matching_profile_applies_known_exclusions_and_refuses_unreadable_lists() {
+        let ip = "203.0.113.15".parse().unwrap();
+        let config = profile_config(
+            "--filter-tcp=443 --ipset-exclude=lists/excluded.list --lua-desync=fake:blob=first --new=second --filter-tcp=443 --ipset=lists/second.list --lua-desync=fake:blob=second",
+        );
+        let profiles = crate::runtime_profiles::from_config(&config, "route").unwrap();
+        let lists = HashMap::from([
+            ("lists/excluded.list".into(), "203.0.113.0/24\n".into()),
+            ("lists/second.list".into(), "203.0.113.0/24\n".into()),
+        ]);
+        assert_eq!(
+            first_matching_profile(&profiles.profiles, "example.com", ip, &lists).unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            profile_exclusion_reason(&profiles.profiles[0], "example.com", ip, &lists),
+            Some("--ipset-exclude=lists/excluded.list".into())
+        );
+
+        let host_config = profile_config(
+            "--filter-tcp=443 --hostlist-exclude=lists/blocked.list --lua-desync=fake:blob=first",
+        );
+        let host_profiles = crate::runtime_profiles::from_config(&host_config, "route").unwrap();
+        let host_lists = HashMap::from([("lists/blocked.list".into(), "example.com\n".into())]);
+        assert_eq!(
+            profile_exclusion_reason(
+                &host_profiles.profiles[0],
+                "www.example.com",
+                ip,
+                &host_lists
+            ),
+            Some("--hostlist-exclude=lists/blocked.list".into())
+        );
+
+        let missing = profile_config(
+            "--filter-tcp=443 --ipset-exclude=lists/missing.list --lua-desync=fake:blob=first",
+        );
+        let missing = crate::runtime_profiles::from_config(&missing, "route").unwrap();
+        assert!(first_matching_profile(&missing.profiles, "example.com", ip, &lists).is_err());
+    }
+
+    #[test]
+    fn route_matching_supports_inline_ip_domains_exclusions_and_auto_lists() {
+        let ip = "203.0.113.8".parse().unwrap();
+        for args in [
+            "--filter-tcp=443 --ipset-ip=203.0.113.4-203.0.113.20 --lua-desync=fake:blob=first",
+            "--filter-tcp=443 --hostlist-domains=video.example,other.example --lua-desync=fake:blob=first",
+            "--filter-tcp=443 --hostlist-auto=lists/auto.list --lua-desync=fake:blob=first",
+        ] {
+            let config = profile_config(args);
+            let profiles = crate::runtime_profiles::from_config(&config, "route").unwrap();
+            assert_eq!(
+                first_matching_profile(&profiles.profiles, "video.example", ip, &HashMap::new())
+                    .unwrap(),
+                Some(1),
+                "route did not match args: {args}"
+            );
+        }
+
+        for (flag, value) in [
+            ("--ipset-exclude-ip", "203.0.113.4-203.0.113.20"),
+            ("--hostlist-exclude-domains", "video.example"),
+        ] {
+            let config = profile_config(&format!(
+                "--filter-tcp=443 {flag}={value} --lua-desync=fake:blob=excluded --new=Fallback --filter-tcp=443 --lua-desync=fake:blob=fallback"
+            ));
+            let profiles = crate::runtime_profiles::from_config(&config, "route").unwrap();
+            assert_eq!(
+                first_matching_profile(&profiles.profiles, "video.example", ip, &HashMap::new())
+                    .unwrap(),
+                Some(2),
+                "inline exclusion did not skip profile for {flag}"
+            );
+            assert_eq!(
+                profile_exclusion_reason(
+                    &profiles.profiles[0],
+                    "video.example",
+                    ip,
+                    &HashMap::new()
+                ),
+                Some(format!("{flag}={value}"))
+            );
+        }
     }
 
     #[test]

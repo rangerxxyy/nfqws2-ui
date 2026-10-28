@@ -2,7 +2,7 @@ import { diagnosisRows } from './diagnosis-layout';
 import { parseCustomStrategies } from './custom-strategy-input';
 import { comparisonVerdict, presentTrace, type Presentation } from './diagnosis-presenter';
 import { summarizeFreezeScan } from './freeze-summary';
-import { freezeCanApplyToHost, freezeCanOfferProfileJoin, freezeMeasurementDetails, freezeRowPresentation } from './freeze-presentation';
+import { freezeCanApplyToHost, freezeCanOfferProfileJoin, freezeInConfigNote, freezeMeasurementDetails, freezeRowPresentation } from './freeze-presentation';
 import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
@@ -12,7 +12,7 @@ import { highlightConfigLine } from './config-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsPackageLeftovers, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PackageLeftover, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -20,6 +20,7 @@ import { installStyledSelects } from './styled-select';
 import { installActionTooltips } from './action-tooltips';
 import { strategyNeedsWindowsTcpTimestamps } from './strategy-capability';
 import { serviceControlPresentation } from './service-control';
+import { buildCommunityStrategyIssueUrl } from './community-share';
 import { communityProviderLabel, visibleCommunityProtocols } from './community-presentation';
 import { renderReleaseMarkdown } from './release-markdown';
 import { isSupportedForeignConfigFileName } from './foreign-config-file';
@@ -35,16 +36,16 @@ import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileP
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { configLuaArgumentEntries } from './config-diagnostics';
 import { navigationGroupForRoute } from './navigation';
-import { isValidNetworkInterfaceName, orderNetworkInterfaces } from './network-interface';
+import { isValidNetworkInterfaceSelection, orderNetworkInterfaces } from './network-interface';
 import { snapshotFreeSpaceState } from './snapshot-storage';
 
-type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'supportReport' | 'appearance' | 'about';
-export const UNAVAILABLE_PANEL_ROUTES = ['supportReport'] as const;
+type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'diagnostic16k' | 'configCheck' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'packageLeftovers' | 'supportReport' | 'appearance' | 'about';
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
 let activeLuaScript: string | null = null;
 let discoveredNetworkInterfaces: string[] = [];
+let defaultNetworkInterfaces: string[] = [];
 let fullscreenPlaceholder: Comment | null = null;
 let listFullscreenPlaceholder: Comment | null = null;
 let activeList: NfqwsListResponse | null = null;
@@ -75,7 +76,11 @@ let communityStrategies: CommunityStrategiesResponse | null = null;
 let communityLoading = false;
 let communityAutoDetectionAttempted = false;
 let communityProviderEditing = false;
-let pendingCommunityShare: { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickOperation['results'][number] } | null = null;
+let packageLeftoverItems: PackageLeftover[] = [];
+let packageLeftoversLoading = false;
+let pendingCommunityShare: { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickOperation['results'][number]; targetAsn: number | null } | null = null;
+let communityShareLookupGeneration = 0;
+let communityShareLookupTimer: number | null = null;
 let configScrollFramePending = false;
 type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
 let foreignConfigInputs: ForeignConfigInput[] = [];
@@ -351,7 +356,6 @@ function setRestartInProgress(value: boolean) {
   }
 }
 function showRoute(route: Route) {
-  if ((UNAVAILABLE_PANEL_ROUTES as readonly string[]).includes(route)) return;
   document.querySelectorAll<HTMLElement>('[id^="tabContent-"]').forEach((section) => section.classList.toggle('hidden', section.id !== `tabContent-${route}`));
   all<HTMLButtonElement>('.side-nav-btn').forEach((button) => {
     const active = button.id === `navBtn-${route}`;
@@ -369,6 +373,7 @@ function showRoute(route: Route) {
   if (route === 'snapshots') void loadBackups();
   if (route === 'changes') void loadChangeHistory();
   if (route === 'logs') { void loadLogs(); startLogPolling(); } else stopLogPolling();
+  if (route === 'packageLeftovers') void loadPackageLeftovers();
   if (route === 'about') void loadAboutStatus();
 }
 
@@ -472,7 +477,7 @@ async function openCommunityShare(operationId: string, candidateIndex: number) {
     const candidate = operation.results[candidateIndex];
     if (!candidate || (!candidate.confirmed && !candidate.candidate.source.includes('Стратегии сообщества'))) return toast('Публиковать можно только подтверждённую стратегию или результат теста стратегии сообщества.', 'error');
     if (operation.hosts && operation.hosts.length > 1) return toast('Общий результат для нескольких сайтов нельзя отправить как проверку одного сайта.', 'error');
-    pendingCommunityShare = { operationId, candidateIndex, host: operation.host, protocol: operation.protocol === 'http' ? 'http' : 'https', candidate };
+    pendingCommunityShare = { operationId, candidateIndex, host: operation.host, protocol: operation.protocol === 'http' ? 'http' : 'https', candidate, targetAsn: null };
     let provider = communityStrategies;
     if (!provider?.asn) {
       try { provider = await nfqwsCommunityStrategies.list(true, false); communityStrategies = provider; }
@@ -484,12 +489,52 @@ async function openCommunityShare(operationId: string, candidateIndex: number) {
     if (host instanceof HTMLInputElement) host.value = operation.host;
     const dialog = $('#communityShareModal');
     renderCommunitySharePreview();
-    for (const field of ['#communityShareAsn', '#communityShareProvider', '#communityShareHost']) {
-      $(field)?.addEventListener('input', renderCommunitySharePreview);
+    for (const field of ['#communityShareAsn', '#communityShareProvider']) {
+      const input = $(field);
+      if (input instanceof HTMLInputElement) input.oninput = renderCommunitySharePreview;
     }
+    const hostInput = $('#communityShareHost');
+    if (hostInput instanceof HTMLInputElement) hostInput.oninput = () => scheduleCommunityShareTargetAsn();
     setText('#communityShareStatus', 'Публичный issue содержит выбранные ниже ASN, провайдера, сайт, протокол и параметры стратегии. IP не передаётся.');
     if (dialog) openAppModal(dialog, '#communityShareAsn');
+    scheduleCommunityShareTargetAsn(true);
   } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось загрузить результат проверки.', 'error'); }
+}
+
+function scheduleCommunityShareTargetAsn(immediate = false) {
+  const host = $<HTMLInputElement>('#communityShareHost')?.value.trim() ?? '';
+  if (!pendingCommunityShare) return;
+  const generation = ++communityShareLookupGeneration;
+  if (communityShareLookupTimer !== null) window.clearTimeout(communityShareLookupTimer);
+  communityShareLookupTimer = null;
+  pendingCommunityShare.targetAsn = null;
+  setText('#communityShareTargetAsn', host ? 'Определяю ASN целевой сети…' : 'ASN целевой сети не указан.');
+  renderCommunitySharePreview();
+  if (!host) return;
+  communityShareLookupTimer = window.setTimeout(() => {
+    communityShareLookupTimer = null;
+    void lookupCommunityShareTargetAsn(host, generation);
+  }, immediate ? 0 : 500);
+}
+
+function clearCommunityShare() {
+  communityShareLookupGeneration++;
+  if (communityShareLookupTimer !== null) window.clearTimeout(communityShareLookupTimer);
+  communityShareLookupTimer = null;
+  pendingCommunityShare = null;
+}
+
+async function lookupCommunityShareTargetAsn(host: string, generation: number) {
+  try {
+    const result = await nfqwsCommunityStrategies.targetAsn(host);
+    if (generation !== communityShareLookupGeneration || !pendingCommunityShare) return;
+    pendingCommunityShare.targetAsn = result.asn;
+    setText('#communityShareTargetAsn', result.asn ? `Целевая сеть: AS${result.asn}` : 'ASN целевой сети не определён; сайт будет указан без привязки к сети.');
+    renderCommunitySharePreview();
+  } catch {
+    if (generation !== communityShareLookupGeneration || !pendingCommunityShare) return;
+    setText('#communityShareTargetAsn', 'ASN целевой сети не удалось определить; сайт будет указан без привязки к сети.');
+  }
 }
 
 function renderCommunitySharePreview() {
@@ -500,7 +545,7 @@ function renderCommunitySharePreview() {
   const candidate = pendingCommunityShare.candidate;
   const proto = pendingCommunityShare.protocol === 'http' ? 'http' : 'tls';
   const preview = $('#communitySharePreview');
-  if (preview) preview.textContent = [`Провайдер: AS${asn}${provider ? ` · ${provider}` : ''}`, `Протокол: ${proto}`, `Сайт: ${host}`, `Результат: ${candidate.successes}/${candidate.attempts}`, '', ...candidate.candidate.steps].join('\n');
+  if (preview) preview.textContent = [`Провайдер: AS${asn}${provider ? ` · ${provider}` : ''}`, `Протокол: ${proto}`, `Сайт: ${host}`, `Целевая сеть: ${pendingCommunityShare.targetAsn ? `AS${pendingCommunityShare.targetAsn}` : 'не определена'}`, `Результат: ${candidate.successes}/${candidate.attempts}`, '', ...candidate.candidate.steps].join('\n');
 }
 
 function submitCommunityShare() {
@@ -514,17 +559,16 @@ function submitCommunityShare() {
   const proto = share.protocol === 'http' ? 'http' : 'tls';
   const outcome = candidate.confirmed ? 'works' : 'fails';
   const tries = candidate.confirmed ? candidate.attempts : Math.max(candidate.attempts, candidate.successes + 1);
-  const query = new URLSearchParams({
-    template: 'strategy.yml',
+  const url = buildCommunityStrategyIssueUrl({
     title: `${outcome === 'fails' ? 'Не сработала' : candidate.candidate.source.includes('Стратегии сообщества') ? 'Подтверждаю' : 'Новая стратегия'} · AS${asnValue} · ${proto} · ${host.value.trim() || candidate.candidate.name}`,
     outcome, asn: asnValue, provider: provider.value.trim(), proto,
-    target_host: host.value.trim(), target_asn: '', strategy: candidate.candidate.steps.join('\n'),
+    targetHost: host.value.trim(), targetAsn: share.targetAsn, strategy: candidate.candidate.steps.join('\n'),
     result: `${candidate.successes}/${tries}`, nfqws2: status?.service.version ?? '', ui: status?.panel.version ?? '',
   });
   void nfqwsCommunityStrategies.setProvider(Number(asnValue), provider.value.trim()).catch(() => {});
-  window.open(`https://github.com/zemidala/nfqws2-strategies/issues/new?${query.toString()}`, '_blank', 'noopener,noreferrer');
+  window.open(url, '_blank', 'noopener,noreferrer');
   const modal = $('#communityShareModal'); if (modal) closeAppModal(modal);
-  pendingCommunityShare = null;
+  clearCommunityShare();
 }
 let snapshotOverview: SnapshotOverview | null = null;
 let logPollingTimer: number | null = null;
@@ -562,7 +606,8 @@ function closeAppModalRoot(root: HTMLElement) {
     case 'profileImportDialog': cancelProfileImport(); break;
     case 'updateModalBackdrop': closeUpdateModal(); break;
     case 'diffModalBackdrop': closeAppModal(root); break;
-    case 'communityShareModal': closeAppModal(root); pendingCommunityShare = null; break;
+    case 'packageLeftoverCompareModal': closeAppModal(root); break;
+    case 'communityShareModal': closeAppModal(root); clearCommunityShare(); break;
   }
 }
 function trapAppModalFocus(event: KeyboardEvent) {
@@ -1740,6 +1785,89 @@ function initializeAppearanceSettings() {
     appearanceSettings = saveAppearance(storage, { ...saved, wrapConfigLines: appearanceSettings.wrapConfigLines }); applyAppearance(appearanceSettings); syncAppearanceControls(); syncNavigationLayout();
   }).catch(() => undefined);
 }
+function renderPackageLeftovers() {
+  const host = $('#packageLeftoversList');
+  const deleteAll = $('#deleteAllPackageLeftovers');
+  if (!host) return;
+  host.replaceChildren();
+  if (deleteAll instanceof HTMLButtonElement) deleteAll.classList.toggle('hidden', packageLeftoverItems.length === 0);
+  if (!packageLeftoverItems.length) {
+    const empty = document.createElement('p'); empty.className = 'py-4 text-sm text-slate-400';
+    empty.textContent = packageLeftoversLoading ? 'Проверяем разрешённые каталоги…' : 'Остатков обновления не найдено.'; host.append(empty); return;
+  }
+  for (const item of packageLeftoverItems) {
+    const row = document.createElement('article'); row.className = 'flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2.5';
+    const details = document.createElement('div'); details.className = 'min-w-0 flex-1';
+    const title = document.createElement('strong'); title.className = 'block break-all font-mono text-sm text-white'; title.textContent = item.name;
+    const meta = document.createElement('p'); meta.className = 'mt-1 text-xs text-slate-400';
+    const sourceState = !item.baseExists ? 'исходный файл отсутствует' : item.sameAsBase === null ? 'содержимое сравнить не удалось' : item.sameAsBase ? 'совпадает с исходным файлом' : 'отличается от исходного файла';
+    const modified = item.modifiedAt === null ? 'время неизвестно' : `изменён ${new Date(item.modifiedAt * 1000).toLocaleString()}`;
+    meta.textContent = `${formatBytes(item.sizeBytes)} · ${modified} · ${sourceState}`;
+    details.append(title, meta);
+    const actions = document.createElement('div'); actions.className = 'flex shrink-0 flex-wrap items-center gap-2';
+    const canCompare = item.baseExists && item.sameAsBase === false
+      && ((item.name === 'nfqws2.conf-opkg' || item.name === 'nfqws2.conf.apk-new')
+        || (item.name.startsWith('lists/') && item.base.endsWith('.list')));
+    if (canCompare) {
+      const compare = document.createElement('button'); compare.type = 'button'; compare.className = 'backup-action'; compare.textContent = 'Сравнить';
+      compare.dataset.actionClick = 'comparePackageLeftover'; compare.dataset.args = JSON.stringify([item.name]); actions.append(compare);
+    }
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'backup-action border-rose-700/50 text-rose-200 hover:bg-rose-950/40'; remove.textContent = 'Удалить'; remove.dataset.actionClick = 'requestDeletePackageLeftover'; remove.dataset.args = JSON.stringify([item.name]);
+    actions.append(remove); row.append(details, actions); host.append(row);
+  }
+}
+
+async function comparePackageLeftover(name: string) {
+  const modal = $('#packageLeftoverCompareModal');
+  const original = $('#packageLeftoverOriginal');
+  const candidate = $('#packageLeftoverCandidate');
+  if (!(modal instanceof HTMLElement) || !(original instanceof HTMLPreElement) || !(candidate instanceof HTMLPreElement)) return;
+  const item = packageLeftoverItems.find((entry) => entry.name === name);
+  if (!item || !item.baseExists || item.sameAsBase !== false) return;
+  setText('#packageLeftoverCompareSubtitle', `${item.name} ↔ ${item.base}`);
+  original.textContent = 'Загружаем исходную версию…'; candidate.textContent = 'Загружаем файл после обновления…';
+  openAppModal(modal);
+  try {
+    const comparison = await nfqwsPackageLeftovers.compare(name);
+    setText('#packageLeftoverCompareSubtitle', `${comparison.name} ↔ ${comparison.base}`);
+    original.textContent = comparison.originalContent || '(пустой файл)';
+    candidate.textContent = comparison.candidateContent || '(пустой файл)';
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Не удалось сравнить файлы.';
+    original.textContent = message; candidate.textContent = message;
+  }
+}
+
+async function loadPackageLeftovers() {
+  if (packageLeftoversLoading) return;
+  packageLeftoversLoading = true; setText('#packageLeftoversStatus', 'Проверяем каталоги nfqws2…'); renderPackageLeftovers();
+  try {
+    const result = await nfqwsPackageLeftovers.list(); packageLeftoverItems = result.items;
+    setText('#packageLeftoversStatus', `${result.items.length} ${pluralize(result.items.length, 'файл', 'файла', 'файлов')} · ${formatBytes(result.totalBytes)} можно освободить`);
+    renderPackageLeftovers();
+  } catch (error) {
+    setText('#packageLeftoversStatus', error instanceof Error ? error.message : 'Не удалось проверить файлы.');
+    packageLeftoverItems = []; renderPackageLeftovers();
+  } finally { packageLeftoversLoading = false; renderPackageLeftovers(); }
+}
+
+function requestDeletePackageLeftovers(names: string[]) {
+  const selected = [...new Set(names)].filter((name) => packageLeftoverItems.some((item) => item.name === name));
+  if (!selected.length) return;
+  const totalBytes = packageLeftoverItems.filter((item) => selected.includes(item.name)).reduce((total, item) => total + item.sizeBytes, 0);
+  requestDangerousConfirmation(
+    selected.length === 1 ? 'Удалить файл после обновления?' : 'Удалить файлы после обновления?',
+    `Будут удалены только ${selected.length === 1 ? 'этот найденный файл' : `эти ${selected.length} найденных файла(ов)`} с суффиксами -opkg/.apk-new (${formatBytes(totalBytes)}). Основные конфигурация и списки не изменятся.`,
+    async () => {
+      try {
+        const result = await nfqwsPackageLeftovers.delete(selected); packageLeftoverItems = result.items;
+        setText('#packageLeftoversStatus', `Удалено файлов: ${result.deleted ?? 0} · осталось ${result.items.length} (${formatBytes(result.totalBytes)})`);
+        renderPackageLeftovers(); toast('Найденные файлы обновления удалены.');
+      } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось удалить файлы.', 'error'); await loadPackageLeftovers(); }
+    },
+  );
+}
+
 async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
   try {
     const result = statusOverride ?? await nfqwsUpdates.uiStatus();
@@ -2045,6 +2173,7 @@ async function loadConfig() {
       canWriteConfig = installation.config?.writable === true;
       networkInterfaces = installation.networkInterfaces ?? [];
       discoveredNetworkInterfaces = networkInterfaces;
+      defaultNetworkInterfaces = installation.defaultNetworkInterfaces ?? [];
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Не удалось проверить права записи в конфиг', 'error');
     }
@@ -2058,7 +2187,7 @@ async function loadConfig() {
     setText('#currentConfigPath', 'Конфигурация');
     const configTitle = $('#currentConfigPath'); if (configTitle) configTitle.title = config.file;
     renderNfqwsArgumentEditors(config.content);
-    updateQuickParameters(config.content, networkInterfaces);
+    updateQuickParameters(config.content, networkInterfaces, defaultNetworkInterfaces);
     const queue = configAssignmentValue(config.content, 'NFQUEUE_NUM');
     setText('#queueBadge', queue ? `Q:${queue.replace(/^['"]|['"]$/g, '')}` : 'Q:—');
     syncConfigLines();
@@ -2284,13 +2413,22 @@ function renderNfqwsArgumentEditors(content: string) {
     host.append(card);
   }
 }
-function updateQuickParameters(content: string, networkInterfaces: string[] = []) {
+function updateQuickParameters(content: string, networkInterfaces: string[] = [], defaultInterfaces: string[] = []) {
   const availableModes = new Set(availableNfqwsModes(content));
   const interfaceSelect = $('[data-key="ISP_INTERFACE"]');
   if (interfaceSelect instanceof HTMLSelectElement) {
     const configured = configAssignmentValue(content, 'ISP_INTERFACE');
     interfaceSelect.replaceChildren(new Option('Выберите интерфейс', '', !configured, false));
-    for (const name of orderNetworkInterfaces(networkInterfaces, configured)) interfaceSelect.add(new Option(name, name));
+    if (configured.trim().split(/\s+/).filter(Boolean).length > 1) {
+      interfaceSelect.add(new Option(`${configured} — задано в конфигурации`, configured));
+    }
+    const defaultSet = new Set(defaultInterfaces);
+    for (const name of orderNetworkInterfaces(networkInterfaces, configured, defaultInterfaces)) {
+      const label = defaultSet.has(name)
+        ? `${name} — маршрут по умолчанию`
+        : !networkInterfaces.includes(name) && name === configured ? `${name} — задан в конфигурации` : name;
+      interfaceSelect.add(new Option(label, name));
+    }
     interfaceSelect.add(new Option('Ввести имя вручную…', '__manual__'));
     interfaceSelect.value = configured;
     interfaceSelect.disabled = false;
@@ -2322,9 +2460,9 @@ async function updateConfigVariable(key: string, value: string) {
   if (!(editor instanceof HTMLTextAreaElement)) return;
   if (key === 'ISP_INTERFACE') {
     value = value.trim();
-    if (!isValidNetworkInterfaceName(value)) {
-      toast('Имя интерфейса должно содержать 1–15 латинских букв, цифр или символов . _ @ + -.', 'error');
-      updateQuickParameters(editor.value, discoveredNetworkInterfaces);
+    if (!isValidNetworkInterfaceSelection(value)) {
+      toast('Укажите до 16 имён интерфейсов через пробел; каждое имя — 1–15 латинских букв, цифр или символов . _ @ + -.', 'error');
+      updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces);
       return;
     }
   }
@@ -2343,7 +2481,7 @@ async function updateConfigVariable(key: string, value: string) {
     toast(error instanceof Error ? error.message : 'Не удалось изменить черновик', 'error');
   } finally {
     setBusy(false);
-    updateQuickParameters(editor.value, discoveredNetworkInterfaces);
+    updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces);
   }
 }
 function handleIspInterfaceSelection(value: string) {
@@ -2606,7 +2744,12 @@ async function saveConfigAndApply() {
       setRestartInProgress(false);
       await fetchStatus();
       toast(lifecycleMessage('restart'));
-    } catch (error) { setRestartInProgress(false); await fetchStatus(); toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error'); }
+    } catch (error) {
+      setRestartInProgress(false);
+      if (error instanceof Error && error.message.includes('Исходный конфиг восстановлен')) await loadConfig();
+      await fetchStatus();
+      toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error');
+    }
     finally { setRestartInProgress(false); setBusy(false); }
   };
   if (warnings.length || validation.checks.installedBinary === 'not_run') {
@@ -2647,7 +2790,12 @@ async function loadList(id: NfqwsListId) {
       candidate.disabled = !available;
       candidate.classList.toggle('opacity-40', !available);
       const discovered = index.files.find((file) => file.id === tabId);
-      candidate.title = discovered ? `${tabId ? listDisplayName(tabId) : 'Список'} — ${discovered.path}` : 'Файл не найден ни по ссылке конфигурации, ни в штатном каталоге lists';
+      const usages = discovered?.usedBy ?? [];
+      const usageTitle = !discovered ? '' : discovered.usageKnown === false
+        ? '\nНе удалось проверить, какие профили используют список.'
+        : usages.length === 0 ? '\nНе используется ни одним разобранным профилем.'
+          : `\nИспользуют: ${usages.map((usage) => `#${usage.profileIndex} ${usage.profileName} (${listUsageRoleLabel(usage.role)})`).join(', ')}`;
+      candidate.title = discovered ? `${tabId ? listDisplayName(tabId) : 'Список'} — ${discovered.path}${usageTitle}` : 'Файл не найден ни по ссылке конфигурации, ни в штатном каталоге lists';
     }
     if (!summary) {
       activeList = null;
@@ -2655,6 +2803,7 @@ async function loadList(id: NfqwsListId) {
       const editor = $('#listEditorTextarea');
       if (editor instanceof HTMLTextAreaElement) { editor.value = ''; editor.placeholder = 'Файл отсутствует; панель не создаёт списки автоматически.'; }
       setText('#currentListFilePath', 'Файл не найден');
+      setText('#listProfileUsageStatus', '');
       setText('#listFooterCount', 'Список недоступен');
       return toast(`Файл ${id} не найден по настройкам nfqws2 или в штатном каталоге lists.`, 'error');
     }
@@ -2687,6 +2836,16 @@ async function loadList(id: NfqwsListId) {
       locationLabel.title = result.path;
       locationLabel.setAttribute('aria-label', `${listDisplayName(id)}. Путь: ${result.path}`);
     }
+    const usageStatus = $('#listProfileUsageStatus');
+    if (usageStatus) {
+      const usages = summary.usedBy ?? [];
+      usageStatus.textContent = summary.usageKnown === false
+        ? 'Использование в профилях неизвестно: конфигурацию не удалось безопасно разобрать.'
+        : usages.length === 0 ? 'Не используется ни одним профилем.'
+          : `Используют: ${usages.map((usage) => `#${usage.profileIndex} ${usage.profileName} · ${listUsageRoleLabel(usage.role)}`).join('; ')}`;
+      usageStatus.classList.toggle('text-amber-300', summary.usageKnown === false);
+      usageStatus.classList.toggle('text-slate-400', summary.usageKnown !== false);
+    }
     for (const candidate of all<HTMLButtonElement>('.list-file-tab')) {
       const selected = isListTabSelected(candidate.id, id);
       candidate.classList.toggle('active', selected);
@@ -2703,6 +2862,10 @@ async function loadList(id: NfqwsListId) {
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось прочитать список', 'error');
   }
+}
+
+function listUsageRoleLabel(role: 'include' | 'exclude' | 'auto'): string {
+  return role === 'exclude' ? 'исключение' : role === 'auto' ? 'автосписок' : 'подключён';
 }
 
 function setListEditorView(view: 'text' | 'rows') {
@@ -2802,10 +2965,17 @@ function renderCustomListTabs(files: readonly NfqwsListSummary[]) {
     remove.dataset.actionClick = 'requestDeleteCustomList';
     remove.dataset.args = JSON.stringify([id]);
     remove.dataset.customListDelete = 'true';
-    remove.dataset.actionTooltip = `Удалить пользовательский список ${id}`;
+    const removeDisabled = summary.usageKnown === false || Boolean(summary.usedBy?.length);
+    remove.disabled = removeDisabled;
+    remove.dataset.actionTooltip = summary.usageKnown === false
+      ? 'Нельзя проверить связи списка: удаление заблокировано'
+      : summary.usedBy?.length
+        ? 'Список используется профилями. Сначала отключите его в конструкторе стратегий.'
+        : `Удалить пользовательский список ${id}`;
     remove.className = 'list-file-delete';
     remove.setAttribute('aria-label', `Удалить пользовательский список ${id}`);
     remove.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2m-9 0 1 14h8l1-14M10 10v6m4-6v6"></path></svg>';
+    if (removeDisabled) remove.classList.add('opacity-40', 'cursor-not-allowed');
     group.append(button, remove);
     host.append(group);
   }
@@ -4015,7 +4185,7 @@ function renderFreezeScan(operation: FreezeScanOperation) {
   resultsPanel.classList.remove('hidden');
   setText('#freezeScanNetworkCount', `${operation.results.length} ${pluralize(operation.results.length, 'сеть проверена', 'сети проверены', 'сетей проверено')}`);
   for (const [resultIndex, result] of operation.results.entries()) {
-    const presentation = freezeRowPresentation({ freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, directOk: result.direct.ok, currentOk: result.current.ok, directClassification: result.direct.classification, currentClassification: result.current.classification });
+    const presentation = freezeRowPresentation({ freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, directOk: result.direct.ok, currentOk: result.current.ok, directClassification: result.direct.classification, currentClassification: result.current.classification, inConf: result.inConf });
     const row = document.createElement('article'); row.className = `freeze-scan-network-row freeze-result-${presentation.tone}`;
     row.setAttribute('role', 'listitem');
     row.dataset.resultTone = presentation.tone;
@@ -4045,6 +4215,13 @@ function renderFreezeScan(operation: FreezeScanOperation) {
     badge.textContent = presentation.label;
     badge.setAttribute('role', 'status');
     outcome.append(badge);
+    const inConfigNote = freezeInConfigNote(result.inConf);
+    if (inConfigNote) {
+      const note = document.createElement('span');
+      note.className = `freeze-result-config-note${result.inConf?.state === 'working' ? ' is-working' : ''}`;
+      note.textContent = inConfigNote;
+      outcome.append(note);
+    }
     const facts = freezeRowDetails(result);
     if (facts.details || result.direct || result.current) {
       const disclosure = document.createElement('details');
@@ -4059,7 +4236,7 @@ function renderFreezeScan(operation: FreezeScanOperation) {
       outcome.append(disclosure);
     }
     const applyKey = `${operation.id}:${resultIndex}`;
-    if (!freezeStrategyApplyDone.has(applyKey) && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy })) {
+    if (!freezeStrategyApplyDone.has(applyKey) && freezeCanApplyToHost({ state: operation.state, targetKind: result.targetKind, freezeDetected: result.freezeDetected, foundStrategy: result.foundStrategy, inConfState: result.inConf?.state })) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'freeze-action-button';
@@ -4094,7 +4271,7 @@ async function pollFreezeScan(id: string) {
   try {
     let current = await nfqwsDiagnostics.freezeScanStatus(id); renderFreezeScan(current);
     for (let index = 0; index < 920 && ['queued', 'running', 'stopping'].includes(current.state); index += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      await new Promise((resolve) => window.setTimeout(resolve, 2000));
       try { current = await nfqwsDiagnostics.freezeScanStatus(id); renderFreezeScan(current); }
       catch { setText('#freezeScanStatus', 'Связь с роутером восстанавливается…'); }
     }
@@ -4215,18 +4392,29 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
   const modal = $('#updateModalBackdrop');
   if (!modal) return;
   openAppModal(modal, '[data-action-click="closeUpdateModal"]');
+  const refresh = $('#updatePickerRefresh');
+  if (refresh instanceof HTMLButtonElement) {
+    refresh.hidden = false;
+    refresh.disabled = true;
+  }
+  await loadUpdatePickerReleases(false);
+}
+
+async function loadUpdatePickerReleases(forceRefresh: boolean) {
   const list = $('#updateVersionsList');
-  if (list) list.textContent = 'Загружаю версии из GitHub Releases…';
+  if (list) list.textContent = 'Загружаю список версий…';
   try {
-    if (target === 'core') {
-      const result = await nfqwsUpdates.coreReleases();
+    if (updateTarget === 'core') {
+      const result = await nfqwsUpdates.coreReleases(forceRefresh);
       availableReleases = result.releases;
       installedCoreTag = result.installedTag;
+      if (result.warning) toast(result.warning, 'error');
     } else {
-      const result = await nfqwsUpdates.releases();
+      const result = await nfqwsUpdates.releases(forceRefresh);
       availableReleases = result.releases;
       installedCoreTag = null;
       renderUiUpdateNotice(result.updateStatus, true);
+      if (result.warning) toast(`Показан сохранённый список релизов: ${result.warning}`, 'error');
     }
     selectedReleaseTag = availableReleases[0]?.tag ?? null;
     expandedReleaseTag = selectedReleaseTag;
@@ -4241,7 +4429,19 @@ async function openUpdatePicker(target: 'ui' | 'core' = 'ui') {
       appendReleaseRetry(list);
     }
     toast('Не удалось получить список версий из GitHub Releases.', 'error');
+  } finally {
+    const refresh = $('#updatePickerRefresh');
+    if (refresh instanceof HTMLButtonElement) {
+      refresh.disabled = false;
+      refresh.textContent = 'Обновить';
+    }
   }
+}
+
+async function refreshUpdatePicker() {
+  const refresh = $('#updatePickerRefresh');
+  if (refresh instanceof HTMLButtonElement) { refresh.disabled = true; refresh.textContent = 'Обновляю…'; }
+  await loadUpdatePickerReleases(true);
 }
 
 async function installSelectedRelease() {
@@ -4318,7 +4518,7 @@ async function buildSupportReport() {
   if (!(textarea instanceof HTMLTextAreaElement)) return;
   if (build instanceof HTMLButtonElement) { build.disabled = true; build.textContent = 'Собираю…'; }
   try {
-    const result = await nfqwsDiagnostics.supportReport(anonymize instanceof HTMLInputElement && anonymize.checked);
+    const result = await nfqwsDiagnostics.supportReport(!(anonymize instanceof HTMLInputElement) || anonymize.checked);
     textarea.value = result.text;
     textarea.classList.remove('hidden');
     $('#copySupportReport')?.classList.remove('hidden');
@@ -4477,7 +4677,7 @@ function bindPrototypeActions() {
     refreshChangeHistory: () => void loadChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
     openCommunityShare: (operationId: string, candidateIndex: string) => void openCommunityShare(operationId, Number(candidateIndex)),
     submitCommunityShare: () => submitCommunityShare(),
-    closeCommunityShare: () => { const modal = $('#communityShareModal'); if (modal) closeAppModal(modal); pendingCommunityShare = null; },
+    closeCommunityShare: () => { const modal = $('#communityShareModal'); if (modal) closeAppModal(modal); clearCommunityShare(); },
     editCommunityProvider: () => { communityProviderEditing = true; if (communityStrategies) renderCommunityStrategies(communityStrategies); $('#communityProviderAsn')?.focus(); },
     cancelCommunityProviderEdit: () => { communityProviderEditing = false; if (communityStrategies) renderCommunityStrategies(communityStrategies); },
     detectCommunityProvider: () => void loadCommunityStrategies(true, true),
@@ -4491,6 +4691,11 @@ function bindPrototypeActions() {
     requestUndoLastChange: () => requestUndoLastChange(),
     requestRestoreInitialHistory: () => requestRestoreInitialHistory(),
     refreshLogs: () => void loadLogs(),
+    refreshPackageLeftovers: () => void loadPackageLeftovers(),
+    comparePackageLeftover: (name: string) => void comparePackageLeftover(name),
+    closePackageLeftoverCompare: () => closeAppModal($('#packageLeftoverCompareModal')),
+    requestDeletePackageLeftover: (name: string) => requestDeletePackageLeftovers([name]),
+    requestDeleteAllPackageLeftovers: () => requestDeletePackageLeftovers(packageLeftoverItems.map((item) => item.name)),
     filterLogs: () => renderLogs(),
     changeLogSource: (source: LogSource) => { currentLogSource = source === 'nfqws2' ? 'nfqws2' : 'nfqws2-ui'; logRequestPending = false; void loadLogs(); },
     toggleLogAutoRefresh: (enabled: boolean) => { setText('#logsAutoRefreshStatus', enabled ? 'Автообновление каждые 5 секунд' : 'Автообновление приостановлено'); },
@@ -4638,9 +4843,10 @@ function bindPrototypeActions() {
     toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) closeAppModal(modal); else showDiff(); },
     resetDefaultConf: () => void loadConfig(),
     closeUpdateModal: () => closeUpdateModal(),
+    refreshUpdatePicker: () => void refreshUpdatePicker(),
     closeDiffModal: () => closeAppModal($('#diffModalBackdrop')),
     openUpdateModal: (target: 'ui' | 'core') => void openUpdatePicker(target),
-    retryUpdateList: () => void openUpdatePicker(updateTarget),
+    retryUpdateList: () => void refreshUpdatePicker(),
     openLatestUiUpdate: (tag: string) => { uiUpdateNoticeOpenedTag = tag; hideUiUpdateNotice(); void openUpdatePicker('ui'); },
     dismissUiUpdateNotice: (tag: string) => dismissUiUpdateNotice(tag),
     dismissCoreUpdateNotice: (tag: string) => { try { window.localStorage.setItem(CORE_UPDATE_DISMISSED_TAG_KEY, tag); } catch { /* The notice can still be closed for this page session. */ } hideCoreUpdateNotice(); },

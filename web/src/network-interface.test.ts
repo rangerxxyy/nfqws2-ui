@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as networkInterface from './network-interface';
-import { isValidNetworkInterfaceName } from './network-interface';
+import { isValidNetworkInterfaceName, isValidNetworkInterfaceSelection } from './network-interface';
 
 describe('network interface names', () => {
   it('accepts common Linux interface names', () => {
@@ -15,11 +15,23 @@ describe('network interface names', () => {
     }
   });
 
-  it('puts the configured interface and detected common uplinks first without inventing options', () => {
-    const order = (networkInterface as unknown as { orderNetworkInterfaces?: (names: string[], configured?: string) => string[] }).orderNetworkInterfaces;
+  it('accepts multiple safe interface names separated by spaces but rejects invalid entries', () => {
+    expect(isValidNetworkInterfaceSelection('eth0 pppoe-wan')).toBe(true);
+    expect(isValidNetworkInterfaceSelection(' eth0   eth1 ')).toBe(true);
+    expect(isValidNetworkInterfaceSelection('')).toBe(false);
+    expect(isValidNetworkInterfaceSelection('eth0 $(id)')).toBe(false);
+    expect(isValidNetworkInterfaceSelection(Array.from({ length: 17 }, (_, index) => `eth${index}`).join(' '))).toBe(false);
+  });
+
+  it('puts the configured interface and detected default-route uplinks first without inventing options', () => {
+    const order = (networkInterface as unknown as { orderNetworkInterfaces?: (names: string[], configured?: string, defaults?: string[]) => string[] }).orderNetworkInterfaces;
     expect(order).toBeTypeOf('function');
-    expect(order?.(['wlan0', 'br-lan', 'eth3', 'wg0', 'ppp0', 'eth0', 'eth1'], 'eth3'))
-      .toEqual(['eth0', 'eth1', 'eth3', 'ppp0', 'br-lan', 'wg0', 'wlan0']);
+    expect(order?.(['wlan0', 'br-lan', 'eth3', 'wg0', 'ppp0', 'eth0', 'eth1'], 'eth3', ['ppp0']))
+      .toEqual(['eth3', 'ppp0', 'eth0', 'eth1', 'br-lan', 'wg0', 'wlan0']);
+    expect(order?.(['eth0', 'eth3', 'wan'], '', ['eth3']))
+      .toEqual(['eth3', 'eth0', 'wan']);
+    expect(order?.(['eth0', 'eth3', 'ppp0'], 'eth3 ppp0', ['eth0']))
+      .toEqual(['eth3', 'ppp0', 'eth0']);
     expect(order?.([], 'eth3')).toEqual(['eth3']);
   });
 });

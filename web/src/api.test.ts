@@ -1,7 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsPackageLeftovers, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('loads package leftovers only from the dedicated read endpoint', async () => {
+    const payload = { items: [{ name: 'lists/user.list-opkg', base: 'lists/user.list', sizeBytes: 12, modifiedAt: 123, baseExists: true, sameAsBase: false }], totalBytes: 12, deleted: null };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsPackageLeftovers.list()).resolves.toEqual(payload);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/package-leftovers');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.method).toBeUndefined();
+  });
+
+  it('posts selected candidate names without constructing filesystem paths', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"items":[],"totalBytes":0,"deleted":1}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await nfqwsPackageLeftovers.delete(['lists/user.list-opkg']);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/package-leftovers');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ names: ['lists/user.list-opkg'] });
+  });
+
+  it('looks up the public target network ASN only for the community share flow', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"asn":13335}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsCommunityStrategies.targetAsn('example.org')).resolves.toEqual({ asn: 13335 });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/community-strategies/target-asn?host=example.org');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.method).toBeUndefined();
+  });
+
   it('notifies the app when an authenticated API request returns 401', async () => {
     const target = new EventTarget();
     let expired = false;
@@ -458,6 +484,19 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/profiles/catalog');
   });
 
+  it('builds the support report on demand with site anonymization enabled', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"text":"Отчёт для помощи"}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const report = await nfqwsDiagnostics.supportReport(true);
+
+    expect(report.text).toBe('Отчёт для помощи');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/support-report');
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(String(request.body))).toEqual({ hideSiteNames: true });
+  });
+
   it('can explicitly bypass the cached profile help catalog', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"functions":[],"standardGroups":[],"cli":{"options":[],"l7":[],"payloads":[],"full":false}}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -492,9 +531,15 @@ describe('API client used by the source-based panel', () => {
     expect(releases.releases[0]?.tag).toBe('v0.1.7');
     expect(releases.updateStatus).toMatchObject({ updateAvailable: true, latestVersion: 'v0.1.7' });
     expect(operation.state).toBe('downloading');
-    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/updates/releases');
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/updates/releases?force=false');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/updates/install');
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ tag: 'v0.1.7' });
+  });
+
+  it('can explicitly refresh the cached ten-release UI catalog', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"releases":[],"updateStatus":{}}', { status: 200 })));
+    await nfqwsUpdates.releases(true);
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe('/api/updates/releases?force=true');
   });
 
   it('loads the cached background UI update status from the local backend', async () => {
@@ -536,6 +581,18 @@ describe('API client used by the source-based panel', () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/updates/releases');
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/nfqws2/updates/install');
     expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({ tag: 'v1.3.2' });
+  });
+
+  it('can force-refresh the cached nfqws2 release catalog', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      '{"releases":[],"installedTag":"v1.3.1"}',
+      { status: 200 },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await nfqwsUpdates.coreReleases(true);
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/updates/releases?force=true');
   });
 
   it('loads a lightweight cached nfqws2 release status for background update checks', async () => {

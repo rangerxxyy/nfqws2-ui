@@ -9,5 +9,6 @@ describe('navigationGroupForRoute', () => {
 
   it('keeps system tools under System', () => {
     expect(navigationGroupForRoute('snapshots')).toBe('system');
+    expect(navigationGroupForRoute('packageLeftovers')).toBe('system');
   });
 });

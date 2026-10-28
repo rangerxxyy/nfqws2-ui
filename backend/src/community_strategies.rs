@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     net::IpAddr,
     path::Path,
+    sync::{Mutex, OnceLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -9,8 +11,19 @@ pub const COMMUNITY_REPO: &str = "https://github.com/zemidala/nfqws2-strategies"
 const COMMUNITY_RAW: &str = "https://raw.githubusercontent.com/zemidala/nfqws2-strategies/main/";
 const COMMUNITY_TTL: u64 = 24 * 60 * 60;
 const COMMUNITY_ERROR_TTL: u64 = 10 * 60;
+const COMMUNITY_HOST_ASN_TTL: u64 = 24 * 60 * 60;
+const COMMUNITY_HOST_ASN_ERROR_TTL: u64 = 10 * 60;
 const COMMUNITY_MAX_FILE_BYTES: usize = 1024 * 1024;
 pub const COMMUNITY_MAX_CANDIDATES: usize = 8;
+
+#[derive(Clone, Copy)]
+struct HostAsnCacheEntry {
+    checked_at: u64,
+    asn: Option<u32>,
+}
+
+type HostAsnCache = Mutex<HashMap<String, HostAsnCacheEntry>>;
+static COMMUNITY_HOST_ASN_CACHE: OnceLock<HostAsnCache> = OnceLock::new();
 
 pub fn provider_detection_needed(current_asn: Option<u32>, force: bool, if_missing: bool) -> bool {
     force || (if_missing && current_asn.is_none())
@@ -338,18 +351,61 @@ pub fn picker_candidates(
     protocol: &str,
     now: u64,
 ) -> Vec<crate::strategy_picker::StrategyCandidate> {
+    picker_candidates_for_asn(items, host, protocol, None, now)
+}
+
+pub async fn picker_candidates_for_host(
+    items: Vec<CommunityItem>,
+    host: &str,
+    protocol: &str,
+    now: u64,
+) -> Vec<crate::strategy_picker::StrategyCandidate> {
+    let needs_target_asn = items.iter().any(|item| {
+        item.proto == protocol && item.targets.iter().any(|target| target.asn.is_some())
+    });
+    let target_asn = if needs_target_asn {
+        cached_host_asn(host, now).await
+    } else {
+        None
+    };
+    picker_candidates_for_asn(items, host, protocol, target_asn, now)
+}
+
+pub async fn target_asn_for_host(host: &str) -> Option<u32> {
+    cached_host_asn(host, now()).await
+}
+
+fn picker_candidates_for_asn(
+    items: Vec<CommunityItem>,
+    host: &str,
+    protocol: &str,
+    target_asn: Option<u32>,
+    now: u64,
+) -> Vec<crate::strategy_picker::StrategyCandidate> {
+    let normalized_host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     let mut eligible = items
         .into_iter()
-        .filter(|item| {
-            item.proto == protocol
-                && is_fresh(item, now)
-                && !(item.fails >= 2 && item.fails > item.reports)
-        })
+        .filter(|item| item.proto == protocol && !(item.fails >= 2 && item.fails > item.reports))
         .map(|item| {
+            let fresh = is_fresh(&item, now);
             let exact_target = item
                 .targets
                 .iter()
-                .any(|target| target.host.as_deref() == Some(host));
+                .any(|target| target.host.as_deref() == Some(normalized_host.as_str()));
+            let network_target = target_asn
+                .is_some_and(|asn| item.targets.iter().any(|target| target.asn == Some(asn)));
+            let target_rank = if exact_target {
+                2
+            } else if network_target {
+                1
+            } else {
+                0
+            };
+            let network_label = if !exact_target && network_target {
+                format!(" · эта сеть AS{}", target_asn.unwrap_or_default())
+            } else {
+                String::new()
+            };
             let candidate = crate::strategy_picker::StrategyCandidate {
                 name: item
                     .steps
@@ -359,19 +415,26 @@ pub fn picker_candidates(
                     .collect::<Vec<_>>()
                     .join(" + "),
                 source: format!(
-                    "Стратегии сообщества · AS{}{}",
+                    "Стратегии сообщества · AS{}{}{}{}",
                     item.asn,
                     if exact_target {
                         " · этот сайт"
                     } else {
                         ""
+                    },
+                    network_label,
+                    if fresh {
+                        ""
+                    } else {
+                        " · давно не подтверждалась"
                     }
                 ),
                 steps: item.steps.clone(),
             };
             (
                 candidate,
-                exact_target,
+                fresh,
+                target_rank,
                 item.reports.saturating_sub(item.fails),
                 item.last,
             )
@@ -381,12 +444,14 @@ pub fn picker_candidates(
         (
             !left.1,
             std::cmp::Reverse(left.2),
-            std::cmp::Reverse(&left.3),
+            std::cmp::Reverse(left.3),
+            std::cmp::Reverse(&left.4),
         )
             .cmp(&(
                 !right.1,
                 std::cmp::Reverse(right.2),
-                std::cmp::Reverse(&right.3),
+                std::cmp::Reverse(right.3),
+                std::cmp::Reverse(&right.4),
             ))
     });
     eligible
@@ -394,6 +459,126 @@ pub fn picker_candidates(
         .take(COMMUNITY_MAX_CANDIDATES)
         .map(|entry| entry.0)
         .collect()
+}
+
+async fn cached_host_asn(host: &str, now: u64) -> Option<u32> {
+    let (host, address) = normalize_host_asn_input(host)?;
+    if let Some(cached) = COMMUNITY_HOST_ASN_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.get(&host).copied())
+        .filter(|entry| host_asn_cache_fresh(*entry, now))
+    {
+        return cached.asn;
+    }
+    let lookup = async {
+        let ip = resolve_host_address(&host, address).await?;
+        lookup_host_asn(ip).await
+    };
+    let asn = tokio::time::timeout(std::time::Duration::from_secs(20), lookup)
+        .await
+        .ok()
+        .flatten();
+    if let Ok(mut cache) = COMMUNITY_HOST_ASN_CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        if cache.len() >= 256 {
+            cache.clear();
+        }
+        cache.insert(
+            host,
+            HostAsnCacheEntry {
+                checked_at: now,
+                asn,
+            },
+        );
+    }
+    asn
+}
+
+async fn resolve_host_address(host: &str, address: Option<IpAddr>) -> Option<IpAddr> {
+    if let Some(ip) = address {
+        return crate::site_diagnostics::public_ip(ip).then_some(ip);
+    }
+    if let Ok(Ok(addresses)) = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::net::lookup_host((host, 443)),
+    )
+    .await
+        && let Some(ip) = addresses
+            .map(|address| address.ip())
+            .find(|ip| crate::site_diagnostics::public_ip(*ip))
+    {
+        return Some(ip);
+    }
+    crate::site_diagnostics::public_ipv4_references(host)
+        .await
+        .into_iter()
+        .next()
+}
+
+fn normalize_host_asn_input(host: &str) -> Option<(String, Option<IpAddr>)> {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || host.len() > 253 || host.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        return None;
+    }
+    let address = host.parse::<IpAddr>().ok();
+    if let Some(ip) = address {
+        if !crate::site_diagnostics::public_ip(ip) {
+            return None;
+        }
+    } else {
+        let suffix = host.rsplit('.').next()?;
+        if !host.contains('.')
+            || matches!(
+                suffix,
+                "localhost"
+                    | "local"
+                    | "lan"
+                    | "home"
+                    | "internal"
+                    | "test"
+                    | "example"
+                    | "invalid"
+            )
+            || valid_public_host(&host).is_none()
+        {
+            return None;
+        }
+    }
+    Some((host, address))
+}
+
+fn host_asn_cache_fresh(entry: HostAsnCacheEntry, now: u64) -> bool {
+    now.saturating_sub(entry.checked_at)
+        < if entry.asn.is_some() {
+            COMMUNITY_HOST_ASN_TTL
+        } else {
+            COMMUNITY_HOST_ASN_ERROR_TTL
+        }
+}
+
+async fn lookup_host_asn(ip: IpAddr) -> Option<u32> {
+    let url = format!(
+        "https://stat.ripe.net/data/network-info/data.json?sourceapp=nfqws2-ui&resource={ip}"
+    );
+    let (status, body) = fetch_ripe(&url).await.ok()?;
+    if status != 0 {
+        return None;
+    }
+    parse_network_info_asn(&body)
+}
+
+fn parse_network_info_asn(body: &[u8]) -> Option<u32> {
+    let response: RipeResponse = serde_json::from_slice(body).ok()?;
+    let data = response.data?;
+    let asn = data.get("asns")?.as_array()?.first()?;
+    asn.as_u64()
+        .or_else(|| asn.as_str()?.trim_start_matches("AS").parse().ok())
+        .and_then(|asn| u32::try_from(asn).ok())
+        .filter(|asn| *asn > 0)
 }
 
 fn parse_iso_date(value: &str) -> Option<u64> {
@@ -697,12 +882,104 @@ mod tests {
     }
 
     #[test]
-    fn picker_candidates_skip_stale_and_failed_entries_and_prioritize_matching_site() {
-        let body = br#"{"items":[{"id":"0123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=split"],"targets":[{"host":"other.example"}],"reports":4,"fails":0,"last":"2026-10-27"},{"id":"1123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=split2"],"targets":[{"host":"example.com"}],"reports":2,"fails":0,"last":"2026-10-26"},{"id":"2123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=split3"],"reports":1,"fails":3,"last":"2026-10-27"},{"id":"3123456789ab","asn":12389,"proto":"http","steps":["--lua-desync=split4"],"last":"2026-10-27"}]}"#;
+    fn host_asn_lookup_normalizes_public_hosts_and_rejects_local_targets() {
+        assert_eq!(
+            normalize_host_asn_input(" Example.COM. "),
+            Some(("example.com".into(), None))
+        );
+        assert_eq!(
+            normalize_host_asn_input("1.1.1.1"),
+            Some(("1.1.1.1".into(), Some("1.1.1.1".parse().unwrap())))
+        );
+        for host in [
+            "localhost",
+            "192.168.1.1",
+            "example.com/path",
+            "example.com evil",
+        ] {
+            assert!(normalize_host_asn_input(host).is_none(), "accepted {host}");
+        }
+    }
+
+    #[test]
+    fn host_asn_cache_uses_a_short_negative_ttl_and_daily_positive_ttl() {
+        let checked_at = 1_000_000;
+        assert!(host_asn_cache_fresh(
+            HostAsnCacheEntry {
+                checked_at,
+                asn: Some(64500),
+            },
+            checked_at + COMMUNITY_HOST_ASN_TTL - 1
+        ));
+        assert!(!host_asn_cache_fresh(
+            HostAsnCacheEntry {
+                checked_at,
+                asn: Some(64500),
+            },
+            checked_at + COMMUNITY_HOST_ASN_TTL
+        ));
+        assert!(!host_asn_cache_fresh(
+            HostAsnCacheEntry {
+                checked_at,
+                asn: None,
+            },
+            checked_at + COMMUNITY_HOST_ASN_ERROR_TTL
+        ));
+    }
+
+    #[tokio::test]
+    async fn host_address_resolution_accepts_only_public_literal_addresses_without_dns() {
+        assert_eq!(
+            resolve_host_address("example.com", Some("1.1.1.1".parse().unwrap())).await,
+            Some("1.1.1.1".parse().unwrap())
+        );
+        assert_eq!(
+            resolve_host_address("example.com", Some("192.168.1.1".parse().unwrap())).await,
+            None
+        );
+    }
+
+    #[test]
+    fn network_info_parser_accepts_numeric_and_as_prefixed_asns() {
+        assert_eq!(
+            parse_network_info_asn(br#"{"data":{"asns":[64500]}}"#),
+            Some(64500)
+        );
+        assert_eq!(
+            parse_network_info_asn(br#"{"data":{"asns":["AS64501"]}}"#),
+            Some(64501)
+        );
+        assert_eq!(parse_network_info_asn(br#"{"data":{"asns":[0]}}"#), None);
+        assert_eq!(parse_network_info_asn(b"invalid"), None);
+    }
+
+    #[test]
+    fn picker_candidates_keep_stale_entries_after_fresh_and_skip_consistently_failed_entries() {
+        let body = br#"{"items":[{"id":"0123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=split"],"targets":[{"host":"other.example"}],"reports":4,"fails":0,"last":"2026-10-27"},{"id":"1123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=split2"],"targets":[{"host":"example.com"}],"reports":2,"fails":0,"last":"2026-10-26"},{"id":"2123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=split3"],"reports":1,"fails":3,"last":"2026-10-27"},{"id":"3123456789ab","asn":12389,"proto":"http","steps":["--lua-desync=split4"],"last":"2026-10-27"},{"id":"4123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=stale"],"targets":[{"host":"example.com"}],"reports":3,"fails":0,"last":"2026-01-01"}]}"#;
         let items = parse_provider_file(body, 12389).unwrap();
         let candidates = picker_candidates(items, "example.com", "tls", 1_793_059_200);
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 3);
         assert!(candidates[0].source.ends_with("этот сайт"));
         assert!(candidates[1].source.contains("AS12389"));
+        assert!(candidates[2].source.contains("давно не подтверждалась"));
+        assert!(
+            candidates[2]
+                .source
+                .ends_with("этот сайт · давно не подтверждалась")
+        );
+    }
+
+    #[test]
+    fn picker_candidates_prioritize_exact_site_then_target_asn_then_general_results() {
+        let body = br#"{"items":[{"id":"0123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=general"],"reports":100,"fails":0,"last":"2026-10-27"},{"id":"1123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=same_asn"],"targets":[{"asn":64500}],"reports":1,"fails":0,"last":"2026-10-27"},{"id":"2123456789ab","asn":12389,"proto":"tls","steps":["--lua-desync=same_site"],"targets":[{"host":"example.com"}],"reports":1,"fails":0,"last":"2026-10-27"}]}"#;
+        let items = parse_provider_file(body, 12389).unwrap();
+        let candidates =
+            picker_candidates_for_asn(items, " Example.COM. ", "tls", Some(64500), 1_793_059_200);
+        assert_eq!(candidates.len(), 3);
+        assert_eq!(candidates[0].name, "same_site");
+        assert!(candidates[0].source.contains("этот сайт"));
+        assert_eq!(candidates[1].name, "same_asn");
+        assert!(candidates[1].source.contains("эта сеть AS64500"));
+        assert_eq!(candidates[2].name, "general");
     }
 }

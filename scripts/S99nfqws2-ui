@@ -4,6 +4,7 @@ APP=/opt/share/nfqws2-ui/current
 RUN=/opt/var/run/nfqws2-ui
 LOG=/opt/var/log/nfqws2-ui.log
 PIDFILE="$RUN/pid"
+PORT_FILE=/opt/var/run/nfqws2-ui.port
 
 is_our_process() {
 	[ -r "$PIDFILE" ] || return 1
@@ -14,6 +15,42 @@ is_our_process() {
 	cmd=$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
 	case "$cmd" in *"$APP/bin/nfqws2-ui"*) return 0 ;; esac
 	return 1
+}
+
+port_is_listening() {
+	port=$1
+	case "$port" in ''|*[!0-9]*) return 2 ;; esac
+	[ "$port" -ge 1 ] 2>/dev/null && [ "$port" -le 65535 ] 2>/dev/null || return 2
+	port_hex=$(printf '%04X' "$port") || return 2
+	seen_table=0
+	for table in /proc/net/tcp /proc/net/tcp6; do
+		[ -r "$table" ] || continue
+		seen_table=1
+		awk -v port=":$port_hex" '$2 ~ (port "$") && $4 == "0A" { found=1 } END { exit !found }' "$table" && return 0
+	done
+	[ "$seen_table" -eq 1 ] && return 1
+	return 2
+}
+
+report_status() {
+	if ! is_our_process; then echo "nfqws2-ui is stopped"; return 1; fi
+	pid=$(cat "$PIDFILE" 2>/dev/null)
+	if [ ! -r "$PORT_FILE" ]; then
+		echo "nfqws2-ui process is running (PID $pid), but port is unknown"
+		return 1
+	fi
+	port=$(cat "$PORT_FILE" 2>/dev/null)
+	port_is_listening "$port"
+	result=$?
+	if [ "$result" -ne 0 ]; then
+		if [ "$result" -eq 2 ]; then
+			echo "nfqws2-ui process is running (PID $pid), but port $port could not be checked"
+		else
+			echo "nfqws2-ui process is running (PID $pid), but port $port is not listening"
+		fi
+		return 1
+	fi
+	echo "nfqws2-ui is running (PID $pid, port $port is listening)"
 }
 
 start_service() {
@@ -57,7 +94,7 @@ case "${1:-}" in
 	stop) stop_service ;;
 	restart) stop_service && start_service ;;
 	status)
-		if is_our_process; then echo "nfqws2-ui is running (PID $(cat "$PIDFILE"))"; else echo "nfqws2-ui is stopped"; exit 1; fi
+		report_status
 		;;
 	*) echo "Usage: $0 {start|stop|restart|status}"; exit 2 ;;
 esac

@@ -16,6 +16,31 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('shows list usage by profile and disables deletion while a profile still uses that list', () => {
+    expect(template).toContain('id="listProfileUsageStatus"');
+    expect(panelSource).toContain('summary.usedBy');
+    expect(panelSource).toContain('summary.usageKnown === false');
+    expect(panelSource).toContain("listUsageRoleLabel(usage.role)");
+    expect(panelSource).toContain('Список используется профилями. Сначала отключите его в конструкторе стратегий.');
+    expect(backendSource).toContain('fn list_profile_usage(');
+    expect(backendSource).toContain('Список используется профилями {names}');
+  });
+
+  it('exposes an on-demand package leftovers screen with explicit confirmation and constrained API calls', () => {
+    expect(template).toContain('id="navBtn-packageLeftovers"');
+    expect(template).toContain('id="tabContent-packageLeftovers"');
+    expect(template).toContain('id="deleteAllPackageLeftovers"');
+    expect(template).toContain('id="packageLeftoverCompareModal"');
+    expect(panelSource).toContain("compare.dataset.actionClick = 'comparePackageLeftover'");
+    expect(panelSource).toContain("if (route === 'packageLeftovers') void loadPackageLeftovers()");
+    expect(panelSource).toContain('nfqwsPackageLeftovers.delete(selected)');
+    expect(panelSource).toContain('requestDangerousConfirmation(');
+    expect(panelSource).toContain("item.sameAsBase === null ? 'содержимое сравнить не удалось'");
+    expect(backendSource).toContain('package_leftovers::list_package_leftovers');
+    expect(backendSource).toContain('package_leftovers::delete_package_leftovers');
+    expect(backendSource).toContain('package_leftovers::compare_package_leftover');
+  });
+
   it('offers inline profile renaming in the name field without a pencil or browser prompt', () => {
     expect(panelSource).toContain("nameLabel.textContent = 'Имя'");
     expect(panelSource).toContain("nameInput.className = 'runtime-profile-name-input'");
@@ -201,6 +226,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(apply).toContain('    setBusy(true);\n    setRestartInProgress(true);');
   });
 
+  it('reloads the editor after backend confirms an automatic config rollback', () => {
+    const apply = panelSource.match(/async function saveConfigAndApply[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(apply).toContain("error.message.includes('Исходный конфиг восстановлен')");
+    expect(apply).toContain('await loadConfig()');
+  });
+
   it('skips validation and the warning dialog when the configuration has no edits', () => {
     const apply = panelSource.match(/async function saveConfigAndApply[\s\S]*?\n}\n/)?.[0] ?? '';
     const unchangedGuard = apply.indexOf("configDraftDisposition(draft, baselineContent, config.content, baselineRevision, config.revision) === 'unchanged'");
@@ -295,12 +326,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).not.toContain('Интерфейсы не обнаружены; введите имя вручную.');
     expect(template).not.toContain('настроен, но не обнаружен');
     expect(panelSource).toContain("new Option('Выберите интерфейс', '', !configured, false)");
-    expect(panelSource).toContain('orderNetworkInterfaces(networkInterfaces, configured)');
+    expect(panelSource).toContain('orderNetworkInterfaces(networkInterfaces, configured, defaultInterfaces)');
     expect(panelSource).toContain("new Option('Ввести имя вручную…', '__manual__')");
     expect(panelSource).toContain('handleIspInterfaceSelection');
     expect(panelSource).toContain('updateIspInterfaceManually');
     expect(template).not.toContain('text-slate-400">WAN</span>');
-    expect(panelSource).toContain('isValidNetworkInterfaceName(value)');
+    expect(panelSource).toContain('isValidNetworkInterfaceSelection(value)');
+    expect(backendSource).toContain('default_network_interfaces: default_network_interfaces(');
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
   });
 
@@ -570,10 +602,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(backendSource).toContain('candidate_average_ms: Option<u64>');
   });
 
-  it('keeps the support report section out of the interface for now', () => {
-    expect(template).not.toContain('id="navBtn-supportReport"');
-    expect(template).not.toContain('id="tabContent-supportReport"');
-    expect(template).not.toContain('Отчёт для помощи');
+  it('exposes a privacy-first support report with manual copy and download actions', () => {
+    expect(template).toContain('id="navBtn-supportReport"');
+    expect(template).toContain('id="tabContent-supportReport"');
+    expect(template).toContain('Отчёт для помощи');
+    expect(template).toContain('id="supportReportAnonymize"');
+    expect(template).toContain('checked=""');
+    expect(template).toContain('data-action-click="buildSupportReport"');
+    expect(template).toContain('data-action-click="copySupportReport"');
+    expect(template).toContain('data-action-click="downloadSupportReport"');
+    expect(template).toContain('Отчёт не отправляется автоматически');
+    expect(panelSource).not.toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
   });
 
   it('styles the trace protocol picker and diagnosis helper text for clear reading', () => {
@@ -674,6 +713,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('freezeStrategyPreview');
     expect(panelSource).toContain('JSON.stringify({ state: operation.state, results: operation.results })');
     expect(panelSource).toContain('freezeCanApplyToHost');
+    expect(panelSource).toContain('freezeInConfigNote(result.inConf)');
+    expect(panelSource).toContain('inConfState: result.inConf?.state');
+    expect(panelStyles).toContain('.freeze-result-config-note');
     expect(panelSource).toContain('freeze-result-badge');
     expect(panelSource).toContain('Применить к сайту');
     expect(panelSource).toContain('applyFreezeStrategyOneClick');
@@ -879,7 +921,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('data-action-click="startStrategyPick"');
     expect(template).toContain('id="tabContent-diagnostic16k"');
     expect(template).toContain('data-action-click="runFreezeScan"');
-    expect(panelSource).toContain('UNAVAILABLE_PANEL_ROUTES');
+    expect(panelSource).not.toContain('UNAVAILABLE_PANEL_ROUTES');
   });
 
   it('installs delayed styled tooltips for action buttons', () => {
@@ -900,11 +942,7 @@ describe('TSX panel with optional server-side authentication', () => {
       expect(template).toContain(`id="navBtn-${route}"`);
       expect(template).toContain(`id="tabContent-${route}"`);
     }
-    for (const route of ['supportReport']) {
-      expect(template).not.toContain(`id="navBtn-${route}"`);
-      expect(template).not.toContain(`id="tabContent-${route}"`);
-    }
-    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
+    expect(panelSource).not.toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
     expect(panelSource).toContain('nfqwsSnapshots.create(');
     expect(backendSource).toContain('"/api/snapshots"');
     expect(backendSource).toContain('get(get_snapshots).post(create_snapshot_api)');
@@ -990,7 +1028,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('value="simplified"');
     expect(template).not.toContain('data-appearance-simplified-navigation');
     expect(template).toContain('data-simplified-group="site-check"');
-    expect(panelSource).toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
+    expect(panelSource).not.toContain("UNAVAILABLE_PANEL_ROUTES = ['supportReport']");
     expect(template).toContain('id="panelAuthEnabled"');
     expect(template).toContain('data-action-click="savePanelAuthSettings"');
     expect(entrySource).toContain('nfqwsAuth.status()');
@@ -1342,7 +1380,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('data-action-click="openUpdateModal" data-args="[&quot;ui&quot;]"');
     expect(template).not.toContain('data-action-click="switchUpdateTarget"');
     expect(template).not.toContain('id="updateTargetCore"');
-    expect(panelSource).toContain("nfqwsUpdates.coreReleases()");
+    expect(panelSource).toContain("nfqwsUpdates.coreReleases(forceRefresh)");
     expect(panelSource).toContain("nfqwsUpdates.installCore(tag)");
     expect(panelSource).toContain("renderReleaseMarkdown(release.notes)");
     expect(panelSource).not.toMatch(/installSelectedRelease.*toast\('Эта функция пока не подключена/);
@@ -1351,8 +1389,21 @@ describe('TSX panel with optional server-side authentication', () => {
   it('offers an in-place retry when a release list is empty or cannot be loaded', () => {
     expect(panelSource).toContain('function appendReleaseRetry(list: HTMLElement)');
     expect(panelSource).toContain("button.dataset.actionClick = 'retryUpdateList'");
-    expect(panelSource).toContain("retryUpdateList: () => void openUpdatePicker(updateTarget)");
+    expect(panelSource).toContain('retryUpdateList: () => void refreshUpdatePicker()');
+    expect(template).toContain('id="updatePickerRefresh"');
     expect(panelStyles).toContain('.release-retry-button');
+  });
+
+  it('keeps a cached core release catalog on open and exposes manual refresh for both catalogs', () => {
+    expect(panelSource).toContain("list.textContent = 'Загружаю список версий…'");
+    expect(panelSource).not.toContain('Загружаю версии из GitHub Releases…');
+    expect(panelSource).toContain('const result = await nfqwsUpdates.coreReleases(forceRefresh)');
+    expect(panelSource).toContain('refresh.hidden = false');
+    expect(panelSource).toContain('refresh.disabled = true');
+    expect(backendSource).toContain('load_cached_core_releases(&state, &architecture, query.force)');
+    expect(backendSource).toContain('Query(query): Query<CoreReleaseQuery>');
+    expect(panelSource).not.toContain("if (updateTarget !== 'ui') return");
+    expect(panelSource).toContain('retryUpdateList: () => void refreshUpdatePicker()');
   });
 
   it('keeps About commands and copy actions from colliding at narrow widths', () => {
@@ -1505,6 +1556,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('visibleCommunityProtocols(data.items)');
     expect(template).toContain('Что это значит и как это устроено');
     expect(template).toContain('data-action-click="editCommunityProvider"');
+    expect(template).toContain('id="communityShareTargetAsn"');
     expect(backendSource).toContain('query.auto_detect');
     expect(panelSource).toContain("dataset.actionClick = 'testCommunityStrategy'");
     expect(panelSource).toContain("community-strategy-badge-skipped");
@@ -1512,6 +1564,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('allTargets.length > targets.length');
     expect(panelSource).toContain("await writeTextToClipboard(item.steps.join('\\n'))");
     expect(backendSource).toContain('/api/community-strategies');
+    expect(backendSource).toContain('/api/community-strategies/target-asn');
+    expect(panelSource).toContain('targetAsn: share.targetAsn');
     expect(backendSource).toContain('include_community');
     expect(panelStyles).toContain('.community-strategy-row');
     expect(panelStyles).toContain('.community-strategy-badge-skipped');

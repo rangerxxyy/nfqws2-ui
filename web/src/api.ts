@@ -23,18 +23,22 @@ export type StrategyPickPreview = { operationId: string; candidateIndex: number;
 export type FreezeProfileJoinPreview = { operationId: string; resultIndex: number; asn: number; profileIndex: number; profileName: string; listId: string; prefixCount: number; originalRevision: string; originalContent: string; proposedContent: string; summary: string };
 export type FreezeStrategyMatch = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; reusedFrom: string | null };
 export type FreezeCandidateAttempt = { sni: string; step: string; attempts: number; successes: number; averageMs: number | null; confirmed: boolean; reason: string | null };
-export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[] };
+export type FreezeInConfigStatus = { state: 'working' | 'elsewhere' | 'not_present' | 'unknown'; profiles: Array<{ index: number; name: string }>; route: { index: number; name: string } | null; why: string | null };
+export type FreezeNetworkResult = { label: string; host: string; path: string; targetKind: 'host_reference' | 'pinned_address' | 'user_host'; address: string | null; asnHint: number | null; asn: { state: 'verified'; asn: number } | { state: 'changed'; expected: number; actual: number } | { state: 'unavailable' }; direct: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; current: { classification: string; ok: boolean; bytesReceived: number | null; replies: number | null; elapsedMs: number; reason: string }; freezeDetected: boolean; triedCandidates: number; candidateTotal: number; foundStrategy: FreezeStrategyMatch | null; candidateAttempts: FreezeCandidateAttempt[]; inConf?: FreezeInConfigStatus };
 export type FreezeScanOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'partial' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; results: FreezeNetworkResult[]; message: string; updatedAt: number };
 export type ForeignConfigCheckOperation = { id: string; state: 'queued' | 'running' | 'stopping' | 'complete' | 'cancelled' | 'failed'; stage: string; current: string | null; done: number; total: number; hosts: string[]; podkopHosts?: string[]; comparisons: { name: string; source: string; sites: { host: string; currentOk: boolean | null; currentDetail: string; currentAttempts: number; currentSuccesses: number; currentAverageMs: number | null; candidateOk: boolean | null; candidateDetail: string; candidateAttempts: number; candidateSuccesses: number; candidateAverageMs: number | null }[] }[]; message: string; updatedAt: number };
 export type NfqwsRuntimeProfile = { index: number; name: string | null; filters: string[]; strategies: string[]; payloads: string[] };
 export type NfqwsRuntime = { running: boolean; pid: number | null; source: 'proc-cmdline'; profiles: NfqwsRuntimeProfile[]; limitations: string[] };
 export type NfqwsListId = string;
+export type NfqwsListProfileUsage = { profileIndex: number; profileName: string; role: 'include' | 'exclude' | 'auto' };
 export type NfqwsListSummary = {
   id: NfqwsListId;
   path: string;
   readable: boolean;
   writable: boolean;
   managedAsn?: { asn: number; prefixCount: number; lastAttemptDate: string | null; lastSuccessDate: string | null; lastError: string | null; paused: boolean; pending: boolean };
+  usageKnown?: boolean;
+  usedBy?: NfqwsListProfileUsage[];
 };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
 export type MonitoringProbeStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
@@ -64,6 +68,7 @@ export type NfqwsInstallation = {
   installationRoot?: string | null;
   detectedBinary?: InstallationPath | null;
   networkInterfaces: string[];
+  defaultNetworkInterfaces: string[];
   config: InstallationPath | null;
   configCandidates: InstallationPath[];
   initScript: InstallationPath | null;
@@ -98,7 +103,7 @@ export type UiAppearanceSettings = { theme: 'dark' | 'light' | 'neon'; layout: '
 export type PanelAuthStatus = { enabled: boolean; hasPassword: boolean; authenticated: boolean; rememberDays: number };
 export type PanelRelease = { tag: string; publishedAt: string | null; notes: string };
 export type UiUpdateStatus = { currentVersion: string; latestVersion: string | null; updateAvailable: boolean; releaseUrl: string | null; checkedAt: number | null };
-export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null };
+export type NfqwsCoreReleases = { releases: PanelRelease[]; installedTag: string | null; warning?: string | null };
 export type NfqwsCoreUpdateStatus = { latestTag: string | null; installedTag: string | null; updateAvailable: boolean; checkedAt: number };
 export type UpdateOperation = {
   id: string;
@@ -194,6 +199,15 @@ export const nfqwsLists = {
   ),
 };
 
+export type PackageLeftover = { name: string; base: string; sizeBytes: number; modifiedAt: number | null; baseExists: boolean; sameAsBase: boolean | null };
+export type PackageLeftoversResponse = { items: PackageLeftover[]; totalBytes: number; deleted: number | null };
+export type PackageLeftoverComparison = { name: string; base: string; originalContent: string; candidateContent: string };
+export const nfqwsPackageLeftovers = {
+  list: () => api<PackageLeftoversResponse>('/api/nfqws2/package-leftovers'),
+  delete: (names: string[]) => api<PackageLeftoversResponse>('/api/nfqws2/package-leftovers', { method: 'POST', body: JSON.stringify({ names }) }),
+  compare: (name: string) => api<PackageLeftoverComparison>('/api/nfqws2/package-leftovers/compare', { method: 'POST', body: JSON.stringify({ name }) }),
+};
+
 export const nfqwsInstallation = {
   get: () => api<NfqwsInstallation>('/api/nfqws2/installation'),
 };
@@ -247,6 +261,7 @@ export const nfqwsChangeHistory = {
 export const nfqwsCommunityStrategies = {
   list: (detect = false, force = false, autoDetect = false) => api<CommunityStrategiesResponse>(`/api/community-strategies?detect=${detect}&force=${force}&autoDetect=${autoDetect}`),
   setProvider: (asn: number | null, name: string) => api<{ asn: number | null; name: string }>('/api/community-strategies/provider', { method: 'POST', body: JSON.stringify({ asn, name }) }),
+  targetAsn: (host: string) => api<{ asn: number | null }>(`/api/community-strategies/target-asn?host=${encodeURIComponent(host)}`),
 };
 
 export const nfqwsLogs = {
@@ -333,12 +348,12 @@ export const nfqwsMonitoring = {
 
 export const nfqwsUpdates = {
   uiStatus: () => api<UiUpdateStatus>('/api/updates/status'),
-  releases: () => api<{ releases: PanelRelease[]; updateStatus: UiUpdateStatus }>('/api/updates/releases'),
+  releases: (force = false) => api<{ releases: PanelRelease[]; updateStatus: UiUpdateStatus; warning?: string }>(`/api/updates/releases?force=${force}`),
   install: (tag: string) => api<UpdateOperation>('/api/updates/install', {
     method: 'POST', body: JSON.stringify({ tag }),
   }),
   status: (id: string) => api<UpdateOperation>(`/api/updates/operations/${encodeURIComponent(id)}`),
-  coreReleases: () => api<NfqwsCoreReleases>('/api/nfqws2/updates/releases'),
+  coreReleases: (force = false) => api<NfqwsCoreReleases>(`/api/nfqws2/updates/releases${force ? '?force=true' : ''}`),
   coreStatus: () => api<NfqwsCoreUpdateStatus>('/api/nfqws2/updates/status'),
   installCore: (tag: string) => api<UpdateOperation>('/api/nfqws2/updates/install', {
     method: 'POST', body: JSON.stringify({ tag }),

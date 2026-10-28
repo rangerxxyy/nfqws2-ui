@@ -24,11 +24,12 @@ use nfqws2_ui::site_diagnostics::{self, DiagnosticProgress, DiagnosticReport, Di
 use nfqws2_ui::site_trace;
 use nfqws2_ui::strategy_picker::{self, StrategyMode, StrategyProtocol};
 use nfqws2_ui::transfer_diagnostic;
+mod package_leftovers;
 mod snapshots;
 use nfqws2_ui::{
-    ServiceAction, ServiceState, discover_system_paths, known_config_paths, known_init_scripts,
-    network_interface_names, parse_meminfo_kb, process_matches, service_action, service_action_at,
-    service_status,
+    ServiceAction, ServiceState, default_network_interfaces, discover_system_paths,
+    known_config_paths, known_init_scripts, network_interface_names, parse_meminfo_kb,
+    process_matches, service_action, service_action_at, service_status,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -57,13 +58,17 @@ const MAX_CONFIG_BYTES: usize = 512 * 1024;
 const MAX_LIST_BYTES: usize = 512 * 1024;
 const MAX_LOG_BYTES: usize = 256 * 1024;
 const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
+const UI_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
+const UI_RELEASE_ERROR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const CORE_RELEASE_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(12 * 60 * 60);
 const CORE_RELEASE_ERROR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+const CONFIG_APPLY_MONITOR_BASELINE_TTL: std::time::Duration =
+    std::time::Duration::from_secs(4 * 60 * 60);
 const WRITE_REVISION_CONFLICT: &str = "REVISION_CONFLICT";
 const GITHUB_RELEASES_API: &str =
-    "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=30";
+    "https://api.github.com/repos/rangerxxyy/nfqws2-ui/releases?per_page=10";
 const NFQWS2_RELEASES_API: &str =
-    "https://api.github.com/repos/nfqws/nfqws2-keenetic/releases?per_page=100";
+    "https://api.github.com/repos/nfqws/nfqws2-keenetic/releases?per_page=10";
 static UPDATE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn github_wget_candidates() -> [&'static str; 2] {
@@ -100,8 +105,10 @@ struct AppState {
     config_write_lock: Mutex<()>,
     config_override: Option<PathBuf>,
     update_lock: Mutex<()>,
+    ui_release_cache: Mutex<Option<UiReleaseCacheEntry>>,
     core_release_cache: Mutex<Option<CoreReleaseCacheEntry>>,
     installed_core_version_cache: Mutex<InstalledCoreVersionCache>,
+    keenetic_system_stats_cache: Mutex<KeeneticSystemStatsCache>,
     interception_status_cache: Mutex<InterceptionStatusCache>,
     ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
@@ -147,6 +154,33 @@ impl InstalledCoreVersionCache {
         self.checked_at = Some(checked_at);
         self.version = version;
     }
+}
+
+const KEENETIC_SYSTEM_STATS_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Default)]
+struct KeeneticSystemStatsCache {
+    checked_at: Option<Instant>,
+    stats: Option<SystemInfo>,
+}
+
+impl KeeneticSystemStatsCache {
+    fn get(&self, now: Instant) -> Option<Option<SystemInfo>> {
+        self.checked_at
+            .filter(|checked_at| keenetic_system_stats_cache_is_fresh(Some(*checked_at), now))
+            .map(|_| self.stats.clone())
+    }
+
+    fn store(&mut self, stats: Option<SystemInfo>, checked_at: Instant) {
+        self.checked_at = Some(checked_at);
+        self.stats = stats;
+    }
+}
+
+fn keenetic_system_stats_cache_is_fresh(checked_at: Option<Instant>, now: Instant) -> bool {
+    checked_at.is_some_and(|checked_at| {
+        now.saturating_duration_since(checked_at) < KEENETIC_SYSTEM_STATS_CACHE_TTL
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -539,6 +573,12 @@ struct CommunityQuery {
     auto_detect: bool,
     #[serde(default)]
     force: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunityTargetAsnQuery {
+    host: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2952,6 +2992,7 @@ struct InstallationResponse {
     installation_root: Option<String>,
     detected_binary: Option<PathInfo>,
     network_interfaces: Vec<String>,
+    default_network_interfaces: Vec<String>,
     config: Option<PathInfo>,
     config_candidates: Vec<PathInfo>,
     init_script: Option<PathInfo>,
@@ -3124,7 +3165,7 @@ struct ServiceInfo {
     version: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SystemInfo {
     memory_total_bytes: Option<u64>,
@@ -3282,6 +3323,12 @@ struct UpdateInstallRequest {
     tag: String,
 }
 
+#[derive(Deserialize, Default)]
+struct UiReleaseQuery {
+    #[serde(default)]
+    force: bool,
+}
+
 #[derive(Deserialize)]
 struct CoreUpdateInstallRequest {
     tag: String,
@@ -3312,12 +3359,94 @@ struct GithubReleaseAsset {
     digest: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct PanelRelease {
     tag: String,
     published_at: Option<String>,
     notes: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UiReleaseCacheEntry {
+    checked_at: u64,
+    releases: Vec<PanelRelease>,
+    #[serde(default)]
+    last_error_at: Option<u64>,
+    #[serde(default)]
+    last_error: Option<String>,
+}
+
+fn ui_release_cache_is_fresh(entry: &UiReleaseCacheEntry, now: u64) -> bool {
+    if entry
+        .last_error_at
+        .is_some_and(|checked| now.saturating_sub(checked) < UI_RELEASE_ERROR_CACHE_TTL.as_secs())
+    {
+        return true;
+    }
+    entry.checked_at > 0 && now.saturating_sub(entry.checked_at) < UI_RELEASE_CACHE_TTL.as_secs()
+}
+
+fn ui_release_check_retry_after(
+    checked_at: u64,
+    warning: Option<&str>,
+    now: u64,
+) -> std::time::Duration {
+    if warning.is_some() {
+        return UI_RELEASE_ERROR_CACHE_TTL;
+    }
+    let next_check = checked_at.saturating_add(UI_RELEASE_CACHE_TTL.as_secs());
+    std::time::Duration::from_secs(next_check.saturating_sub(now).max(1))
+}
+
+fn ui_release_cache_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("ui-releases-cache.json")
+}
+
+async fn read_ui_release_cache(path: &Path) -> Option<UiReleaseCacheEntry> {
+    let metadata = tokio::fs::metadata(path).await.ok()?;
+    if metadata.len() > MAX_RELEASE_RESPONSE_BYTES as u64 {
+        return None;
+    }
+    let bytes = tokio::fs::read(path).await.ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+async fn write_ui_release_cache(path: &Path, entry: &UiReleaseCacheEntry) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Не удалось определить каталог кэша релизов UI".to_owned())?;
+    tokio::fs::create_dir_all(parent)
+        .await
+        .map_err(|error| format!("Не удалось создать каталог кэша релизов UI: {error}"))?;
+    let bytes = serde_json::to_vec(entry).map_err(|error| error.to_string())?;
+    if bytes.len() > MAX_RELEASE_RESPONSE_BYTES {
+        return Err("Кэш релизов UI превышает ограничение размера".into());
+    }
+    let temporary = path.with_extension(format!("{}.tmp", new_update_id()));
+    tokio::fs::write(&temporary, bytes)
+        .await
+        .map_err(|error| format!("Не удалось записать кэш релизов UI: {error}"))?;
+    #[cfg(unix)]
+    if let Err(error) =
+        tokio::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600)).await
+    {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(format!("Не удалось защитить кэш релизов UI: {error}"));
+    }
+    #[cfg(windows)]
+    if tokio::fs::try_exists(path).await.unwrap_or(false)
+        && let Err(error) = tokio::fs::remove_file(path).await
+    {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(format!("Не удалось заменить кэш релизов UI: {error}"));
+    }
+    if let Err(error) = tokio::fs::rename(&temporary, path).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(format!("Не удалось обновить кэш релизов UI: {error}"));
+    }
+    Ok(())
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -3340,6 +3469,12 @@ struct CoreReleaseCacheEntry {
     last_error_at: Option<u64>,
 }
 
+#[derive(Deserialize, Default)]
+struct CoreReleaseQuery {
+    #[serde(default)]
+    force: bool,
+}
+
 fn core_release_cache_is_fresh(
     entry: &CoreReleaseCacheEntry,
     architecture: &str,
@@ -3355,6 +3490,15 @@ fn core_release_cache_is_fresh(
         return true;
     }
     entry.checked_at > 0 && now.saturating_sub(entry.checked_at) < CORE_RELEASE_CACHE_TTL.as_secs()
+}
+
+fn should_use_core_release_cache(
+    entry: &CoreReleaseCacheEntry,
+    architecture: &str,
+    now: u64,
+    force: bool,
+) -> bool {
+    !force && core_release_cache_is_fresh(entry, architecture, now)
 }
 
 fn core_release_cache_path(data_dir: &Path) -> PathBuf {
@@ -3421,7 +3565,8 @@ struct CoreUpdateStatus {
 async fn load_cached_core_releases(
     state: &AppState,
     architecture: &str,
-) -> Result<(Vec<CoreRelease>, u64), String> {
+    force: bool,
+) -> Result<(Vec<CoreRelease>, u64, Option<String>), String> {
     let mut cache = state.core_release_cache.lock().await;
     if cache.is_none() {
         *cache = read_core_release_cache(&core_release_cache_path(&state.data_dir)).await;
@@ -3429,9 +3574,13 @@ async fn load_cached_core_releases(
     let now = now_unix_seconds();
     if let Some(entry) = cache
         .as_ref()
-        .filter(|entry| core_release_cache_is_fresh(entry, architecture, now))
+        .filter(|entry| should_use_core_release_cache(entry, architecture, now, force))
     {
-        return Ok((entry.releases.clone(), entry.checked_at));
+        let warning = entry
+            .last_error_at
+            .filter(|checked| now.saturating_sub(*checked) < CORE_RELEASE_ERROR_CACHE_TTL.as_secs())
+            .map(|_| "GitHub недоступен; показан сохранённый список релизов".to_owned());
+        return Ok((entry.releases.clone(), entry.checked_at, warning));
     }
     let stale = cache
         .as_ref()
@@ -3454,7 +3603,7 @@ async fn load_cached_core_releases(
                 {
                     tracing::warn!("cannot persist nfqws2 release cache: {error}");
                 }
-                Ok((releases, checked_at))
+                Ok((releases, checked_at, None))
             }
             Err(message) => Err(message),
         },
@@ -3487,7 +3636,7 @@ async fn load_cached_core_releases(
                 tracing::warn!("cannot persist nfqws2 release-check backoff: {error}");
             }
             if entry.checked_at > 0 {
-                Ok((entry.releases, entry.checked_at))
+                Ok((entry.releases, entry.checked_at, Some(message)))
             } else {
                 Err(message)
             }
@@ -3579,6 +3728,26 @@ struct ListsResponse {
     files: Vec<ListSummary>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageLeftoversDeleteRequest {
+    names: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageLeftoverCompareRequest {
+    name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageLeftoversResponse {
+    items: Vec<package_leftovers::PackageLeftover>,
+    total_bytes: u64,
+    deleted: Option<usize>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ListSummary {
@@ -3588,6 +3757,16 @@ struct ListSummary {
     writable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     managed_asn: Option<ManagedAsnListSummary>,
+    usage_known: bool,
+    used_by: Vec<ListProfileUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ListProfileUsage {
+    profile_index: usize,
+    profile_name: String,
+    role: &'static str,
 }
 
 #[derive(Serialize)]
@@ -3780,10 +3959,10 @@ fn cache_ui_update_status(
 fn start_ui_update_checker(state: Arc<AppState>) {
     tokio::spawn(async move {
         loop {
-            let retry_after = match fetch_github_releases().await {
-                Ok(releases) => {
-                    cache_ui_update_status(&state.ui_update_status, &releases, now_unix_seconds());
-                    std::time::Duration::from_secs(4 * 60 * 60)
+            let retry_after = match load_cached_ui_releases(&state, false).await {
+                Ok((releases, checked_at, warning)) => {
+                    cache_ui_update_status(&state.ui_update_status, &releases, checked_at);
+                    ui_release_check_retry_after(checked_at, warning.as_deref(), now_unix_seconds())
                 }
                 Err(error) => {
                     tracing::warn!("Background UI update check failed: {error}");
@@ -3935,26 +4114,26 @@ fn entware_architecture() -> Option<String> {
         .find(|arch| matches!(arch.as_str(), "aarch64-3.10" | "mips-3.4" | "mipsel-3.4"))
 }
 
-async fn get_core_releases() -> Response {
+async fn get_core_releases(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CoreReleaseQuery>,
+) -> Response {
     let Some(architecture) = entware_architecture() else {
         return error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Не удалось определить поддерживаемую архитектуру Entware nfqws2",
         );
     };
-    match fetch_github_url(NFQWS2_RELEASES_API).await {
-        Ok(json) => match eligible_core_releases(&json, &architecture) {
-            Ok(releases) => {
-                let installed_tag = std::process::Command::new("/opt/bin/opkg")
-                    .args(["status", "nfqws2-keenetic"])
-                    .output()
-                    .ok()
-                    .and_then(|output| installed_core_tag_from_output(&output.stdout));
-                Json(serde_json::json!({ "releases": releases, "installedTag": installed_tag }))
-                    .into_response()
-            }
-            Err(message) => error(StatusCode::BAD_GATEWAY, message),
-        },
+    match load_cached_core_releases(&state, &architecture, query.force).await {
+        Ok((releases, _, warning)) => {
+            let installed_tag = std::process::Command::new("/opt/bin/opkg")
+                .args(["status", "nfqws2-keenetic"])
+                .output()
+                .ok()
+                .and_then(|output| installed_core_tag_from_output(&output.stdout));
+            Json(serde_json::json!({ "releases": releases, "installedTag": installed_tag, "warning": warning }))
+                .into_response()
+        }
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
 }
@@ -3966,10 +4145,11 @@ async fn get_core_update_status(State(state): State<Arc<AppState>>) -> Response 
             "Не удалось определить поддерживаемую архитектуру Entware nfqws2",
         );
     };
-    let (releases, checked_at) = match load_cached_core_releases(&state, &architecture).await {
-        Ok(value) => value,
-        Err(message) => return error(StatusCode::BAD_GATEWAY, message),
-    };
+    let (releases, checked_at, _) =
+        match load_cached_core_releases(&state, &architecture, false).await {
+            Ok(value) => value,
+            Err(message) => return error(StatusCode::BAD_GATEWAY, message),
+        };
     let installed_tag = std::process::Command::new("/opt/bin/opkg")
         .args(["status", "nfqws2-keenetic"])
         .output()
@@ -4116,6 +4296,73 @@ async fn fetch_github_releases() -> Result<Vec<PanelRelease>, String> {
     eligible_panel_releases(&json)
 }
 
+async fn load_cached_ui_releases(
+    state: &AppState,
+    force: bool,
+) -> Result<(Vec<PanelRelease>, u64, Option<String>), String> {
+    let mut cache = state.ui_release_cache.lock().await;
+    if cache.is_none() {
+        *cache = read_ui_release_cache(&ui_release_cache_path(&state.data_dir)).await;
+    }
+    let now = now_unix_seconds();
+    if !force
+        && let Some(entry) = cache
+            .as_ref()
+            .filter(|entry| ui_release_cache_is_fresh(entry, now))
+    {
+        if entry.releases.is_empty() && entry.last_error.is_some() {
+            return Err(entry
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "В GitHub Releases нет подходящих версий UI".into()));
+        }
+        return Ok((
+            entry.releases.clone(),
+            entry.checked_at,
+            entry.last_error.clone(),
+        ));
+    }
+
+    match fetch_github_releases().await {
+        Ok(releases) => {
+            let entry = UiReleaseCacheEntry {
+                checked_at: now_unix_seconds(),
+                releases: releases.clone(),
+                last_error_at: None,
+                last_error: None,
+            };
+            *cache = Some(entry.clone());
+            if let Err(error) =
+                write_ui_release_cache(&ui_release_cache_path(&state.data_dir), &entry).await
+            {
+                tracing::warn!("cannot persist UI release cache: {error}");
+            }
+            Ok((releases, entry.checked_at, None))
+        }
+        Err(message) => {
+            let mut entry = cache.clone().unwrap_or_else(|| UiReleaseCacheEntry {
+                checked_at: 0,
+                releases: Vec::new(),
+                last_error_at: None,
+                last_error: None,
+            });
+            entry.last_error_at = Some(now_unix_seconds());
+            entry.last_error = Some(message.clone());
+            *cache = Some(entry.clone());
+            if let Err(error) =
+                write_ui_release_cache(&ui_release_cache_path(&state.data_dir), &entry).await
+            {
+                tracing::warn!("cannot persist UI release-check backoff: {error}");
+            }
+            if entry.releases.is_empty() {
+                Err(message)
+            } else {
+                Ok((entry.releases, entry.checked_at, Some(message)))
+            }
+        }
+    }
+}
+
 fn update_operation_path(state: &AppState, id: &str) -> PathBuf {
     state
         .data_dir
@@ -4146,13 +4393,15 @@ fn new_update_id() -> String {
     format!("{nanos:016x}{sequence:016x}")
 }
 
-async fn get_github_releases(State(state): State<Arc<AppState>>) -> Response {
-    match fetch_github_releases().await {
-        Ok(releases) => {
+async fn get_github_releases(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UiReleaseQuery>,
+) -> Response {
+    match load_cached_ui_releases(&state, query.force).await {
+        Ok((releases, _, warning)) => {
             let update_status =
                 cache_ui_update_status(&state.ui_update_status, &releases, now_unix_seconds());
-            Json(serde_json::json!({ "releases": releases, "updateStatus": update_status }))
-                .into_response()
+            Json(serde_json::json!({ "releases": releases, "updateStatus": update_status, "warning": warning })).into_response()
         }
         Err(message) => error(StatusCode::BAD_GATEWAY, message),
     }
@@ -4176,8 +4425,8 @@ async fn post_update_install(
         return error(StatusCode::BAD_REQUEST, "Недопустимый тег релиза");
     }
     let _guard = state.update_lock.lock().await;
-    let releases = match fetch_github_releases().await {
-        Ok(releases) => releases,
+    let releases = match load_cached_ui_releases(&state, false).await {
+        Ok((releases, _, _)) => releases,
         Err(message) => return error(StatusCode::BAD_GATEWAY, message),
     };
     if !release_is_eligible(&releases, &request.tag) {
@@ -4455,6 +4704,10 @@ async fn get_installation(State(state): State<Arc<AppState>>) -> Response {
             .as_ref()
             .map(|paths| inspect_path(&paths.binary, false)),
         network_interfaces: network_interface_names(Path::new("/sys/class/net")),
+        default_network_interfaces: default_network_interfaces(
+            &std::fs::read_to_string("/proc/net/route").unwrap_or_default(),
+            &std::fs::read_to_string("/proc/net/ipv6_route").unwrap_or_default(),
+        ),
         config: config.as_deref().map(|path| inspect_path(path, true)),
         config_candidates,
         init_script: init_script.as_deref().map(|path| inspect_path(path, false)),
@@ -4502,12 +4755,14 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
         .and_then(memory_usage_bytes)
         .map_or((None, None), |(used, total)| (Some(used), Some(total)));
     let cpu_percent = cpu_sample(&state).await;
-    let system = keenetic_system_stats().await.unwrap_or(SystemInfo {
-        memory_total_bytes,
-        memory_used_bytes,
-        cpu_percent,
-        source: "proc",
-    });
+    let system = cached_keenetic_system_stats(&state)
+        .await
+        .unwrap_or(SystemInfo {
+            memory_total_bytes,
+            memory_used_bytes,
+            cpu_percent,
+            source: "proc",
+        });
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -4745,6 +5000,16 @@ async fn keenetic_system_stats() -> Option<SystemInfo> {
         .await
         .ok()
         .flatten()
+}
+
+async fn cached_keenetic_system_stats(state: &AppState) -> Option<SystemInfo> {
+    let mut cache = state.keenetic_system_stats_cache.lock().await;
+    if let Some(stats) = cache.get(Instant::now()) {
+        return stats;
+    }
+    let stats = keenetic_system_stats().await;
+    cache.store(stats.clone(), Instant::now());
+    stats
 }
 
 fn parse_meminfo_kb_key(text: &str, key: &str) -> Option<u64> {
@@ -5470,6 +5735,57 @@ fn list_reference_matches_path(config: &Path, list_path: &Path, reference: &Path
         .canonicalize()
         .unwrap_or_else(|_| list_path.to_path_buf());
     candidate.canonicalize().is_ok_and(|path| path == target)
+}
+
+fn list_profile_usage(
+    config: &Path,
+    list_path: &Path,
+    profiles: &[nfqws2_ui::runtime_profiles::RuntimeProfile],
+) -> Vec<ListProfileUsage> {
+    const FLAGS: [(&str, &str); 5] = [
+        ("--hostlist", "include"),
+        ("--hostlist-auto", "auto"),
+        ("--hostlist-exclude", "exclude"),
+        ("--ipset", "include"),
+        ("--ipset-exclude", "exclude"),
+    ];
+    let mut usages = Vec::new();
+    for profile in profiles {
+        for (index, argument) in profile.args.iter().take(16_384).enumerate() {
+            for (flag, role) in FLAGS {
+                let reference = argument
+                    .strip_prefix(flag)
+                    .and_then(|suffix| suffix.strip_prefix('='))
+                    .or_else(|| {
+                        (argument == flag)
+                            .then(|| profile.args.get(index + 1).map(String::as_str))
+                            .flatten()
+                    });
+                let Some(reference) = reference.map(|value| value.trim_start_matches('@')) else {
+                    continue;
+                };
+                if reference.is_empty()
+                    || reference.len() > 4096
+                    || reference.contains(['$', '`', '\0'])
+                    || reference.starts_with('~')
+                {
+                    continue;
+                }
+                if list_reference_matches_path(config, list_path, Path::new(reference)) {
+                    let usage = ListProfileUsage {
+                        profile_index: profile.index,
+                        profile_name: profile.name.clone(),
+                        role,
+                    };
+                    if !usages.contains(&usage) {
+                        usages.push(usage);
+                    }
+                }
+            }
+        }
+    }
+    usages.sort_by_key(|usage| (usage.profile_index, usage.role));
+    usages
 }
 
 fn list_requires_nfqws_validation(
@@ -8279,13 +8595,14 @@ async fn start_multi_strategy_pick(
             StrategyProtocol::Https => "tls",
             StrategyProtocol::Quic => unreachable!(),
         };
-        for host in &hosts {
-            let candidates = community_strategies::picker_candidates(
+        if let Some(host) = hosts.first() {
+            let candidates = community_strategies::picker_candidates_for_host(
                 items.clone(),
                 host,
                 protocol_name,
                 now_unix_seconds(),
-            );
+            )
+            .await;
             strategy_picker::insert_reusable_candidates(&mut plan, candidates, &functions, &blobs);
         }
     }
@@ -8758,12 +9075,13 @@ async fn start_strategy_pick(
             StrategyProtocol::Http => "http",
             _ => "tls",
         };
-        let candidates = community_strategies::picker_candidates(
+        let candidates = community_strategies::picker_candidates_for_host(
             items,
             &host,
             protocol_name,
             now_unix_seconds(),
-        );
+        )
+        .await;
         strategy_picker::insert_reusable_candidates(&mut plan, candidates, &functions, &blobs);
     }
     {
@@ -9471,6 +9789,167 @@ async fn read_freeze_scan_operation(
     Ok(Some(operation))
 }
 
+fn freeze_in_config_unknown(reason: &str) -> serde_json::Value {
+    serde_json::json!({ "state": "unknown", "profiles": [], "route": null, "why": reason })
+}
+
+fn freeze_in_config_status(
+    host: &str,
+    address: Option<std::net::Ipv4Addr>,
+    found_step: &str,
+    profiles: &[nfqws2_ui::runtime_profiles::RuntimeProfile],
+    list_contents: &HashMap<String, String>,
+) -> serde_json::Value {
+    let Some(found_step) = freeze_profile_join::normalize_strategy_step(found_step) else {
+        return freeze_in_config_unknown(
+            "Найденный шаг нельзя безопасно сопоставить с конфигурацией",
+        );
+    };
+    let matching = profiles
+        .iter()
+        .filter(|profile| {
+            profile.steps.iter().any(|step| {
+                freeze_profile_join::normalize_strategy_step(step).as_ref() == Some(&found_step)
+            })
+        })
+        .collect::<Vec<_>>();
+    let matching_profiles = matching
+        .iter()
+        .map(|profile| serde_json::json!({ "index": profile.index, "name": profile.name }))
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return serde_json::json!({ "state": "not_present", "profiles": [], "route": null, "why": null });
+    }
+    let Some(address) = address else {
+        return serde_json::json!({
+            "state": "unknown", "profiles": matching_profiles, "route": null,
+            "why": "У результата проверки нет подтверждённого IP-адреса",
+        });
+    };
+    let route_index = match freeze_profile_join::first_matching_profile(
+        profiles,
+        host,
+        IpAddr::V4(address),
+        list_contents,
+    ) {
+        Ok(index) => index,
+        Err(reason) => {
+            return serde_json::json!({
+                "state": "unknown", "profiles": matching_profiles, "route": null, "why": reason,
+            });
+        }
+    };
+    let route = route_index.and_then(|index| {
+        profiles
+            .iter()
+            .find(|profile| profile.index == index)
+            .map(|profile| serde_json::json!({ "index": profile.index, "name": profile.name }))
+    });
+    let working =
+        route_index.is_some_and(|index| matching.iter().any(|profile| profile.index == index));
+    let excluded_by = if working {
+        None
+    } else {
+        matching.iter().find_map(|profile| {
+            freeze_profile_join::profile_exclusion_reason(
+                profile,
+                host,
+                IpAddr::V4(address),
+                list_contents,
+            )
+            .map(|reason| (profile, reason))
+        })
+    };
+    let why = if working {
+        serde_json::Value::Null
+    } else if let Some((profile, reason)) = excluded_by {
+        serde_json::Value::String(format!(
+            "Профиль #{} «{}» исключает адрес через {reason}",
+            profile.index, profile.name
+        ))
+    } else if let Some(route) = &route {
+        serde_json::Value::String(format!(
+            "Адрес сейчас обрабатывает профиль #{} «{}», найденный шаг находится в другом профиле",
+            route["index"].as_u64().unwrap_or_default(),
+            route["name"].as_str().unwrap_or_default()
+        ))
+    } else {
+        serde_json::Value::String("Ни один профиль сейчас не совпадает с этим адресом".into())
+    };
+    serde_json::json!({
+        "state": if working { "working" } else { "elsewhere" },
+        "profiles": matching_profiles,
+        "route": route,
+        "why": why,
+    })
+}
+
+async fn read_freeze_scan_profile_context(
+    config_path: &Path,
+) -> Result<
+    (
+        Vec<nfqws2_ui::runtime_profiles::RuntimeProfile>,
+        HashMap<String, String>,
+    ),
+    String,
+> {
+    const MAX_CONTEXT_LISTS: usize = 128;
+    const MAX_CONTEXT_LIST_BYTES: usize = 4 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    tokio::fs::File::open(config_path)
+        .await
+        .map_err(|error| format!("не удалось прочитать текущую конфигурацию: {error}"))?
+        .take((MAX_CONFIG_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|error| format!("не удалось прочитать текущую конфигурацию: {error}"))?;
+    if bytes.len() > MAX_CONFIG_BYTES {
+        return Err("текущая конфигурация превышает лимит 512 КиБ".into());
+    }
+    let source = std::str::from_utf8(&bytes)
+        .map_err(|_| "текущая конфигурация не является UTF-8 текстом".to_owned())?;
+    let parsed = nfqws2_ui::runtime_profiles::from_config(source, &revision(&bytes))
+        .map_err(|message| format!("не удалось разобрать профили: {message}"))?;
+    let lists_directory = config_path
+        .parent()
+        .map(|parent| parent.join("lists"))
+        .ok_or_else(|| "не удалось определить каталог списков".to_owned())?;
+    let mut list_contents = HashMap::new();
+    let mut total_bytes = 0_usize;
+    for profile in &parsed.profiles {
+        for reference in freeze_profile_join::profile_list_references(&profile.args)
+            .map_err(|message| format!("не удалось разобрать списки профиля: {message}"))?
+        {
+            if list_contents.contains_key(&reference) {
+                continue;
+            }
+            if list_contents.len() >= MAX_CONTEXT_LISTS {
+                return Err("слишком много списков для безопасной проверки маршрута".into());
+            }
+            let path = resolve_foreign_list_path(&reference, &lists_directory)?;
+            let mut content = Vec::new();
+            let file = tokio::fs::File::open(path)
+                .await
+                .map_err(|error| format!("список профиля недоступен: {error}"))?;
+            file.take((MAX_LIST_BYTES + 1) as u64)
+                .read_to_end(&mut content)
+                .await
+                .map_err(|error| format!("не удалось прочитать список профиля: {error}"))?;
+            if content.len() > MAX_LIST_BYTES {
+                return Err("список профиля превышает лимит 512 КиБ".into());
+            }
+            total_bytes = total_bytes.saturating_add(content.len());
+            if total_bytes > MAX_CONTEXT_LIST_BYTES {
+                return Err("суммарный размер списков для проверки превышает 4 МиБ".into());
+            }
+            let content = String::from_utf8(content)
+                .map_err(|_| "список профиля не является UTF-8 текстом".to_owned())?;
+            list_contents.insert(reference, content);
+        }
+    }
+    Ok((parsed.profiles, list_contents))
+}
+
 async fn start_freeze_scan(
     State(state): State<Arc<AppState>>,
     Json(request): Json<FreezeScanRequest>,
@@ -9678,7 +10157,45 @@ async fn get_freeze_scan(
                 operation.updated_at = now_unix_seconds();
                 let _ = write_freeze_scan_operation(&directory, &operation);
             }
-            Json(operation).into_response()
+            if operation
+                .results
+                .iter()
+                .any(|result| result.found_strategy.is_some())
+            {
+                let context = match config_path_for_state(&state) {
+                    Some(path) => read_freeze_scan_profile_context(&path).await,
+                    None => Err("текущая конфигурация nfqws2 не найдена".into()),
+                };
+                let mut response = match serde_json::to_value(&operation) {
+                    Ok(value) => value,
+                    Err(message) => {
+                        return error(StatusCode::INTERNAL_SERVER_ERROR, message.to_string());
+                    }
+                };
+                if let Some(results) = response["results"].as_array_mut() {
+                    for (index, result) in operation.results.iter().enumerate() {
+                        let Some(found) = result.found_strategy.as_ref() else {
+                            continue;
+                        };
+                        let context_status = match &context {
+                            Ok((profiles, lists)) => freeze_in_config_status(
+                                &result.host,
+                                result.address,
+                                &found.step,
+                                profiles,
+                                lists,
+                            ),
+                            Err(reason) => freeze_in_config_unknown(reason),
+                        };
+                        if let Some(value) = results.get_mut(index) {
+                            value["inConf"] = context_status;
+                        }
+                    }
+                }
+                Json(response).into_response()
+            } else {
+                Json(operation).into_response()
+            }
         }
         Ok(None) => error(StatusCode::NOT_FOUND, "Операция проверки сетей не найдена"),
         Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
@@ -10111,6 +10628,10 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
     let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
+    let profile_inventory = std::fs::read(&config).ok().and_then(|bytes| {
+        let content = std::str::from_utf8(&bytes).ok()?;
+        nfqws2_ui::runtime_profiles::from_config(content, &revision(&bytes)).ok()
+    });
     let managed = ManagedAsnListStore::load(&state.data_dir);
     let files = list_ids_for_config(&config)
         .into_iter()
@@ -10135,10 +10656,100 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
                 readable: std::fs::File::open(&path).is_ok(),
                 writable: std::fs::OpenOptions::new().append(true).open(&path).is_ok(),
                 managed_asn,
+                usage_known: profile_inventory.is_some(),
+                used_by: profile_inventory
+                    .as_ref()
+                    .map(|inventory| list_profile_usage(&config, &path, &inventory.profiles))
+                    .unwrap_or_default(),
             })
         })
         .collect();
     Json(ListsResponse { files }).into_response()
+}
+
+async fn get_package_leftovers(State(state): State<Arc<AppState>>) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let Some(config_dir) = config.parent() else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось определить каталог конфигурации",
+        );
+    };
+    let lists_dir = config_dir.join("lists");
+    match package_leftovers::list_package_leftovers(&config, &lists_dir) {
+        Ok(items) => {
+            let total_bytes = items.iter().map(|item| item.size_bytes).sum();
+            Json(PackageLeftoversResponse {
+                items,
+                total_bytes,
+                deleted: None,
+            })
+            .into_response()
+        }
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn delete_package_leftovers(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<PackageLeftoversDeleteRequest>,
+) -> Response {
+    if request.names.is_empty() || request.names.len() > 100 {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Выберите от 1 до 100 файлов для удаления",
+        );
+    }
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let Some(config_dir) = config.parent() else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось определить каталог конфигурации",
+        );
+    };
+    let lists_dir = config_dir.join("lists");
+    match package_leftovers::delete_package_leftovers(&config, &lists_dir, &request.names) {
+        Ok(deleted) => match package_leftovers::list_package_leftovers(&config, &lists_dir) {
+            Ok(items) => {
+                let total_bytes = items.iter().map(|item| item.size_bytes).sum();
+                Json(PackageLeftoversResponse {
+                    items,
+                    total_bytes,
+                    deleted: Some(deleted),
+                })
+                .into_response()
+            }
+            Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+        },
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn compare_package_leftover(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<PackageLeftoverCompareRequest>,
+) -> Response {
+    let Some(config) = config_path_for_state(&state) else {
+        return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
+    };
+    let Some(config_dir) = config.parent() else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Не удалось определить каталог конфигурации",
+        );
+    };
+    match package_leftovers::compare_package_leftover(
+        &config,
+        &config_dir.join("lists"),
+        &request.name,
+    ) {
+        Ok(comparison) => Json(comparison).into_response(),
+        Err(message) => error(StatusCode::CONFLICT, message),
+    }
 }
 
 async fn get_list(
@@ -10611,6 +11222,27 @@ fn strategy_apply_verification_hosts_for_protocol(
     }
 }
 
+fn config_apply_verification_hosts(monitoring: &MonitoringStore, now: u64) -> Vec<String> {
+    monitoring
+        .sites
+        .iter()
+        .filter(|site| {
+            site.results.first().is_some_and(|result| {
+                result.status == "ok"
+                    && result.checked_at <= now
+                    && now.saturating_sub(result.checked_at)
+                        < CONFIG_APPLY_MONITOR_BASELINE_TTL.as_secs()
+            })
+        })
+        .filter_map(|site| site_diagnostics::normalize_host(&site.host).ok())
+        .fold(Vec::new(), |mut hosts, host| {
+            if hosts.len() < 20 && !hosts.contains(&host) {
+                hosts.push(host);
+            }
+            hosts
+        })
+}
+
 async fn verify_strategy_hosts_with<F, Fut>(hosts: Vec<String>, probe: F) -> Result<(), String>
 where
     F: Fn(String) -> Fut + Clone + Send + Sync + 'static,
@@ -10677,6 +11309,50 @@ async fn delete_custom_list(
     let Some(path) = list_file_path(&config, &id) else {
         return error(StatusCode::NOT_FOUND, "Пользовательский список не найден");
     };
+    let config_bytes = match tokio::fs::read(&config).await {
+        Ok(bytes) => bytes,
+        Err(io_error) => {
+            return error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Не удалось проверить связи списка с профилями: {io_error}"),
+            );
+        }
+    };
+    let config_source = match std::str::from_utf8(&config_bytes) {
+        Ok(source) => source,
+        Err(_) => {
+            return error(
+                StatusCode::CONFLICT,
+                "Не удалось безопасно разобрать конфигурацию; список не удалён",
+            );
+        }
+    };
+    let profiles = match nfqws2_ui::runtime_profiles::from_config(
+        config_source,
+        &revision(&config_bytes),
+    ) {
+        Ok(profiles) => profiles,
+        Err(_) => {
+            return error(
+                StatusCode::CONFLICT,
+                "Не удалось безопасно определить использование списка в профилях; список не удалён",
+            );
+        }
+    };
+    let usages = list_profile_usage(&config, &path, &profiles.profiles);
+    if !usages.is_empty() {
+        let names = usages
+            .iter()
+            .map(|usage| format!("#{} {}", usage.profile_index, usage.profile_name))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return error(
+            StatusCode::CONFLICT,
+            format!("Список используется профилями {names}. Сначала отключите его от них."),
+        );
+    }
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
         Err(io_error) if io_error.kind() == std::io::ErrorKind::NotFound => {
@@ -10877,11 +11553,38 @@ async fn apply_config(
     State(state): State<Arc<AppState>>,
     Json(write): Json<ConfigWrite>,
 ) -> Response {
-    match apply_config_transaction(&state, write, || async {
-        service_action(ServiceAction::Restart).await
-    })
-    .await
-    {
+    let _monitoring_guard = state.monitoring_lock.lock().await;
+    let monitoring = match load_monitoring_store(&state.data_dir).await {
+        Ok(monitoring) => monitoring,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    let hosts = config_apply_verification_hosts(&monitoring, now_unix_seconds());
+    let policy_route = resolve_monitoring_policy_route(&state).await;
+    let result = apply_config_transaction_with_verification(
+        &state,
+        write,
+        || async { service_action(ServiceAction::Restart).await },
+        || {
+            let hosts = hosts.clone();
+            let policy_route = policy_route.clone();
+            async move {
+                verify_strategy_hosts_with(hosts, move |host| {
+                    let policy_route = policy_route.clone();
+                    async move {
+                        let report = check_monitoring_host(host, policy_route).await;
+                        if report.current.status == "ok" {
+                            Ok(())
+                        } else {
+                            Err(report.summary)
+                        }
+                    }
+                })
+                .await
+            }
+        },
+    )
+    .await;
+    match result {
         Ok(result) => Json(result).into_response(),
         Err(message) if message == WRITE_REVISION_CONFLICT => error(
             StatusCode::CONFLICT,
@@ -11278,6 +11981,13 @@ async fn get_community_strategies(
             )
         }),
     })
+    .into_response()
+}
+
+async fn get_community_target_asn(Query(query): Query<CommunityTargetAsnQuery>) -> Response {
+    Json(serde_json::json!({
+        "asn": community_strategies::target_asn_for_host(&query.host).await
+    }))
     .into_response()
 }
 
@@ -13848,6 +14558,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/diagnostics/trace", post(trace_site))
         .route("/api/community-strategies", get(get_community_strategies))
         .route(
+            "/api/community-strategies/target-asn",
+            get(get_community_target_asn),
+        )
+        .route(
             "/api/community-strategies/provider",
             post(set_community_provider),
         )
@@ -13898,6 +14612,14 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         )
         .route("/api/nfqws2/apply", post(apply_config))
         .route("/api/nfqws2/lists", get(get_lists))
+        .route(
+            "/api/nfqws2/package-leftovers",
+            get(get_package_leftovers).post(delete_package_leftovers),
+        )
+        .route(
+            "/api/nfqws2/package-leftovers/compare",
+            post(compare_package_leftover),
+        )
         .route(
             "/api/nfqws2/lists/{id}",
             get(get_list).put(put_list).delete(delete_custom_list),
@@ -14024,8 +14746,10 @@ async fn main() {
         config_write_lock: Mutex::new(()),
         config_override: None,
         update_lock: Mutex::new(()),
+        ui_release_cache: Mutex::new(None),
         core_release_cache: Mutex::new(None),
         installed_core_version_cache: Mutex::new(InstalledCoreVersionCache::default()),
+        keenetic_system_stats_cache: Mutex::new(KeeneticSystemStatsCache::default()),
         interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
         ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
@@ -14151,6 +14875,51 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn keenetic_system_stats_cache_expires_after_five_seconds() {
+        let checked_at = Instant::now();
+        let mut cache = KeeneticSystemStatsCache::default();
+
+        cache.store(
+            Some(SystemInfo {
+                memory_total_bytes: Some(1024),
+                memory_used_bytes: Some(512),
+                cpu_percent: Some(25.0),
+                source: "keenetic-rci",
+            }),
+            checked_at,
+        );
+
+        assert!(keenetic_system_stats_cache_is_fresh(
+            Some(checked_at),
+            checked_at + std::time::Duration::from_secs(4)
+        ));
+        assert!(!keenetic_system_stats_cache_is_fresh(
+            Some(checked_at),
+            checked_at + std::time::Duration::from_secs(5)
+        ));
+        assert!(!keenetic_system_stats_cache_is_fresh(None, checked_at));
+        assert_eq!(
+            cache
+                .get(checked_at + std::time::Duration::from_secs(4))
+                .flatten()
+                .map(|stats| stats.source),
+            Some("keenetic-rci")
+        );
+
+        cache.store(None, checked_at);
+        assert!(
+            cache
+                .get(checked_at + std::time::Duration::from_secs(4))
+                .is_some_and(|stats| stats.is_none())
+        );
+        assert!(
+            cache
+                .get(checked_at + std::time::Duration::from_secs(5))
+                .is_none()
+        );
+    }
 
     #[test]
     fn nfqws_help_catalog_parses_runtime_protocols_payloads_and_argument_scope() {
@@ -15740,8 +16509,10 @@ mod tests {
             config_write_lock: Mutex::new(()),
             config_override,
             update_lock: Mutex::new(()),
+            ui_release_cache: Mutex::new(None),
             core_release_cache: Mutex::new(None),
             installed_core_version_cache: Mutex::new(InstalledCoreVersionCache::default()),
+            keenetic_system_stats_cache: Mutex::new(KeeneticSystemStatsCache::default()),
             interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
@@ -15956,8 +16727,10 @@ mod tests {
             config_write_lock: Mutex::new(()),
             config_override: None,
             update_lock: Mutex::new(()),
+            ui_release_cache: Mutex::new(None),
             core_release_cache: Mutex::new(None),
             installed_core_version_cache: Mutex::new(InstalledCoreVersionCache::default()),
+            keenetic_system_stats_cache: Mutex::new(KeeneticSystemStatsCache::default()),
             interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
@@ -16510,6 +17283,81 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    #[tokio::test]
+    async fn package_leftovers_api_lists_and_deletes_only_server_discovered_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_dir = dir.path().join("etc/nfqws2");
+        let lists = config_dir.join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        let config = config_dir.join("nfqws2.conf");
+        std::fs::write(&config, b"active configuration").unwrap();
+        std::fs::write(config_dir.join("nfqws2.conf-opkg"), b"package default").unwrap();
+        std::fs::write(config_dir.join("custom.yaml-opkg"), b"extra").unwrap();
+        std::fs::write(lists.join("user.list"), b"active list").unwrap();
+        std::fs::write(lists.join("user.list.apk-new"), b"modified list").unwrap();
+        let outside = dir.path().join("outside.list-opkg");
+        std::fs::write(&outside, b"outside").unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("data"), Some(config.clone())),
+            dir.path().join("web"),
+        );
+
+        let listed = app
+            .clone()
+            .oneshot(
+                Request::get("/api/nfqws2/package-leftovers")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let listed = body_json(listed).await;
+        assert_eq!(listed["items"].as_array().unwrap().len(), 3);
+        assert_eq!(listed["totalBytes"], 33);
+        assert_eq!(
+            listed["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["name"] == "lists/user.list.apk-new")
+                .unwrap()["sameAsBase"],
+            false
+        );
+
+        let compared = app
+            .clone()
+            .oneshot(
+                Request::post("/api/nfqws2/package-leftovers/compare")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "name": "lists/user.list.apk-new" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(compared.status(), StatusCode::OK);
+        let compared = body_json(compared).await;
+        assert_eq!(compared["base"], "user.list");
+        assert_eq!(compared["originalContent"], "active list");
+        assert_eq!(compared["candidateContent"], "modified list");
+
+        let deleted = app.oneshot(
+            Request::post("/api/nfqws2/package-leftovers")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({ "names": ["nfqws2.conf-opkg", "custom.yaml-opkg", "lists/user.list.apk-new", "../../outside.list-opkg", "nfqws2.conf"] }).to_string()))
+                .unwrap(),
+        ).await.unwrap();
+        assert_eq!(deleted.status(), StatusCode::OK);
+        let deleted = body_json(deleted).await;
+        assert_eq!(deleted["deleted"], 3);
+        assert_eq!(deleted["items"].as_array().unwrap().len(), 0);
+        assert!(config.is_file());
+        assert!(lists.join("user.list").is_file());
+        assert!(outside.is_file());
+    }
+
     #[test]
     fn runtime_inventory_uses_only_active_argv_and_splits_at_new_profiles() {
         let args = [
@@ -16635,8 +17483,65 @@ mod tests {
     }
 
     #[test]
-    fn panel_release_request_avoids_the_oversized_hundred_release_response() {
-        assert!(GITHUB_RELEASES_API.ends_with("?per_page=30"));
+    fn update_release_requests_load_only_the_ten_latest_releases() {
+        assert!(GITHUB_RELEASES_API.ends_with("?per_page=10"));
+        assert!(NFQWS2_RELEASES_API.ends_with("?per_page=10"));
+    }
+
+    #[test]
+    fn ui_release_cache_expires_after_twelve_hours_and_backs_off_errors_for_ten_minutes() {
+        let now = 2_000_000_000_u64;
+        let entry = UiReleaseCacheEntry {
+            checked_at: now - UI_RELEASE_CACHE_TTL.as_secs(),
+            releases: Vec::new(),
+            last_error_at: None,
+            last_error: None,
+        };
+        assert!(!ui_release_cache_is_fresh(&entry, now));
+        let error_entry = UiReleaseCacheEntry {
+            last_error_at: Some(now - UI_RELEASE_ERROR_CACHE_TTL.as_secs() + 1),
+            last_error: Some("GitHub unavailable".into()),
+            ..entry
+        };
+        assert!(ui_release_cache_is_fresh(&error_entry, now));
+        assert!(!ui_release_cache_is_fresh(
+            &error_entry,
+            now + UI_RELEASE_ERROR_CACHE_TTL.as_secs()
+        ));
+    }
+
+    #[test]
+    fn background_ui_release_check_waits_until_cache_expiry_or_retries_errors_early() {
+        let now = 2_000_000_000_u64;
+        assert_eq!(
+            ui_release_check_retry_after(now - 60, None, now),
+            std::time::Duration::from_secs(UI_RELEASE_CACHE_TTL.as_secs() - 60)
+        );
+        assert_eq!(
+            ui_release_check_retry_after(now - 60, Some("stale"), now),
+            UI_RELEASE_ERROR_CACHE_TTL
+        );
+    }
+
+    #[tokio::test]
+    async fn ui_release_cache_persists_the_catalog_and_error_backoff() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = ui_release_cache_path(dir.path());
+        let entry = UiReleaseCacheEntry {
+            checked_at: 123,
+            releases: vec![PanelRelease {
+                tag: "v1.9.7".into(),
+                published_at: None,
+                notes: "release notes".into(),
+            }],
+            last_error_at: Some(124),
+            last_error: Some("temporary outage".into()),
+        };
+        write_ui_release_cache(&path, &entry).await.unwrap();
+        let cached = read_ui_release_cache(&path).await.unwrap();
+        assert_eq!(cached.checked_at, 123);
+        assert_eq!(cached.releases[0].tag, "v1.9.7");
+        assert_eq!(cached.last_error.as_deref(), Some("temporary outage"));
     }
 
     #[test]
@@ -16724,6 +17629,62 @@ mod tests {
             "mips-3.4",
             now - CORE_RELEASE_CACHE_TTL.as_secs() + 1
         ));
+    }
+
+    #[test]
+    fn core_release_list_uses_cache_by_default_and_bypasses_it_on_force_refresh() {
+        let now = 2_000_000_000_u64;
+        let entry = CoreReleaseCacheEntry {
+            checked_at: now - 60,
+            architecture: "aarch64-3.10".into(),
+            releases: Vec::new(),
+            last_error_at: None,
+        };
+        assert!(should_use_core_release_cache(
+            &entry,
+            "aarch64-3.10",
+            now,
+            false
+        ));
+        assert!(!should_use_core_release_cache(
+            &entry,
+            "aarch64-3.10",
+            now,
+            true
+        ));
+    }
+
+    #[tokio::test]
+    async fn core_release_catalog_returns_a_fresh_cached_list_without_fetching_github() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = test_state(dir.path().to_path_buf());
+        let checked_at = now_unix_seconds();
+        *state.core_release_cache.lock().await = Some(CoreReleaseCacheEntry {
+            checked_at,
+            architecture: "aarch64-3.10".into(),
+            releases: vec![CoreRelease {
+                tag: "v1.9.7".into(),
+                published_at: None,
+                notes: "cached".into(),
+                asset: "nfqws2-aarch64.tar.gz".into(),
+                sha256: "a".repeat(64),
+            }],
+            last_error_at: None,
+        });
+
+        let (releases, returned_checked_at, warning) =
+            load_cached_core_releases(&state, "aarch64-3.10", false)
+                .await
+                .unwrap();
+
+        assert_eq!(releases[0].tag, "v1.9.7");
+        assert_eq!(returned_checked_at, checked_at);
+        assert!(warning.is_none());
+    }
+
+    #[test]
+    fn core_release_query_defaults_to_cached_mode() {
+        assert!(!CoreReleaseQuery::default().force);
     }
 
     #[test]
@@ -17437,6 +18398,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn config_apply_verification_hosts_use_only_recent_successful_monitor_baselines() {
+        let now = 2_000_000_000_u64;
+        let result = |checked_at, status: &str| MonitoredResult {
+            checked_at,
+            status: status.into(),
+            summary: String::new(),
+            latency_ms: None,
+            steps: Vec::new(),
+        };
+        let monitoring = MonitoringStore {
+            sites: vec![
+                MonitoredSite {
+                    host: "healthy.example".into(),
+                    results: vec![result(now - 60, "ok")],
+                },
+                MonitoredSite {
+                    host: "failed.example".into(),
+                    results: vec![result(now - 60, "error")],
+                },
+                MonitoredSite {
+                    host: "stale.example".into(),
+                    results: vec![result(
+                        now - CONFIG_APPLY_MONITOR_BASELINE_TTL.as_secs() - 1,
+                        "ok",
+                    )],
+                },
+                MonitoredSite {
+                    host: "future.example".into(),
+                    results: vec![result(now + 60, "ok")],
+                },
+            ],
+            ..MonitoringStore::default()
+        };
+        assert_eq!(
+            config_apply_verification_hosts(&monitoring, now),
+            ["healthy.example"]
+        );
+    }
+
     #[tokio::test]
     async fn strategy_apply_retries_only_failed_host_checks_once() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17580,6 +18581,7 @@ mod tests {
         });
         assert_eq!(report["platform"], expected_platform);
         assert!(report["networkInterfaces"].is_array());
+        assert!(report["defaultNetworkInterfaces"].is_array());
         assert_eq!(report["config"]["path"], config.display().to_string());
         assert_eq!(report["config"]["exists"], true);
         assert_eq!(report["config"]["usedByActiveConfig"], true);
@@ -18607,6 +19609,174 @@ mod tests {
         assert_eq!(operation["state"], "partial");
     }
 
+    #[tokio::test]
+    async fn freeze_scan_status_decorates_results_without_persisting_route_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        tokio::fs::create_dir_all(dir.path().join("lists"))
+            .await
+            .unwrap();
+        tokio::fs::write(
+            &config,
+            "NFQWS_ARGS_CUSTOM=\"--name=Video --filter-tcp=443 --filter-l7=tls --ipset=isp.list --lua-desync=hostfakesplit:repeats=4:tcp_ts=-600000:tcp_md5:host=ya.ru\"\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(dir.path().join("lists/isp.list"), "203.0.113.0/24\n")
+            .await
+            .unwrap();
+        let data = dir.path().join("data");
+        let mut operation = confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost);
+        operation.results[0].found_strategy.as_mut().unwrap().step =
+            "--lua-desync=hostfakesplit:strategy=9:repeats=4:tcp_ts=-600000:tcp_md5:host=ya.ru"
+                .into();
+        let directory = data.join("freeze-diagnostic-operations");
+        write_freeze_scan_operation(&directory, &operation).unwrap();
+        let app = api_router(
+            test_state_with_config(data, Some(config)),
+            dir.path().join("web"),
+        );
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/nfqws2/diagnostics/freeze-scan/operations/{}",
+                        operation.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response_value = body_json(response).await;
+        assert_eq!(response_value["results"][0]["inConf"]["state"], "working");
+        assert_eq!(
+            response_value["results"][0]["inConf"]["route"]["name"],
+            "Video"
+        );
+
+        let persisted = tokio::fs::read(directory.join(format!("{}.json", operation.id)))
+            .await
+            .unwrap();
+        let persisted: serde_json::Value = serde_json::from_slice(&persisted).unwrap();
+        assert!(persisted["results"][0].get("inConf").is_none());
+    }
+
+    #[tokio::test]
+    async fn freeze_scan_status_stays_available_when_config_context_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let operation = confirmed_freeze_scan(freeze_diagnostic::FreezeTargetKind::UserHost);
+        let directory = data.join("freeze-diagnostic-operations");
+        write_freeze_scan_operation(&directory, &operation).unwrap();
+        let app = api_router(test_state(data), dir.path().join("web"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri(format!(
+                        "/api/nfqws2/diagnostics/freeze-scan/operations/{}",
+                        operation.id
+                    ))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response_value = body_json(response).await;
+        assert_eq!(response_value["results"][0]["inConf"]["state"], "unknown");
+        assert!(
+            response_value["results"][0]["inConf"]["why"]
+                .as_str()
+                .unwrap()
+                .contains("не найден"),
+            "unexpected status: {response_value}"
+        );
+    }
+
+    #[tokio::test]
+    async fn freeze_scan_profile_context_caps_config_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        tokio::fs::write(&config, vec![b'x'; MAX_CONFIG_BYTES + 1])
+            .await
+            .unwrap();
+        let error = read_freeze_scan_profile_context(&config).await.unwrap_err();
+        assert!(error.contains("превышает лимит 512 КиБ"));
+    }
+
+    #[test]
+    fn freeze_in_config_status_requires_the_strategy_in_the_actual_route_profile() {
+        let step = "--lua-desync=fake:strategy=2:blob=tls_clienthello";
+        let matching_config = "NFQWS_ARGS_CUSTOM=\"--name=Video --filter-tcp=443 --filter-l7=tls --ipset=lists/isp.list --lua-desync=fake:strategy=1:blob=tls_clienthello\"\n";
+        let profiles = nfqws2_ui::runtime_profiles::from_config(matching_config, "route").unwrap();
+        let lists = HashMap::from([("lists/isp.list".into(), "203.0.113.0/24\n".into())]);
+        let status = freeze_in_config_status(
+            "video.example",
+            Some("203.0.113.8".parse().unwrap()),
+            step,
+            &profiles.profiles,
+            &lists,
+        );
+        assert_eq!(status["state"], "working");
+        assert_eq!(status["profiles"][0]["name"], "Video");
+        assert_eq!(status["route"]["index"], 1);
+
+        let later_config = "NFQWS_ARGS_CUSTOM=\"--name=CatchAll --filter-tcp=443 --filter-l7=tls --lua-desync=multisplit:pos=1 --new=Video --filter-tcp=443 --filter-l7=tls --ipset=lists/isp.list --lua-desync=fake:strategy=1:blob=tls_clienthello\"\n";
+        let profiles = nfqws2_ui::runtime_profiles::from_config(later_config, "route").unwrap();
+        let status = freeze_in_config_status(
+            "video.example",
+            Some("203.0.113.8".parse().unwrap()),
+            step,
+            &profiles.profiles,
+            &lists,
+        );
+        assert_eq!(status["state"], "elsewhere");
+        assert_eq!(status["route"]["name"], "CatchAll");
+    }
+
+    #[test]
+    fn freeze_in_config_status_reports_unknown_when_current_route_cannot_be_proven() {
+        let config = "NFQWS_ARGS_CUSTOM=\"--name=Excluded --filter-tcp=443 --filter-l7=tls --ipset=lists/isp.list --ipset-exclude=lists/excluded.list --lua-desync=fake:blob=tls_clienthello\"\n";
+        let profiles = nfqws2_ui::runtime_profiles::from_config(config, "route").unwrap();
+        let lists = HashMap::from([("lists/isp.list".into(), "203.0.113.0/24\n".into())]);
+        let status = freeze_in_config_status(
+            "video.example",
+            Some("203.0.113.8".parse().unwrap()),
+            "--lua-desync=fake:blob=tls_clienthello",
+            &profiles.profiles,
+            &lists,
+        );
+        assert_eq!(status["state"], "unknown");
+        assert!(status["why"].as_str().unwrap().contains("Excluded"));
+    }
+
+    #[test]
+    fn freeze_in_config_status_explains_a_known_profile_exclusion() {
+        let config = "NFQWS_ARGS_CUSTOM=\"--name=Excluded --filter-tcp=443 --filter-l7=tls --ipset-exclude=lists/excluded.list --lua-desync=fake:blob=tls_clienthello --new=General --filter-tcp=443 --filter-l7=tls --lua-desync=multisplit:pos=1\"\n";
+        let profiles = nfqws2_ui::runtime_profiles::from_config(config, "route").unwrap();
+        let lists = HashMap::from([(
+            "lists/excluded.list".into(),
+            "203.0.113.4-203.0.113.20\n".into(),
+        )]);
+        let status = freeze_in_config_status(
+            "video.example",
+            Some("203.0.113.8".parse().unwrap()),
+            "--lua-desync=fake:blob=tls_clienthello",
+            &profiles.profiles,
+            &lists,
+        );
+        assert_eq!(status["state"], "elsewhere");
+        assert_eq!(status["route"]["name"], "General");
+        assert!(
+            status["why"]
+                .as_str()
+                .unwrap()
+                .contains("--ipset-exclude=lists/excluded.list")
+        );
+    }
+
     #[test]
     fn freeze_scan_progress_persists_each_completed_target_row() {
         let mut operation = FreezeScanOperation {
@@ -19467,7 +20637,7 @@ mod tests {
         tokio::fs::create_dir_all(&list_dir).await.unwrap();
         tokio::fs::write(
             &config,
-            "NFQWS_ARGS=--hostlist=lists/user.list --hostlist-auto=lists/auto.list --hostlist-exclude=lists/exclude.list --ipset=lists/ipset.list --ipset-exclude=lists/ipset_exclude.list\n",
+            "NFQWS_ARGS=\"--hostlist=lists/user.list --hostlist-auto=lists/auto.list --hostlist-exclude=lists/exclude.list --ipset=lists/ipset.list --ipset-exclude=lists/ipset_exclude.list\"\n",
         )
         .await
         .unwrap();
@@ -19499,6 +20669,46 @@ mod tests {
             .map(|file| file["id"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert_eq!(ids, LIST_IDS);
+        let user = report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["id"] == "user.list")
+            .unwrap();
+        assert_eq!(user["usageKnown"], true);
+        assert!(
+            user["usedBy"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|usage| usage["role"] == "include")
+        );
+        let exclude = report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["id"] == "exclude.list")
+            .unwrap();
+        assert!(
+            exclude["usedBy"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|usage| usage["role"] == "exclude")
+        );
+        let auto = report["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|file| file["id"] == "auto.list")
+            .unwrap();
+        assert!(
+            auto["usedBy"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|usage| usage["role"] == "auto")
+        );
     }
 
     #[tokio::test]
@@ -19770,9 +20980,12 @@ mod tests {
         let config = dir.path().join("nfqws2.conf");
         let list_dir = dir.path().join("lists");
         tokio::fs::create_dir_all(&list_dir).await.unwrap();
-        tokio::fs::write(&config, "NFQWS_EXTRA_ARGS=$MODE_LIST\n")
-            .await
-            .unwrap();
+        tokio::fs::write(
+            &config,
+            "MODE_LIST=\"--hostlist=lists/user.list\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n",
+        )
+        .await
+        .unwrap();
         tokio::fs::write(list_dir.join("google.list"), "google.com\n")
             .await
             .unwrap();
@@ -19841,6 +21054,49 @@ mod tests {
         let backup_dir = dir.path().join("state").join("backups");
         let backups = std::fs::read_dir(backup_dir).unwrap().count();
         assert_eq!(backups, 1);
+    }
+
+    #[tokio::test]
+    async fn custom_list_delete_rejects_a_list_still_used_by_a_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let lists = dir.path().join("lists");
+        tokio::fs::create_dir_all(&lists).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS_CUSTOM=--hostlist=lists/google.list\n")
+            .await
+            .unwrap();
+        let list_path = lists.join("google.list");
+        tokio::fs::write(&list_path, "google.com\n").await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::get("/api/nfqws2/lists/google.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let revision = body_json(loaded).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let deleted = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/nfqws2/lists/google.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(r#"{{"revision":"{revision}"}}"#)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::CONFLICT);
+        assert!(list_path.is_file());
     }
 
     #[tokio::test]
@@ -20073,6 +21329,34 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn list_profile_usage_reports_include_exclude_and_ipset_roles() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let config = root.join("nfqws2.conf");
+        let lists = root.join("lists");
+        std::fs::create_dir_all(&lists).unwrap();
+        std::fs::write(&config, "").unwrap();
+        std::fs::write(lists.join("user.list"), "example.org\n").unwrap();
+        std::fs::write(lists.join("ipset.list"), "203.0.113.7\n").unwrap();
+        let content = concat!(
+            "NFQWS_ARGS=\"--hostlist=lists/user.list --hostlist-exclude=lists/user.list\"\n",
+            "NFQWS_ARGS_IPSET=\"--ipset=lists/ipset.list\"\n",
+        );
+        let profiles = nfqws2_ui::runtime_profiles::from_config(content, "revision").unwrap();
+        let user_usage = list_profile_usage(&config, &lists.join("user.list"), &profiles.profiles);
+        assert!(user_usage.iter().any(|usage| usage.role == "include"));
+        assert!(user_usage.iter().any(|usage| usage.role == "exclude"));
+        assert!(
+            user_usage
+                .iter()
+                .all(|usage| !usage.profile_name.is_empty())
+        );
+        let ipset_usage =
+            list_profile_usage(&config, &lists.join("ipset.list"), &profiles.profiles);
+        assert!(ipset_usage.iter().any(|usage| usage.role == "include"));
     }
 
     #[test]

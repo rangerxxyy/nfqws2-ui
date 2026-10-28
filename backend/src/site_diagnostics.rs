@@ -296,6 +296,16 @@ pub fn list_entry_matches(host: &str, ips: &[IpAddr], line: &str, ip_list: bool)
     let (network, prefix) = entry
         .split_once('/')
         .map_or((entry, None), |(network, prefix)| (network, Some(prefix)));
+    if prefix.is_none()
+        && let Some((start, end)) = network.split_once('-')
+        && let (Ok(start), Ok(end)) = (start.parse::<IpAddr>(), end.parse::<IpAddr>())
+    {
+        return ips.iter().any(|ip| match (start, *ip, end) {
+            (IpAddr::V4(start), IpAddr::V4(ip), IpAddr::V4(end)) => start <= ip && ip <= end,
+            (IpAddr::V6(start), IpAddr::V6(ip), IpAddr::V6(end)) => start <= ip && ip <= end,
+            _ => false,
+        });
+    }
     let Ok(network) = network.parse::<IpAddr>() else {
         return false;
     };
@@ -1876,6 +1886,30 @@ mod tests {
             "www.example.com",
             &ips,
             "2606:4700::/32",
+            true
+        ));
+        assert!(list_entry_matches(
+            "www.example.com",
+            &ips,
+            "8.8.8.1-8.8.8.9",
+            true
+        ));
+        assert!(!list_entry_matches(
+            "www.example.com",
+            &ips,
+            "8.8.8.9-8.8.8.1",
+            true
+        ));
+        assert!(list_entry_matches(
+            "www.example.com",
+            &ips,
+            "2606:4700:4700::1100-2606:4700:4700::1200",
+            true
+        ));
+        assert!(!list_entry_matches(
+            "www.example.com",
+            &ips,
+            "2606:4700:4700::1200-2606:4700:4700::1100",
             true
         ));
         assert!(!list_entry_matches(
