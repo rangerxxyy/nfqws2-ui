@@ -470,14 +470,8 @@ export default function App() {
               <div id={"configEditorWorkspace"} className={"config-editor-workspace config-editor-workspace-open grid grid-cols-1 gap-3"}>
                 <div className={"mobile-code-editor flex h-[740px] min-w-0 bg-[#060a12] font-mono text-[14px] leading-[1.68] overflow-hidden"}>
                   {"\n              "}
-                  <div id={"confLineNumbers"} className={"line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3 w-13 overflow-hidden select-none text-xs leading-[1.68]"}>
-                    {"\n                1\n              "}
-                  </div>
-                  {"\n              "}
-                  <div className={"conf-editor-surface relative min-w-0 flex-1 overflow-hidden"}>
-                    <pre id={"confSyntaxHighlight"} aria-hidden={"true"} className={"conf-syntax-highlight absolute inset-0 m-0 overflow-hidden py-4 px-5 font-mono leading-[1.68]"}></pre>
-                    <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-action-scroll={"syncConfScroll"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} className={"conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono overflow-y-auto focus:ring-0 border-none"}></textarea>
-                  </div>
+                  <div id={"configCodeEditor"} className={"config-code-editor min-w-0 flex-1 overflow-hidden"} aria-label={"Редактор конфигурации nfqws2"}></div>
+                  <textarea id={"nfqwsConfTextarea"} data-action-input={"handleConfInput"} data-args={JSON.stringify([{"source": "self"}])} spellCheck={"false"} aria-hidden={"true"} tabIndex={-1} className={"config-code-editor-state"}></textarea>
                   {"\n            "}
                 </div>
                 <aside id={"configOutline"} aria-label={"Структура конфигурации"} className={"config-outline max-h-[740px] overflow-y-auto rounded-xl border border-slate-800 bg-[#070b14] p-2.5"}>

@@ -8,7 +8,6 @@ import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
 import { configAssignmentValue, configDraftDisposition, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
-import { highlightConfigLine } from './config-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
@@ -35,6 +34,8 @@ import { copyProfileIntoDraft } from './copy-profile';
 import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileProtocol, appendProfileUdpFilter, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, filterProfileArgumentChoices, moveProfileStepTo, profileStrategyNumbers, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
 import { configLuaArgumentEntries } from './config-diagnostics';
+import { getConfigCodeEditor, mountConfigArgumentEditor, mountConfigCodeEditor, setConfigCodeEditorContent, setConfigCodeEditorWrapping } from './config-code-editor';
+import { EditorView } from '@codemirror/view';
 import { navigationGroupForRoute } from './navigation';
 import { isValidNetworkInterfaceSelection, networkInterfaceChoices } from './network-interface';
 import { snapshotFreeSpaceState } from './snapshot-storage';
@@ -65,6 +66,7 @@ let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
 let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, showConfigWarnings: true };
 let configWarningsTimer: number | null = null;
+const configArgumentViews = new Map<string, EditorView>();
 let configWarningsRequest = 0;
 let configWarningsCatalogPromise: Promise<void> | null = null;
 let traceRunning = false;
@@ -79,7 +81,6 @@ let communityProviderEditing = false;
 let pendingCommunityShare: { operationId: string; candidateIndex: number; host: string; protocol: 'http' | 'https'; candidate: StrategyPickOperation['results'][number]; targetAsn: number | null } | null = null;
 let communityShareLookupGeneration = 0;
 let communityShareLookupTimer: number | null = null;
-let configScrollFramePending = false;
 type ForeignConfigInput = { name: string; source: 'Текст' | 'Файл' | 'Ссылка'; content?: string; url?: string };
 let foreignConfigInputs: ForeignConfigInput[] = [];
 const expandedForeignConfigPreviews = new WeakSet<ForeignConfigInput>();
@@ -343,6 +344,8 @@ function setBusy(value: boolean) {
   all<HTMLTextAreaElement>('textarea[data-config-argument]').forEach((field) => {
     if (value && !field.disabled) { field.disabled = true; field.dataset.busyDisabled = 'true'; }
     else if (!value && field.dataset.busyDisabled === 'true') { field.disabled = false; delete field.dataset.busyDisabled; }
+    const editor = field.closest<HTMLElement>('.config-argument-editor');
+    if (editor) editor.inert = value;
   });
 }
 function setRestartInProgress(value: boolean) {
@@ -1538,7 +1541,7 @@ async function saveRuntimeProfiles() {
       }
       if (!result) return;
       config = result.config;
-      const textarea = $('#nfqwsConfTextarea'); if (textarea instanceof HTMLTextAreaElement) textarea.value = config.content;
+      setNfqwsConfigText(config.content);
       toast(result.message || 'Профили nfqws2 применены.'); await Promise.all([loadProfiles(), fetchStatus()]);
     } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось применить профили.', 'error'); }
     finally { setRestartInProgress(false); setBusy(false); }
@@ -1736,11 +1739,23 @@ function syncAppearanceControls() {
 function syncConfigWordWrap(enabled: boolean) {
   const toggle = $('#configWordWrapToggle');
   if (toggle instanceof HTMLInputElement) toggle.checked = enabled;
-  const editor = $('#nfqwsConfTextarea');
-  if (editor instanceof HTMLTextAreaElement) {
-    editor.style.whiteSpace = enabled ? 'pre-wrap' : 'pre';
-    syncConfigHighlight(editor);
-  }
+  setConfigCodeEditorWrapping(enabled);
+}
+function setNfqwsConfigText(value: string) {
+  const textarea = $('#nfqwsConfTextarea');
+  if (!(textarea instanceof HTMLTextAreaElement)) return;
+  if (getConfigCodeEditor()) setConfigCodeEditorContent(value);
+  else textarea.value = value;
+}
+function selectConfigText(start: number, end: number, line?: number) {
+  const view = getConfigCodeEditor();
+  if (!view) return;
+  const position = Math.max(0, Math.min(start, view.state.doc.length));
+  view.dispatch({
+    selection: { anchor: position, head: Math.max(position, Math.min(end, view.state.doc.length)) },
+    effects: EditorView.scrollIntoView(position, { y: line ? 'center' : 'nearest' }),
+  });
+  view.focus();
 }
 function routerAppearanceSettings(settings: AppearanceSettings) {
   const { wrapConfigLines: _wrapConfigLines, ...routerSettings } = settings;
@@ -2103,7 +2118,7 @@ async function loadConfig() {
       applyButton.title = canWriteConfig ? '' : 'Backend не подтвердил право записи в обнаруженный конфиг';
     }
     const editor = $('#nfqwsConfTextarea');
-    if (editor instanceof HTMLTextAreaElement) editor.value = config.content;
+    if (editor instanceof HTMLTextAreaElement) setNfqwsConfigText(config.content);
     setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} строк`);
     setText('#currentConfigPath', 'Конфигурация');
     const configTitle = $('#currentConfigPath'); if (configTitle) configTitle.title = config.file;
@@ -2147,10 +2162,9 @@ function setConfigClearModal(open: boolean) {
 function confirmClearConfig() {
   const editor = $('#nfqwsConfTextarea');
   if (!(editor instanceof HTMLTextAreaElement)) return;
-  editor.value = '';
-  editor.dispatchEvent(new Event('input', { bubbles: true }));
+  setNfqwsConfigText('');
   setConfigClearModal(false);
-  editor.focus();
+  getConfigCodeEditor()?.focus();
   toast('Черновик конфигурации очищен.');
 }
 function setListClearModal(open: boolean) {
@@ -2219,7 +2233,7 @@ function toggleConfigEditorFullscreen() {
   button.setAttribute('aria-pressed', String(fullscreen));
   button.setAttribute('aria-label', fullscreen ? 'Свернуть редактор' : 'Развернуть редактор');
   button.title = fullscreen ? 'Свернуть редактор' : 'Развернуть редактор';
-  if (fullscreen) $('#nfqwsConfTextarea')?.focus({ preventScroll: true });
+  if (fullscreen) getConfigCodeEditor()?.focus();
 }
 
 function renderLuaScriptTabs() {
@@ -2281,55 +2295,46 @@ const NFQWS_ARGUMENT_GROUPS = [
 function renderNfqwsArgumentEditors(content: string) {
   const host = $('#nfqwsArgEditors');
   if (!host) return;
+  configArgumentViews.forEach((view) => view.destroy());
+  configArgumentViews.clear();
   host.replaceChildren();
   for (const [key, label] of NFQWS_ARGUMENT_GROUPS) {
     const card = document.createElement('section');
     card.className = 'block rounded-xl border border-slate-800 bg-[#070b14] p-3';
-    const heading = document.createElement('label');
-    const fieldId = `configArgument-${key}`;
-    heading.htmlFor = fieldId;
+    const heading = document.createElement('div');
     heading.className = 'mb-2 block font-mono text-xs font-bold text-cyan-200';
     heading.textContent = `${key} · ${label}`;
     const field = document.createElement('textarea');
     const minimumRows = key === 'NFQWS_ARGS_CUSTOM' ? 5 : 3;
-    field.id = fieldId;
+    field.id = `configArgument-${key}`;
     field.rows = minimumRows;
     field.spellcheck = false;
     field.dataset.configArgument = 'true';
-    field.className = 'min-h-0 min-w-0 flex-1 resize-y border-0 bg-transparent px-3 py-2 font-mono text-xs leading-5 text-slate-100 outline-none focus:ring-0 disabled:opacity-60';
+    field.className = 'config-code-editor-state';
+    field.tabIndex = -1;
+    field.setAttribute('aria-hidden', 'true');
     field.value = configAssignmentValue(content, key);
     field.placeholder = key === 'NFQWS_ARGS_CUSTOM' ? '--new --filter-tcp=443 --hostlist-domains=example.com …' : 'Введите аргументы для этой группы';
     field.title = 'Изменение обновит черновик; сохранить его можно кнопкой «Применить конфигурацию».';
     const editor = document.createElement('div');
     editor.className = 'config-argument-editor flex min-w-0 overflow-hidden rounded-lg border border-slate-700 bg-slate-950 transition';
-    const gutter = document.createElement('div');
-    gutter.className = 'config-argument-line-numbers line-numbers-col min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[#05080f] px-2.5 py-2 font-mono text-xs leading-5 text-slate-500';
-    gutter.setAttribute('aria-hidden', 'true');
-    const surface = document.createElement('div');
-    surface.className = 'config-argument-surface relative min-w-0 flex-1 overflow-hidden';
-    const highlight = document.createElement('pre');
-    highlight.className = 'config-argument-highlight conf-syntax-highlight absolute inset-0 m-0 overflow-hidden px-3 py-2 font-mono text-xs leading-5';
-    highlight.setAttribute('aria-hidden', 'true');
-    field.classList.add('config-argument-input', 'absolute', 'inset-0', 'h-full', 'w-full', 'overflow-auto');
-    surface.append(highlight, field);
-    editor.append(gutter, surface);
+    const codeHost = document.createElement('div');
+    codeHost.className = 'config-argument-code-editor min-w-0 flex-1 overflow-hidden';
+    editor.append(codeHost, field);
     const syncEditor = () => {
       const layout = configEditorLayout(field.value, minimumRows);
-      const viewportHeight = configEditorViewportHeight(layout.visibleRows);
       field.rows = layout.visibleRows;
-      field.style.maxHeight = viewportHeight;
-      surface.style.height = viewportHeight;
-      highlight.innerHTML = field.value.split('\n').map(highlightConfigLine).join('\n');
-      highlight.scrollTop = field.scrollTop;
-      highlight.scrollLeft = field.scrollLeft;
-      gutter.style.maxHeight = viewportHeight;
-      gutter.textContent = layout.lineNumbers;
-      gutter.scrollTop = field.scrollTop;
+      codeHost.style.height = configEditorViewportHeight(layout.visibleRows);
     };
     field.addEventListener('input', syncEditor);
-    field.addEventListener('scroll', () => { gutter.scrollTop = field.scrollTop; highlight.scrollTop = field.scrollTop; highlight.scrollLeft = field.scrollLeft; });
     syncEditor();
     field.addEventListener('change', () => void updateConfigVariable(key, field.value));
+    const view = mountConfigArgumentEditor(codeHost, field.value, (value) => {
+      field.value = value;
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    }, `${key} · ${label}`, field.placeholder);
+    codeHost.addEventListener('focusout', () => field.dispatchEvent(new Event('change', { bubbles: true })));
+    configArgumentViews.set(key, view);
     card.append(heading, editor);
     host.append(card);
   }
@@ -2383,7 +2388,7 @@ async function updateConfigVariable(key: string, value: string) {
   try {
     const preview = await nfqwsConfig.preview(before, key, value);
     if (editor.value !== before) throw new Error('Черновик изменился во время запроса; повторите выбор настройки.');
-    editor.value = preview.content;
+    setNfqwsConfigText(preview.content);
     syncConfigLines();
     renderConfigOutline();
     renderNfqwsArgumentEditors(editor.value);
@@ -2426,12 +2431,9 @@ async function updateIspInterfaceManually(value: string) {
   }
 }
 function syncConfigLines() {
-  const editor = $('#nfqwsConfTextarea'); const gutter = $('#confLineNumbers');
-  if (!(editor instanceof HTMLTextAreaElement) || !gutter) return;
+  const editor = $('#nfqwsConfTextarea');
+  if (!(editor instanceof HTMLTextAreaElement)) return;
   const count = Math.max(1, editor.value.split('\n').length);
-  gutter.innerHTML = Array.from({ length: count }, (_, i) => `${i + 1}`).join('<br>');
-  gutter.scrollTop = editor.scrollTop;
-  syncConfigHighlight(editor);
   setText('#confLinesBadge', `${count} строк`);
 }
 function syncConfigWarningsVisibility() {
@@ -2505,11 +2507,7 @@ async function validateConfigWarnings() {
         goToLine.addEventListener('click', () => {
           const start = content.split(/\r?\n/).slice(0, warning.line! - 1).join('\n').length + (warning.line! > 1 ? 1 : 0);
           const end = content.indexOf('\n', start);
-          editor.focus();
-          editor.setSelectionRange(start, end < 0 ? content.length : end);
-          const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 23;
-          editor.scrollTop = (warning.line! - 1) * lineHeight;
-          syncConfigScroll();
+          selectConfigText(start, end < 0 ? content.length : end, warning.line ?? undefined);
         });
         row.append(goToLine);
       }
@@ -2535,36 +2533,13 @@ async function ensureConfigWarningsLuaCatalog() {
   }
   await configWarningsCatalogPromise;
 }
-function syncConfigScroll() {
-  if (configScrollFramePending) return;
-  configScrollFramePending = true;
-  window.requestAnimationFrame(() => {
-    configScrollFramePending = false;
-    const editor = $('#nfqwsConfTextarea');
-    if (!(editor instanceof HTMLTextAreaElement)) return;
-    const gutter = $('#confLineNumbers');
-    const highlight = $('#confSyntaxHighlight');
-    if (gutter) gutter.scrollTop = editor.scrollTop;
-    if (highlight) {
-      highlight.scrollTop = editor.scrollTop;
-      highlight.scrollLeft = editor.scrollLeft;
-    }
-  });
-}
-function syncConfigHighlight(editor?: HTMLTextAreaElement) {
-  const input = editor ?? $('#nfqwsConfTextarea'); const highlight = $('#confSyntaxHighlight');
-  if (!(input instanceof HTMLTextAreaElement) || !highlight) return;
-  highlight.innerHTML = input.value.split('\n').map(highlightConfigLine).join('\n');
-  highlight.scrollTop = input.scrollTop;
-  highlight.scrollLeft = input.scrollLeft;
-  highlight.style.whiteSpace = input.style.whiteSpace || 'pre-wrap';
-}
 function renderConfigOutline() {
   const editor = $('#nfqwsConfTextarea');
   const entriesHost = $('#configOutlineEntries');
   if (!(editor instanceof HTMLTextAreaElement) || !entriesHost) return;
   const entries = configOutlineEntries(editor.value);
-  const active = entries.filter((entry) => entry.offset <= editor.selectionStart).at(-1);
+  const cursor = getConfigCodeEditor()?.state.selection.main.head ?? 0;
+  const active = entries.filter((entry) => entry.offset <= cursor).at(-1);
   entriesHost.replaceChildren();
   if (!entries.length) {
     const empty = document.createElement('div');
@@ -2587,9 +2562,7 @@ function renderConfigOutline() {
     button.append(name, line);
     button.addEventListener('click', () => {
       editor.focus();
-      editor.setSelectionRange(entry.offset, entry.offset + entry.name.length);
-      const lineHeight = Number.parseFloat(getComputedStyle(editor).lineHeight) || 23;
-      editor.scrollTop = Math.max(0, (entry.line - 1) * lineHeight);
+      selectConfigText(entry.offset, entry.offset + entry.name.length, entry.line);
       renderConfigOutline();
     });
     entriesHost.append(button);
@@ -4741,14 +4714,13 @@ function bindPrototypeActions() {
       }
     })(),
     handleConfInput: () => { syncConfigLines(); renderConfigOutline(); scheduleConfigWarnings(); },
-    syncConfScroll: () => syncConfigScroll(),
     toggleWordWrapConf: (enabled: boolean) => {
       let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Keep this session's choice if browser storage is blocked. */ }
       appearanceSettings = saveAppearance(storage, { ...appearanceSettings, wrapConfigLines: enabled });
       syncConfigWordWrap(enabled);
     },
     toggleConfigOutline: () => toggleConfigOutline(),
-    scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); editor.scrollTop = editor.value.slice(0, offset).split('\n').length * 23; },
+    scrollToConfMarker: (marker: string) => { const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return; const offset = editor.value.toLowerCase().indexOf(String(marker).toLowerCase()); if (offset < 0) return toast(`Секция ${marker} не найдена`, 'error'); const line = editor.value.slice(0, offset).split('\n').length; selectConfigText(offset, offset, line); },
     toggleDiffModal: () => { const modal = $('#diffModalBackdrop'); if (modal && !modal.classList.contains('hidden')) closeAppModal(modal); else showDiff(); },
     resetDefaultConf: () => void loadConfig(),
     closeUpdateModal: () => closeUpdateModal(),
@@ -4824,6 +4796,16 @@ function bindPrototypeActions() {
 
 function boot() {
   initializeAppearanceSettings();
+  const configState = $('#nfqwsConfTextarea');
+  const configHost = $('#configCodeEditor');
+  if (configState instanceof HTMLTextAreaElement && configHost instanceof HTMLElement) {
+    mountConfigCodeEditor(configHost, configState.value, (value) => {
+      configState.value = value;
+      configState.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    setConfigCodeEditorWrapping(appearanceSettings.wrapConfigLines !== false);
+    configHost.addEventListener('configselection', renderConfigOutline);
+  }
   setListEditorView(listEditorView);
   installStyledSelects(document);
   installActionTooltips(document);
@@ -4896,7 +4878,6 @@ function boot() {
     if (event.key === 'Escape' && $('#listEditorPanel.list-editor-fullscreen')) toggleListEditorFullscreen();
   });
   document.addEventListener('click', closeAppModalOnBackdrop);
-  $('#nfqwsConfTextarea')?.addEventListener('scroll', syncConfigScroll, { passive: true });
   $('#refreshStatusBtn')?.addEventListener('click', () => void fetchStatus());
   void fetchStatus();
   void refreshUiUpdateStatus();

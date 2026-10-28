@@ -8,6 +8,7 @@ const template = renderToStaticMarkup(React.createElement(App));
 const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
 const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8');
+const codeEditorSource = readFileSync(new URL('./config-code-editor.ts', import.meta.url), 'utf8');
 const styledSelectSource = readFileSync(new URL('./styled-select.ts', import.meta.url), 'utf8');
 const monitoringSource = readFileSync(new URL('./monitoring.ts', import.meta.url), 'utf8');
 const actionTooltipSource = readFileSync(new URL('./action-tooltips.ts', import.meta.url), 'utf8');
@@ -281,9 +282,10 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(configSection).not.toContain('Оформить');
     expect(template).toContain('overflow-y-auto p-4 lg:p-6');
     expect(configSection).toContain('mobile-code-editor flex h-[740px] min-w-0 bg-[#060a12] font-mono text-[14px] leading-[1.68]');
-    expect(configSection).toContain('line-numbers-col bg-[#05080f] border-r border-slate-800/80 py-4 px-3');
-    expect(configSection).toContain('conf-syntax-highlight absolute inset-0 m-0 overflow-hidden py-4 px-5 font-mono leading-[1.68]');
-    expect(configSection).toContain('conf-editor-input absolute inset-0 min-w-0 w-full h-full bg-transparent py-4 px-5 outline-none resize-none leading-[1.68] font-mono');
+    expect(configSection).toContain('id="configCodeEditor"');
+    expect(configSection).toContain('id="nfqwsConfTextarea"');
+    expect(configSection).not.toContain('conf-syntax-highlight absolute');
+    expect(codeEditorSource).toContain('basicSetup');
   });
 
   it('copies the current configuration with the secure-context fallback and only shows copy in the editor tab', () => {
@@ -386,11 +388,9 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('numbers each editable config argument block without padding short values', () => {
     expect(panelSource).toContain('configEditorLayout(field.value, minimumRows)');
-    expect(panelSource).toContain('gutter.textContent = layout.lineNumbers');
     expect(panelSource).toContain('field.rows = layout.visibleRows');
-    expect(panelSource).toContain('gutter.style.maxHeight = viewportHeight');
-    expect(panelSource).toContain('field.style.maxHeight = viewportHeight');
-    expect(panelStyles).toContain('.config-argument-line-numbers');
+    expect(panelSource).not.toContain('config-argument-highlight');
+    expect(panelSource).not.toContain('config-argument-line-numbers');
   });
 
   it('validates and applies the same immutable configuration draft', () => {
@@ -731,13 +731,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('.strategy-settings-grid > div.strategy-setting-row:not(.hidden)');
   });
 
-  it('synchronizes config editor scrolling once per animation frame without rebuilding syntax highlighting', () => {
-    const scrollSync = panelSource.slice(panelSource.indexOf('function syncConfigScroll'), panelSource.indexOf('function syncConfigHighlight'));
-    expect(scrollSync).toContain('requestAnimationFrame');
-    expect(scrollSync).toContain('scrollTop');
-    expect(scrollSync).toContain('scrollLeft');
-    expect(scrollSync).not.toContain('syncConfigLines(');
-    expect(panelSource).toContain("addEventListener('scroll', syncConfigScroll, { passive: true })");
+  it('uses one editor view for config text, gutter, syntax and selection rendering', () => {
+    expect(codeEditorSource).toContain('basicSetup');
+    expect(codeEditorSource).toContain('basicSetup');
+    expect(codeEditorSource).toContain('lineWrapping');
+    expect(codeEditorSource).toContain('syntaxPlugin');
+    expect(codeEditorSource).toContain('.cm-selectionBackground');
+    expect(codeEditorSource).toContain('doc.length > 200_000');
+    expect(appSource).not.toContain('confSyntaxHighlight');
+    expect(panelSource).toContain('setConfigCodeEditorContent(value)');
+    expect(panelSource).toContain('selectConfigText(start, end < 0 ? content.length : end, warning.line ?? undefined)');
+    expect(panelSource).toContain('if (fullscreen) getConfigCodeEditor()?.focus()');
   });
 
   it('clears stale candidate cards when a selected operation has no candidate results', () => {
@@ -1099,28 +1103,27 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('Синий (стандартная)');
   });
 
-  it('keeps text selection visible and prevents syntax overlays from selecting duplicate text', () => {
-    expect(panelStyles).toContain('*::selection, *::-moz-selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent) !important;');
-    expect(panelStyles).toContain('.conf-editor-input::selection, .config-argument-input::selection { color:transparent !important;');
-    expect(panelStyles).toContain('.conf-editor-input::-moz-selection, .config-argument-input::-moz-selection { color:transparent !important;');
-    expect(panelStyles).not.toContain('*::selection, *::-moz-selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent) !important; color:inherit !important;');
-    expect(panelStyles).toContain('user-select:none; -webkit-user-select:none;');
-    expect(panelStyles).toContain('background:color-mix(in srgb,var(--accent-color,#60a5fa) 32%,transparent) !important;');
+  it('keeps selection painting inside the active editor layer', () => {
+    expect(codeEditorSource).toContain('.cm-selectionBackground');
+    expect(panelStyles).toContain('.config-code-editor .cm-selectionBackground');
+    expect(panelStyles).toContain('::selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent); }');
+    expect(panelStyles).not.toContain('color:transparent !important; -webkit-text-fill-color:transparent !important;');
+    expect(panelSource).not.toContain('highlight.innerHTML = input.value');
     expect(panelStyles).not.toContain('selection:bg-blue-500/30');
     expect(appSource).not.toContain('selection:bg-blue-500/30');
     expect(entrySource).not.toContain('selection:bg-blue-500/30');
   });
 
   it('keeps the accent focus halo off text editors and line-number gutters', () => {
-    expect(panelStyles).toContain('.mobile-list-editor textarea:focus,');
-    expect(panelStyles).toContain('.config-argument-editor .config-argument-input:focus { border-color:transparent; box-shadow:none; }');
+    expect(panelStyles).toContain('.mobile-list-editor textarea:focus {');
+    expect(panelStyles).toContain('.config-argument-editor:focus-within { border-color:var(--accent-border,#60a5fa);');
   });
 
   it('uses the selected accent for config editor caret and structure focus states', () => {
     expect(appSource).toContain('config-section-indicator h-2.5 w-2.5 rounded-full');
     expect(panelStyles).toContain('.config-section-indicator { background:var(--accent-color,#3b82f6);');
-    expect(panelStyles).toContain('caret-color:var(--accent-color,#60a5fa); white-space:pre-wrap;');
-    expect(panelStyles).toContain('caret-color:var(--accent-color,#2563eb);');
+    expect(codeEditorSource).toContain('caretColor: \'var(--accent-color, #60a5fa)\'');
+    expect(codeEditorSource).toContain('caretColor: \'var(--accent-color, #60a5fa)\'');
     expect(panelStyles).toContain('.config-editor-icon-button:focus-visible { outline:2px solid var(--accent-border,#60a5fa);');
     expect(panelStyles).toContain('.config-structure-toggle-active { border-color:var(--accent-border,#60a5fa);');
     expect(panelStyles).toContain('.config-outline-entry:focus-visible { outline:2px solid var(--accent-border,#60a5fa);');
@@ -1658,11 +1661,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('goToLine.textContent = `К строке ${warning.line}`');
   });
 
-  it('uses the full config token highlighter in grouped argument editors', () => {
-    expect(panelSource).toContain("import { highlightConfigLine } from './config-syntax'");
-    expect(panelSource).toContain("field.value.split('\\n').map(highlightConfigLine).join('\\n')");
-    expect(panelSource).toContain("highlight.className = 'config-argument-highlight conf-syntax-highlight");
-    expect(panelStyles).toContain('.config-argument-input');
+  it('uses the CodeMirror selection and syntax layer for grouped argument editors too', () => {
+    expect(codeEditorSource).toContain('mountConfigArgumentEditor');
+    expect(panelSource).toContain('mountConfigArgumentEditor(codeHost');
+    expect(panelSource).toContain('field.dispatchEvent(new Event(\'change\', { bubbles: true }))');
+    expect(panelSource).toContain('if (editor) editor.inert = value');
+    expect(panelStyles).toContain('.config-argument-code-editor .cm-editor');
+    expect(panelSource).not.toContain('config-argument-highlight');
     expect(panelSource).not.toContain('focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20');
     expect(panelStyles).toContain('.config-argument-editor:focus-within { border-color:var(--accent-border');
   });
