@@ -11,7 +11,13 @@ function tokenDecorations(view: EditorView): DecorationSet {
   if (isLargeConfigDocumentLength(view.state.doc.length)) return Decoration.none;
   const decorations: Range<Decoration>[] = [];
   const parser = new DOMParser();
-  for (let lineNo = 1; lineNo <= view.state.doc.lines; lineNo += 1) {
+  const visibleLines = new Set<number>();
+  for (const range of view.visibleRanges) {
+    const firstLine = view.state.doc.lineAt(range.from).number;
+    const lastLine = view.state.doc.lineAt(range.to).number;
+    for (let lineNo = firstLine; lineNo <= lastLine; lineNo += 1) visibleLines.add(lineNo);
+  }
+  for (const lineNo of visibleLines) {
     const line = view.state.doc.line(lineNo);
     const doc = parser.parseFromString(`<span>${highlightConfigLine(line.text)}</span>`, 'text/html');
     let offset = line.from;
@@ -30,7 +36,7 @@ function tokenDecorations(view: EditorView): DecorationSet {
 const syntaxPlugin = ViewPlugin.fromClass(class {
   decorations: DecorationSet;
   constructor(view: EditorView) { this.decorations = tokenDecorations(view); }
-  update(update: ViewUpdate) { if (update.docChanged) this.decorations = tokenDecorations(update.view); }
+  update(update: ViewUpdate) { if (update.docChanged || update.viewportChanged) this.decorations = tokenDecorations(update.view); }
 }, { decorations: (plugin) => plugin.decorations });
 
 interface CodeEditorOptions {
@@ -59,10 +65,10 @@ function createCodeEditor(host: HTMLElement, initialValue: string, onChange: (va
     EditorView.theme({
       '&': { height: '100%', minHeight: compact ? '4.5rem' : '0', color: 'var(--text-primary, #e2e8f0)', backgroundColor: compact ? '#05080f' : '#060a12', fontSize },
       '.cm-scroller': { fontFamily: 'var(--font-mono, "JetBrains Mono", monospace)', lineHeight: compact ? '1.25rem' : '1.68', overflow: 'auto' },
-      '.cm-content': { padding, caretColor: 'var(--accent-color, #60a5fa)' },
+      '.cm-content': { padding, caretColor: 'var(--accent-color, #60a5fa)', fontFeatureSettings: '"calt" 0' },
       '.cm-gutters': { backgroundColor: '#05080f', color: '#64748b', borderRight: '1px solid rgb(30 41 59 / 80%)' },
       '.cm-activeLineGutter': { backgroundColor: 'transparent' },
-      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'color-mix(in srgb, var(--accent-color, #60a5fa) 32%, transparent) !important' },
+      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'color-mix(in srgb, var(--accent-color, #60a5fa) 32%, transparent) !important' },
       '&.cm-focused': { outline: 'none' },
       '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent-color, #60a5fa)' },
     }),

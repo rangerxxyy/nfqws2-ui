@@ -736,6 +736,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(codeEditorSource).toContain('basicSetup');
     expect(codeEditorSource).toContain('lineWrapping');
     expect(codeEditorSource).toContain('syntaxPlugin');
+    expect(codeEditorSource).toContain('view.visibleRanges');
+    expect(codeEditorSource).toContain('fontFeatureSettings');
+    expect(codeEditorSource).toContain('"calt" 0');
+    expect(panelStyles).toContain('.config-code-editor ::selection { background:transparent !important; color:inherit !important; }');
+    expect(codeEditorSource).toContain('update.docChanged || update.viewportChanged');
     expect(codeEditorSource).toContain('.cm-selectionBackground');
     expect(codeEditorSource).toContain('isLargeConfigDocumentLength(view.state.doc.length)');
     expect(codeEditorSource).toContain("host.classList.toggle('config-editor-large'");
