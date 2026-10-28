@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "nfqws2-ui"
-version = "1.9.4"
+version = "1.9.5"
 dependencies = [
  "argon2",
  "axum",

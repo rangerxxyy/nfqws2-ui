@@ -392,19 +392,6 @@ function renderCommunityStrategies(data: CommunityStrategiesResponse) {
   if (!host) return;
   host.replaceChildren();
   const groups = visibleCommunityProtocols(data.items);
-  if (groups.length === 0) {
-    const empty = document.createElement('div'); empty.className = 'community-empty-state';
-    const title = document.createElement('h2'); title.className = 'community-empty-title';
-    const message = document.createElement('p'); message.className = 'community-empty-message';
-    if (data.asn === null) {
-      title.textContent = 'Определите провайдера';
-      message.textContent = 'Для загрузки стратегий нужен номер AS вашего интернет-провайдера. Попробуем определить его автоматически; если не получится, укажите ASN вручную выше.';
-    } else {
-      title.textContent = `Для ${communityProviderLabel(data.asn, data.provider)} пока нет стратегий`;
-      message.textContent = `В общей базе ${data.total ?? 0} стратегий для ${data.providers ?? 0} провайдеров. После успешного подбора можно поделиться своей стратегией, чтобы пополнить базу.`;
-    }
-    empty.append(title, message); host.append(empty);
-  }
   for (const group of groups) {
     const items = group.items;
     const section = document.createElement('section'); section.className = 'community-protocol-group';
@@ -456,8 +443,7 @@ function findCommunityStrategy(id: string) { return communityStrategies?.items.f
 async function testCommunityStrategy(id: string) {
   const item = findCommunityStrategy(id); if (!item) return toast('Стратегия больше не доступна. Обновите список.', 'error');
   const target = item.targets.find((candidate) => candidate.host)?.host;
-  const host = $<HTMLInputElement>('#communityTestHost')?.value.trim() || target;
-  if (!host) return toast('Введите домен для проверки этой стратегии.', 'error');
+  const host = target ?? '';
   const input = $('#scanCustomHost'); const protocol = $('#strategyProtocolSelect'); const mode = $('#strategyModeSelect'); const custom = $('#strategyCustomSteps'); const repeats = $('#strategyRepeatsSelect');
   if (input instanceof HTMLInputElement) input.value = host;
   if (protocol instanceof HTMLSelectElement) protocol.value = item.proto === 'http' ? 'http' : 'https';
@@ -467,6 +453,11 @@ async function testCommunityStrategy(id: string) {
   strategyTargetMode = 'single';
   setStrategyTargetMode('single');
   showRoute('autotune');
+  if (!host) {
+    toast('Укажите домен для проверки этой стратегии в поле «Сайт».');
+    if (input instanceof HTMLInputElement) input.focus();
+    return;
+  }
   await startStrategyPick();
 }
 async function copyCommunityStrategy(id: string) {
@@ -2982,8 +2973,8 @@ function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticRepor
     const row = document.createElement('div'); row.className = `diagnosis-row${item.inactive ? ' diagnosis-row-inactive' : ''}`; row.setAttribute('role', 'listitem');
     const label = document.createElement('h4'); label.className = 'diagnosis-row-label'; label.textContent = item.label;
     const body = document.createElement('div'); body.className = 'diagnosis-row-body';
-    if (item.metrics) { const metrics = document.createElement('p'); metrics.className = 'diagnosis-row-metrics'; metrics.textContent = item.metrics; body.append(metrics); }
     const detail = document.createElement('p'); detail.className = 'diagnosis-row-detail'; detail.textContent = item.detail; body.append(detail);
+    if (item.metrics) { const metrics = document.createElement('p'); metrics.className = 'diagnosis-row-metrics'; metrics.textContent = item.metrics; body.append(metrics); }
     if (item.note) { const note = document.createElement('p'); note.className = 'diagnosis-row-note'; note.textContent = item.note; body.append(note); }
     const icon = diagnosisIcon(item.kind); if (item.inactive) { icon.textContent = '—'; icon.setAttribute('aria-label', 'Этап не выполнялся'); }
     row.append(icon, label, body); list.append(row);

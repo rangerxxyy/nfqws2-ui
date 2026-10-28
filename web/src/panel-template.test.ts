@@ -304,9 +304,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
   });
 
-  it('keeps community empty state compact and provider actions readable', () => {
-    expect(panelSource).toContain("empty.className = 'community-empty-state'");
-    expect(panelSource).toContain("document.createElement('div'); empty.className = 'community-empty-state'");
+  it('keeps the community page free of the fallback host field and empty-result card', () => {
+    expect(template).not.toContain('id="communityTestHost"');
+    expect(panelStyles).not.toContain('.community-test-host');
+    expect(panelSource).not.toContain("empty.className = 'community-empty-state'");
+    expect(panelSource).toContain('Укажите домен для проверки этой стратегии в поле «Сайт»');
+    expect(panelSource).toContain("input.focus()");
     expect(panelStyles).toContain('.community-provider-actions .backup-action');
     expect(panelStyles).toContain('font-family:var(--ui-font-sans)');
     expect(panelStyles).toContain('min-height:2.35rem');
@@ -1028,6 +1031,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(diagnosisRequest).not.toContain('waitForDiagnosisAnimation');
     expect(panelStyles).toContain('.diagnosis-live-checks .diagnosis-row.is-active');
     expect(panelStyles).toContain('.diagnosis-progress-spinner');
+  });
+
+  it('separates diagnosis duration from the result text in live and final rows', () => {
+    const liveRow = panelSource.slice(panelSource.indexOf('function renderDiagnosisProgress('), panelSource.indexOf('function renderSiteDiagnosis('));
+    const finalRow = panelSource.slice(panelSource.indexOf('function renderSiteDiagnosis('), panelSource.indexOf('async function runSiteDiagnosis('));
+    expect(liveRow.indexOf('body.append(result)')).toBeLessThan(liveRow.indexOf('body.append(timing)'));
+    expect(finalRow.indexOf('body.append(detail)')).toBeLessThan(finalRow.indexOf('body.append(metrics)'));
+    expect(panelStyles).toMatch(/\.diagnosis-live-checks \.diagnosis-row-metrics\s*\{[^}]*margin\s*:\s*0 0 0 \.4rem/);
+    expect(panelStyles).toMatch(/\.diagnosis-live-checks \.diagnosis-row-metrics\s*\{[^}]*border-left\s*:\s*1px solid/);
   });
 
   it('styles checkbox inputs while keeping their native keyboard semantics', () => {
