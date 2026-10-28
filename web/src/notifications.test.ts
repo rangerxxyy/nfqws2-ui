@@ -35,6 +35,7 @@ describe('lifecycle notifications', () => {
 
 describe('nfqws2 core update notice', () => {
   it('throttles background release checks to avoid repeated router requests on tab focus', () => {
+    expect(CORE_UPDATE_CHECK_INTERVAL_MS).toBe(5 * 60 * 1000);
     expect(shouldCheckCoreUpdate(10_000, 0)).toBe(false);
     expect(shouldCheckCoreUpdate(CORE_UPDATE_CHECK_INTERVAL_MS, 0)).toBe(true);
     expect(shouldCheckCoreUpdate(CORE_UPDATE_CHECK_INTERVAL_MS + 1, 1)).toBe(true);
