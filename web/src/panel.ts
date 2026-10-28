@@ -33,7 +33,7 @@ import { loadMonitoringState, normalizeMonitoringHost, normalizeMonitoringInterv
 import { copyProfileIntoDraft } from './copy-profile';
 import { appendArgumentToCustomProfile, appendProfileFilterValue, appendProfileProtocol, appendProfileUdpFilter, diagnoseProfileLuaArguments, getLuaProfileParameterOptions, getRuntimeProfileConstructorTarget, getRuntimeProfileListTarget, getRuntimeProfileComponentArgs, getRuntimeProfileSharedComponentNote, getRussianLuaArgumentDescription, getRussianLuaFunctionDescription, filterProfileArgumentChoices, moveProfileStepTo, profileStrategyNumbers, nextProfileChoiceIndex, parseLuaParameterOption, prepareVisibleRuntimeProfiles, profileArgumentChoices, profileFilterValues, profileOrderWarnings, profileProtocolChoices, removeProfileFilterValue, reorderProfileSteps, replaceDesyncFunction, replaceDesyncParameters, replaceProfileArgument, replaceProfileName, serializeProfileForSharing, splitDesyncParameters, updateDesyncParameter, updateProfileFilterValue, removeDesyncParameter, appendDesyncParameter, parseProfilePaste } from './profile-editor';
 import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSettings, type UiLayout, type UiTheme } from './appearance';
-import { configLuaArgumentEntries } from './config-diagnostics';
+import { configLuaArgumentEntries, diagnoseConfigLuaArguments } from './config-diagnostics';
 import { getConfigCodeEditor, mountConfigArgumentEditor, mountConfigCodeEditor, setConfigCodeEditorContent, setConfigCodeEditorWrapping } from './config-code-editor';
 import { EditorView } from '@codemirror/view';
 import { navigationGroupForRoute } from './navigation';
@@ -2484,9 +2484,8 @@ async function validateConfigWarnings() {
       luaEntries.length ? ensureConfigWarningsLuaCatalog() : Promise.resolve(),
     ]);
     if (request !== configWarningsRequest || editor.value !== content || !appearanceSettings.showConfigWarnings) return;
-    const luaWarnings = luaEntries.flatMap((entry) => diagnoseProfileLuaArguments(
-      [entry.argument], runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups,
-    ).map((diagnostic) => ({ severity: 'warning' as const, code: 'lua_argument', message: diagnostic.message, line: entry.line })));
+    const luaWarnings = diagnoseConfigLuaArguments(content, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups)
+      .map((diagnostic) => ({ severity: 'warning' as const, code: 'lua_argument', message: diagnostic.message, line: diagnostic.line }));
     const warnings = [...result.diagnostics.filter((diagnostic) => diagnostic.severity === 'warning'), ...luaWarnings];
     const badge = $('#configWarningsBadge');
     if (badge) badge.textContent = warnings.length ? `${warnings.length} ${pluralize(warnings.length, 'предупреждение', 'предупреждения', 'предупреждений')}` : 'Предупреждений нет';
@@ -2660,7 +2659,14 @@ async function saveConfigAndApply() {
       .map((item) => `${item.line ? `Строка ${item.line}: ` : ''}${item.message}`);
     return toast(`Конфигурация не прошла проверку: ${messages.join(' · ')}`, 'error');
   }
-  const warnings = validation.diagnostics.filter((item) => item.severity === 'warning');
+  if (configLuaArgumentEntries(draft).length) await ensureConfigWarningsLuaCatalog();
+  if (editor.value !== draft) {
+    setBusy(false);
+    return toast('Черновик изменился во время проверки. Проверьте конфигурацию повторно.', 'error');
+  }
+  const luaWarnings = diagnoseConfigLuaArguments(draft, runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups)
+    .map((diagnostic) => ({ severity: 'warning' as const, code: 'lua_argument', message: diagnostic.message, line: diagnostic.line }));
+  const warnings = [...validation.diagnostics.filter((item) => item.severity === 'warning'), ...luaWarnings];
   const binaryCheckNote = validation.checks.installedBinary === 'not_run'
     ? 'Проверка установленным бинарником не выполнялась.'
     : 'Проверка установленным бинарником выполнена.';

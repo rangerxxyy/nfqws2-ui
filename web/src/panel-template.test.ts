@@ -1075,6 +1075,12 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("import { diagnosisRows } from './diagnosis-layout'");
   });
 
+  it('shows installed Lua catalog warnings before Apply without converting them into blocking errors', () => {
+    expect(panelSource).toContain('diagnoseConfigLuaArguments(draft');
+    expect(panelSource).toContain("severity: 'warning'");
+    expect(panelSource).toContain('warnings.length || validation.checks.installedBinary === \'not_run\'');
+  });
+
   it('separates diagnosis duration from the result text in live and final rows', () => {
     const liveRow = panelSource.slice(panelSource.indexOf('function renderDiagnosisProgress('), panelSource.indexOf('function renderSiteDiagnosis('));
     const finalRow = panelSource.slice(panelSource.indexOf('function renderSiteDiagnosis('), panelSource.indexOf('async function runSiteDiagnosis('));
