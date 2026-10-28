@@ -3303,7 +3303,7 @@ function renderForeignConfigInputs() {
   if (!list) return;
   list.replaceChildren();
   if (!foreignConfigInputs.length) {
-    const empty = document.createElement('p'); empty.className = 'text-sm text-slate-500'; empty.textContent = 'Добавьте конфиг текстом, ссылкой или файлом .conf/.txt.'; list.append(empty); return;
+    const empty = document.createElement('p'); empty.className = 'text-sm text-slate-500'; empty.textContent = 'Добавьте конфиги текстом, ссылками или файлами .conf/.txt.'; list.append(empty); return;
   }
   foreignConfigInputs.forEach((item, index) => {
     const row = document.createElement('div'); row.className = 'flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/35 px-3 py-2';
@@ -3317,12 +3317,13 @@ function renderForeignConfigInputs() {
   });
 }
 
-function addForeignConfig(input: ForeignConfigInput) {
-  if (foreignConfigInputs.length >= 10) return toast('Можно сравнить не больше десяти конфигов за один запуск.', 'error');
+function addForeignConfig(input: ForeignConfigInput): boolean {
+  if (foreignConfigInputs.length >= 10) { toast('Можно сравнить не больше десяти конфигов за один запуск.', 'error'); return false; }
   foreignConfigInputs.push(input);
   renderForeignConfigInputs();
   closeForeignConfigForms();
   toast(`Добавлен конфиг «${input.name}».`, 'success');
+  return true;
 }
 
 function addForeignConfigText() {
@@ -3353,15 +3354,16 @@ function openForeignConfigFile() {
   if (input instanceof HTMLInputElement) input.click();
 }
 
-async function addForeignConfigFile(file: File) {
-  if (!isSupportedForeignConfigFileName(file.name)) return toast('Выберите файл с расширением .conf или .txt.', 'error');
-  if (file.size > 65536) return toast('Размер файла не должен превышать 64 КиБ.', 'error');
+async function addForeignConfigFile(file: File): Promise<boolean> {
+  if (!isSupportedForeignConfigFileName(file.name)) { toast(`Файл «${file.name}»: выберите .conf или .txt.`, 'error'); return false; }
+  if (file.size > 65536) { toast(`Файл «${file.name}» больше 64 КиБ.`, 'error'); return false; }
   try {
     const content = decodeForeignConfigText(await file.arrayBuffer());
-    if (!content.trim()) return toast('Файл пустой.', 'error');
-    addForeignConfig({ name: file.name, source: 'Файл', content });
+    if (!content.trim()) { toast(`Файл «${file.name}» пустой.`, 'error'); return false; }
+    return addForeignConfig({ name: file.name, source: 'Файл', content });
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось прочитать файл конфигурации.', 'error');
+    return false;
   }
 }
 
@@ -3437,35 +3439,39 @@ function renderForeignConfigCheck(operation: ForeignConfigCheckOperation) {
     }
     return list;
   };
-  const makeDisclosure = (disclosureKey: string, title: string, sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail', successfulLabel: string) => {
+  const makeDisclosure = (disclosureKey: string, title: string, sites: ForeignConfigCheckOperation['comparisons'][number]['sites'], key: 'currentOk' | 'candidateOk', detailKey: 'currentDetail' | 'candidateDetail', successfulLabel: string, action?: HTMLButtonElement) => {
     const passed = sites.filter((site) => site[key] === true).length;
-    const details = document.createElement('details'); details.className = 'ui-card min-w-0 self-start h-fit rounded-xl border border-slate-800 p-3';
+    const panel = document.createElement('div'); panel.className = 'ui-card min-w-0 self-start h-fit overflow-hidden rounded-xl border border-slate-800';
+    const heading = document.createElement('div'); heading.className = 'flex min-h-11 flex-wrap items-center justify-between gap-2 px-3 py-2';
+    const headingTitle = document.createElement('strong'); headingTitle.className = 'min-w-0 text-sm font-semibold text-white'; headingTitle.textContent = title;
+    const headingActions = document.createElement('div'); headingActions.className = 'flex shrink-0 items-center gap-2';
+    const count = document.createElement('span'); count.className = `text-xs ${sites.length > 0 && passed === sites.length ? 'text-emerald-300' : 'text-slate-400'}`; count.textContent = `${passed}/${sites.length} доменов · ${sites.length > 0 && passed === sites.length ? successfulLabel : 'есть недоступные или ожидают'}`;
+    headingActions.append(count);
+    if (action) headingActions.append(action);
+    heading.append(headingTitle, headingActions);
+    const details = document.createElement('details'); details.className = 'border-t border-slate-800/80';
     details.dataset.disclosureKey = disclosureKey;
     details.open = openDisclosures.has(disclosureKey);
-    const summary = document.createElement('summary'); summary.className = 'flex cursor-pointer list-none flex-wrap items-center justify-between gap-2 text-sm font-semibold text-white';
-    const label = document.createElement('span'); label.textContent = title;
-    const count = document.createElement('span'); count.className = `text-xs ${sites.length > 0 && passed === sites.length ? 'text-emerald-300' : 'text-slate-400'}`; count.textContent = `${passed}/${sites.length} доменов · ${sites.length > 0 && passed === sites.length ? successfulLabel : 'есть недоступные или ожидают'}`;
-    const disclosureHint = document.createElement('span'); disclosureHint.className = 'inline-flex items-center gap-2';
-    const chevron = document.createElement('span'); chevron.className = 'details-chevron'; chevron.setAttribute('aria-hidden', 'true'); chevron.textContent = '⌄';
-    disclosureHint.append(count, chevron);
-    summary.append(label, disclosureHint); details.append(summary, renderSites(sites, key, detailKey));
-    return details;
+    const summary = document.createElement('summary'); summary.className = 'flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-1.5 text-xs font-semibold text-slate-300'; summary.textContent = 'Результаты по сайтам';
+    const chevron = document.createElement('span'); chevron.className = 'details-chevron'; chevron.setAttribute('aria-hidden', 'true'); chevron.textContent = '⌄'; summary.append(chevron);
+    const siteList = renderSites(sites, key, detailKey); siteList.classList.add('px-3');
+    details.append(summary, siteList); panel.append(heading, details);
+    return panel;
   };
 
   const baselineSites = operation.comparisons[0]?.sites ?? [];
   results.append(makeDisclosure('current', 'Текущая конфигурация', baselineSites, 'currentOk', 'currentDetail', 'все доступны'));
   for (const [index, comparison] of operation.comparisons.entries()) {
     const candidateWorks = operation.state === 'complete' && comparison.sites.length > 0 && comparison.sites.every((site) => site.candidateOk === true);
-    const details = makeDisclosure(`candidate-${index}`, `Проверяемая конфигурация · ${comparison.name}`, comparison.sites, 'candidateOk', 'candidateDetail', candidateWorks ? 'Конфигурация работает' : 'все доступны');
-    const source = document.createElement('span'); source.className = 'mt-1 block text-[11px] text-slate-500'; source.textContent = comparison.source; details.append(source);
+    let apply: HTMLButtonElement | undefined;
     if (candidateWorks) {
-      const outcome = document.createElement('div'); outcome.className = 'mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2';
-      const label = document.createElement('strong'); label.className = 'text-sm font-semibold text-emerald-200'; label.textContent = 'Конфигурация работает';
-      const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50'; apply.textContent = 'Применить конфигурацию';
-      apply.addEventListener('click', () => void applyForeignConfig(operation.id, index, comparison.name, apply));
-      outcome.append(label, apply); details.append(outcome);
+      const applyButton = document.createElement('button'); applyButton.type = 'button'; applyButton.className = 'rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50'; applyButton.textContent = 'Применить конфигурацию';
+      applyButton.addEventListener('click', () => void applyForeignConfig(operation.id, index, comparison.name, applyButton));
+      apply = applyButton;
     }
-    results.append(details);
+    const candidate = makeDisclosure(`candidate-${index}`, `Проверяемая конфигурация · ${comparison.name}`, comparison.sites, 'candidateOk', 'candidateDetail', candidateWorks ? 'Конфигурация работает' : 'все доступны', apply);
+    const source = document.createElement('span'); source.className = 'block px-3 pb-2 text-[11px] text-slate-500'; source.textContent = comparison.source; candidate.append(source);
+    results.append(candidate);
   }
 }
 
@@ -4933,8 +4939,12 @@ function boot() {
   const foreignFileInput = $('#foreignConfigFileInput');
   foreignFileInput?.addEventListener('change', () => {
     if (!(foreignFileInput instanceof HTMLInputElement)) return;
-    const file = foreignFileInput.files?.[0];
-    if (file) void addForeignConfigFile(file);
+    const files = Array.from(foreignFileInput.files ?? []);
+    const remaining = Math.max(0, 10 - foreignConfigInputs.length);
+    void (async () => {
+      for (const file of files.slice(0, remaining)) await addForeignConfigFile(file);
+      if (files.length > remaining) toast(`За один запуск можно сравнить до 10 конфигов. Добавлено ${remaining} из выбранных файлов.`, 'error');
+    })();
     foreignFileInput.value = '';
   });
   renderForeignConfigInputs();

@@ -552,12 +552,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(section).toContain('id="foreignConfigTextContent"');
     expect(section).toContain('id="foreignConfigUrl"');
     expect(section).toContain('id="foreignConfigFileInput"');
+    expect(section).toContain('multiple');
     expect(section).toContain('data-action-click="openForeignConfigFile"');
     expect(section).not.toContain('＋ Текстом');
     expect(section).not.toContain('＋ По ссылке');
-    expect(section).toContain('Файл .conf/.txt');
+    expect(section).toContain('Файлы .conf/.txt');
     expect(section).toContain('accept=".conf,.txt,text/plain"');
-    expect(section).toContain('файлом .conf/.txt');
+    expect(section).toContain('файлами .conf/.txt');
     expect(section).toContain('id="foreignConfigHosts"');
     expect(section).toContain('id="foreignConfigRepeats"');
     expect(section).toContain('id="foreignConfigResults"');
@@ -565,6 +566,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(section).toContain('(1–15, домен или публичный IPv4)');
     expect(panelSource).toContain('foreignConfigInputs.length >= 10');
     expect(panelSource).toContain('isSupportedForeignConfigFileName(file.name)');
+    expect(panelSource).toContain('Array.from(foreignFileInput.files ?? [])');
     expect(panelSource).toContain('hosts.length > 15');
     expect(section).toContain('data-action-click="runForeignConfigCheck"');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigStart');
@@ -580,7 +582,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('col-span-2 justify-self-end text-right font-semibold sm:col-span-1');
     expect(panelSource).toContain("attemptLabel.className = 'inline-flex w-fit items-center gap-1.5");
     expect(panelSource).toContain("latency.className = 'text-teal-200'");
-    expect(panelSource).toContain("details.className = 'ui-card min-w-0 self-start h-fit rounded-xl border border-slate-800 p-3'");
+    expect(panelSource).toContain("heading.className = 'flex min-h-11 flex-wrap items-center justify-between gap-2 px-3 py-2'");
+    expect(panelSource).toContain('if (action) headingActions.append(action)');
+    expect(panelSource).toContain("details.className = 'border-t border-slate-800/80'");
     expect(panelSource).toContain('`Домен: ${foreignStatusLabel(result)}`');
     expect(panelSource).toContain('nfqwsDiagnostics.foreignConfigApply');
     expect(backendSource).toContain('MAX_FOREIGN_CONFIGS');
@@ -1140,9 +1144,11 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('Синий (стандартная)');
   });
 
-  it('removes the selection overlay across appearance palettes', () => {
-    expect(panelStyles).toContain('*::selection, *::-moz-selection { background:transparent !important; color:inherit !important;');
-    expect(panelStyles).toContain('.conf-editor-input::selection, .conf-editor-input::-moz-selection { color:transparent !important;');
+  it('keeps text selection visible and prevents syntax overlays from selecting duplicate text', () => {
+    expect(panelStyles).toContain('*::selection, *::-moz-selection { background:color-mix(in srgb,var(--accent-color,#60a5fa) 28%,transparent) !important;');
+    expect(panelStyles).toContain('.conf-editor-input::selection, .conf-editor-input::-moz-selection, .config-argument-input::selection, .config-argument-input::-moz-selection { color:transparent !important;');
+    expect(panelStyles).toContain('user-select:none; -webkit-user-select:none;');
+    expect(panelStyles).toContain('background:color-mix(in srgb,var(--accent-color,#60a5fa) 32%,transparent) !important;');
     expect(panelStyles).not.toContain('selection:bg-blue-500/30');
     expect(appSource).not.toContain('selection:bg-blue-500/30');
     expect(entrySource).not.toContain('selection:bg-blue-500/30');

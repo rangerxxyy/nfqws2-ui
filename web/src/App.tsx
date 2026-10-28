@@ -1194,8 +1194,8 @@ export default function App() {
             <div className={"flex flex-wrap items-center gap-2"}>
               <button data-action-click={"openForeignConfigText"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>Текстом</button>
               <button data-action-click={"openForeignConfigUrl"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>По ссылке</button>
-              <button data-action-click={"openForeignConfigFile"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>Файл .conf/.txt</button>
-              <input id={"foreignConfigFileInput"} type={"file"} accept={".conf,.txt,text/plain"} className={"hidden"} />
+              <button data-action-click={"openForeignConfigFile"} className={"min-w-28 rounded-lg border border-slate-700 px-3 py-2 text-sm font-semibold text-slate-200 hover:border-blue-400"}>Файлы .conf/.txt</button>
+              <input id={"foreignConfigFileInput"} type={"file"} accept={".conf,.txt,text/plain"} multiple className={"hidden"} />
             </div>
             <div id={"foreignConfigTextForm"} className={"hidden space-y-2 rounded-xl border border-slate-800 bg-slate-950/40 p-3"}>
               <input id={"foreignConfigTextName"} type={"text"} placeholder={"Название конфига (необязательно)"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 text-sm text-white placeholder:text-slate-500"} />
@@ -1207,7 +1207,7 @@ export default function App() {
               <input id={"foreignConfigUrl"} type={"url"} placeholder={"https://github.com/.../blob/main/nfqws2.conf или raw URL"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs text-white placeholder:text-slate-500"} />
               <div className={"flex justify-end gap-2"}><button data-action-click={"closeForeignConfigForms"} className={"rounded-lg px-3 py-2 text-sm text-slate-400"}>Закрыть</button><button data-action-click={"addForeignConfigUrl"} className={"rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white"}>Добавить ссылку</button></div>
             </div>
-            <div id={"foreignConfigList"} className={"space-y-2"}><p className={"text-sm text-slate-500"}>Добавьте конфиг текстом, ссылкой или файлом .conf/.txt.</p></div>
+            <div id={"foreignConfigList"} className={"space-y-2"}><p className={"text-sm text-slate-500"}>Добавьте конфиги текстом, ссылками или файлами .conf/.txt.</p></div>
             <label htmlFor={"foreignConfigHosts"} className={"block max-w-3xl space-y-1.5 text-sm font-semibold text-slate-200"}>
               <span>Сайты для сравнения <span className={"font-normal text-slate-500"}>(1–15, домен или публичный IPv4)</span></span>
               <input id={"foreignConfigHosts"} type={"text"} defaultValue={"youtube.com, discord.com, googleusercontent.com"} className={"w-full rounded-lg border border-slate-700 bg-[#060a12] px-3 py-2 font-mono text-xs text-white"} />

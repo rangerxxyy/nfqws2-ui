@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
-use tokio::time::{Instant, timeout};
+use tokio::time::timeout;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -11,6 +11,10 @@ pub struct InterceptionStatus {
 }
 
 pub const INTERCEPTION_MISSING_GRACE: Duration = Duration::from_secs(20);
+
+fn iptables_status_arguments() -> [&'static str; 4] {
+    ["-w", "-t", "mangle", "-S"]
+}
 
 pub fn visible_interception_status(
     status: Option<InterceptionStatus>,
@@ -76,29 +80,20 @@ pub async fn read_iptables_status() -> Option<InterceptionStatus> {
         .into_iter()
         .find(|path| Path::new(path).is_file())
         .unwrap_or("iptables");
-    let deadline = Instant::now() + TIMEOUT;
-    let mut snapshot = String::new();
-    for chain in ["nfqws_post", "nfqws_pre", "POSTROUTING", "PREROUTING"] {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return None;
-        }
-        let output = timeout(
-            remaining,
-            Command::new(program)
-                .args(["-w", "-t", "mangle", "-S", chain])
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await
-        .ok()?
-        .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        snapshot.push_str(&String::from_utf8_lossy(&output.stdout));
+    let output = timeout(
+        TIMEOUT,
+        Command::new(program)
+            .args(iptables_status_arguments())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    if !output.status.success() {
+        return None;
     }
-    parse_iptables_snapshot(&snapshot)
+    parse_iptables_snapshot(&String::from_utf8_lossy(&output.stdout))
 }
 
 #[cfg(test)]
@@ -113,6 +108,25 @@ mod tests {
     fn reports_no_missing_hooks_when_both_nfqueue_chains_are_connected() {
         assert_eq!(
             parse_iptables_snapshot(CONNECTED),
+            Some(InterceptionStatus {
+                missing_hooks: vec![]
+            })
+        );
+    }
+
+    #[test]
+    fn reads_the_mangle_table_in_one_iptables_call() {
+        assert_eq!(
+            super::iptables_status_arguments(),
+            ["-w", "-t", "mangle", "-S"]
+        );
+    }
+
+    #[test]
+    fn finds_nfqueue_hooks_in_a_full_mangle_table_snapshot() {
+        let snapshot = "-P PREROUTING ACCEPT\n-N nfqws_pre\n-N nfqws_post\n-N unrelated_chain\n-A PREROUTING -j nfqws_pre\n-A POSTROUTING -j nfqws_post\n-A unrelated_chain -j RETURN\n";
+        assert_eq!(
+            parse_iptables_snapshot(snapshot),
             Some(InterceptionStatus {
                 missing_hooks: vec![]
             })
