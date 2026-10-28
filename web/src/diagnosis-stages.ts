@@ -1,10 +1,10 @@
 export const SITE_DIAGNOSIS_STAGES = [
   { id: 'dns', label: 'Имя сайта · DNS' },
   { id: 'tcp', label: 'Соединение · TCP 443' },
-  { id: 'current', label: 'Текущий маршрут nfqws2' },
   { id: 'direct', label: 'Запрос напрямую' },
   { id: 'sni', label: 'Проверка имени · SNI' },
   { id: 'http', label: 'Открытый HTTP · порт 80' },
+  { id: 'current', label: 'Как открывается сейчас' },
   { id: 'quic', label: 'QUIC · HTTP/3' },
 ] as const;
 

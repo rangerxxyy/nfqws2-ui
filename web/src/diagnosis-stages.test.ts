@@ -3,7 +3,7 @@ import { diagnosisProgressState, diagnosisQueueMarker, SITE_DIAGNOSIS_STAGES } f
 
 describe('site diagnosis stage queue', () => {
   it('lists checks in their intended order before a request starts', () => {
-    expect(SITE_DIAGNOSIS_STAGES.map(({ id }) => id)).toEqual(['dns', 'tcp', 'current', 'direct', 'sni', 'http', 'quic']);
+    expect(SITE_DIAGNOSIS_STAGES.map(({ id }) => id)).toEqual(['dns', 'tcp', 'direct', 'sni', 'http', 'current', 'quic']);
   });
   it('marks only results received from the backend complete and highlights the real current stage', () => {
     const completed = new Set(['dns']);

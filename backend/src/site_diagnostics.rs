@@ -1457,7 +1457,7 @@ where
         {
             let tcp = tcp_step(&addresses).await;
             progress(DiagnosticProgress {
-                active_stage: "current".into(),
+                active_stage: "direct".into(),
                 step: Some(tcp.clone()),
                 addresses: addresses.clone(),
             });
@@ -1529,33 +1529,11 @@ where
     steps.push(tcp.clone());
     if literal_ip.is_some() || steps.iter().any(|step| step.id == "doh") {
         progress(DiagnosticProgress {
-            active_stage: "current".into(),
+            active_stage: "direct".into(),
             step: Some(tcp),
             addresses: addresses.clone(),
         });
     }
-    let (current, route, advertised) = tokio::join!(
-        probe("current", &host, ip.into(), 443, false),
-        route_step(ip.into()),
-        async {
-            if literal_ip.is_some() {
-                None
-            } else {
-                advertised_http3(&host, ip.into()).await
-            }
-        }
-    );
-    progress(DiagnosticProgress {
-        active_stage: "direct".into(),
-        step: Some(current.clone()),
-        addresses: addresses.clone(),
-    });
-    progress(DiagnosticProgress {
-        active_stage: "direct".into(),
-        step: Some(route.clone()),
-        addresses: addresses.clone(),
-    });
-    steps.push(route);
     let direct_host = host.clone();
     let (direct_tx, mut direct_rx) = tokio::sync::mpsc::unbounded_channel();
     let direct_probe = bypass_probe(ip, 443, ProbeTransport::Tcp, async move {
@@ -1606,29 +1584,11 @@ where
         Err(message) => {
             let direct = DiagnosticStep::new("direct", "unavailable", message);
             progress(DiagnosticProgress {
-                active_stage: "complete".into(),
+                active_stage: "current".into(),
                 step: Some(direct.clone()),
                 addresses: addresses.clone(),
             });
-            complete_doh_progress(
-                &mut doh_task,
-                &mut steps,
-                &addresses,
-                "complete",
-                &mut progress,
-            )
-            .await;
-            return DiagnosticReport {
-                summary: diagnosis_summary(&direct, &current).into(),
-                host,
-                addresses,
-                reverse_dns,
-                steps,
-                limitations,
-                direct,
-                current,
-                quic: None,
-            };
+            direct
         }
     };
     match bypass_probe(
@@ -1641,7 +1601,7 @@ where
     {
         Ok(http) => {
             progress(DiagnosticProgress {
-                active_stage: "quic".into(),
+                active_stage: "current".into(),
                 step: Some(http.clone()),
                 addresses: addresses.clone(),
             });
@@ -1650,32 +1610,28 @@ where
         Err(message) => {
             let http = DiagnosticStep::new("http", "unavailable", message);
             progress(DiagnosticProgress {
-                active_stage: "complete".into(),
+                active_stage: "current".into(),
                 step: Some(http.clone()),
                 addresses: addresses.clone(),
             });
             steps.push(http);
-            complete_doh_progress(
-                &mut doh_task,
-                &mut steps,
-                &addresses,
-                "complete",
-                &mut progress,
-            )
-            .await;
-            return DiagnosticReport {
-                summary: diagnosis_summary(&direct, &current).into(),
-                host,
-                addresses,
-                reverse_dns,
-                steps,
-                limitations,
-                direct,
-                current,
-                quic: None,
-            };
         }
     }
+    let (current, route) = tokio::join!(
+        probe("current", &host, ip.into(), 443, false),
+        route_step(ip.into()),
+    );
+    steps.push(route);
+    progress(DiagnosticProgress {
+        active_stage: "quic".into(),
+        step: Some(current.clone()),
+        addresses: addresses.clone(),
+    });
+    let advertised = if literal_ip.is_some() {
+        None
+    } else {
+        advertised_http3(&host, ip.into()).await
+    };
     let quic = if literal_ip.is_some() {
         let skipped = DiagnosticStep::new(
             "quic",
