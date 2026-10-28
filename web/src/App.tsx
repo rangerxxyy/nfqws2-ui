@@ -1526,7 +1526,7 @@ export default function App() {
       <section className={"w-full max-w-md rounded-2xl border border-slate-700 bg-[#0b101b] p-5 shadow-2xl view-animate"} role={"alertdialog"} aria-modal={"true"} aria-labelledby={"operationConfirmTitle"} aria-describedby={"operationConfirmMessage"}>
         <h3 id={"operationConfirmTitle"} className={"text-base font-bold text-white"}>Подтвердите действие</h3>
         <p id={"operationConfirmMessage"} className={"mt-2 text-sm leading-6 text-slate-300 whitespace-pre-wrap"}></p>
-        <div className={"mt-5 flex justify-end gap-2"}><button type={"button"} data-action-click={"cancelOperationConfirmation"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button type={"button"} data-action-click={"confirmOperationConfirmation"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Продолжить</button></div>
+        <div className={"mt-5 flex justify-end gap-2"}><button id={"operationConfirmCancel"} type={"button"} className={"rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"}>Отмена</button><button id={"operationConfirmContinue"} type={"button"} className={"rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-500"}>Продолжить</button></div>
       </section>
     </div>
     <div id={"communityShareModal"} data-app-modal-root={"true"} aria-hidden={"true"} className={"fixed inset-0 bg-black/75 backdrop-blur-sm z-[82] hidden items-center justify-center p-4"}>

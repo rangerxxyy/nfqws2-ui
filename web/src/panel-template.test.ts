@@ -172,12 +172,14 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('role="alertdialog"');
   });
 
-  it('routes both configuration confirmation buttons through the live action dispatcher', () => {
-    expect(template).toContain('data-action-click="cancelOperationConfirmation"');
-    expect(template).toContain('data-action-click="confirmOperationConfirmation"');
-    expect(panelSource).toContain("cancelOperationConfirmation: () => closeDangerousConfirmation(),");
-    expect(panelSource).toContain('confirmOperationConfirmation: () => void confirmDangerousOperation(),');
-    expect(panelSource).toContain("document.addEventListener('click', (event) => dispatch(event, 'click'));");
+  it('keeps config confirmation actions directly bound and outside global busy disabling', () => {
+    expect(template).toContain('id="operationConfirmCancel"');
+    expect(template).toContain('id="operationConfirmContinue"');
+    expect(template).not.toContain('data-action-click="cancelOperationConfirmation"');
+    expect(template).not.toContain('data-action-click="confirmOperationConfirmation"');
+    expect(panelSource).toContain("$('#operationConfirmCancel')?.addEventListener('click', () => closeDangerousConfirmation());");
+    expect(panelSource).toContain("$('#operationConfirmContinue')?.addEventListener('click', () => void confirmDangerousOperation());");
+    expect(panelSource).toContain("openAppModal(modal, '#operationConfirmCancel')");
   });
 
   it('releases the busy lock while config confirmation is open and restores it on continue', () => {

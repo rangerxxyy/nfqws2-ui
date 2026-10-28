@@ -1511,7 +1511,7 @@ async function saveRuntimeProfiles() {
 function requestDangerousConfirmation(title: string, message: string, action: () => Promise<void>, onCancel: () => void = () => undefined) {
   setText('#operationConfirmTitle', title); setText('#operationConfirmMessage', message); pendingConfirmation = action;
   pendingConfirmationCancel = onCancel;
-  const modal = $('#operationConfirmModal'); if (modal) openAppModal(modal, '[data-action-click="cancelOperationConfirmation"]');
+  const modal = $('#operationConfirmModal'); if (modal) openAppModal(modal, '#operationConfirmCancel');
 }
 function closeUpdateModal() { closeAppModal($('#updateModalBackdrop')); }
 function closeDangerousConfirmation(confirmed = false) {
@@ -4436,6 +4436,8 @@ async function logoutPanel() {
 }
 
 function bindPrototypeActions() {
+  $('#operationConfirmCancel')?.addEventListener('click', () => closeDangerousConfirmation());
+  $('#operationConfirmContinue')?.addEventListener('click', () => void confirmDangerousOperation());
   const showDiff = () => {
     if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
     const editor = $('#nfqwsConfTextarea'); const body = $('#diffModalBody'); const modal = $('#diffModalBackdrop');
@@ -4507,8 +4509,6 @@ function bindPrototypeActions() {
     toggleLogAutoRefresh: (enabled: boolean) => { setText('#logsAutoRefreshStatus', enabled ? 'Автообновление каждые 5 секунд' : 'Автообновление приостановлено'); },
     downloadLogs: () => downloadLogs(),
     clearLogs: () => clearLogs(),
-    cancelOperationConfirmation: () => closeDangerousConfirmation(),
-    confirmOperationConfirmation: () => void confirmDangerousOperation(),
     saveSnapshotRetention: () => void saveSnapshotSettings().catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить срок хранения.', 'error')),
     toggleAutomaticSnapshots: (enabled: boolean) => void toggleAutomaticSnapshots(enabled),
     saveSnapshotRemote: () => void saveSnapshotSettings(true).catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить настройки NAS.', 'error')),
