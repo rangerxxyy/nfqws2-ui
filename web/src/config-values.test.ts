@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
+import { configAssignmentValue, configDraftDisposition, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
 
 describe('sameConfigText', () => {
   it('treats CRLF and LF line endings as equivalent', () => {
@@ -8,6 +8,20 @@ describe('sameConfigText', () => {
 
   it('keeps actual text edits distinct', () => {
     expect(sameConfigText('A=1\r\n', 'A=2\n')).toBe(false);
+  });
+});
+
+describe('configDraftDisposition', () => {
+  it('treats a draft matching the latest configuration as unchanged after a concurrent refresh', () => {
+    expect(configDraftDisposition('A=1\n', 'A=1\n', 'A=1\r\n', 'rev-1', 'rev-2')).toBe('unchanged');
+  });
+
+  it('rejects a draft based on a stale configuration revision', () => {
+    expect(configDraftDisposition('A=2\n', 'A=1\n', 'A=3\n', 'rev-1', 'rev-2')).toBe('stale');
+  });
+
+  it('allows a genuine edit against the same configuration revision', () => {
+    expect(configDraftDisposition('A=2\n', 'A=1\n', 'A=1\n', 'rev-1', 'rev-1')).toBe('changed');
   });
 });
 

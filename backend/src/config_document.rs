@@ -95,7 +95,10 @@ pub fn validate_nfqws2_config(source: &str) -> Result<Vec<ConfigDiagnostic>, Str
                 line: Some(delimiter_line),
             });
         }
-        if raw_value.contains('$') {
+        let safely_resolved_mode_reference = assignment.name == "NFQWS_EXTRA_ARGS"
+            && ConfigDocument::mode_reference(raw_value).is_some()
+            && document.literal_or_mode_value(assignment.name).is_ok();
+        if raw_value.contains('$') && !safely_resolved_mode_reference {
             diagnostics.push(ConfigDiagnostic {
                 severity: DiagnosticSeverity::Warning,
                 code: "dynamic_shell_value",
@@ -900,6 +903,31 @@ mod tests {
     }
 
     #[test]
+    fn nfqws2_static_validation_does_not_warn_for_safely_resolved_mode_reference() {
+        let source = "MODE_LIST=\"--hostlist=lists/user.list\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n";
+        let diagnostics = validate_nfqws2_config(source).unwrap();
+
+        assert!(
+            diagnostics
+                .iter()
+                .all(|item| item.code != "dynamic_shell_value"),
+            "a known, locally defined MODE_* reference is safely resolvable"
+        );
+    }
+
+    #[test]
+    fn nfqws2_static_validation_still_warns_for_unresolved_shell_variables() {
+        let source = "NFQWS_ARGS=\"$USER_ARGS\"\n";
+        let diagnostics = validate_nfqws2_config(source).unwrap();
+
+        assert!(diagnostics.iter().any(|item| {
+            item.code == "dynamic_shell_value"
+                && item.severity == DiagnosticSeverity::Warning
+                && item.line == Some(1)
+        }));
+    }
+
+    #[test]
     fn nfqws2_static_validation_reports_the_line_where_forbidden_delimiter_occurs() {
         let diagnostics =
             validate_nfqws2_config("NFQWS_ARGS=\"--filter-tcp=443\n --new\"\n").unwrap();
@@ -908,10 +936,7 @@ mod tests {
 
     #[test]
     fn nfqws2_static_validation_warns_on_unresolved_shell_values_without_expanding_them() {
-        let diagnostics = validate_nfqws2_config(
-            "MODE_LIST=\"--hostlist=/opt/etc/nfqws2/lists/user.list\"\nNFQWS_EXTRA_ARGS=\"$MODE_LIST\"\n",
-        )
-        .unwrap();
+        let diagnostics = validate_nfqws2_config("NFQWS_ARGS=\"$USER_ARGS\"\n").unwrap();
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, "dynamic_shell_value");
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Warning);
@@ -929,7 +954,8 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|item| item.code == "dynamic_shell_value")
+                .all(|item| item.code != "dynamic_shell_value"),
+            "the checked-in init fixture uses supported MODE_* references"
         );
         assert!(
             validate_nfqws2_config(

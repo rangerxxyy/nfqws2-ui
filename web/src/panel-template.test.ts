@@ -172,6 +172,14 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('role="alertdialog"');
   });
 
+  it('routes both configuration confirmation buttons through the live action dispatcher', () => {
+    expect(template).toContain('data-action-click="cancelOperationConfirmation"');
+    expect(template).toContain('data-action-click="confirmOperationConfirmation"');
+    expect(panelSource).toContain("cancelOperationConfirmation: () => closeDangerousConfirmation(),");
+    expect(panelSource).toContain('confirmOperationConfirmation: () => void confirmDangerousOperation(),');
+    expect(panelSource).toContain("document.addEventListener('click', (event) => dispatch(event, 'click'));");
+  });
+
   it('releases the busy lock while config confirmation is open and restores it on continue', () => {
     const apply = panelSource.match(/async function saveConfigAndApply[\s\S]*?\n}\n/)?.[0] ?? '';
     expect(apply).toContain("setBusy(false);\n    requestDangerousConfirmation('Проверка конфигурации'");
@@ -181,11 +189,13 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('skips validation and the warning dialog when the configuration has no edits', () => {
     const apply = panelSource.match(/async function saveConfigAndApply[\s\S]*?\n}\n/)?.[0] ?? '';
-    const unchangedGuard = apply.indexOf('if (sameConfigText(draft, config.content))');
+    const unchangedGuard = apply.indexOf("configDraftDisposition(draft, baselineContent, config.content, baselineRevision, config.revision) === 'unchanged'");
     const validationCall = apply.indexOf('nfqwsConfig.validate(draft)');
     expect(unchangedGuard).toBeGreaterThanOrEqual(0);
     expect(unchangedGuard).toBeLessThan(validationCall);
     expect(apply).toContain("toast('Конфигурация не изменена.');");
+    expect(apply).toContain("validatedDraftState === 'unchanged'");
+    expect(apply).toContain("confirmedDraftState === 'stale'");
   });
 
   it('treats CRLF and LF config text as the same draft in strategy apply guards', () => {

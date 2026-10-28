@@ -21,6 +21,18 @@ export function sameConfigText(left: string, right: string): boolean {
   return left.replace(/\r\n?/g, '\n') === right.replace(/\r\n?/g, '\n');
 }
 
+export function configDraftDisposition(
+  draft: string,
+  baselineContent: string,
+  currentContent: string,
+  baselineRevision: string,
+  currentRevision: string,
+): 'unchanged' | 'changed' | 'stale' {
+  if (sameConfigText(draft, currentContent)) return 'unchanged';
+  if (baselineRevision !== currentRevision || !sameConfigText(baselineContent, currentContent)) return 'stale';
+  return 'changed';
+}
+
 export function configOutlineEntries(value: string): Array<{ name: string; line: number; offset: number }> {
   return [...value.matchAll(/^([A-Z_][A-Z0-9_]*)=/gm)].map((match) => ({
     name: match[1] ?? '',

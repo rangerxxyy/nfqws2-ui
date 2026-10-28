@@ -7,7 +7,7 @@ import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
-import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
+import { configAssignmentValue, configDraftDisposition, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
 import { highlightConfigLine } from './config-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -2565,7 +2565,9 @@ async function saveConfigAndApply() {
   if (!config) return toast('Сначала загрузите конфигурацию backend.', 'error');
   const editor = $('#nfqwsConfTextarea'); if (!(editor instanceof HTMLTextAreaElement)) return;
   const draft = editor.value;
-  if (sameConfigText(draft, config.content)) return toast('Конфигурация не изменена.');
+  const baselineContent = config.content;
+  const baselineRevision = config.revision;
+  if (configDraftDisposition(draft, baselineContent, config.content, baselineRevision, config.revision) === 'unchanged') return toast('Конфигурация не изменена.');
   setBusy(true);
   let validation: ConfigValidationResponse;
   try {
@@ -2577,6 +2579,15 @@ async function saveConfigAndApply() {
   if (editor.value !== draft) {
     setBusy(false);
     return toast('Черновик изменился во время проверки. Проверьте конфигурацию повторно.', 'error');
+  }
+  const validatedDraftState = configDraftDisposition(draft, baselineContent, config.content, baselineRevision, config.revision);
+  if (validatedDraftState === 'unchanged') {
+    setBusy(false);
+    return toast('Конфигурация не изменена.');
+  }
+  if (validatedDraftState === 'stale') {
+    setBusy(false);
+    return toast('Конфигурация на роутере изменилась во время проверки. Загрузите её заново и повторите действие.', 'error');
   }
   if (!validation.valid) {
     setBusy(false);
@@ -2590,6 +2601,9 @@ async function saveConfigAndApply() {
     : 'Проверка установленным бинарником выполнена.';
   const applyValidatedConfig = async () => {
     if (editor.value !== draft || !config) { setBusy(false); return toast('Черновик изменился во время подтверждения. Проверьте конфигурацию повторно.', 'error'); }
+    const confirmedDraftState = configDraftDisposition(draft, baselineContent, config.content, baselineRevision, config.revision);
+    if (confirmedDraftState === 'unchanged') { setBusy(false); return toast('Конфигурация уже соответствует этому черновику.'); }
+    if (confirmedDraftState === 'stale') { setBusy(false); return toast('Конфигурация на роутере изменилась во время подтверждения. Загрузите её заново.', 'error'); }
     setBusy(true);
     setRestartInProgress(true);
     try {
