@@ -1751,8 +1751,10 @@ async function loadAboutStatus(statusOverride?: UiUpdateStatus) {
       const tag = version.startsWith('v') ? version : `v${version}`;
       if (/^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(tag)) {
         versionCommand.textContent = `nfqws2-ui-ctl update ${tag} --force`;
+        const title = $('[data-about-version-command-title]');
+        if (title) title.textContent = 'Установить эту версию';
         const description = $('[data-about-version-command-description]');
-        if (description) description.textContent = 'Установить указанную версию или откатиться к ней.';
+        if (description) description.textContent = 'Переустановить эту версию или откатиться на неё.';
       }
     }
     setText('#aboutUpdateStatus', result.updateAvailable ? `Доступна версия ${result.latestVersion}. Обновите панель через кнопку обновления в верхней панели.` : result.latestVersion ? `Установлена актуальная версия ${result.currentVersion}.` : 'Последнюю версию пока не удалось определить. Проверьте соединение с GitHub.');
@@ -4586,15 +4588,43 @@ function bindPrototypeActions() {
       const command = button?.closest('.about-command-row')?.querySelector('code')?.textContent?.trim();
       const text = typeof value === 'string' ? value : command;
       if (!text) return toast('Команда не найдена.', 'error');
+      const label = button?.querySelector<HTMLElement>('[data-about-copy-label="true"]');
+      const copyStatus = $('#aboutCopyStatus');
+      const originalLabel = label?.textContent ?? 'Копировать';
+      if (button) {
+        button.disabled = true;
+        if (label) label.textContent = 'Копирую…';
+        button.setAttribute('aria-label', 'Копирование команды');
+        button.title = 'Копирование команды';
+        button.classList.remove('about-copy-success');
+      }
       try {
         await writeTextToClipboard(text);
         if (button) {
-          const original = button.textContent ?? 'Копировать';
-          button.textContent = 'Скопировано'; button.classList.add('strategy-copy-success');
-          setText('#aboutCopyStatus', 'Команда скопирована в буфер обмена.');
-          window.setTimeout(() => { if (button.isConnected) { button.textContent = original; button.classList.remove('strategy-copy-success'); } }, 1500);
+          button.disabled = false;
+          if (label) label.textContent = 'Скопировано';
+          button.setAttribute('aria-label', 'Команда скопирована');
+          button.title = 'Команда скопирована';
+          button.classList.add('about-copy-success');
+          if (copyStatus) copyStatus.textContent = 'Команда скопирована в буфер обмена.';
+          window.setTimeout(() => {
+            if (!button.isConnected) return;
+            if (label) label.textContent = originalLabel;
+            button.setAttribute('aria-label', 'Копировать команду');
+            button.title = 'Копировать команду';
+            button.classList.remove('about-copy-success');
+            if (copyStatus) copyStatus.textContent = '';
+          }, 1800);
         } else toast('Фрагмент скопирован');
-      } catch { toast('Буфер обмена недоступен', 'error'); }
+      } catch {
+        if (button) {
+          button.disabled = false;
+          if (label) label.textContent = originalLabel;
+          button.setAttribute('aria-label', 'Копировать команду');
+          button.title = 'Копировать команду';
+        }
+        toast('Буфер обмена недоступен', 'error');
+      }
     })(),
     handleConfInput: () => { syncConfigLines(); renderConfigOutline(); scheduleConfigWarnings(); },
     syncConfScroll: () => syncConfigScroll(),

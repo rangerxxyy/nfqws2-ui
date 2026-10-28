@@ -1004,9 +1004,26 @@ describe('TSX panel with optional server-side authentication', () => {
   it('copies the exact About command from its row and confirms the result accessibly', () => {
     expect(template).toContain('id="aboutCopyStatus"');
     expect(template).toContain('aria-label="Копировать команду"');
+    expect(template).toContain('data-about-copy-label="true"');
     expect(appSource).toContain('JSON.stringify([{source:"self"}])');
     expect(panelSource).toContain("closest('.about-command-row')?.querySelector('code')?.textContent?.trim()");
-    expect(panelSource).toContain("setText('#aboutCopyStatus', 'Команда скопирована в буфер обмена.')");
+    expect(panelSource).toContain("copyStatus.textContent = 'Команда скопирована в буфер обмена.'");
+    expect(panelSource).toContain("button.classList.add('about-copy-success')");
+    expect(panelSource).toContain("button.disabled = true");
+    expect(panelSource).toContain("label.textContent = 'Скопировано'");
+    expect(panelStyles).toContain('.about-copy-button.about-copy-success');
+    expect(panelStyles).toContain('@keyframes about-copy-check');
+  });
+
+  it('places About after the other pages and as the last system navigation item', () => {
+    expect(template.indexOf('id="tabContent-logs"')).toBeLessThan(template.indexOf('id="tabContent-about"'));
+    expect(template.indexOf('id="navBtn-logs"')).toBeLessThan(template.indexOf('id="navBtn-about"'));
+    expect(template).toContain('about-version-grid');
+    expect(template).toContain('about-command-title');
+    expect(template).toContain('Установить последнюю стабильную версию панели.');
+    expect(template).toContain('Показать версии панели и nfqws2, а также проверить доступность веб-панели.');
+    expect(template).not.toContain('команда панели rangerxxyy; штатное управление nfqws2 не меняется');
+    expect(panelStyles).toContain('font-size:.84rem; font-weight:650; line-height:1.55; white-space:pre');
   });
 
   it('shows the configuration structure panel enabled on first render', () => {
@@ -1341,8 +1358,9 @@ describe('TSX panel with optional server-side authentication', () => {
   it('keeps About commands and copy actions from colliding at narrow widths', () => {
     expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) auto;');
     expect(panelStyles).toContain('.about-command-row > button { white-space:nowrap; }');
-    expect(panelStyles).toContain('.about-command-row code { display:block; min-width:0;');
-    expect(panelStyles).toContain('overflow-wrap:anywhere; }');
+    expect(panelStyles).toContain('.about-command-row code { display:block; width:fit-content; max-width:100%;');
+    expect(panelStyles).toContain('overflow-x:auto;');
+    expect(panelStyles).toContain('@media (max-width:560px)');
   });
 
   it('does not register a beforeunload warning that blocks browser reload or close', () => {

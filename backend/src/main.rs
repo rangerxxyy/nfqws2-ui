@@ -101,6 +101,7 @@ struct AppState {
     config_override: Option<PathBuf>,
     update_lock: Mutex<()>,
     core_release_cache: Mutex<Option<CoreReleaseCacheEntry>>,
+    installed_core_version_cache: Mutex<InstalledCoreVersionCache>,
     interception_status_cache: Mutex<InterceptionStatusCache>,
     ui_update_status: Arc<std::sync::RwLock<UiUpdateStatus>>,
     site_diagnostic_lock: Arc<Mutex<()>>,
@@ -123,6 +124,29 @@ struct InterceptionStatusCache {
     checked_at: Option<Instant>,
     visible: Option<InterceptionStatus>,
     missing_since: Option<Instant>,
+}
+
+const INSTALLED_CORE_VERSION_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Default)]
+struct InstalledCoreVersionCache {
+    checked_at: Option<Instant>,
+    version: Option<String>,
+}
+
+impl InstalledCoreVersionCache {
+    fn get(&self, now: Instant) -> Option<Option<String>> {
+        self.checked_at
+            .filter(|checked_at| {
+                now.saturating_duration_since(*checked_at) < INSTALLED_CORE_VERSION_CACHE_TTL
+            })
+            .map(|_| self.version.clone())
+    }
+
+    fn store(&mut self, version: Option<String>, checked_at: Instant) {
+        self.checked_at = Some(checked_at);
+        self.version = version;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4471,14 +4495,7 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
 async fn get_status(State(state): State<Arc<AppState>>) -> Response {
     let (service_state, detail) = service_status().await;
     let interception = cached_interception_status(&state, service_state).await;
-    let core_version = match tokio::process::Command::new("/opt/bin/opkg")
-        .args(["status", "nfqws2-keenetic"])
-        .output()
-        .await
-    {
-        Ok(output) => installed_core_tag_from_output(&output.stdout),
-        Err(_) => None,
-    };
+    let core_version = installed_core_version(&state).await;
     let meminfo = tokio::fs::read_to_string("/proc/meminfo").await.ok();
     let (memory_used_bytes, memory_total_bytes) = meminfo
         .as_deref()
@@ -4511,6 +4528,26 @@ async fn get_status(State(state): State<Arc<AppState>>) -> Response {
         interception,
     })
     .into_response()
+}
+
+async fn installed_core_version(state: &AppState) -> Option<String> {
+    let mut cache = state.installed_core_version_cache.lock().await;
+    if let Some(version) = cache.get(Instant::now()) {
+        return version;
+    }
+    let version = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::process::Command::new("/opt/bin/opkg")
+            .args(["status", "nfqws2-keenetic"])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .and_then(|output| installed_core_tag_from_output(&output.stdout));
+    cache.store(version.clone(), Instant::now());
+    version
 }
 
 async fn cached_interception_status(
@@ -13988,6 +14025,7 @@ async fn main() {
         config_override: None,
         update_lock: Mutex::new(()),
         core_release_cache: Mutex::new(None),
+        installed_core_version_cache: Mutex::new(InstalledCoreVersionCache::default()),
         interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
         ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
         site_diagnostic_lock: Arc::new(Mutex::new(())),
@@ -15703,6 +15741,7 @@ mod tests {
             config_override,
             update_lock: Mutex::new(()),
             core_release_cache: Mutex::new(None),
+            installed_core_version_cache: Mutex::new(InstalledCoreVersionCache::default()),
             interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
@@ -15918,6 +15957,7 @@ mod tests {
             config_override: None,
             update_lock: Mutex::new(()),
             core_release_cache: Mutex::new(None),
+            installed_core_version_cache: Mutex::new(InstalledCoreVersionCache::default()),
             interception_status_cache: Mutex::new(InterceptionStatusCache::default()),
             ui_update_status: Arc::new(std::sync::RwLock::new(UiUpdateStatus::default())),
             site_diagnostic_lock: Arc::new(Mutex::new(())),
@@ -16752,6 +16792,32 @@ mod tests {
         );
         let status = body_json(response).await;
         assert!(status.get("interception").is_some());
+    }
+
+    #[test]
+    fn installed_core_version_cache_reuses_recent_values_and_expires_them() {
+        let mut cache = InstalledCoreVersionCache::default();
+        let checked = Instant::now();
+        assert_eq!(cache.get(checked), None);
+
+        cache.store(Some("v1.2.3".into()), checked);
+        assert_eq!(
+            cache.get(checked + std::time::Duration::from_secs(4)),
+            Some(Some("v1.2.3".into()))
+        );
+        assert_eq!(cache.get(checked + std::time::Duration::from_secs(5)), None);
+    }
+
+    #[test]
+    fn installed_core_version_cache_can_reuse_a_missing_package_result_briefly() {
+        let mut cache = InstalledCoreVersionCache::default();
+        let checked = Instant::now();
+        cache.store(None, checked);
+
+        assert_eq!(
+            cache.get(checked + std::time::Duration::from_secs(1)),
+            Some(None)
+        );
     }
 
     #[tokio::test]
