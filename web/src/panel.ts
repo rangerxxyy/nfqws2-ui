@@ -2533,14 +2533,41 @@ async function ensureConfigWarningsLuaCatalog() {
   }
   await configWarningsCatalogPromise;
 }
+let configOutlineRenderedContent: string | null = null;
+let configOutlineButtons: HTMLButtonElement[] = [];
+let activeConfigOutlineButton: HTMLButtonElement | null = null;
+function updateActiveConfigOutline() {
+  const cursor = getConfigCodeEditor()?.state.selection.main.head ?? 0;
+  let low = 0;
+  let high = configOutlineButtons.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (Number(configOutlineButtons[middle].dataset.configOutlineOffset) <= cursor) low = middle + 1;
+    else high = middle;
+  }
+  const nextActive = configOutlineButtons[low - 1] ?? null;
+  if (nextActive === activeConfigOutlineButton) return;
+  if (activeConfigOutlineButton) {
+    activeConfigOutlineButton.classList.remove('bg-blue-500/10', 'text-blue-200');
+    activeConfigOutlineButton.classList.add('text-slate-200');
+    activeConfigOutlineButton.removeAttribute('aria-current');
+  }
+  activeConfigOutlineButton = nextActive;
+  activeConfigOutlineButton?.classList.add('bg-blue-500/10', 'text-blue-200');
+  activeConfigOutlineButton?.classList.remove('text-slate-200');
+  activeConfigOutlineButton?.setAttribute('aria-current', 'location');
+}
 function renderConfigOutline() {
   const editor = $('#nfqwsConfTextarea');
   const entriesHost = $('#configOutlineEntries');
   if (!(editor instanceof HTMLTextAreaElement) || !entriesHost) return;
-  const entries = configOutlineEntries(editor.value);
-  const cursor = getConfigCodeEditor()?.state.selection.main.head ?? 0;
-  const active = entries.filter((entry) => entry.offset <= cursor).at(-1);
+  const content = editor.value;
+  if (content === configOutlineRenderedContent) { updateActiveConfigOutline(); return; }
+  configOutlineRenderedContent = content;
+  const entries = configOutlineEntries(content);
   entriesHost.replaceChildren();
+  configOutlineButtons = [];
+  activeConfigOutlineButton = null;
   if (!entries.length) {
     const empty = document.createElement('div');
     empty.className = 'px-2 py-2 text-xs text-slate-500';
@@ -2551,7 +2578,8 @@ function renderConfigOutline() {
   for (const entry of entries) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = `config-outline-entry flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left font-mono text-xs transition-colors hover:bg-slate-800 ${active?.offset === entry.offset ? 'bg-blue-500/10 text-blue-200' : 'text-slate-200'}`;
+    button.className = 'config-outline-entry flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left font-mono text-xs transition-colors hover:bg-slate-800 text-slate-200';
+    button.dataset.configOutlineOffset = String(entry.offset);
     button.title = `Перейти к строке ${entry.line}`;
     const name = document.createElement('span');
     name.className = 'min-w-0 truncate';
@@ -2563,10 +2591,12 @@ function renderConfigOutline() {
     button.addEventListener('click', () => {
       editor.focus();
       selectConfigText(entry.offset, entry.offset + entry.name.length, entry.line);
-      renderConfigOutline();
+      updateActiveConfigOutline();
     });
     entriesHost.append(button);
+    configOutlineButtons.push(button);
   }
+  updateActiveConfigOutline();
 }
 function toggleConfigOutline() {
   const outline = $('#configOutline');
@@ -4713,7 +4743,13 @@ function bindPrototypeActions() {
         toast('Буфер обмена недоступен', 'error');
       }
     })(),
-    handleConfInput: () => { syncConfigLines(); renderConfigOutline(); scheduleConfigWarnings(); },
+    handleConfInput: () => {
+      syncConfigLines();
+      renderConfigOutline();
+      scheduleConfigWarnings();
+      const editor = $('#nfqwsConfTextarea');
+      if (editor instanceof HTMLTextAreaElement) updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces);
+    },
     toggleWordWrapConf: (enabled: boolean) => {
       let storage: Storage | null = null; try { storage = window.localStorage; } catch { /* Keep this session's choice if browser storage is blocked. */ }
       appearanceSettings = saveAppearance(storage, { ...appearanceSettings, wrapConfigLines: enabled });
@@ -4804,7 +4840,7 @@ function boot() {
       configState.dispatchEvent(new Event('input', { bubbles: true }));
     });
     setConfigCodeEditorWrapping(appearanceSettings.wrapConfigLines !== false);
-    configHost.addEventListener('configselection', renderConfigOutline);
+    configHost.addEventListener('configselection', updateActiveConfigOutline);
   }
   setListEditorView(listEditorView);
   installStyledSelects(document);
@@ -4849,12 +4885,6 @@ function boot() {
     void loadStrategyPickHistory();
   const applyButton = $('[data-action-click="applyConfigAndRestart"]');
   if (applyButton instanceof HTMLButtonElement) applyButton.disabled = true;
-  $('#nfqwsConfTextarea')?.addEventListener('input', () => {
-    syncConfigLines();
-    renderConfigOutline();
-    const editor = $('#nfqwsConfTextarea');
-    if (editor instanceof HTMLTextAreaElement) updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces);
-  });
   $('#ispInterfaceManualInput')?.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter') return;
     event.preventDefault();

@@ -316,7 +316,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('isValidNetworkInterfaceSelection(value)');
     expect(backendSource).toContain('default_network_interfaces: default_network_interfaces(');
     expect(panelSource).toContain('nfqwsConfig.preview(before, key, value)');
-    const editorInput = panelSource.slice(panelSource.indexOf("$('#nfqwsConfTextarea')?.addEventListener('input'"), panelSource.indexOf("$('#listEditorTextarea')?.addEventListener('keydown'"));
+    const editorInput = panelSource.slice(panelSource.indexOf('handleConfInput: () => {'), panelSource.indexOf('toggleWordWrapConf:'));
     expect(editorInput).toContain('updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces)');
   });
 
@@ -749,6 +749,15 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('setConfigCodeEditorContent(value)');
     expect(panelSource).toContain('selectConfigText(start, end < 0 ? content.length : end, warning.line ?? undefined)');
     expect(panelSource).toContain('if (fullscreen) getConfigCodeEditor()?.focus()');
+  });
+
+  it('updates only the active outline item while selection moves', () => {
+    expect(panelSource).toContain("configHost.addEventListener('configselection', updateActiveConfigOutline)");
+    expect(panelSource).toContain('if (content === configOutlineRenderedContent) { updateActiveConfigOutline(); return; }');
+    expect(panelSource).toContain("button.dataset.configOutlineOffset = String(entry.offset)");
+    expect(panelSource).toContain('handleConfInput: () => {');
+    expect(panelSource).toContain('updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces)');
+    expect(panelSource).not.toContain("$('#nfqwsConfTextarea')?.addEventListener('input'");
   });
 
   it('clears stale candidate cards when a selected operation has no candidate results', () => {
