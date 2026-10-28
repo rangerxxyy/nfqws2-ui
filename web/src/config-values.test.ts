@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries } from './config-values';
+import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
+
+describe('sameConfigText', () => {
+  it('treats CRLF and LF line endings as equivalent', () => {
+    expect(sameConfigText('A=1\r\nB=2\r\n', 'A=1\nB=2\n')).toBe(true);
+  });
+
+  it('keeps actual text edits distinct', () => {
+    expect(sameConfigText('A=1\r\n', 'A=2\n')).toBe(false);
+  });
+});
 
 describe('configAssignmentValue', () => {
   it('reads a full multiline quoted assignment without its shell quotes', () => {

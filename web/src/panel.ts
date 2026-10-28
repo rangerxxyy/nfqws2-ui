@@ -7,7 +7,7 @@ import { freezeProgressPresentation } from './freeze-progress';
 import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
-import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries } from './config-values';
+import { configAssignmentValue, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
 import { highlightConfigLine } from './config-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
@@ -2600,9 +2600,6 @@ async function saveConfigAndApply() {
   }
   await applyValidatedConfig();
 }
-function sameConfigText(left: string, right: string) {
-  return left.replace(/\r\n?/g, '\n') === right.replace(/\r\n?/g, '\n');
-}
 async function serviceAction(action: 'start' | 'stop' | 'restart') {
   if (busy) return;
 
@@ -3621,7 +3618,7 @@ async function applyFreezeStrategyOneClick(operationId: string, resultIndex: str
     .find((button) => button.dataset.args === JSON.stringify([operationId, resultIndex]));
   if (!Number.isInteger(index) || index < 0) return toast('Индекс проверенного домена некорректен.', 'error');
   const editor = $('#nfqwsConfTextarea');
-  if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) {
+  if (config && editor instanceof HTMLTextAreaElement && !sameConfigText(editor.value, config.content)) {
     return toast('Сначала примените или отмените черновик конфигурации.', 'error');
   }
   freezeStrategyApplyPending.add(actionKey);
@@ -3657,7 +3654,7 @@ async function applyStrategyPick(source: string, operationId: string, candidateI
   const buttonId = activeStrategyPreview.panel === 'freeze' ? '#applyFreezeStrategyButton' : '#applyStrategyPickButton';
   if (activeStrategyPreview.candidateIndex !== Number(candidateIndex) || activeStrategyPreview.revision !== expectedRevision) return toast('Предпросмотр устарел. Откройте его снова.', 'error');
   const editor = $('#nfqwsConfTextarea');
-  if (config && editor instanceof HTMLTextAreaElement && editor.value !== config.content) return toast('Сначала примените или отмените черновик конфигурации. Стратегия не применена.', 'error');
+  if (config && editor instanceof HTMLTextAreaElement && !sameConfigText(editor.value, config.content)) return toast('Сначала примените или отмените черновик конфигурации. Стратегия не применена.', 'error');
   const applyScope = source === 'strategyPick'
     ? 'Добавить подтверждённую стратегию как Strategy #1 в NFQWS_ARGS и сдвинуть прежние номера вниз? Это повлияет на все сайты; NFQWS_BASE_ARGS не меняется.'
     : `Добавить профиль только для ${$(summaryId)?.textContent?.split(' · ')[0] ?? 'проверенного домена'}?`;

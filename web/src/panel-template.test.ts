@@ -173,6 +173,13 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(apply).toContain("toast('Конфигурация не изменена.');");
   });
 
+  it('treats CRLF and LF config text as the same draft in strategy apply guards', () => {
+    const oneClick = panelSource.match(/async function applyFreezeStrategyOneClick[\s\S]*?\n}\n/)?.[0] ?? '';
+    const applyPicked = panelSource.match(/async function applyStrategyPick[\s\S]*?\n}\n/)?.[0] ?? '';
+    expect(oneClick).toContain('sameConfigText(editor.value, config.content)');
+    expect(applyPicked).toContain('sameConfigText(editor.value, config.content)');
+  });
+
   it('keeps the UDP filter action content-sized instead of forcing the icon button dimensions', () => {
     expect(panelSource).toContain("addUdp.className = 'profile-filter-add-text'");
     expect(panelSource).toContain("confirm.className = 'profile-filter-add-text'");

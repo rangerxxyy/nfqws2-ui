@@ -17,6 +17,10 @@ export function configEditorViewportHeight(visibleRows: number): string {
   return `calc(${rows} * 1.25rem + 1rem)`;
 }
 
+export function sameConfigText(left: string, right: string): boolean {
+  return left.replace(/\r\n?/g, '\n') === right.replace(/\r\n?/g, '\n');
+}
+
 export function configOutlineEntries(value: string): Array<{ name: string; line: number; offset: number }> {
   return [...value.matchAll(/^([A-Z_][A-Z0-9_]*)=/gm)].map((match) => ({
     name: match[1] ?? '',
