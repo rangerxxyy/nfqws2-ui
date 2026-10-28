@@ -739,6 +739,8 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(codeEditorSource).toContain('view.visibleRanges');
     expect(codeEditorSource).toContain('fontFeatureSettings');
     expect(codeEditorSource).toContain('"calt" 0');
+    expect(codeEditorSource).toContain('fontVariantLigatures: \'none\'');
+    expect(codeEditorSource).toContain('"liga" 0, "clig" 0, "calt" 0');
     expect(codeEditorSource).toContain("'.cm-activeLine': { backgroundColor: 'transparent' }");
     expect(panelStyles).toContain('.config-code-editor ::selection { background:transparent !important; color:inherit !important; }');
     expect(codeEditorSource).toContain('update.docChanged || update.viewportChanged');

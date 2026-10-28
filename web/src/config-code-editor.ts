@@ -65,7 +65,12 @@ function createCodeEditor(host: HTMLElement, initialValue: string, onChange: (va
     EditorView.theme({
       '&': { height: '100%', minHeight: compact ? '4.5rem' : '0', color: 'var(--text-primary, #e2e8f0)', backgroundColor: compact ? '#05080f' : '#060a12', fontSize },
       '.cm-scroller': { fontFamily: 'var(--font-mono, "JetBrains Mono", monospace)', lineHeight: compact ? '1.25rem' : '1.68', overflow: 'auto' },
-      '.cm-content': { padding, caretColor: 'var(--accent-color, #60a5fa)', fontFeatureSettings: '"calt" 0' },
+      '.cm-content': {
+        padding,
+        caretColor: 'var(--accent-color, #60a5fa)',
+        fontVariantLigatures: 'none',
+        fontFeatureSettings: '"liga" 0, "clig" 0, "calt" 0',
+      },
       '.cm-gutters': { backgroundColor: '#05080f', color: '#64748b', borderRight: '1px solid rgb(30 41 59 / 80%)' },
       '.cm-activeLineGutter': { backgroundColor: 'transparent' },
       '.cm-activeLine': { backgroundColor: 'transparent' },
