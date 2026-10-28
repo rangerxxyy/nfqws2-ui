@@ -3786,6 +3786,7 @@ struct ListSummary {
     managed_asn: Option<ManagedAsnListSummary>,
     usage_known: bool,
     used_by: Vec<ListProfileUsage>,
+    validation_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -5878,13 +5879,23 @@ fn list_requires_nfqws_validation(
     config_source: &str,
     active_args: Option<&[String]>,
 ) -> bool {
-    if !LIST_IDS.contains(&id) {
-        return true;
-    }
-    let flags: &[&str] = if id.starts_with("ipset") {
-        &["--ipset", "--ipset-exclude"]
+    const HOSTLIST_FLAGS: [&str; 3] = ["--hostlist", "--hostlist-auto", "--hostlist-exclude"];
+    const IPSET_FLAGS: [&str; 2] = ["--ipset", "--ipset-exclude"];
+    const ALL_FLAGS: [&str; 5] = [
+        "--hostlist",
+        "--hostlist-auto",
+        "--hostlist-exclude",
+        "--ipset",
+        "--ipset-exclude",
+    ];
+    let known_list = LIST_IDS.contains(&id);
+    let is_ipset = id.starts_with("ipset");
+    let flags: &[&str] = if !known_list {
+        &ALL_FLAGS
+    } else if is_ipset {
+        &IPSET_FLAGS
     } else {
-        &["--hostlist", "--hostlist-auto", "--hostlist-exclude"]
+        &HOSTLIST_FLAGS
     };
     for flag in flags {
         let (references, ambiguous) = configured_list_references_for_flag(config_source, flag);
@@ -10711,15 +10722,23 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
     let Some(config) = config_path_for_state(&state) else {
         return error(StatusCode::NOT_FOUND, "Конфигурация nfqws2 не найдена");
     };
-    let profile_inventory = std::fs::read(&config).ok().and_then(|bytes| {
-        let content = std::str::from_utf8(&bytes).ok()?;
-        nfqws2_ui::runtime_profiles::from_config(content, &revision(&bytes)).ok()
+    let config_bytes = std::fs::read(&config).ok();
+    let config_source = config_bytes
+        .as_deref()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok());
+    let active_args = active_process_arguments();
+    let profile_inventory = config_bytes.as_deref().and_then(|bytes| {
+        let content = std::str::from_utf8(bytes).ok()?;
+        nfqws2_ui::runtime_profiles::from_config(content, &revision(bytes)).ok()
     });
     let managed = ManagedAsnListStore::load(&state.data_dir);
     let files = list_ids_for_config(&config)
         .into_iter()
         .filter_map(|id| {
             let path = list_file_path(&config, &id)?;
+            let validation_required = config_source.is_none_or(|source| {
+                list_requires_nfqws_validation(&config, &path, &id, source, active_args.as_deref())
+            });
             let managed_asn = managed
                 .entries
                 .iter()
@@ -10744,6 +10763,7 @@ async fn get_lists(State(state): State<Arc<AppState>>) -> Response {
                     .as_ref()
                     .map(|inventory| list_profile_usage(&config, &path, &inventory.profiles))
                     .unwrap_or_default(),
+                validation_required,
             })
         })
         .collect();
@@ -12244,14 +12264,15 @@ async fn undo_last_change(State(state): State<Arc<AppState>>) -> Response {
                         "Предыдущая версия списка превышает лимит 512 КБ",
                     );
                 }
-                let requires_validation =
-                    list_requires_nfqws_validation(
+                let requires_validation = !LIST_IDS.contains(&entry.file.as_str())
+                    || list_requires_nfqws_validation(
                         &config,
                         &path,
                         &entry.file,
                         &current_config_source,
                         active_args.as_deref(),
-                    ) || target_config_source.as_deref().is_some_and(|target| {
+                    )
+                    || target_config_source.as_deref().is_some_and(|target| {
                         list_requires_nfqws_validation(
                             &config,
                             &path,
@@ -12523,15 +12544,16 @@ async fn revert_change_history_id_inner(
                 );
             }
             let config_source = tokio::fs::read_to_string(&config).await.ok();
-            let requires_validation = config_source.as_deref().is_none_or(|source| {
-                list_requires_nfqws_validation(
-                    &config,
-                    &path,
-                    &entry.file,
-                    source,
-                    active_process_arguments().as_deref(),
-                )
-            });
+            let requires_validation = !LIST_IDS.contains(&entry.file.as_str())
+                || config_source.as_deref().is_none_or(|source| {
+                    list_requires_nfqws_validation(
+                        &config,
+                        &path,
+                        &entry.file,
+                        source,
+                        active_process_arguments().as_deref(),
+                    )
+                });
             if requires_validation {
                 let kind = entry.file.starts_with("ipset");
                 if let Err(message) = validate_list_content_with_kind(&entry.file, &content, kind) {
@@ -20806,6 +20828,7 @@ mod tests {
             .find(|file| file["id"] == "user.list")
             .unwrap();
         assert_eq!(user["usageKnown"], true);
+        assert_eq!(user["validationRequired"], true);
         assert!(
             user["usedBy"]
                 .as_array()
@@ -20891,6 +20914,14 @@ mod tests {
         assert!(ids.contains(&"google.list"));
         assert!(!ids.contains(&"nested/ignored.list"));
         assert!(!ids.contains(&"notes.txt"));
+        let files = report["files"].as_array().unwrap();
+        let connected = files.iter().find(|file| file["id"] == "user.list").unwrap();
+        let unconnected = files
+            .iter()
+            .find(|file| file["id"] == "google.list")
+            .unwrap();
+        assert_eq!(connected["validationRequired"], true);
+        assert_eq!(unconnected["validationRequired"], false);
     }
 
     #[tokio::test]
@@ -21038,6 +21069,57 @@ mod tests {
                 Request::builder()
                     .method("PUT")
                     .uri("/api/nfqws2/lists/user.list")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"content":"+example.org\n","revision":"{revision}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(saved.status(), StatusCode::OK);
+        assert_eq!(
+            tokio::fs::read_to_string(path).await.unwrap(),
+            "+example.org\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn unconnected_custom_list_can_save_other_tool_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("nfqws2.conf");
+        let list_dir = dir.path().join("lists");
+        tokio::fs::create_dir_all(&list_dir).await.unwrap();
+        tokio::fs::write(&config, "NFQWS_ARGS=\"\"\n")
+            .await
+            .unwrap();
+        let path = list_dir.join("custom.list");
+        tokio::fs::write(&path, "example.org\n").await.unwrap();
+        let app = api_router(
+            test_state_with_config(dir.path().join("state"), Some(config)),
+            dir.path().join("web"),
+        );
+        let loaded = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/nfqws2/lists/custom.list")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(loaded.status(), StatusCode::OK);
+        let revision = body_json(loaded).await["revision"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let saved = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/nfqws2/lists/custom.list")
                     .header("content-type", "application/json")
                     .body(Body::from(format!(
                         r#"{{"content":"+example.org\n","revision":"{revision}"}}"#
@@ -21551,11 +21633,29 @@ mod tests {
             "",
             Some(&active_args),
         ));
-        assert!(list_requires_nfqws_validation(
+        assert!(!list_requires_nfqws_validation(
             &config,
             &user_list,
             "custom.list",
             "",
+            None,
+        ));
+        let custom_list = lists.join("custom.list");
+        std::fs::write(&custom_list, "+example.org\n").unwrap();
+        for reference in ["--hostlist=lists/custom.list", "--ipset=lists/custom.list"] {
+            assert!(list_requires_nfqws_validation(
+                &config,
+                &custom_list,
+                "custom.list",
+                &format!("NFQWS_ARGS=\"{reference}\"\n"),
+                None,
+            ));
+        }
+        assert!(list_requires_nfqws_validation(
+            &config,
+            &custom_list,
+            "custom.list",
+            "NFQWS_ARGS=\"--ipset=${CUSTOM_IPSET}\"\\n",
             None,
         ));
     }

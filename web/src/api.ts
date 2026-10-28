@@ -39,6 +39,7 @@ export type NfqwsListSummary = {
   managedAsn?: { asn: number; prefixCount: number; lastAttemptDate: string | null; lastSuccessDate: string | null; lastError: string | null; paused: boolean; pending: boolean };
   usageKnown?: boolean;
   usedBy?: NfqwsListProfileUsage[];
+  validationRequired?: boolean;
 };
 export type NfqwsListResponse = { id: NfqwsListId; path: string; content: string; revision: string };
 export type MonitoringProbeStep = { id: string; status: 'ok' | 'warning' | 'error' | 'unavailable'; detail: string; durationMs: number | null; httpCode: number | null };
