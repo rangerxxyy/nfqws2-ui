@@ -15,12 +15,13 @@ describe('configuration syntax highlighting', () => {
     expect(assignment).toContain(plain);
   });
 
-  it('highlights values of ordinary nfqws flags, including comma-separated numbers', () => {
-    expect(highlightConfigLine('NFQWS_ARGS="--filter-tcp=80,443 --payload=tls_clienthello,http_req"')).toContain(
-      '<span class="conf-token-flag">--filter-tcp</span><span class="conf-token-operator">=</span><span class="conf-token-value">80</span><span class="conf-token-operator">,</span><span class="conf-token-value">443</span>',
+  it('keeps ordinary nfqws flag values in the v1.11.9 number and word palette', () => {
+    const highlighted = highlightConfigLine('NFQWS_ARGS="--filter-tcp=80,443 --payload=tls_clienthello,http_req"');
+    expect(highlighted).toContain(
+      '<span class="conf-token-flag">--filter-tcp</span><span class="conf-token-operator">=</span><span class="conf-token-number">80</span><span class="conf-token-operator">,</span><span class="conf-token-number">443</span>',
     );
-    expect(highlightConfigLine('NFQWS_ARGS="--filter-tcp=80,443 --payload=tls_clienthello,http_req"')).toContain(
-      '<span class="conf-token-flag">--payload</span><span class="conf-token-operator">=</span><span class="conf-token-value">tls_clienthello</span><span class="conf-token-operator">,</span><span class="conf-token-value">http_req</span>',
+    expect(highlighted).toContain(
+      '<span class="conf-token-flag">--payload</span><span class="conf-token-operator">=</span><span class="conf-token-word">tls_clienthello</span><span class="conf-token-operator">,</span><span class="conf-token-word">http_req</span>',
     );
   });
 

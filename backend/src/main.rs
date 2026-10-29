@@ -6127,12 +6127,10 @@ async fn diagnose_site_stream(
         Ok(host) => host,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    let Ok(guard) = state.site_diagnostic_lock.clone().try_lock_owned() else {
-        return error(
-            StatusCode::CONFLICT,
-            "Проверка сайта уже выполняется; дождитесь результата",
-        );
-    };
+    // A browser-side AbortController closes the previous SSE stream, but the
+    // detached diagnostic deliberately remains alive until temporary firewall
+    // rules have been removed. Queue the replacement instead of returning 409.
+    let guard = state.site_diagnostic_lock.clone().lock_owned().await;
     let binary = discover_system_paths()
         .map(|paths| paths.binary.to_string_lossy().into_owned())
         .unwrap_or_default();

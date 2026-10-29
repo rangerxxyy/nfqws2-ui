@@ -1831,8 +1831,11 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 .list-toolbar-menu > summary { display:grid; width:2.2rem; height:2.2rem; place-items:center; border:1px solid #334155; border-radius:.6rem; background:#111827; color:#cbd5e1; font-size:1.3rem; line-height:1; cursor:pointer; list-style:none; }
 .list-toolbar-menu > summary::-webkit-details-marker { display:none; }
 .list-toolbar-menu > summary:hover,.list-toolbar-menu[open] > summary { border-color:#3b82f6; background:#172554; color:#dbeafe; }
-.list-toolbar-menu-items { position:absolute; top:calc(100% + .35rem); right:0; z-index:40; display:grid; min-width:13rem; gap:.35rem; border:1px solid #334155; border-radius:.7rem; background:#0b101b; padding:.5rem; box-shadow:0 12px 36px #0009; }
-.list-toolbar-menu-items button { text-align:left; }
+.list-toolbar-menu-items { position:absolute; top:calc(100% + .35rem); right:0; z-index:65; display:grid; min-width:13rem; gap:.15rem; border:1px solid var(--panel-border,#334155); border-radius:.6rem; background:var(--panel-surface,#111827); color:var(--text-main,#f8fafc); padding:.3rem; box-shadow:0 12px 32px #02061788; font-family:var(--ui-font-sans,Inter,system-ui,sans-serif); }
+.list-toolbar-menu-items .list-toolbar-button { width:100%; min-height:2.15rem; justify-content:flex-start; border-color:transparent; border-radius:.35rem; background:transparent; color:var(--text-main,#f8fafc); padding:.4rem .55rem; font-family:inherit; font-size:.84rem; font-weight:550; }
+.list-toolbar-menu-items .list-toolbar-button:hover:not(:disabled) { border-color:color-mix(in srgb,var(--accent-color,#3b82f6) 24%,transparent); background:color-mix(in srgb,var(--accent-color,#3b82f6) 12%,transparent); color:var(--text-main,#f8fafc); }
+.list-toolbar-menu-items .list-toolbar-button-danger { color:#fda4af; }
+.list-toolbar-menu-items .list-toolbar-button-danger:hover:not(:disabled) { border-color:#9f123966; background:rgb(159 18 57 / 14%); color:#fecdd3; }
 .diagnosis-results .diagnosis-checks-header { padding:.7rem 1.1rem; }
 .diagnosis-results .diagnosis-row { padding:.42rem 0; }
 .diagnosis-results .diagnosis-row-detail { line-height:1.4; }

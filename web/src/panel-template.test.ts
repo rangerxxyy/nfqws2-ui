@@ -17,6 +17,19 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('queues a replacement site diagnosis while the previous bounded probe cleans up', () => {
+    const streamHandler = backendSource.slice(backendSource.indexOf('async fn diagnose_site_stream('), backendSource.indexOf('\nasync fn resolve_monitoring_policy_route', backendSource.indexOf('async fn diagnose_site_stream(')));
+    expect(streamHandler).toContain('.lock_owned().await');
+    expect(streamHandler).not.toContain('try_lock_owned');
+  });
+
+  it('styles the list action dropdown with the same theme surface tokens as selects', () => {
+    expect(panelStyles).toMatch(/\.list-toolbar-menu-items\s*\{[^}]*background:\s*var\(--panel-surface/);
+    expect(panelStyles).toMatch(/\.list-toolbar-menu-items\s*\{[^}]*border:\s*1px solid var\(--panel-border/);
+    expect(panelStyles).toMatch(/\.list-toolbar-menu-items \.list-toolbar-button\s*\{[^}]*min-height:2\.15rem;[^}]*border-color:transparent;[^}]*background:transparent;[^}]*color:var\(--text-main,#f8fafc\)/);
+    expect(panelStyles).toContain('.list-toolbar-menu-items .list-toolbar-button-danger { color:#fda4af;');
+  });
+
   it('keeps DPI Lab implementation in the bundle but removes navigation entry points', () => {
     expect(template).toContain('id="tabContent-dpiLab"');
     expect(template).not.toContain('id="navBtn-dpiLab"');
