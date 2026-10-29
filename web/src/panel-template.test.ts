@@ -1087,7 +1087,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('about-version-grid');
     expect(panelStyles).toContain('.about-card { width:100%; padding:1rem 1.1rem;');
     expect(panelStyles).toContain('.about-version-card { display:flex; align-items:center; justify-content:space-between;');
-    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;');
+    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) auto;');
     expect(panelStyles).toContain('.about-command-content { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);');
     expect(panelStyles).toContain('.about-copy-button { display:inline-flex; align-items:center; justify-content:center; min-width:2.15rem; min-height:2.15rem;');
   });
@@ -1515,8 +1515,8 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('keeps About commands and copy actions from colliding at narrow widths', () => {
-    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;');
-    expect(panelStyles).toContain('.about-command-row > button { white-space:nowrap; }');
+    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) auto;');
+    expect(panelStyles).toContain('.about-command-row > button { justify-self:end; white-space:nowrap; }');
     expect(panelStyles).toMatch(/\.about-command-row code \{[^}]*display:block;[^}]*width:fit-content;[^}]*max-width:100%;/);
     expect(panelStyles).toContain('overflow-x:auto;');
     expect(panelStyles).toContain('@media (max-width:560px)');
