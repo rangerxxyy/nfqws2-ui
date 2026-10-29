@@ -7303,14 +7303,21 @@ async fn auto_strategy_tick(state: &Arc<AppState>) -> Result<(), String> {
             store.offers.truncate(20);
             if store.settings.apply_automatically {
                 match apply_auto_strategy_candidate(state, &operation, candidate_index).await {
-                    Ok(()) => auto_strategy_event(
+                    Ok(updated_existing_profile) => auto_strategy_event(
                         &mut store,
                         &host,
                         "applied",
-                        format!(
-                            "Подтверждённая стратегия «{}» добавлена отдельным профилем; перезапуск и контрольные сайты прошли проверку.",
-                            result.candidate.name
-                        ),
+                        if updated_existing_profile {
+                            format!(
+                                "Подтверждённая стратегия «{}» установлена в существующий профиль домена; перезапуск и контрольные сайты прошли проверку.",
+                                result.candidate.name
+                            )
+                        } else {
+                            format!(
+                                "Подтверждённая стратегия «{}» добавлена отдельным профилем домена; перезапуск и контрольные сайты прошли проверку.",
+                                result.candidate.name
+                            )
+                        },
                     ),
                     Err(message) => auto_strategy_event(
                         &mut store,
@@ -7356,35 +7363,8 @@ async fn auto_strategy_tick(state: &Arc<AppState>) -> Result<(), String> {
         .last_attempt_at
         .retain(|host, _| monitored_hosts.contains(host.as_str()));
     store
-        .recheck_after
-        .retain(|host, _| monitored_hosts.contains(host.as_str()));
-    store
         .retry_after
         .retain(|host, _| monitored_hosts.contains(host.as_str()));
-    // Match zemidala's delayed single-host recheck: a first failure after a known-good
-    // result is rechecked after five minutes before any expensive strategy search.
-    for site in &monitoring.sites {
-        let statuses = site
-            .results
-            .iter()
-            .map(|result| result.status.as_str())
-            .collect::<Vec<_>>();
-        let readiness = monitor_auto::readiness(&store.settings, &statuses, 0, 0, None, now);
-        if readiness == monitor_auto::AutoPickReadiness::NeedsRecheck {
-            let due = *store
-                .recheck_after
-                .entry(site.host.clone())
-                .or_insert_with(|| now.saturating_add(300));
-            if now >= due {
-                store.recheck_after.remove(&site.host);
-                save_auto_strategy_store(&state.data_dir, &store).await?;
-                let _ = check_saved_sites(state, true, Some(vec![site.host.clone()])).await?;
-                return Ok(());
-            }
-            continue;
-        }
-        store.recheck_after.remove(&site.host);
-    }
     let mut picked = None;
     for site in &monitoring.sites {
         if store
@@ -7399,22 +7379,9 @@ async fn auto_strategy_tick(state: &Arc<AppState>) -> Result<(), String> {
             .iter()
             .map(|result| result.status.as_str())
             .collect::<Vec<_>>();
-        let monitored_count = monitoring.sites.len();
-        let down_count = monitoring
-            .sites
-            .iter()
-            .filter(|monitored| {
-                monitored
-                    .results
-                    .first()
-                    .is_some_and(|result| matches!(result.status.as_str(), "error" | "unavailable"))
-            })
-            .count();
         let readiness = monitor_auto::readiness(
             &store.settings,
             &statuses,
-            monitored_count,
-            down_count,
             store.last_attempt_at.get(&site.host).copied(),
             now,
         );
@@ -7468,7 +7435,6 @@ async fn auto_strategy_tick(state: &Arc<AppState>) -> Result<(), String> {
         );
         return save_auto_strategy_store(&state.data_dir, &store).await;
     }
-    store.recheck_after.remove(&host);
     let response = start_strategy_pick(
         State(state.clone()),
         Json(StrategyPickRequest {
@@ -7520,11 +7486,14 @@ async fn auto_strategy_tick(state: &Arc<AppState>) -> Result<(), String> {
         store.retry_after.remove(&host);
         store.active_operation_id = Some(id.to_owned());
         store.active_host = Some(host.clone());
+        let failure_threshold = store.settings.failures_before_pick;
         auto_strategy_event(
             &mut store,
             &host,
             "started",
-            "После повторной ошибки запущен ограниченный подбор HTTPS-стратегии; рабочий конфиг не меняется.",
+            format!(
+                "После {failure_threshold} ошибок подряд запущен ограниченный подбор HTTPS-стратегии; рабочий конфиг не меняется."
+            ),
         );
     } else {
         store
@@ -7544,7 +7513,7 @@ async fn apply_auto_strategy_candidate(
     state: &AppState,
     operation: &StrategyPickOperation,
     index: usize,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if operation.protocol != "https" {
         return Err("Автоматическое применение разрешено только для HTTPS-профиля".into());
     }
@@ -7576,19 +7545,8 @@ async fn apply_auto_strategy_candidate(
         .map_err(|error| error.to_string())?;
     let original_content = String::from_utf8(original.clone())
         .map_err(|_| "Конфигурация не является корректным UTF-8".to_string())?;
-    let document = ConfigDocument::parse(&original_content)?;
-    let custom_args = document.literal_value("NFQWS_ARGS_CUSTOM")?;
-    let selector = if operation.host.parse::<std::net::Ipv4Addr>().is_ok() {
-        format!("--ipset-ip={}", operation.host)
-    } else {
-        format!("--hostlist-domains={}", operation.host)
-    };
-    if custom_args.split_whitespace().any(|arg| arg == selector) {
-        return Err(
-            "У домена уже настроен профиль NFQWS_ARGS_CUSTOM; он сохранён без изменений".into(),
-        );
-    }
-    let proposed = document.append_literal_words("NFQWS_ARGS_CUSTOM", &profile)?;
+    let (proposed, updated_existing_profile) =
+        build_auto_strategy_config(&original_content, &profile)?;
     if validate_nfqws2_config(&proposed)?
         .iter()
         .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
@@ -7629,7 +7587,68 @@ async fn apply_auto_strategy_candidate(
         },
     )
     .await
-    .map(|_| ())
+    .map(|_| updated_existing_profile)
+}
+
+fn build_auto_strategy_config(
+    original_content: &str,
+    profile: &str,
+) -> Result<(String, bool), String> {
+    let document = ConfigDocument::parse(original_content)?;
+    let custom_args = document.literal_value("NFQWS_ARGS_CUSTOM")?;
+    let mut profiles = nfqws2_ui::runtime_profiles::split_custom_profile_args(&custom_args)?;
+    profiles.retain(|existing| !existing.is_empty());
+    let candidate_profiles = nfqws2_ui::runtime_profiles::split_custom_profile_args(profile)?;
+    let candidate = candidate_profiles
+        .get(1)
+        .filter(|_| candidate_profiles.len() == 2)
+        .ok_or_else(|| "Автоподбор сформировал некорректный профиль".to_string())?;
+    let selector = candidate
+        .iter()
+        .find(|argument| {
+            argument.starts_with("--hostlist-domains=") || argument.starts_with("--ipset-ip=")
+        })
+        .ok_or_else(|| "В профиле автоподбора отсутствует точный доменный селектор".to_string())?;
+    let candidate_steps = candidate
+        .iter()
+        .filter(|argument| argument.starts_with("--lua-desync="))
+        .cloned()
+        .collect::<Vec<_>>();
+    if candidate_steps.is_empty() {
+        return Err("Подтверждённый профиль не содержит Lua-стратегии".into());
+    }
+
+    let exact_matches = profiles
+        .iter()
+        .enumerate()
+        .filter(|(_, profile)| profile.iter().any(|argument| argument == selector))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let updated_existing_profile = match exact_matches.as_slice() {
+        [index] => {
+            let target = profiles
+                .get_mut(*index)
+                .ok_or_else(|| "Точный профиль домена изменился".to_string())?;
+            target.retain(|argument| !argument.starts_with("--lua-desync="));
+            target.extend(candidate_steps);
+            true
+        }
+        [] => {
+            profiles.insert(0, candidate.clone());
+            false
+        }
+        _ => {
+            return Err(
+                "Найдено несколько точных профилей домена; автоматическое изменение отменено"
+                    .into(),
+            );
+        }
+    };
+    let encoded = nfqws2_ui::runtime_profiles::encode_custom_profile_args(&profiles)?;
+    Ok((
+        document.set_literal_all("NFQWS_ARGS_CUSTOM", &encoded)?,
+        updated_existing_profile,
+    ))
 }
 
 fn foreign_config_operation_path(directory: &Path, id: &str) -> PathBuf {
@@ -17929,6 +17948,37 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn automatic_strategy_replaces_lua_steps_in_the_exact_existing_domain_profile() {
+        let source = "NFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443 --filter-l7=tls --hostlist-domains=example.com --payload=tls_client_hello --lua-desync=fake:strategy=1\"\n";
+        let candidate = "--new --filter-tcp=443 --filter-l7=tls --hostlist-domains=example.com --payload=tls_client_hello --lua-desync=multisplit:pos=1";
+
+        let (updated, replaced) = super::build_auto_strategy_config(source, candidate).unwrap();
+        assert!(replaced);
+        assert!(updated.contains("--hostlist-domains=example.com"));
+        assert!(updated.contains("--lua-desync=multisplit:pos=1"));
+        assert!(!updated.contains("--lua-desync=fake:strategy=1"));
+        assert!(updated.contains("--payload=tls_client_hello"));
+    }
+
+    #[test]
+    fn automatic_strategy_inserts_site_profile_before_existing_profiles() {
+        let source = "NFQWS_ARGS_CUSTOM=\"--new --filter-tcp=443 --filter-l7=tls --lua-desync=fake:strategy=1\"\n";
+        let candidate = "--new --filter-tcp=443 --filter-l7=tls --hostlist-domains=example.com --payload=tls_client_hello --lua-desync=multisplit:pos=1";
+
+        let (updated, replaced) = super::build_auto_strategy_config(source, candidate).unwrap();
+        assert!(!replaced);
+        let profiles = nfqws2_ui::runtime_profiles::split_custom_profile_args(
+            &super::ConfigDocument::parse(&updated)
+                .unwrap()
+                .literal_value("NFQWS_ARGS_CUSTOM")
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(profiles[0].contains(&"--hostlist-domains=example.com".into()));
+        assert!(profiles[1].contains(&"--lua-desync=fake:strategy=1".into()));
     }
 
     #[test]

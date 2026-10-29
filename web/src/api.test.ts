@@ -3,7 +3,7 @@ import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapsho
 
 describe('API client used by the source-based panel', () => {
   it('loads and saves monitoring auto-strategy preferences through the Rust API', async () => {
-    const state = { settings: { enabled: false, applyAutomatically: false, failuresBeforePick: 2, cooldownHours: 12 }, activeOperationId: null, activeHost: null, offers: [], log: [] };
+    const state = { settings: { enabled: false, applyAutomatically: false, failuresBeforePick: 3, cooldownHours: 12 }, activeOperationId: null, activeHost: null, offers: [], log: [] };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(state), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(state), { status: 200 }));
