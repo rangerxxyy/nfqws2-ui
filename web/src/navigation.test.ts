@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { navigationGroupForRoute } from './navigation';
+import { isPanelRouteAvailable, navigationGroupForRoute } from './navigation';
 
 describe('navigationGroupForRoute', () => {
   it('places the strategy constructor under Configuration', () => {
@@ -14,7 +14,9 @@ describe('navigationGroupForRoute', () => {
     expect(navigationGroupForRoute('diagnostic16k')).toBeUndefined();
   });
 
-  it('places DPI Lab under diagnostics in both navigation layouts', () => {
-    expect(navigationGroupForRoute('dpiLab')).toBe('site-check');
+  it('keeps DPI Lab unavailable until it is ready to be reopened', () => {
+    expect(isPanelRouteAvailable('dpiLab')).toBe(false);
+    expect(navigationGroupForRoute('dpiLab')).toBeUndefined();
+    expect(isPanelRouteAvailable('check')).toBe(true);
   });
 });

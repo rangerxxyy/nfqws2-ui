@@ -17,12 +17,18 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
-  it('opens DPI Lab on a text-first strategy visualizer while retaining PCAP and isolated test tabs', () => {
+  it('keeps DPI Lab implementation in the bundle but removes navigation entry points', () => {
+    expect(template).toContain('id="tabContent-dpiLab"');
+    expect(template).not.toContain('id="navBtn-dpiLab"');
+    expect(template).not.toContain('data-simplified-route="dpiLab"');
+    expect(panelSource).toContain("if (route === 'dpiLab' || !isPanelRouteAvailable(route)) return showRoute('conf')");
+  });
+
+  it('retains DPI Lab implementation while its route is unavailable', () => {
     expect(template).toContain('id="dpiLabPane-visualizer"');
     expect(template).toContain('id="dpiLabPane-live"');
     expect(template).toContain('id="dpiLabPane-pcap"');
     expect(template).toContain('accept=".conf,.txt,.lua,text/plain"');
-    expect(panelSource).toContain("switchDpiLabTab('visualizer')");
     expect(panelSource).toContain('nfqwsDpiLab.analyzeStrategy(text)');
     expect(panelSource).toContain("'custom', 2, [steps]");
     expect(panelSource).toContain('журнал фактических Lua-вызовов этот API не предоставляет');
@@ -174,7 +180,8 @@ describe('TSX panel with optional server-side authentication', () => {
     const renderSource = panelSource.slice(renderStart, renderEnd);
 
     expect(renderSource).toContain('details.append(actions)');
-    expect(renderSource).toContain('row.append(summary, diff)');
+    expect(renderSource).toContain('diffDetails.append(diffButton, diffPanel)');
+    expect(renderSource).toContain('row.append(summary)');
     expect(renderSource).not.toContain('row.append(summary, actions, diff)');
     expect(panelStyles).toMatch(/\.change-history-actions\s*\{\s*display:\s*flex;\s*flex-wrap:\s*wrap;\s*justify-content:\s*flex-start;/);
     expect(panelStyles).not.toContain('.change-history-actions { justify-content: flex-start; margin-left: 3.4rem; }');
@@ -1085,11 +1092,21 @@ describe('TSX panel with optional server-side authentication', () => {
 
   it('streams real site diagnosis results into the checklist as each probe completes', () => {
     const diagnosisRequest = panelSource.slice(panelSource.indexOf('async function runSiteDiagnosis()'), panelSource.indexOf('function renderTraceReport('));
-    expect(diagnosisRequest).toContain('nfqwsDiagnostics.siteStream(input.value');
+    expect(diagnosisRequest).toContain('nfqwsDiagnostics.siteStream(host');
     expect(diagnosisRequest).toContain('renderDiagnosisProgress(container');
     expect(diagnosisRequest).not.toContain('waitForDiagnosisAnimation');
     expect(panelStyles).toContain('.diagnosis-live-checks .diagnosis-row.is-active');
     expect(panelStyles).toContain('.diagnosis-progress-spinner');
+  });
+
+  it('aborts the previous site diagnosis and ignores stale stream events', () => {
+    const diagnosisRequest = panelSource.slice(panelSource.indexOf('async function runSiteDiagnosis()'), panelSource.indexOf('function renderTraceReport('));
+    expect(diagnosisRequest).toContain('diagnosisController?.abort()');
+    expect(diagnosisRequest).toContain('new AbortController()');
+    expect(diagnosisRequest).toContain('controller.signal);');
+    expect(diagnosisRequest).toContain('diagnosisController !== controller');
+    expect(diagnosisRequest).not.toContain('input.disabled = true');
+    expect(diagnosisRequest).not.toContain('if (diagnosisRunning) return');
   });
 
   it('keeps the live diagnosis checklist aligned with the final checklist', () => {
@@ -1256,6 +1273,17 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(appSource).toContain('aria-label={"Вид списка"}');
     expect(panelStyles).toContain('.list-editor-row');
     expect(panelStyles).toContain('[data-theme="light"] .list-editor-row');
+  });
+
+  it('uses the shared styled dropdown and a quiet red state for selected rows to delete', () => {
+    expect(template).toContain('data-menu-min-width="150"');
+    expect(panelStyles).toContain('.styled-select-menu {');
+    expect(panelStyles).toContain('[data-theme="light"] .styled-select-menu');
+    expect(panelStyles).toContain('[data-theme="neon"] .styled-select-menu');
+    expect(panelStyles).toContain('.list-editor-row.is-selected');
+    expect(panelStyles).toContain('accent-color:#f87171');
+    expect(panelSource).toContain("${selected ? ' is-selected' : ''}");
+    expect(panelSource).toContain("item.classList.toggle('is-selected', checkbox.checked)");
   });
 
   it('places config actions in the same row as its section tabs', () => {
@@ -1469,6 +1497,9 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain("dataset.actionClick = 'openLatestUiUpdate'");
     expect(panelSource).toContain("dataset.actionClick = 'dismissUiUpdateNotice'");
     expect(panelStyles).toContain('.version-pill.update-available');
+    expect(panelStyles).toContain('.version-pill.update-available::before');
+    expect(panelStyles).toContain('@keyframes release-update-shimmer');
+    expect(panelStyles).toContain('.version-pill.update-available::before { animation: none; }');
     expect(panelStyles).toContain('.ui-update-notice');
     expect(panelSource).toContain("document.createElementNS('http://www.w3.org/2000/svg', 'svg')");
     expect(panelStyles).toContain('.ui-update-notice > button { margin-left: 26px;');
@@ -1710,6 +1741,38 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(updateFlow).toContain('if (!reloading)');
     expect(updateFlow).toContain('updatePolling = false');
     expect(panelSource).toContain('install.disabled = !selectedReleaseTag || updatePolling');
+  });
+
+  it('uses a compact checked radio marker for the selected release', () => {
+    expect(panelSource).toContain("radio.className = `release-version-radio absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full ${selected ? 'is-selected' : ''}`");
+    expect(panelStyles).toContain('.release-version-radio.is-selected::after');
+    expect(panelStyles).toContain('[data-theme="light"] .release-version-radio.is-selected');
+  });
+
+  it('renders change history as a compact animated disclosure without a manual refresh control', () => {
+    const history = appSource.slice(appSource.indexOf('id={"tabContent-changes"}'), appSource.indexOf('id={"tabContent-logs"}'));
+    expect(history).not.toContain('refreshChangeHistory');
+    expect(history).toContain('change-history-icon-button');
+    expect(panelSource).toContain("diffButton.dataset.actionClick = 'loadChangeHistoryDiff'");
+    expect(panelSource).toContain("diffPanel.className = 'change-history-accordion-panel'");
+    expect(panelSource).toContain("diffPanel?.classList.toggle('is-open', button.getAttribute('aria-expanded') === 'true')");
+    expect(panelStyles).toContain('.change-history-accordion-panel.is-open');
+    expect(panelStyles).toContain('#tabContent-changes { margin-top:-.65rem; }');
+  });
+
+  it('keeps the strategy constructor compact and aligned on desktop and touch layouts', () => {
+    expect(appSource).toContain('profile-workspace-grid grid min-h-0 gap-3 lg:grid-cols-[14rem_minmax(0,1fr)]');
+    expect(panelStyles).toContain('#profileEditor { display:grid; align-content:start; gap:.65rem; }');
+    expect(panelStyles).toContain('.profile-builder-step-list { gap:.45rem; padding:.5rem; }');
+    expect(panelStyles).toContain('@media (max-width:1023px) { #profileList { max-height:15rem; } }');
+  });
+
+  it('unifies control fonts and flattens the status bar across appearance themes', () => {
+    expect(panelStyles).toContain(':where(button,input,select,textarea,summary,.styled-select-trigger,.styled-select-option) { font-family:var(--ui-font-sans,Inter,system-ui,sans-serif); }');
+    expect(panelStyles).toContain('[data-theme="light"] .styled-select-menu');
+    expect(panelStyles).toContain('[data-theme="neon"] .styled-select-menu');
+    expect(panelStyles).toContain('#headerStatusBar .metric-chip { min-width:0; border-color:transparent; background:transparent;');
+    expect(panelStyles).toContain('#headerStatusBar .status-pill:has(#statusMainDot.bg-emerald-400)');
   });
 
   it('keeps drag feedback out of the cursor and hides the grip on narrow touch layouts', () => {

@@ -1,12 +1,13 @@
 export type PanelRoute = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'configCheck' | 'dpiLab' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'appearance' | 'about';
 
-const ROUTE_GROUPS: Record<PanelRoute, string> = {
+type AvailablePanelRoute = Exclude<PanelRoute, 'dpiLab'>;
+
+const ROUTE_GROUPS: Record<AvailablePanelRoute, string> = {
   conf: 'configuration',
   profiles: 'configuration',
   check: 'site-check',
   trace: 'site-check',
   configCheck: 'site-check',
-  dpiLab: 'site-check',
   autotune: 'tuning',
   monitor: 'monitoring',
   community: 'site-check',
@@ -18,6 +19,10 @@ const ROUTE_GROUPS: Record<PanelRoute, string> = {
   about: 'system',
 };
 
+export function isPanelRouteAvailable(route: string | undefined): route is AvailablePanelRoute {
+  return !!route && route in ROUTE_GROUPS;
+}
+
 export function navigationGroupForRoute(route: string | undefined): string | undefined {
-  return route && route in ROUTE_GROUPS ? ROUTE_GROUPS[route as PanelRoute] : undefined;
+  return isPanelRouteAvailable(route) ? ROUTE_GROUPS[route] : undefined;
 }

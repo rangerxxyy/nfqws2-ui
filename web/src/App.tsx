@@ -310,10 +310,6 @@ export default function App() {
                 </span>
                 {"\n            "}
               </button>
-              <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["dpiLab"])} id={"navBtn-dpiLab"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>⌁</span><span>DPI Lab</span></span>
-                <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"}>LAB</span>
-              </button>
               {"\n\n            "}
               {"\n            "}
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["trace"])} id={"navBtn-trace"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
@@ -404,7 +400,7 @@ export default function App() {
             {[['configuration', 'Конфигурация'], ['site-check', 'Проверка сайта'], ['tuning', 'Подбор'], ['monitoring', 'Мониторинг'], ['lists', 'Списки'], ['system', 'Система']].map(([group, label], index) => <button key={group} type={"button"} data-simplified-group={group} data-action-click={"switchSimplifiedNavGroup"} data-args={JSON.stringify([group])} aria-pressed={index === 0 ? "true" : "false"} className={"simplified-nav-button"}>{label}</button>)}
           </div>
           <div className={"simplified-nav-pages"} role={"group"} aria-label={"Страницы группы"}>
-            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['configCheck', 'Проверка конфигурации'], ['dpiLab', 'DPI Lab'], ['community', 'Стратегии сообщества'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
+            {[['conf', 'Конфигурация'], ['profiles', 'Конструктор стратегий'], ['check', 'Проверка сайта'], ['trace', 'Трассировка'], ['configCheck', 'Проверка конфигурации'], ['community', 'Стратегии сообщества'], ['autotune', 'Авто-подбор'], ['monitor', 'Мониторинг'], ['lists', 'Списки'], ['snapshots', 'Резервные копии'], ['changes', 'Журнал изменений'], ['logs', 'Журнал'], ['appearance', 'Настройки UI'], ['about', 'О панели']].map(([route, label]) => <button key={route} type={"button"} data-simplified-route={route} data-action-click={"switchMainTab"} data-args={JSON.stringify([route])} className={"simplified-nav-button hidden"}>{label}</button>)}
           </div>
         </nav>
         {"\n\n      "}
@@ -1245,7 +1241,7 @@ export default function App() {
           <div className={"flex flex-wrap items-center justify-between gap-3"}><div><h1 className={"text-xl font-bold text-white"}>Конструктор стратегий</h1><p className={"mt-1 text-sm text-slate-400"}>Настройка профилей nfqws2 из раздела конфигурации.</p></div><div className={"flex flex-wrap gap-2"}><button type={"button"} data-action-click={"pasteRuntimeProfile"} className={"backup-action"}>Вставить чужой</button><button type={"button"} data-action-click={"addRuntimeProfile"} className={"backup-action"}>＋ Свой профиль</button><button type={"button"} data-action-click={"saveRuntimeProfiles"} className={"rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"}>Применить изменения</button></div></div>
           <section className={"ui-card max-w-[90rem] rounded-xl p-3 sm:p-4"}>
             <p id={"profileStatus"} className={"mb-3 text-sm text-slate-400"} role={"status"} aria-live={"polite"}>Профили загружаются из конфигурации nfqws2…</p>
-            <div className={"grid min-h-[34rem] gap-3 lg:grid-cols-[15rem_minmax(0,1fr)]"}>
+            <div className={"profile-workspace-grid grid min-h-0 gap-3 lg:grid-cols-[14rem_minmax(0,1fr)]"}>
               <nav id={"profileList"} className={"grid content-start gap-1 rounded-lg border border-slate-800 bg-slate-950/40 p-2"} aria-label={"Порядок профилей nfqws2"}></nav>
               <div id={"profileEditor"} className={"min-w-0 rounded-lg border border-slate-800 bg-slate-950/20 p-3 sm:p-4"}></div>
             </div>
@@ -1271,9 +1267,8 @@ export default function App() {
           <div className={"flex flex-wrap items-center justify-between gap-2"}>
             <div><h1 className={"text-xl font-bold text-white"}>История изменений</h1><p className={"mt-0.5 text-xs text-slate-400"}>Конфигурация и списки · в том числе изменения вне панели</p></div>
             <div className={"change-history-controls"}>
-              <button id={"changeHistoryUndoLast"} type={"button"} disabled={true} data-action-click={"requestUndoLastChange"} className={"backup-action"}>↶ Отменить последнее</button>
-              <button id={"changeHistoryRestoreInitial"} type={"button"} disabled={true} data-action-click={"requestRestoreInitialHistory"} className={"backup-action"}>⟲ Вернуть как при установке</button>
-              <button type={"button"} data-action-click={"refreshChangeHistory"} className={"backup-action"} aria-label={"Обновить историю"} title={"Обновить"}>↻</button>
+              <button id={"changeHistoryUndoLast"} type={"button"} disabled={true} data-action-click={"requestUndoLastChange"} className={"backup-action change-history-icon-button"}><svg viewBox={"0 0 24 24"} aria-hidden={"true"}><path d={"M9 14 4 9l5-5"}></path><path d={"M4 9h9a7 7 0 1 1 0 14h-2"}></path></svg>Отменить последнее</button>
+              <button id={"changeHistoryRestoreInitial"} type={"button"} disabled={true} data-action-click={"requestRestoreInitialHistory"} className={"backup-action change-history-icon-button"}><svg viewBox={"0 0 24 24"} aria-hidden={"true"}><path d={"M3 12a9 9 0 1 0 3-6.7L3 8"}></path><path d={"M3 3v5h5M12 7v5l3 2"}></path></svg>Вернуть как при установке</button>
             </div>
           </div>
           <section className={"ui-card rounded-xl p-3 sm:p-4"}>

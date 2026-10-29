@@ -147,10 +147,10 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return await readApiResponse(response) as T;
 }
 
-async function streamSiteDiagnosis(host: string, onProgress: (progress: SiteDiagnosticProgress) => void): Promise<SiteDiagnosticReport> {
+async function streamSiteDiagnosis(host: string, onProgress: (progress: SiteDiagnosticProgress) => void, signal?: AbortSignal): Promise<SiteDiagnosticReport> {
   const response = await fetch('/api/nfqws2/diagnostics/site/stream', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    credentials: 'same-origin', body: JSON.stringify({ host }),
+    credentials: 'same-origin', body: JSON.stringify({ host }), signal,
   });
   if (response.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event('nfqws-auth-expired'));
   if (!response.ok) {
@@ -184,7 +184,10 @@ async function streamSiteDiagnosis(host: string, onProgress: (progress: SiteDiag
       }
       if (done) break;
     }
-  } finally { reader.releaseLock(); }
+  } finally {
+    if (signal?.aborted) { try { await reader.cancel(signal.reason); } catch { /* Abort already closed the stream. */ } }
+    reader.releaseLock();
+  }
   if (!report) throw new ApiError(response.status, 'Поток проверки завершился без итогового отчёта');
   return report;
 }

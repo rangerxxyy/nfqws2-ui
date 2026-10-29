@@ -98,11 +98,13 @@ describe('API client used by the source-based panel', () => {
     }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } }));
     vi.stubGlobal('fetch', fetchMock);
     const observed: unknown[] = [];
+    const controller = new AbortController();
 
-    await expect(nfqwsDiagnostics.siteStream('example.com', (event) => observed.push(event))).resolves.toEqual(report);
+    await expect(nfqwsDiagnostics.siteStream('example.com', (event) => observed.push(event), controller.signal)).resolves.toEqual(report);
 
     expect(observed).toEqual([progress]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/diagnostics/site/stream');
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).signal).toBe(controller.signal);
     expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({ host: 'example.com' });
   });
 

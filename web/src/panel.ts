@@ -37,7 +37,7 @@ import { applyAppearance, loadAppearance, saveAppearance, type AppearanceSetting
 import { configLuaArgumentEntries, diagnoseConfigLuaArguments } from './config-diagnostics';
 import { getConfigCodeEditor, mountConfigArgumentEditor, mountConfigCodeEditor, setConfigCodeEditorContent, setConfigCodeEditorWrapping } from './config-code-editor';
 import { EditorView } from '@codemirror/view';
-import { navigationGroupForRoute } from './navigation';
+import { isPanelRouteAvailable, navigationGroupForRoute } from './navigation';
 import { isValidNetworkInterfaceSelection, networkInterfaceChoices } from './network-interface';
 import { snapshotFreeSpaceState } from './snapshot-storage';
 import { formatListProfileUsageStatus, listValidationNotice } from './list-profile-usage';
@@ -61,7 +61,8 @@ let listEditorView: 'text' | 'rows' = (() => {
 const selectedListRows = new Set<number>();
 let busy = false;
 let statusPolling = false;
-let diagnosisRunning = false;
+let diagnosisController: AbortController | null = null;
+let diagnosisProgressCloser: (() => void) | null = null;
 let monitoringRunning = false;
 const monitoringHostsRunning = new Set<string>();
 let monitoringState: MonitoringState | null = null;
@@ -386,6 +387,7 @@ function setRestartInProgress(value: boolean) {
   }
 }
 function showRoute(route: Route) {
+  if (route === 'dpiLab' || !isPanelRouteAvailable(route)) return showRoute('conf');
   document.querySelectorAll<HTMLElement>('[id^="tabContent-"]').forEach((section) => section.classList.toggle('hidden', section.id !== `tabContent-${route}`));
   all<HTMLButtonElement>('.side-nav-btn').forEach((button) => {
     const active = button.id === `navBtn-${route}`;
@@ -401,7 +403,6 @@ function showRoute(route: Route) {
     void loadCommunityStrategies(false, false, autoDetect);
   }
   if (route === 'snapshots') void loadBackups();
-  if (route === 'dpiLab') { switchDpiLabTab('visualizer'); void loadDpiStrategyProfiles(); }
   if (route === 'changes') void loadChangeHistory();
   if (route === 'logs') { void loadLogs(); startLogPolling(); } else stopLogPolling();
   if (route === 'about') void loadAboutStatus();
@@ -455,6 +456,8 @@ async function loadDpiExperiments() {
 }
 
 function switchDpiLabTab(tab: 'visualizer' | 'live' | 'pcap') {
+  if (!isPanelRouteAvailable('dpiLab')) return;
+  if (tab === 'visualizer') void loadDpiStrategyProfiles();
   for (const name of ['visualizer', 'live', 'pcap'] as const) {
     const pane = $(`#dpiLabPane-${name}`);
     pane?.classList.toggle('hidden', name !== tab);
@@ -2249,12 +2252,17 @@ function renderChangeHistory(query = '') {
     summary.append(time, details, delta);
 
     const actions = document.createElement('div'); actions.className = 'change-history-actions';
-    const diffButton = document.createElement('button'); diffButton.type = 'button'; diffButton.className = 'backup-action'; diffButton.textContent = 'Что изменилось'; diffButton.dataset.actionClick = 'toggleChangeHistoryDiff'; diffButton.dataset.args = JSON.stringify([item.id, { source: 'self' }]);
+    const diffDetails = document.createElement('div'); diffDetails.className = 'change-history-accordion'; diffDetails.dataset.historyAccordion = item.id;
+    const diffButton = document.createElement('button'); diffButton.type = 'button'; diffButton.className = 'change-history-accordion-trigger'; diffButton.textContent = 'Что изменилось'; diffButton.setAttribute('aria-expanded', 'false'); diffButton.dataset.actionClick = 'loadChangeHistoryDiff'; diffButton.dataset.args = JSON.stringify([item.id, { source: 'self' }]);
+    const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); chevron.setAttribute('viewBox', '0 0 20 20'); chevron.setAttribute('aria-hidden', 'true'); chevron.classList.add('change-history-chevron'); chevron.innerHTML = '<path d="m5 7.5 5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>';
+    diffButton.append(chevron);
     const revertButton = document.createElement('button'); revertButton.type = 'button'; revertButton.className = 'backup-action'; revertButton.textContent = 'Откатить'; revertButton.dataset.actionClick = 'requestRevertChangeHistory'; revertButton.dataset.args = JSON.stringify([item.id]);
-    actions.append(diffButton, revertButton);
+    actions.append(diffDetails, revertButton);
     details.append(actions);
-    const diff = document.createElement('pre'); diff.className = 'change-history-diff'; diff.hidden = true; diff.dataset.historyDiff = item.id;
-    row.append(summary, diff); host.append(row);
+    const diffPanel = document.createElement('div'); diffPanel.className = 'change-history-accordion-panel'; diffPanel.dataset.historyDiffPanel = '';
+    const diff = document.createElement('pre'); diff.className = 'change-history-diff'; diff.dataset.historyDiff = item.id;
+    diffDetails.append(diffButton, diffPanel); diffPanel.append(diff);
+    row.append(summary); host.append(row);
   }
   setText('#changeHistoryStatus', `${visible.length} ${pluralize(visible.length, 'изменение', 'изменения', 'изменений')} · хранится до 500 событий`);
 }
@@ -2270,12 +2278,16 @@ function changedHistoryLines(from: string | null, to: string | null) {
   for (const [line, n] of after) for (let index = (before.get(line) ?? 0); index < n; index += 1) added.push(line);
   return { removed, added };
 }
-async function toggleChangeHistoryDiff(id: string, button: HTMLButtonElement) {
-  const diff = button.closest('.change-history-row')?.querySelector<HTMLElement>('[data-history-diff]');
+async function loadChangeHistoryDiff(id: string, button: HTMLElement) {
+  const accordion = button.closest<HTMLElement>('[data-history-accordion]');
+  const diffPanel = accordion?.querySelector<HTMLElement>('[data-history-diff-panel]');
+  const diff = accordion?.querySelector<HTMLElement>('[data-history-diff]');
   if (!(diff instanceof HTMLElement)) return;
-  diff.hidden = !diff.hidden;
-  button.setAttribute('aria-expanded', String(!diff.hidden));
-  if (diff.hidden || diff.dataset.loaded === 'true') return;
+  const opening = button.getAttribute('aria-expanded') !== 'true';
+  button.setAttribute('aria-expanded', String(opening));
+  diffPanel?.classList.toggle('is-open', opening);
+  if (!opening || diff.dataset.loaded === 'true' || diff.dataset.loading === 'true') return;
+  diff.dataset.loading = 'true';
   diff.textContent = 'Загружаем diff…';
   try {
     const result = await nfqwsChangeHistory.diff(id);
@@ -2290,7 +2302,9 @@ async function toggleChangeHistoryDiff(id: string, button: HTMLButtonElement) {
     if (!diff.childElementCount) diff.textContent = 'Текстовые строки не изменились.';
     if (result.current !== result.to) { const warning = document.createElement('span'); warning.className = 'block border-t border-amber-700/50 pt-2 text-amber-300'; warning.textContent = 'Текущий файл отличается от этой записи. Откат будет отклонён при конфликте.'; diff.append(warning); }
     diff.dataset.loaded = 'true';
+    diffPanel?.classList.toggle('is-open', button.getAttribute('aria-expanded') === 'true');
   } catch (error) { diff.textContent = error instanceof Error ? error.message : 'Не удалось загрузить diff.'; }
+  finally { delete diff.dataset.loading; }
 }
 function requestRevertChangeHistory(id: string) {
   const item = changeHistoryCache.find((entry) => entry.id === id); if (!item) return;
@@ -3474,14 +3488,16 @@ function renderListRows() {
   }
   for (const row of rows) {
     const item = document.createElement('div');
-    item.className = `list-editor-row${row.comment ? ' is-comment' : ''}`;
+    const selected = selectedListRows.has(row.index);
+    item.className = `list-editor-row${row.comment ? ' is-comment' : ''}${selected ? ' is-selected' : ''}`;
     item.setAttribute('role', 'listitem');
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
-    checkbox.checked = selectedListRows.has(row.index);
+    checkbox.checked = selected;
     checkbox.setAttribute('aria-label', `Выбрать строку ${row.index + 1}: ${row.text}`);
     checkbox.addEventListener('change', () => {
       checkbox.checked ? selectedListRows.add(row.index) : selectedListRows.delete(row.index);
+      item.classList.toggle('is-selected', checkbox.checked);
       const remove = $('[data-action-click="removeSelectedListLines"]');
       if (remove) remove.textContent = `Удалить выбранные (${selectedListRows.size})`;
     });
@@ -3704,7 +3720,7 @@ function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticRepor
   const title = document.createElement('h3'); title.className = 'diagnosis-overview-title'; title.textContent = verdict.text;
   const subtitle = document.createElement('p'); subtitle.className = 'diagnosis-overview-detail'; subtitle.textContent = [report.host, report.addresses.join(', ')].filter(Boolean).join(' · '); copy.append(title, subtitle);
   const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'diagnosis-retry'; retry.textContent = '↻ Ещё раз'; retry.setAttribute('aria-label', `Повторить проверку ${report.host}`);
-  retry.addEventListener('click', () => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = report.host; void runSiteDiagnosis(); } });
+  retry.addEventListener('click', () => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement) { input.value = report.host; void runSiteDiagnosis(); } });
   overview.append(diagnosisIcon(verdict.kind), copy, retry); container.append(overview);
   const checks = document.createElement('section'); checks.className = 'diagnosis-checks ui-card rounded-2xl';
   const header = document.createElement('div'); header.className = 'diagnosis-checks-header';
@@ -3727,30 +3743,38 @@ function renderSiteDiagnosis(container: HTMLElement, report: SiteDiagnosticRepor
   for (const text of [report.summary, ...report.limitations]) { const p = document.createElement('p'); p.textContent = text; notes.append(p); } container.append(notes);
 }
 async function runSiteDiagnosis() {
-  if (diagnosisRunning) return;
   const input = $('#diagDomainInput'); const container = $('#diagResultContainer');
   const button = $('[data-action-click="runSiteDiagnosis"]');
   if (!(input instanceof HTMLInputElement) || !container || !(button instanceof HTMLButtonElement)) return;
   if (!input.value.trim()) return toast('Введите домен или публичный IPv4 для проверки.', 'error');
-  diagnosisRunning = true; input.disabled = true; button.disabled = true;
-  button.textContent = 'Проверяем…'; container.replaceChildren();
+  diagnosisController?.abort(); diagnosisProgressCloser?.();
+  const controller = new AbortController(); diagnosisController = controller;
+  const host = input.value.trim();
+  input.setAttribute('aria-busy', 'true'); button.disabled = false;
+  button.textContent = 'Проверить другой домен'; button.setAttribute('aria-label', `Остановить текущую проверку и проверить ${host}`); container.replaceChildren();
   const toastHost = $('#toastWrapper');
-  const closeProgress = toastHost ? showDiagnosisProgress(toastHost, input.value.trim()) : () => undefined;
+  const closeProgress = toastHost ? showDiagnosisProgress(toastHost, host) : () => undefined;
+  diagnosisProgressCloser = closeProgress;
   const completed = new Map<string, SiteDiagnosticStep>();
   let latestStep: SiteDiagnosticStep | null = null;
-  renderDiagnosisProgress(container, input.value.trim(), 'dns', completed, [], latestStep);
+  renderDiagnosisProgress(container, host, 'dns', completed, [], latestStep);
   try {
-    const report = await nfqwsDiagnostics.siteStream(input.value, (progress) => {
+    const report = await nfqwsDiagnostics.siteStream(host, (progress) => {
+      if (diagnosisController !== controller || controller.signal.aborted) return;
       if (progress.step) { completed.set(progress.step.id, progress.step); latestStep = progress.step; }
-      renderDiagnosisProgress(container, input.value.trim(), progress.activeStage, completed, progress.addresses, latestStep);
-    });
+      renderDiagnosisProgress(container, host, progress.activeStage, completed, progress.addresses, latestStep);
+    }, controller.signal);
+    if (diagnosisController !== controller || controller.signal.aborted) return;
     renderSiteDiagnosis(container, report);
     closeProgress();
     toast(`Проверка ${report.host} завершена: ${report.summary}`);
   } catch (error) {
+    if (controller.signal.aborted || diagnosisController !== controller) return;
     container.replaceChildren(); const message = error instanceof Error ? error.message : 'Не удалось выполнить проверку сайта';
     const row = document.createElement('p'); row.className = 'col-span-full text-sm text-rose-400'; row.textContent = message; container.append(row); closeProgress(); toast(message, 'error');
-  } finally { diagnosisRunning = false; input.disabled = false; button.disabled = false; button.textContent = 'Проверить'; }
+  } finally {
+    if (diagnosisController === controller) { diagnosisController = null; diagnosisProgressCloser = null; input.removeAttribute('aria-busy'); button.disabled = false; button.textContent = 'Проверить'; button.setAttribute('aria-label', 'Проверить домен или IP'); closeProgress(); }
+  }
 }
 
 function renderTraceReport(container: HTMLElement, report: SiteTraceReport) {
@@ -4966,7 +4990,7 @@ function renderReleases() {
     header.append(date);
     const radio = document.createElement('span');
     radio.setAttribute('aria-hidden', 'true');
-    radio.className = `absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full border-2 ${selected ? 'border-blue-300 bg-blue-500' : 'border-slate-500'}`;
+    radio.className = `release-version-radio absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rounded-full ${selected ? 'is-selected' : ''}`;
     header.append(radio);
     card.append(header);
     const notes = document.createElement('div');
@@ -5249,7 +5273,6 @@ function bindPrototypeActions() {
     deleteRuntimeProfile: (id: string) => mutateRuntimeProfile(id, 'delete'),
     saveRuntimeProfiles: () => void saveRuntimeProfiles(),
     refreshProfiles: () => void loadProfiles(),
-    refreshChangeHistory: () => void loadChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
     openCommunityShare: (operationId: string, candidateIndex: string) => void openCommunityShare(operationId, Number(candidateIndex)),
     submitCommunityShare: () => submitCommunityShare(),
     closeCommunityShare: () => { const modal = $('#communityShareModal'); if (modal) closeAppModal(modal); clearCommunityShare(); },
@@ -5261,7 +5284,7 @@ function bindPrototypeActions() {
     testCommunityStrategy: (id: string) => void testCommunityStrategy(id),
     copyCommunityStrategy: (id: string) => void copyCommunityStrategy(id),
     filterChangeHistory: () => renderChangeHistory($<HTMLInputElement>('#changeHistorySearch')?.value ?? ''),
-    toggleChangeHistoryDiff: (id: string, button: HTMLButtonElement) => void toggleChangeHistoryDiff(id, button),
+    loadChangeHistoryDiff: (id: string, button: HTMLElement) => void loadChangeHistoryDiff(id, button),
     requestRevertChangeHistory: (id: string) => requestRevertChangeHistory(id),
     requestUndoLastChange: () => requestUndoLastChange(),
     requestRestoreInitialHistory: () => requestRestoreInitialHistory(),
@@ -5336,7 +5359,7 @@ function bindPrototypeActions() {
     applyStrategyPick: (source: string, operationId: string, index: string, revision: string) => void applyStrategyPick(source, operationId, index, revision),
     runFreezeScan: () => void startFreezeScan(),
     cancelFreezeScan: () => void cancelFreezeScan(),
-    setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement && !diagnosisRunning) { input.value = host; input.focus(); } },
+    setDiagPreset: (host: string) => { const input = $('#diagDomainInput'); if (input instanceof HTMLInputElement) { input.value = host; input.focus(); } },
     restartService: () => void serviceAction('restart'),
     toggleDaemonPower: () => void serviceAction(serviceControlPresentation(status?.service.state).action),
     applyConfigAndRestart: () => void saveConfigAndApply(),
