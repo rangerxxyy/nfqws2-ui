@@ -364,7 +364,7 @@ pub fn analyze_pcap(name: &str, bytes: &[u8]) -> Result<Analysis, DpiLabError> {
         return Err(DpiLabError::Limit("Недопустимый snaplen в PCAP".into()));
     }
     let link_type = read_u32(bytes, 20, format.big_endian).unwrap_or_default();
-    if !matches!(link_type, 1 | 12 | 101 | 228 | 229) {
+    if !matches!(link_type, 1 | 12 | 101 | 228 | 229 | 276) {
         return Err(DpiLabError::Malformed(format!(
             "Тип канального уровня {link_type} не поддерживается"
         )));
@@ -545,6 +545,15 @@ fn parse_frame(frame: &[u8], link_type: u32) -> Result<Option<ParsedFrame>, &'st
         ),
         228 => (0, 0x0800),
         229 => (0, 0x86dd),
+        // LINKTYPE_LINUX_SLL2: fixed 20-byte cooked header. Its protocol
+        // field is network byte order independently of the PCAP byte order.
+        // Layout: libpcap pcap/sll.h, struct sll2_header.
+        276 => {
+            if frame.len() < 20 {
+                return Err("Linux SLL2-заголовок обрезан");
+            }
+            (20, u16::from_be_bytes([frame[0], frame[1]]))
+        }
         _ => return Err("Канальный уровень не поддерживается"),
     };
     let (source, destination, ttl, transport, network_end) = match ether_type {
@@ -1185,6 +1194,57 @@ mod tests {
     }
 
     #[test]
+    fn linux_sll2_preserves_ipv4_ipv6_tcp_tls_and_network_order_in_both_pcap_orders() {
+        for big_endian in [false, true] {
+            let hello = client_hello_sni("example.com");
+            for ethernet in [tcp_frame(100, &hello), ipv6_tcp_frame(100, &hello, &[])] {
+                let mut frame = vec![0u8; 20];
+                frame[0..2].copy_from_slice(&ethernet[12..14]);
+                frame[4..8].copy_from_slice(&7u32.to_be_bytes());
+                frame[8..10].copy_from_slice(&1u16.to_be_bytes());
+                frame[10] = 4;
+                frame[11] = 6;
+                frame.extend_from_slice(&ethernet[14..]);
+                let mut pcap = pcap_with_frames(std::slice::from_ref(&frame), big_endian, false);
+                pcap[20..24].copy_from_slice(&if big_endian {
+                    276u32.to_be_bytes()
+                } else {
+                    276u32.to_le_bytes()
+                });
+                let analysis = analyze_pcap("sll2.pcap", &pcap).unwrap();
+                assert_eq!(analysis.capture.link_type, 276);
+                assert_eq!(analysis.packets[0].tcp_sequence, Some(100));
+                assert_eq!(analysis.packets[0].payload_len, hello.len());
+                assert_eq!(analysis.packets[0].frame_hex, hex::encode(&frame));
+                assert_eq!(
+                    analysis.flows[0]
+                        .tls_client_hello
+                        .as_ref()
+                        .unwrap()
+                        .server_name
+                        .as_deref(),
+                    Some("example.com")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn linux_sll2_checks_header_bounds_and_skips_non_ip_protocols() {
+        for length in 0..20 {
+            assert_eq!(
+                parse_frame(&vec![0; length], 276),
+                Err("Linux SLL2-заголовок обрезан")
+            );
+        }
+        let mut frame = vec![0u8; 20];
+        frame[0..2].copy_from_slice(&0x0806u16.to_be_bytes());
+        assert_eq!(parse_frame(&frame, 276), Ok(None));
+        frame[0..2].copy_from_slice(&0x0800u16.to_be_bytes());
+        assert!(parse_frame(&frame, 276).is_err());
+    }
+
+    #[test]
     fn extracts_ipv6_tcp_after_hop_by_hop_and_destination_options() {
         let extensions = [
             (0, vec![60, 0, 0, 0, 0, 0, 0, 0]),
@@ -1247,7 +1307,7 @@ mod tests {
 
     #[test]
     fn arbitrary_bounded_frames_never_panic_in_link_and_ip_parsing() {
-        let link_types = [1, 12, 101, 228, 229];
+        let link_types = [1, 12, 101, 228, 229, 276];
         let mut state = 0x9e37_79b9u32;
         for case in 0..4096usize {
             let length = case % 320;
