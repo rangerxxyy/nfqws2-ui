@@ -12,7 +12,7 @@ import { tokenizeLuaScript } from './lua-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
-import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, nfqwsDpiLab, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
+import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, nfqwsDpiLab, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource, type AutoStrategyStore } from './api';
 import { dpiCaptureAvailability, dpiExperimentSaveAvailability, dpiEvidencePresentation, dpiFindingStatus, dpiStrategyCorrelation, dpiNextSteps, dpiHumanOverview, formatDpiByteDump, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabFlow, type DpiLabPacket, type DpiLabSavedExperiment, type DpiLabStrategyAnalysis } from './dpi-lab';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
@@ -2570,10 +2570,89 @@ async function loadBackendMonitoring() {
   const last = saved.lastAutoCheck ? new Date(saved.lastAutoCheck * 1000).toLocaleString() : 'ещё не запускалась';
   setText('#monitoringStatus', `Последняя автоматическая проверка: ${last}. Интервал: ${saved.intervalMinutes} мин.`);
 }
-function showMonitorSection(section: 'sites' | 'telegram') {
+let autoStrategyState: AutoStrategyStore | null = null;
+function renderAutoStrategyState() {
+  if (!autoStrategyState) return;
+  const { settings, activeHost, offers, log } = autoStrategyState;
+  const status = $('#autoStrategyStatus');
+  if (status) {
+    const monitoringEnabled = ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? false;
+    const hasSites = Boolean(monitoringState?.sites.length);
+    status.textContent = activeHost
+      ? `Подбирается стратегия для ${activeHost}. Проверка работает отдельно от обычного трафика; текущая конфигурация пока не изменена.`
+      : !settings.enabled
+        ? 'Автоподбор выключен. Результаты мониторинга продолжают собираться.'
+        : !monitoringEnabled || !hasSites
+          ? `Автоподбор включён, но пока не запускается: ${!monitoringEnabled ? 'включите автопроверку' : 'добавьте домен'} в разделе «Мониторинг».`
+          : 'Автоподбор включён. Он реагирует только на домены из мониторинга после успешных проверок и повторной ошибки.';
+  }
+  const offersHost = $('#autoStrategyOffers');
+  if (offersHost) {
+    offersHost.replaceChildren();
+    if (offers.length) {
+      const heading = document.createElement('h3'); heading.className = 'text-sm font-semibold text-white'; heading.textContent = 'Найдены подтверждённые варианты'; offersHost.append(heading);
+    }
+    for (const offer of offers) {
+      const card = document.createElement('article'); card.className = 'flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3';
+      const summary = document.createElement('div');
+      const title = document.createElement('strong'); title.className = 'block text-sm text-emerald-200'; title.textContent = `${offer.host} · ${offer.strategyName}`;
+      const steps = document.createElement('p'); steps.className = 'mt-1 max-w-3xl break-words text-xs text-slate-400'; steps.textContent = offer.steps.join(' → ') || 'Подтверждённый профиль';
+      const date = document.createElement('p'); date.className = 'mt-1 text-[11px] text-slate-500'; date.textContent = `Найдено ${new Date(offer.createdAt * 1000).toLocaleString()}`;
+      summary.append(title, steps, date);
+      const open = document.createElement('button'); open.type = 'button'; open.className = 'list-toolbar-button list-toolbar-button-secondary !min-h-8 !px-3 !py-1.5 text-xs'; open.textContent = 'Открыть результат'; open.addEventListener('click', () => { void openAutoStrategyOffer(offer.operationId); });
+      card.append(summary, open); offersHost.append(card);
+    }
+  }
+  const logHost = $('#autoStrategyLog');
+  if (logHost) {
+    logHost.replaceChildren();
+    if (!log.length) { const empty = document.createElement('p'); empty.className = 'text-xs text-slate-500'; empty.textContent = 'Событий автоподбора пока нет.'; logHost.append(empty); }
+    for (const event of log.slice(0, 20)) {
+      const row = document.createElement('div'); row.className = 'grid gap-1 border-b border-slate-800/80 py-2 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]';
+      const when = document.createElement('time'); when.className = 'text-slate-500'; when.textContent = new Date(event.timestamp * 1000).toLocaleString();
+      const message = document.createElement('p'); message.className = 'text-slate-300'; message.textContent = `${event.host ? `${event.host} · ` : ''}${event.message}`;
+      row.append(when, message); logHost.append(row);
+    }
+  }
+}
+async function refreshAutoStrategyState(populateControls = false) {
+  autoStrategyState = await nfqwsMonitoring.autoStrategy();
+  if (populateControls) {
+    const enabled = $('#autoStrategyEnabled') as HTMLInputElement | null; if (enabled) enabled.checked = autoStrategyState.settings.enabled;
+    const apply = $('#autoStrategyApply') as HTMLInputElement | null; if (apply) apply.checked = autoStrategyState.settings.applyAutomatically;
+    const failures = $('#autoStrategyFailures') as HTMLSelectElement | null; if (failures) failures.value = String(autoStrategyState.settings.failuresBeforePick);
+    const cooldown = $('#autoStrategyCooldown') as HTMLSelectElement | null; if (cooldown) cooldown.value = String(autoStrategyState.settings.cooldownHours);
+  }
+  renderAutoStrategyState();
+}
+async function saveAutoStrategySettings() {
+  const applyAutomatically = ($('#autoStrategyApply') as HTMLInputElement | null)?.checked ?? false;
+  const persist = async () => {
+    autoStrategyState = await nfqwsMonitoring.saveAutoStrategy({
+      enabled: ($('#autoStrategyEnabled') as HTMLInputElement | null)?.checked ?? false,
+      applyAutomatically,
+      failuresBeforePick: Number(($('#autoStrategyFailures') as HTMLSelectElement | null)?.value ?? 2),
+      cooldownHours: Number(($('#autoStrategyCooldown') as HTMLSelectElement | null)?.value ?? 12),
+    });
+    renderAutoStrategyState();
+    toast('Настройки автоподбора сохранены.');
+  };
+  if (applyAutomatically) {
+    requestDangerousConfirmation('Разрешить автоприменение стратегии?', 'Подтверждённый результат добавит отдельный профиль только для домена, перезапустит nfqws2 и проверит целевой и ранее доступные сайты. При ошибке конфигурация будет восстановлена.', persist);
+  } else await persist();
+}
+async function openAutoStrategyOffer(id: string) {
+  const operation = await nfqwsDiagnostics.strategyStatus(id);
+  activeStrategyPickId = id;
+  renderStrategyPick(operation);
+  showRoute('autotune');
+}
+function showMonitorSection(section: 'sites' | 'auto' | 'telegram') {
   $('#monitorSection-sites')?.classList.toggle('hidden', section !== 'sites');
+  $('#monitorSection-auto')?.classList.toggle('hidden', section !== 'auto');
   $('#monitorSection-telegram')?.classList.toggle('hidden', section !== 'telegram');
-  all<HTMLButtonElement>('.monitor-subtab').forEach((button) => button.classList.toggle('active', button.textContent?.includes(section === 'sites' ? 'Мониторинг' : 'Telegram') ?? false));
+  all<HTMLButtonElement>('.monitor-subtab').forEach((button) => button.classList.toggle('active', button.textContent?.includes(section === 'sites' ? 'Мониторинг' : section === 'auto' ? 'Автоподбор' : 'Telegram') ?? false));
+  if (section === 'auto') void refreshAutoStrategyState(true).catch((error) => { const status = $('#autoStrategyStatus'); if (status) status.textContent = error instanceof Error ? error.message : 'Не удалось загрузить автоподбор.'; });
   if (section === 'telegram') void loadTelegramNotifications().catch(() => {});
 }
 async function saveMonitoringSettings() {
@@ -5336,7 +5415,8 @@ function bindPrototypeActions() {
     setAppearanceConfigWarnings: (showConfigWarnings: boolean) => updateAppearance({ showConfigWarnings }),
     switchSimplifiedNavGroup: (group: string) => { const routes: Record<string, Route> = { configuration: 'conf', 'site-check': 'check', tuning: 'autotune', monitoring: 'monitor', lists: 'lists', system: 'appearance' }; const route = routes[group]; if (route) showRoute(route); },
     checkUiUpdate: () => void checkUiUpdate(),
-    showMonitorSection: (section: 'sites' | 'telegram') => showMonitorSection(section),
+    showMonitorSection: (section: 'sites' | 'auto' | 'telegram') => showMonitorSection(section),
+    saveAutoStrategySettings: () => void saveAutoStrategySettings().catch((error) => toast(error instanceof Error ? error.message : 'Не удалось сохранить автоподбор.', 'error')),
     checkMonitoringSite: (host: string) => void runMonitoring(host),
     saveMonitoringSettings: () => void saveMonitoringSettings().catch((e) => toast(e instanceof Error ? e.message : 'Не удалось сохранить расписание.', 'error')),
     toggleMonitoringCustom: (select: HTMLSelectElement) => { $('#monitoringCustom')?.classList.toggle('hidden', select.value !== 'custom'); $('#monitoringCustom')?.classList.toggle('inline-flex', select.value === 'custom'); },
@@ -5565,6 +5645,9 @@ function boot() {
   window.setInterval(() => {
     if (document.visibilityState === 'visible' && $('#tabContent-monitor:not(.hidden) #monitorSection-telegram:not(.hidden)')) {
       void loadTelegramNotifications().catch(() => {});
+    }
+    if (document.visibilityState === 'visible' && $('#tabContent-monitor:not(.hidden) #monitorSection-auto:not(.hidden)')) {
+      void refreshAutoStrategyState(false).catch(() => {});
     }
   }, 30_000);
   bindPrototypeActions();

@@ -536,5 +536,6 @@ mod tests {
         );
     }
 }
+pub mod monitor_auto;
 pub mod strategy_picker;
 pub mod transfer_diagnostic;

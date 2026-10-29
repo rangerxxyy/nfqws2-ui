@@ -21,6 +21,9 @@ use nfqws2_ui::freeze_diagnostic;
 use nfqws2_ui::freeze_profile_join;
 use nfqws2_ui::interception_status::{self, InterceptionStatus};
 use nfqws2_ui::managed_asn_lists::{self, ManagedAsnList, ManagedAsnListStore};
+use nfqws2_ui::monitor_auto::{
+    self, AutoStrategyEvent, AutoStrategyOffer, AutoStrategySettings, AutoStrategyStore,
+};
 use nfqws2_ui::site_diagnostics::{self, DiagnosticProgress, DiagnosticReport, DiagnosticStep};
 use nfqws2_ui::site_trace;
 use nfqws2_ui::strategy_picker::{self, StrategyMode, StrategyProtocol};
@@ -117,6 +120,7 @@ struct AppState {
     dpi_lab_lock: Mutex<()>,
     managed_asn_refresh_lock: Mutex<()>,
     monitoring_lock: Arc<Mutex<()>>,
+    auto_strategy_lock: Arc<Mutex<()>>,
     site_trace_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
     site_trace_runner: Arc<SiteTraceRunner>,
     foreign_config_controls: Mutex<HashMap<String, Arc<AtomicBool>>>,
@@ -309,6 +313,15 @@ struct MonitoringStoreUpdate {
 #[serde(rename_all = "camelCase")]
 struct MonitoringRunRequest {
     hosts: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AutoStrategySettingsUpdate {
+    enabled: bool,
+    apply_automatically: bool,
+    failures_before_pick: usize,
+    cooldown_hours: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -6495,6 +6508,85 @@ async fn get_monitoring_store(State(state): State<Arc<AppState>>) -> Response {
     }
 }
 
+fn auto_strategy_store_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("monitoring-auto-strategy.json")
+}
+
+async fn load_auto_strategy_store(data_dir: &Path) -> Result<AutoStrategyStore, String> {
+    let path = auto_strategy_store_path(data_dir);
+    match tokio::fs::read(&path).await {
+        Ok(bytes) if bytes.len() <= 128 * 1024 => {
+            let mut store: AutoStrategyStore = serde_json::from_slice(&bytes)
+                .map_err(|_| "Повреждены настройки автоподбора".to_string())?;
+            store.settings = monitor_auto::normalize_settings(store.settings);
+            Ok(store)
+        }
+        Ok(_) => Err("Состояние автоподбора превышает лимит 128 КиБ".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(AutoStrategyStore::default())
+        }
+        Err(error) => Err(format!(
+            "Не удалось прочитать настройки автоподбора: {error}"
+        )),
+    }
+}
+
+async fn save_auto_strategy_store(
+    data_dir: &Path,
+    store: &AutoStrategyStore,
+) -> Result<(), String> {
+    tokio::fs::create_dir_all(data_dir)
+        .await
+        .map_err(|error| error.to_string())?;
+    let path = auto_strategy_store_path(data_dir);
+    let temporary = path.with_extension("json.tmp");
+    let mut bounded = store.clone();
+    bounded.log.truncate(80);
+    bounded.offers.truncate(20);
+    let bytes = serde_json::to_vec(&bounded).map_err(|error| error.to_string())?;
+    if bytes.len() > 128 * 1024 {
+        return Err("Состояние автоподбора превышает лимит 128 КиБ".into());
+    }
+    tokio::fs::write(&temporary, bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    tokio::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
+        .await
+        .map_err(|error| error.to_string())?;
+    tokio::fs::rename(&temporary, &path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+async fn get_auto_strategy(State(state): State<Arc<AppState>>) -> Response {
+    match load_auto_strategy_store(&state.data_dir).await {
+        Ok(store) => Json(store).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
+async fn put_auto_strategy(
+    State(state): State<Arc<AppState>>,
+    Json(update): Json<AutoStrategySettingsUpdate>,
+) -> Response {
+    let _guard = state.auto_strategy_lock.lock().await;
+    let mut store = match load_auto_strategy_store(&state.data_dir).await {
+        Ok(store) => store,
+        Err(message) => return error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    };
+    store.settings = monitor_auto::normalize_settings(AutoStrategySettings {
+        enabled: update.enabled,
+        apply_automatically: update.apply_automatically,
+        failures_before_pick: update.failures_before_pick,
+        cooldown_hours: update.cooldown_hours,
+    });
+    match save_auto_strategy_store(&state.data_dir, &store).await {
+        Ok(()) => Json(store).into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, message),
+    }
+}
+
 async fn put_monitoring_store(
     State(state): State<Arc<AppState>>,
     Json(update): Json<MonitoringStoreUpdate>,
@@ -7098,8 +7190,446 @@ fn start_monitoring_scheduler(state: Arc<AppState>) {
             if let Err(message) = check_saved_sites(&state, false, None).await {
                 tracing::warn!("monitoring scheduler: {message}");
             }
+            if let Err(message) = auto_strategy_tick(&state).await {
+                tracing::warn!("monitoring auto strategy: {message}");
+            }
         }
     });
+}
+
+fn auto_strategy_event(
+    store: &mut AutoStrategyStore,
+    host: &str,
+    kind: &str,
+    message: impl Into<String>,
+) {
+    store.log.insert(
+        0,
+        AutoStrategyEvent {
+            host: host.to_owned(),
+            kind: kind.to_owned(),
+            message: message.into(),
+            timestamp: now_unix_seconds(),
+        },
+    );
+    store.log.truncate(80);
+}
+
+async fn auto_strategy_tick(state: &Arc<AppState>) -> Result<(), String> {
+    let _guard = state.auto_strategy_lock.lock().await;
+    let mut store = load_auto_strategy_store(&state.data_dir).await?;
+    if !store.settings.enabled {
+        if let Some(id) = store.active_operation_id.take() {
+            if let Some(control) = state.strategy_pick_controls.lock().await.get(&id) {
+                control.store(true, Ordering::Release);
+            }
+            let host = store.active_host.take().unwrap_or_default();
+            auto_strategy_event(
+                &mut store,
+                &host,
+                "cancelled",
+                "Автоподбор отключён; незавершённая проверка остановлена, конфигурация не менялась.",
+            );
+            save_auto_strategy_store(&state.data_dir, &store).await?;
+        }
+        return Ok(());
+    }
+    let now = now_unix_seconds();
+    if let Some(operation_id) = store.active_operation_id.clone() {
+        let Some(operation) = read_strategy_pick_operation(
+            &state.data_dir.join("strategy-pick-operations"),
+            &operation_id,
+        )
+        .await?
+        else {
+            store.active_operation_id = None;
+            store.active_host = None;
+            auto_strategy_event(
+                &mut store,
+                "",
+                "error",
+                "Результат автоподбора потерян; операция снята с ожидания.",
+            );
+            return save_auto_strategy_store(&state.data_dir, &store).await;
+        };
+        if matches!(operation.state.as_str(), "queued" | "running" | "stopping") {
+            return Ok(());
+        }
+        let host = store
+            .active_host
+            .clone()
+            .unwrap_or_else(|| operation.host.clone());
+        let monitor_store = load_monitoring_store(&state.data_dir).await?;
+        let target_still_monitored =
+            monitor_store.enabled && monitor_store.sites.iter().any(|site| site.host == host);
+        if !target_still_monitored {
+            auto_strategy_event(
+                &mut store,
+                &host,
+                "cancelled",
+                "Сайт удалён из мониторинга или мониторинг выключен; найденный профиль не применяется.",
+            );
+            store.active_operation_id = None;
+            store.active_host = None;
+            return save_auto_strategy_store(&state.data_dir, &store).await;
+        }
+        let healthy_again = monitor_store
+            .sites
+            .iter()
+            .find(|site| site.host == host)
+            .and_then(|site| site.results.first())
+            .is_some_and(|result| result.status == "ok");
+        if healthy_again || operation.state == "site_unblocked" {
+            auto_strategy_event(
+                &mut store,
+                &host,
+                "recovered",
+                "Сайт снова отвечает; результат не применяется.",
+            );
+        } else if let Some((candidate_index, result)) =
+            operation.results.iter().enumerate().find(|(_, result)| {
+                result.confirmed && result.attempts >= 2 && result.successes >= 2
+            })
+        {
+            let offer = AutoStrategyOffer {
+                host: host.clone(),
+                operation_id: operation.id.clone(),
+                candidate_index,
+                strategy_name: result.candidate.name.clone(),
+                steps: result.candidate.steps.clone(),
+                created_at: now,
+            };
+            store.offers.insert(0, offer);
+            store.offers.truncate(20);
+            if store.settings.apply_automatically {
+                match apply_auto_strategy_candidate(state, &operation, candidate_index).await {
+                    Ok(()) => auto_strategy_event(
+                        &mut store,
+                        &host,
+                        "applied",
+                        format!(
+                            "Подтверждённая стратегия «{}» добавлена отдельным профилем; перезапуск и контрольные сайты прошли проверку.",
+                            result.candidate.name
+                        ),
+                    ),
+                    Err(message) => auto_strategy_event(
+                        &mut store,
+                        &host,
+                        "rollback",
+                        format!("Применение не завершено: {message}"),
+                    ),
+                }
+            } else {
+                auto_strategy_event(
+                    &mut store,
+                    &host,
+                    "offer",
+                    format!(
+                        "Найдена подтверждённая стратегия «{}». Основной конфиг не менялся; результат доступен во вкладке автоподбора.",
+                        result.candidate.name
+                    ),
+                );
+            }
+        } else {
+            auto_strategy_event(
+                &mut store,
+                &host,
+                "no-match",
+                "Подбор завершён, но подтверждённой стратегии не найдено. Конфигурация не менялась.",
+            );
+        }
+        store.active_operation_id = None;
+        store.active_host = None;
+        return save_auto_strategy_store(&state.data_dir, &store).await;
+    }
+
+    let monitoring = load_monitoring_store(&state.data_dir).await?;
+    if !monitoring.enabled || monitoring.sites.is_empty() {
+        return Ok(());
+    }
+    let monitored_hosts = monitoring
+        .sites
+        .iter()
+        .map(|site| site.host.as_str())
+        .collect::<HashSet<_>>();
+    store
+        .last_attempt_at
+        .retain(|host, _| monitored_hosts.contains(host.as_str()));
+    store
+        .recheck_after
+        .retain(|host, _| monitored_hosts.contains(host.as_str()));
+    store
+        .retry_after
+        .retain(|host, _| monitored_hosts.contains(host.as_str()));
+    // Match zemidala's delayed single-host recheck: a first failure after a known-good
+    // result is rechecked after five minutes before any expensive strategy search.
+    for site in &monitoring.sites {
+        let statuses = site
+            .results
+            .iter()
+            .map(|result| result.status.as_str())
+            .collect::<Vec<_>>();
+        let readiness = monitor_auto::readiness(&store.settings, &statuses, 0, 0, None, now);
+        if readiness == monitor_auto::AutoPickReadiness::NeedsRecheck {
+            let due = *store
+                .recheck_after
+                .entry(site.host.clone())
+                .or_insert_with(|| now.saturating_add(300));
+            if now >= due {
+                store.recheck_after.remove(&site.host);
+                save_auto_strategy_store(&state.data_dir, &store).await?;
+                let _ = check_saved_sites(state, true, Some(vec![site.host.clone()])).await?;
+                return Ok(());
+            }
+            continue;
+        }
+        store.recheck_after.remove(&site.host);
+    }
+    let mut picked = None;
+    for site in &monitoring.sites {
+        if store
+            .retry_after
+            .get(&site.host)
+            .is_some_and(|retry| now < *retry)
+        {
+            continue;
+        }
+        let statuses = site
+            .results
+            .iter()
+            .map(|result| result.status.as_str())
+            .collect::<Vec<_>>();
+        let monitored_count = monitoring.sites.len();
+        let down_count = monitoring
+            .sites
+            .iter()
+            .filter(|monitored| {
+                monitored
+                    .results
+                    .first()
+                    .is_some_and(|result| matches!(result.status.as_str(), "error" | "unavailable"))
+            })
+            .count();
+        let readiness = monitor_auto::readiness(
+            &store.settings,
+            &statuses,
+            monitored_count,
+            down_count,
+            store.last_attempt_at.get(&site.host).copied(),
+            now,
+        );
+        if readiness != monitor_auto::AutoPickReadiness::Ready {
+            continue;
+        }
+        let latest = site.results.first().expect("ready site has a result");
+        if monitor_auto::is_infrastructure_failure(&latest.summary) {
+            store
+                .retry_after
+                .insert(site.host.clone(), now.saturating_add(300));
+            auto_strategy_event(
+                &mut store,
+                &site.host,
+                "skipped",
+                "Пропущено: похоже на проблему DNS или маршрута, а не на необходимость менять стратегию.",
+            );
+            continue;
+        }
+        picked = Some(site.host.clone());
+        break;
+    }
+    let Some(host) = picked else {
+        save_auto_strategy_store(&state.data_dir, &store).await?;
+        return Ok(());
+    };
+    if active_process_snapshot().is_none() {
+        store
+            .retry_after
+            .insert(host.clone(), now.saturating_add(300));
+        auto_strategy_event(
+            &mut store,
+            &host,
+            "skipped",
+            "Подбор пропущен: работающий процесс nfqws2 не обнаружен однозначно.",
+        );
+        return save_auto_strategy_store(&state.data_dir, &store).await;
+    }
+    if detect_podkop_hosts(std::slice::from_ref(&host))
+        .await
+        .contains(&host)
+    {
+        store
+            .retry_after
+            .insert(host.clone(), now.saturating_add(300));
+        auto_strategy_event(
+            &mut store,
+            &host,
+            "skipped",
+            "Пропущено: домен направляется через Podkop; автоподбор nfqws2 не будет менять его маршрут.",
+        );
+        return save_auto_strategy_store(&state.data_dir, &store).await;
+    }
+    store.recheck_after.remove(&host);
+    let response = start_strategy_pick(
+        State(state.clone()),
+        Json(StrategyPickRequest {
+            host: host.clone(),
+            protocol: Some("https".into()),
+            mode: Some("quick".into()),
+            repeats: Some(3),
+            stop_after_first_confirmed: false,
+            include_other_history: true,
+            refine_lighter: false,
+            include_community: true,
+            custom_steps: None,
+        }),
+    )
+    .await;
+    if !response.status().is_success() {
+        let body = axum::body::to_bytes(response.into_body(), 16 * 1024)
+            .await
+            .unwrap_or_default();
+        let reason = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| {
+                "Сейчас нельзя запустить диагностику; повтор будет после паузы.".into()
+            });
+        store
+            .retry_after
+            .insert(host.clone(), now.saturating_add(300));
+        auto_strategy_event(
+            &mut store,
+            &host,
+            "deferred",
+            format!("Автоподбор отложен: {reason}"),
+        );
+        return save_auto_strategy_store(&state.data_dir, &store).await;
+    }
+    let body = axum::body::to_bytes(response.into_body(), 32 * 1024)
+        .await
+        .map_err(|error| error.to_string())?;
+    let value: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|error| format!("Не удалось прочитать ответ автоподбора: {error}"))?;
+    if let Some(id) = value.get("id").and_then(serde_json::Value::as_str) {
+        store.last_attempt_at.insert(host.clone(), now);
+        store.retry_after.remove(&host);
+        store.active_operation_id = Some(id.to_owned());
+        store.active_host = Some(host.clone());
+        auto_strategy_event(
+            &mut store,
+            &host,
+            "started",
+            "После повторной ошибки запущен ограниченный подбор HTTPS-стратегии; рабочий конфиг не меняется.",
+        );
+    } else {
+        store
+            .retry_after
+            .insert(host.clone(), now.saturating_add(300));
+        auto_strategy_event(
+            &mut store,
+            &host,
+            "deferred",
+            "Подбор не принят системой диагностики; конфигурация не менялась.",
+        );
+    }
+    save_auto_strategy_store(&state.data_dir, &store).await
+}
+
+async fn apply_auto_strategy_candidate(
+    state: &AppState,
+    operation: &StrategyPickOperation,
+    index: usize,
+) -> Result<(), String> {
+    if operation.protocol != "https" {
+        return Err("Автоматическое применение разрешено только для HTTPS-профиля".into());
+    }
+    let result = operation
+        .results
+        .get(index)
+        .ok_or_else(|| "Не найден выбранный результат".to_string())?;
+    if !result.confirmed || result.attempts < 2 || result.successes < 2 {
+        return Err("Результат не прошёл повторное подтверждение".into());
+    }
+    let Some((pid, active_args)) = active_process_snapshot() else {
+        return Err("Работающий nfqws2 изменился; профиль не применён".into());
+    };
+    let paths = discover_system_paths()
+        .ok_or_else(|| "Не удалось определить установленные файлы nfqws2".to_string())?;
+    let functions = active_lua_functions(&active_args, &paths.lua_dir);
+    let blobs = active_blob_names(&active_args);
+    let profile = strategy_picker::build_domain_profile(
+        &operation.host,
+        StrategyProtocol::Https,
+        &result.candidate.steps,
+        &functions,
+        &blobs,
+    )?;
+    let config_path = config_path_for_state(state)
+        .ok_or_else(|| "Разрешённый конфиг nfqws2 не найден".to_string())?;
+    let original = tokio::fs::read(&config_path)
+        .await
+        .map_err(|error| error.to_string())?;
+    let original_content = String::from_utf8(original.clone())
+        .map_err(|_| "Конфигурация не является корректным UTF-8".to_string())?;
+    let document = ConfigDocument::parse(&original_content)?;
+    let custom_args = document.literal_value("NFQWS_ARGS_CUSTOM")?;
+    let selector = if operation.host.parse::<std::net::Ipv4Addr>().is_ok() {
+        format!("--ipset-ip={}", operation.host)
+    } else {
+        format!("--hostlist-domains={}", operation.host)
+    };
+    if custom_args.split_whitespace().any(|arg| arg == selector) {
+        return Err(
+            "У домена уже настроен профиль NFQWS_ARGS_CUSTOM; он сохранён без изменений".into(),
+        );
+    }
+    let proposed = document.append_literal_words("NFQWS_ARGS_CUSTOM", &profile)?;
+    if validate_nfqws2_config(&proposed)?
+        .iter()
+        .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+    {
+        return Err("Новая конфигурация не прошла статическую проверку".into());
+    }
+    validate_profile_config_dry_run(&proposed, &paths).await?;
+    if active_process_snapshot().is_none_or(|(current_pid, _)| current_pid != pid) {
+        return Err("Процесс nfqws2 изменился; профиль не применён".into());
+    }
+    let monitoring = load_monitoring_store(&state.data_dir).await?;
+    let hosts = strategy_apply_verification_hosts(&operation.host, &monitoring);
+    let route = resolve_monitoring_policy_route(state).await;
+    apply_config_transaction_with_verification(
+        state,
+        ConfigWrite {
+            content: proposed,
+            revision: revision(&original),
+        },
+        || async { service_action(ServiceAction::Restart).await },
+        || {
+            let hosts = hosts.clone();
+            let route = route.clone();
+            async move {
+                verify_strategy_hosts_with(hosts, move |host| {
+                    let route = route.clone();
+                    async move {
+                        let report = check_monitoring_host(host, route).await;
+                        if report.current.status == "ok" {
+                            Ok(())
+                        } else {
+                            Err(report.summary)
+                        }
+                    }
+                })
+                .await
+            }
+        },
+    )
+    .await
+    .map(|_| ())
 }
 
 fn foreign_config_operation_path(directory: &Path, id: &str) -> PathBuf {
@@ -14749,6 +15279,10 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         )
         .route("/api/nfqws2/monitoring/run", post(run_saved_monitoring))
         .route(
+            "/api/nfqws2/monitoring/auto-strategy",
+            get(get_auto_strategy).put(put_auto_strategy),
+        )
+        .route(
             "/api/nfqws2/telegram",
             get(get_telegram_settings).put(put_telegram_settings),
         )
@@ -14983,6 +15517,7 @@ async fn main() {
         dpi_lab_lock: Mutex::new(()),
         managed_asn_refresh_lock: Mutex::new(()),
         monitoring_lock: Arc::new(Mutex::new(())),
+        auto_strategy_lock: Arc::new(Mutex::new(())),
         site_trace_controls: Mutex::new(HashMap::new()),
         site_trace_runner: Arc::new(router_site_trace_runner),
         foreign_config_controls: Mutex::new(HashMap::new()),
@@ -16773,6 +17308,7 @@ mod tests {
             dpi_lab_lock: Mutex::new(()),
             managed_asn_refresh_lock: Mutex::new(()),
             monitoring_lock: Arc::new(Mutex::new(())),
+            auto_strategy_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: Arc::new(router_site_trace_runner),
             foreign_config_controls: Mutex::new(HashMap::new()),
@@ -16992,6 +17528,7 @@ mod tests {
             dpi_lab_lock: Mutex::new(()),
             managed_asn_refresh_lock: Mutex::new(()),
             monitoring_lock: Arc::new(Mutex::new(())),
+            auto_strategy_lock: Arc::new(Mutex::new(())),
             site_trace_controls: Mutex::new(HashMap::new()),
             site_trace_runner: runner,
             foreign_config_controls: Mutex::new(HashMap::new()),

@@ -1,7 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsPackageLeftovers, nfqwsRuntime, nfqwsUpdates } from './api';
+import { api, nfqwsApply, nfqwsAppearance, nfqwsAuth, nfqwsBackups, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsMonitoring, nfqwsPackageLeftovers, nfqwsRuntime, nfqwsUpdates } from './api';
 
 describe('API client used by the source-based panel', () => {
+  it('loads and saves monitoring auto-strategy preferences through the Rust API', async () => {
+    const state = { settings: { enabled: false, applyAutomatically: false, failuresBeforePick: 2, cooldownHours: 12 }, activeOperationId: null, activeHost: null, offers: [], log: [] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(state), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(state), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(nfqwsMonitoring.autoStrategy()).resolves.toEqual(state);
+    await expect(nfqwsMonitoring.saveAutoStrategy(state.settings)).resolves.toEqual(state);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/nfqws2/monitoring/auto-strategy');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/nfqws2/monitoring/auto-strategy');
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).method).toBe('PUT');
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual(state.settings);
+  });
   it('loads package leftovers only from the dedicated read endpoint', async () => {
     const payload = { items: [{ name: 'lists/user.list-opkg', base: 'lists/user.list', sizeBytes: 12, modifiedAt: 123, baseExists: true, sameAsBase: false }], totalBytes: 12, deleted: null };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(payload), { status: 200 }));

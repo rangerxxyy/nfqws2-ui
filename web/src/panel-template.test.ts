@@ -461,7 +461,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(19);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(21);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");
@@ -1658,6 +1658,16 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('[data-accent] .appearance-choice:has(input:checked)');
     expect(panelSource).toContain("import '@fontsource-variable/inter'");
     expect(panelSource).toContain("import '@fontsource-variable/jetbrains-mono'");
+  });
+
+  it('provides an integrated monitoring auto-pick tab with safe defaults and real state controls', () => {
+    expect(template).toContain('data-args="[&quot;auto&quot;]"');
+    expect(template).toContain('id="monitorSection-auto"');
+    expect(template).toContain('id="autoStrategyEnabled"');
+    expect(template).toContain('id="autoStrategyApply"');
+    expect(panelSource).toContain('nfqwsMonitoring.autoStrategy()');
+    expect(panelSource).toContain('nfqwsMonitoring.saveAutoStrategy');
+    expect(panelSource).toContain('Найдены подтверждённые варианты');
   });
 
   it('keeps site diagnosis and packet tracing as separate navigation sections', () => {
