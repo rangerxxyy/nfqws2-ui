@@ -192,12 +192,18 @@ describe('TSX panel with optional server-side authentication', () => {
     const renderEnd = panelSource.indexOf('\nfunction changedHistoryLines', renderStart);
     const renderSource = panelSource.slice(renderStart, renderEnd);
 
-    expect(renderSource).toContain('details.append(actions)');
-    expect(renderSource).toContain('diffDetails.append(diffButton, diffPanel)');
-    expect(renderSource).toContain('row.append(summary)');
-    expect(renderSource).not.toContain('row.append(summary, actions, diff)');
-    expect(panelStyles).toMatch(/\.change-history-actions\s*\{\s*display:\s*flex;\s*flex-wrap:\s*wrap;\s*justify-content:\s*flex-start;/);
-    expect(panelStyles).not.toContain('.change-history-actions { justify-content: flex-start; margin-left: 3.4rem; }');
+    expect(renderSource).toContain('details.append(title, meta)');
+    expect(renderSource).not.toContain('details.append(actions)');
+    expect(renderSource).toContain('diffDetails.append(diffButton)');
+    expect(renderSource).toContain('row.append(summary, actions, diffPanel)');
+    expect(renderSource).toContain('history-kind-icon');
+    const diffLoaderStart = panelSource.indexOf('async function loadChangeHistoryDiff(');
+    const diffLoaderEnd = panelSource.indexOf('\nasync function requestRevertChangeHistory', diffLoaderStart);
+    const diffLoader = panelSource.slice(diffLoaderStart, diffLoaderEnd);
+    expect(diffLoader).toContain("diffPanel?.querySelector<HTMLElement>('[data-history-diff]')");
+    expect(panelStyles).toMatch(/\.change-history-summary\s*\{[^}]*grid-template-columns:\s*2\.8rem 1rem minmax\(0,1fr\) auto/);
+    expect(panelStyles).toContain('.change-history-actions { display: flex; align-items:center; flex-wrap: wrap; justify-content: flex-start;');
+    expect(panelStyles).toMatch(/\.change-history-diff \{[^}]*margin: \.35rem 0 0 4\.15rem;/);
   });
 
   it('shows the actual nfqws2 argument variable under every profile heading', () => {

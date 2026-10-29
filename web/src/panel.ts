@@ -2241,6 +2241,15 @@ function renderChangeHistory(query = '') {
     const row = document.createElement('article'); row.className = 'change-history-row';
     const summary = document.createElement('div'); summary.className = 'change-history-summary';
     const time = document.createElement('time'); time.className = 'change-history-time'; time.dateTime = date.toISOString(); time.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const kindIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); kindIcon.classList.add('history-kind-icon'); kindIcon.setAttribute('viewBox', '0 0 24 24'); kindIcon.setAttribute('aria-hidden', 'true');
+    const iconPaths: Record<string, string> = {
+      'интерфейс': '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
+      'вне интерфейса': '<path d="m12 3 10 18H2L12 3Z"/><path d="M12 9v5m0 3h.01"/>',
+      'обновление пакета': '<path d="M12 3v12m-5-5 5 5 5-5"/><path d="M5 17v4h14v-4"/>',
+      'откат': '<path d="M3 11a9 9 0 1 1 2.6 6.4L3 15"/><path d="M3 7v4h4"/>',
+    };
+    kindIcon.innerHTML = iconPaths[item.source] ?? iconPaths['интерфейс'];
+    kindIcon.setAttribute('aria-label', item.source);
     const details = document.createElement('div');
     const title = document.createElement('strong'); title.className = 'change-history-file'; title.textContent = item.file === 'nfqws2.conf' ? 'Конфигурация' : item.file;
     const meta = document.createElement('p'); meta.className = 'change-history-meta'; meta.textContent = `${item.note || item.source} · ${item.source}`;
@@ -2258,11 +2267,11 @@ function renderChangeHistory(query = '') {
     diffButton.append(chevron);
     const revertButton = document.createElement('button'); revertButton.type = 'button'; revertButton.className = 'backup-action'; revertButton.textContent = 'Откатить'; revertButton.dataset.actionClick = 'requestRevertChangeHistory'; revertButton.dataset.args = JSON.stringify([item.id]);
     actions.append(diffDetails, revertButton);
-    details.append(actions);
     const diffPanel = document.createElement('div'); diffPanel.className = 'change-history-accordion-panel'; diffPanel.dataset.historyDiffPanel = '';
     const diff = document.createElement('pre'); diff.className = 'change-history-diff'; diff.dataset.historyDiff = item.id;
-    diffDetails.append(diffButton, diffPanel); diffPanel.append(diff);
-    row.append(summary); host.append(row);
+    diffDetails.append(diffButton); diffPanel.append(diff);
+    summary.append(time, kindIcon, details, delta);
+    row.append(summary, actions, diffPanel); host.append(row);
   }
   setText('#changeHistoryStatus', `${visible.length} ${pluralize(visible.length, 'изменение', 'изменения', 'изменений')} · хранится до 500 событий`);
 }
@@ -2280,8 +2289,8 @@ function changedHistoryLines(from: string | null, to: string | null) {
 }
 async function loadChangeHistoryDiff(id: string, button: HTMLElement) {
   const accordion = button.closest<HTMLElement>('[data-history-accordion]');
-  const diffPanel = accordion?.querySelector<HTMLElement>('[data-history-diff-panel]');
-  const diff = accordion?.querySelector<HTMLElement>('[data-history-diff]');
+  const diffPanel = accordion?.closest<HTMLElement>('.change-history-row')?.querySelector<HTMLElement>('[data-history-diff-panel]');
+  const diff = diffPanel?.querySelector<HTMLElement>('[data-history-diff]');
   if (!(diff instanceof HTMLElement)) return;
   const opening = button.getAttribute('aria-expanded') !== 'true';
   button.setAttribute('aria-expanded', String(opening));
