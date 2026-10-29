@@ -4,6 +4,7 @@ pub mod community_strategies;
 pub mod config_document;
 pub mod config_format;
 pub mod dpi_lab;
+pub mod dpi_summary;
 pub mod freeze_diagnostic;
 pub mod freeze_profile_join;
 pub mod interception_status;

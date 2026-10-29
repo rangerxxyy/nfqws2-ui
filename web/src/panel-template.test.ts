@@ -17,6 +17,25 @@ const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('opens DPI Lab on a text-first strategy visualizer while retaining PCAP and isolated test tabs', () => {
+    expect(template).toContain('id="dpiLabPane-visualizer"');
+    expect(template).toContain('id="dpiLabPane-live"');
+    expect(template).toContain('id="dpiLabPane-pcap"');
+    expect(template).toContain('accept=".conf,.txt,.lua,text/plain"');
+    expect(panelSource).toContain("switchDpiLabTab('visualizer')");
+    expect(panelSource).toContain('nfqwsDpiLab.analyzeStrategy(text)');
+    expect(panelSource).toContain("'custom', 2, [steps]");
+    expect(panelSource).toContain('журнал фактических Lua-вызовов этот API не предоставляет');
+  });
+
+  it('keeps the simple result concise and gates technical sections behind detail levels', () => {
+    expect(template).toContain('id="dpiLabQuickOverview"');
+    expect(template).toContain('data-dpi-min-level="advanced"');
+    expect(template).toContain('id="dpiLabExpertPanel"');
+    expect(panelSource).toContain("dpiHumanOverview(analysis)");
+    expect(panelSource).toContain("element.dataset.dpiMinLevel");
+  });
+
   it('shows list usage by profile and disables deletion while a profile still uses that list', () => {
     expect(template).toContain('id="listProfileUsageStatus"');
     expect(panelSource).toContain('summary.usedBy');
@@ -416,7 +435,7 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('installs a shared styled menu for all native selects and preserves change behavior', () => {
-    expect([...template.matchAll(/<select\b/g)]).toHaveLength(17);
+    expect([...template.matchAll(/<select\b/g)]).toHaveLength(19);
     expect(panelSource).toContain('installStyledSelects(document)');
     expect(styledSelectSource).toContain("setAttribute('role', 'combobox')");
     expect(styledSelectSource).toContain("setAttribute('role', 'listbox')");

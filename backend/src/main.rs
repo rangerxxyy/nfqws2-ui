@@ -7936,6 +7936,42 @@ async fn analyze_dpi_capture(
     }
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DpiLabStrategyRequest {
+    source: String,
+}
+
+async fn analyze_dpi_strategy(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<DpiLabStrategyRequest>,
+) -> Response {
+    if request.source.len() > dpi_lab::MAX_STRATEGY_SOURCE_BYTES {
+        return error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "Текст стратегии превышает лимит {} КиБ",
+                dpi_lab::MAX_STRATEGY_SOURCE_BYTES / 1024
+            ),
+        );
+    }
+    let Some(paths) = discover_system_paths() else {
+        return error(
+            StatusCode::NOT_FOUND,
+            "Установка nfqws2 не обнаружена; каталог Lua-функций недоступен",
+        );
+    };
+    let catalog = load_cached_nfqws_lua_catalog(&state, &paths.lua_dir, false).await;
+    match dpi_lab::analyze_strategy_with_standard_groups(
+        &request.source,
+        &catalog.functions,
+        &catalog.standard_groups,
+    ) {
+        Ok(analysis) => Json(analysis).into_response(),
+        Err(error) => dpi_lab_error_response(error.to_string()),
+    }
+}
+
 async fn save_dpi_experiment(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DpiLabCaptureQuery>,
@@ -14664,6 +14700,12 @@ fn api_router(state: Arc<AppState>, web_root: PathBuf) -> Router {
         .route("/api/nfqws2/config/format", post(format_config))
         .route("/api/nfqws2/config/validate", post(validate_config))
         .route("/api/nfqws2/diagnostics/site", post(diagnose_site))
+        .route(
+            "/api/nfqws2/dpi-lab/strategy/analyze",
+            post(analyze_dpi_strategy).layer(DefaultBodyLimit::max(
+                dpi_lab::MAX_STRATEGY_SOURCE_BYTES * 6 + 1024,
+            )),
+        )
         .route(
             "/api/nfqws2/dpi-lab/analyze",
             post(analyze_dpi_capture).layer(DefaultBodyLimit::max(dpi_lab::MAX_PCAP_BYTES)),

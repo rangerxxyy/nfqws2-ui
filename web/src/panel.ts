@@ -12,7 +12,7 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, nfqwsDpiLab, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
-import { dpiEvidencePresentation, formatDpiByteDump, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabFlow, type DpiLabPacket, type DpiLabSavedExperiment } from './dpi-lab';
+import { dpiCaptureAvailability, dpiExperimentSaveAvailability, dpiEvidencePresentation, dpiFindingStatus, dpiStrategyCorrelation, dpiNextSteps, dpiHumanOverview, formatDpiByteDump, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabFlow, type DpiLabPacket, type DpiLabSavedExperiment, type DpiLabStrategyAnalysis } from './dpi-lab';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -74,9 +74,14 @@ let configWarningsCatalogPromise: Promise<void> | null = null;
 let traceRunning = false;
 let activeTraceOperationId: string | null = null;
 let dpiLabAnalysis: DpiLabAnalysis | null = null;
+let dpiCaptureAnalyzing = false;
+let dpiCaptureSaving = false;
 let selectedDpiPacketNumber: number | null = null;
 let selectedDpiFlowIndex: number | null = null;
 let dpiLabExperiments: DpiLabSavedExperiment[] = [];
+let dpiStrategyAnalysis: DpiLabStrategyAnalysis | null = null;
+let dpiAnalyzedStrategySource: string | null = null;
+let dpiLabProfiles: NfqwsProfilesResponse | null = null;
 let dpiAnalyzedFileIdentity: string | null = null;
 let strategyPickRunning = false;
 let activeStrategyPickId: string | null = null;
@@ -353,7 +358,7 @@ function showDiagnosisProgress(host: HTMLElement, domain: string) {
 }
 function setBusy(value: boolean) {
   busy = value;
-  all<HTMLButtonElement>('button[data-action-click]').forEach((button) => {
+  all<HTMLButtonElement>('button[data-action-click]:not([data-independent-action="true"])').forEach((button) => {
     if (value && !button.disabled) { button.disabled = true; button.dataset.busyDisabled = 'true'; }
     else if (!value && button.dataset.busyDisabled === 'true') { button.disabled = false; delete button.dataset.busyDisabled; }
   });
@@ -396,7 +401,7 @@ function showRoute(route: Route) {
     void loadCommunityStrategies(false, false, autoDetect);
   }
   if (route === 'snapshots') void loadBackups();
-  if (route === 'dpiLab') void loadDpiExperiments();
+  if (route === 'dpiLab') { switchDpiLabTab('visualizer'); void loadDpiStrategyProfiles(); }
   if (route === 'changes') void loadChangeHistory();
   if (route === 'logs') { void loadLogs(); startLogPolling(); } else stopLogPolling();
   if (route === 'about') void loadAboutStatus();
@@ -449,10 +454,212 @@ async function loadDpiExperiments() {
   }
 }
 
+function switchDpiLabTab(tab: 'visualizer' | 'live' | 'pcap') {
+  for (const name of ['visualizer', 'live', 'pcap'] as const) {
+    const pane = $(`#dpiLabPane-${name}`);
+    pane?.classList.toggle('hidden', name !== tab);
+    const button = [...document.querySelectorAll<HTMLButtonElement>('.dpi-lab-tab')].find((item) => item.dataset.args?.includes(name));
+    button?.classList.toggle('active', name === tab);
+    button?.setAttribute('aria-current', name === tab ? 'page' : 'false');
+  }
+  renderDpiExpectedModel();
+  if (tab === 'pcap') void loadDpiExperiments();
+}
+
+function renderDpiExpectedModel() {
+  const host = $('#dpiLabLiveModel');
+  const note = $('#dpiLabPcapStrategyNote');
+  if (host) {
+    host.replaceChildren();
+    if (!dpiStrategyAnalysis) host.textContent = 'Ожидаемая стратегия появится здесь после разбора в первой вкладке.';
+    else {
+      host.append(dpiLabElement('strong', `Ожидаемая схема · ${dpiStrategyAnalysis.stepCount} шага(ов)`, 'block text-slate-200'));
+      if (dpiStrategyAnalysis.steps.length) {
+        const list = dpiLabElement('ol', '', 'mt-2 grid gap-1');
+        for (const step of dpiStrategyAnalysis.steps) list.append(dpiLabElement('li', `${step.index}. ${step.function}(${step.arguments.map((arg) => `${arg.name}${arg.value === null ? '' : `=${arg.value}`}`).join(', ')}) → ${step.modeling}`, 'break-words'));
+        host.append(list);
+      }
+      host.append(dpiLabElement('p', 'Source metadata: подтверждённое наличие в Lua-каталоге; сетевой эффект пока не моделируется.', 'mt-2 text-xs'));
+    }
+  }
+  if (note) note.textContent = dpiStrategyAnalysis?.steps.length
+    ? `Визуализировано шагов: ${dpiStrategyAnalysis.stepCount}. Сопоставление по наблюдаемым байтам/пакетам пока невозможно: моделирование этих Lua-действий не реализовано.`
+    : 'Сравнение PCAP со стратегией станет достоверным, когда для её Lua-функций будет реализована проверенная модель. Неизвестные действия не синтезируются.';
+  renderDpiCorrelation();
+}
+
+function renderDpiCorrelation() {
+  const host = $('#dpiLabCorrelation');
+  if (!host) return;
+  host.replaceChildren();
+  const data = dpiStrategyCorrelation(dpiStrategyAnalysis, dpiLabAnalysis);
+  for (const [title, detail] of [
+    ['Ожидается по выбранной стратегии', data.expected.length ? data.expected.join(' · ') : 'Стратегия не выбрана или не содержит Lua-шагов.'],
+    ['Модель', data.model], ['Наблюдается', data.observed], ['Неизвестно', data.confirmed],
+  ]) {
+    const row = dpiLabElement('div', '', 'rounded-lg border border-slate-700 p-3');
+    row.append(dpiLabElement('strong', title, 'text-slate-100'), dpiLabElement('p', detail, 'mt-1 break-words text-slate-300')); host.append(row);
+  }
+}
+
+function renderDpiJourney(packet: DpiLabPacket | undefined) {
+  const host = $('#dpiLabJourney');
+  if (!host) return;
+  host.replaceChildren();
+  const nodes = [packet ? `Отправитель: ${packet.source}:${packet.sourcePort ?? '—'}` : 'Отправитель неизвестен', 'Сетевой путь: неизвестен', 'nfqws2: участие не подтверждено', packet ? `Получатель: ${packet.destination}:${packet.destinationPort ?? '—'}` : 'Получатель неизвестен'];
+  nodes.forEach((label, index) => {
+    if (index) host.append(dpiLabElement('span', '→', 'text-slate-500'));
+    host.append(dpiLabElement('span', label, 'rounded-lg border border-slate-700 px-3 py-2 break-all text-slate-200'));
+  });
+}
+
+async function loadDpiStrategyProfiles() {
+  const select = $('#dpiLabProfileSelect');
+  if (!(select instanceof HTMLSelectElement)) return;
+  try {
+    dpiLabProfiles = await nfqwsProfiles.list();
+    select.replaceChildren(new Option('Выберите текущий профиль…', ''));
+    for (const profile of dpiLabProfiles.profiles) select.add(new Option(`${profile.index}. ${profile.name} · ${profile.source}`, profile.id));
+    if (!dpiLabProfiles.profiles.length) select.replaceChildren(new Option('Профили не найдены', ''));
+  } catch (error) {
+    select.replaceChildren(new Option('Не удалось загрузить профили', ''));
+    setText('#dpiLabStrategyStatus', error instanceof Error ? error.message : 'Не удалось загрузить профили из конфигурации nfqws2.');
+  }
+}
+
+function selectDpiStrategyProfile() {
+  const select = $('#dpiLabProfileSelect');
+  const source = $('#dpiLabStrategySource');
+  if (!(select instanceof HTMLSelectElement) || !(source instanceof HTMLTextAreaElement) || !dpiLabProfiles) return;
+  const profile = dpiLabProfiles.profiles.find((item) => item.id === select.value);
+  if (!profile) return;
+  source.value = [...profile.filters, ...profile.protocols, ...profile.payloads, ...profile.steps].join('\n');
+  invalidateDpiStrategyAnalysis();
+  setText('#dpiLabStrategyStatus', `Загружен профиль «${profile.name}» из ${profile.source}. Нажмите «Визуализировать».`);
+}
+
+function invalidateDpiStrategyAnalysis() {
+  dpiStrategyAnalysis = null;
+  dpiAnalyzedStrategySource = null;
+  $('#dpiLabStrategyResults')?.classList.add('hidden');
+  renderDpiExpectedModel();
+}
+
+function renderDpiStrategyAnalysis(result: DpiLabStrategyAnalysis) {
+  const region = $('#dpiLabStrategyResults');
+  const facts = $('#dpiLabStrategyFacts');
+  const steps = $('#dpiLabStrategySteps');
+  if (!region || !facts || !steps) return;
+  region.classList.remove('hidden');
+  facts.replaceChildren();
+  facts.append(dpiLabElement('span', `${result.stepCount} Lua-шаг(ов)`, 'dpi-lab-fact'));
+  for (const profile of result.profiles) facts.append(dpiLabElement('span', `Профиль ${profile.index}${profile.name ? ` · ${profile.name}` : ''}: ${[...profile.filters, ...profile.controls].join(' · ') || 'фильтры не заданы'}`, 'dpi-lab-fact font-mono'));
+  steps.replaceChildren();
+  if (result.warnings.length) {
+    const warningBox = dpiLabElement('div', '', 'grid gap-1 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200');
+    result.warnings.forEach((warning) => warningBox.append(dpiLabElement('p', warning)));
+    steps.append(warningBox);
+  }
+  for (const item of result.steps) {
+    const card = dpiLabElement('article', '', 'dpi-lab-strategy-step');
+    const heading = dpiLabElement('div', '', 'flex flex-wrap items-center justify-between gap-2');
+    heading.append(dpiLabElement('h3', `${item.index}. ${item.function} · профиль ${item.profileIndex}`, 'font-semibold text-slate-100'));
+    heading.append(dpiLabElement('span', item.installed ? `${item.evidence} · ${item.file}` : 'UNKNOWN · нет в каталоге установки', `evidence-badge ${item.installed ? 'evidence-derived' : 'evidence-unknown'}`));
+    card.append(heading);
+    card.append(dpiLabElement('code', `--lua-desync=${item.raw}`, 'mt-2 block overflow-x-auto rounded bg-slate-950/70 p-2 font-mono text-xs text-cyan-100'));
+    if (item.arguments.length) {
+      const argList = dpiLabElement('div', '', 'mt-2 flex flex-wrap gap-2');
+      for (const argument of item.arguments) argList.append(dpiLabElement('span', `${argument.name}${argument.value === null ? '' : ` = ${argument.value}`}`, 'dpi-lab-fact font-mono'));
+      card.append(argList);
+    } else card.append(dpiLabElement('p', 'Аргументы не заданы.', 'mt-2 text-xs text-slate-400'));
+    if (item.requiredArguments.length) card.append(dpiLabElement('p', `Функция требует: ${item.requiredArguments.join(', ')}. Сверьте с указанными аргументами.`, 'mt-2 text-xs text-amber-200'));
+    if (item.unverifiedArguments.length) card.append(dpiLabElement('p', `Не найдены в документации установленной функции: ${item.unverifiedArguments.join(', ')}. Требует ручной проверки; поддержка не подтверждена.`, 'mt-2 text-xs text-amber-200'));
+    for (const doc of item.docs) card.append(dpiLabElement('p', doc, 'mt-2 text-sm text-slate-300'));
+    if (item.declaredArguments.length) card.append(dpiLabElement('p', `Параметры по установленному Lua-каталогу: ${item.declaredArguments.join(' · ')}`, 'mt-2 break-words text-xs text-slate-400'));
+    card.append(dpiLabElement('p', `Packet Timeline: шаг ${item.index} следует за предыдущим. Синтетические пакеты, SEQ/ACK, TTL, checksum, replay/drop и точный split: ${item.modeling}.`, 'mt-2 border-t border-slate-800 pt-2 text-xs text-slate-400'));
+    steps.append(card);
+  }
+  if (!result.luaExecuted) steps.prepend(dpiLabElement('p', 'Исходник прочитан как данные. Выполнение Lua отключено.', 'rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-200'));
+}
+
+async function visualizeDpiStrategy() {
+  const source = $('#dpiLabStrategySource');
+  const button = $('[data-action-click="visualizeDpiStrategy"]');
+  if (!(source instanceof HTMLTextAreaElement)) return;
+  const text = source.value;
+  if (!text.trim()) { setText('#dpiLabStrategyStatus', 'Выберите профиль, вставьте стратегию или загрузите текстовый файл.'); return; }
+  if (new TextEncoder().encode(text).length > 256 * 1024) { setText('#dpiLabStrategyStatus', 'Текст больше лимита 256 КиБ.'); return; }
+  invalidateDpiStrategyAnalysis();
+  if (button instanceof HTMLButtonElement) button.disabled = true;
+  setText('#dpiLabStrategyStatus', 'Разбираю стратегию и сверяю функции с Lua-файлами установленной версии…');
+  try {
+    const analysis = await nfqwsDpiLab.analyzeStrategy(text);
+    if (source.value !== text) { setText('#dpiLabStrategyStatus', 'Текст изменился во время анализа. Нажмите «Визуализировать» повторно.'); return; }
+    dpiStrategyAnalysis = analysis;
+    dpiAnalyzedStrategySource = text;
+    renderDpiStrategyAnalysis(dpiStrategyAnalysis);
+    renderDpiExpectedModel();
+    setText('#dpiLabStrategyStatus', `Разбор завершён: ${dpiStrategyAnalysis.stepCount} Lua-шаг(ов). Никакие сетевые пакеты не отправлялись.`);
+  } catch (error) {
+    setText('#dpiLabStrategyStatus', error instanceof Error ? error.message : 'Не удалось разобрать стратегию.');
+  } finally { if (button instanceof HTMLButtonElement) button.disabled = false; }
+}
+
+async function runDpiLiveStrategyTest() {
+  const host = $('#dpiLabLiveHost');
+  const protocol = $('#dpiLabLiveProtocol');
+  const output = $('#dpiLabLiveResults');
+  if (!(host instanceof HTMLInputElement) || !(protocol instanceof HTMLSelectElement) || !output) return;
+  if (!dpiStrategyAnalysis || $<HTMLTextAreaElement>('#dpiLabStrategySource')?.value !== dpiAnalyzedStrategySource) { setText('#dpiLabLiveStatus', 'Сначала выполните «Визуализировать» для текущего текста стратегии.'); return; }
+  if (dpiStrategyAnalysis.profiles.length > 1) { setText('#dpiLabLiveStatus', 'В тексте несколько профилей. Выберите один текущий профиль в визуализаторе: объединять разные --new в одну тестовую цепочку нельзя.'); return; }
+  const steps = dpiStrategyAnalysis.steps.map((step) => `--lua-desync=${step.raw}`);
+  if (!steps.length) { setText('#dpiLabLiveStatus', 'В тексте нет шагов --lua-desync для сетевой проверки.'); return; }
+  if (steps.length > 8) { setText('#dpiLabLiveStatus', 'Изолированная проверка ограничена 8 Lua-шагами за один запуск.'); return; }
+  if (dpiStrategyAnalysis.otherOptions.some((option) => option.startsWith('--in-range=') || option.startsWith('--out-range='))) {
+    setText('#dpiLabLiveStatus', 'Этот тест не поддерживает --in-range/--out-range. Цепочка с такими ограничениями не будет запущена с изменённой семантикой.'); return;
+  }
+  const button = $('[data-action-click="runDpiLiveStrategyTest"]');
+  if (button instanceof HTMLButtonElement) button.disabled = true;
+  output.replaceChildren();
+  setText('#dpiLabLiveStatus', 'Запускаю прямую базовую проверку, затем отдельный тестовый процесс nfqws2…');
+  try {
+    const operation = await nfqwsDiagnostics.strategyStart(host.value.trim(), protocol.value as 'http' | 'https' | 'quic', 'custom', 2, [steps], true, false, false, false);
+    let current = operation;
+    for (let attempt = 0; attempt < 90 && ['queued', 'running', 'stopping'].includes(current.state); attempt += 1) {
+      setText('#dpiLabLiveStatus', `${current.message} · ${current.done}/${current.total}`);
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      current = await nfqwsDiagnostics.strategyStatus(operation.id);
+    }
+    output.replaceChildren();
+    output.append(dpiLabElement('p', 'Наблюдение: результат изолированного сетевого запроса NFQWS2. Отдельный захват пакетов и журнал фактических Lua-вызовов этот API не предоставляет.', 'rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-100'));
+    output.append(dpiLabElement('p', 'Сначала операция выполняет прямой базовый запрос, затем запускает выбранные шаги в отдельном тестовом процессе.', 'text-sm text-slate-300'));
+    const results = current.results ?? [];
+    if (!results.length) output.append(dpiLabElement('p', `${current.state}: ${current.message}`, 'text-sm text-slate-200'));
+    for (const result of results) {
+      const row = dpiLabElement('article', '', 'dpi-lab-strategy-step');
+      row.append(dpiLabElement('h3', result.candidate.name, 'font-semibold text-slate-100'));
+      row.append(dpiLabElement('p', `${result.successes}/${result.attempts} успешных сетевых ответов · подтверждение: ${result.confirmed ? 'да по критерию проверки' : 'нет'} · ${result.elapsedMs} мс`, 'mt-1 text-sm text-slate-300'));
+      row.append(dpiLabElement('p', result.detail, 'mt-1 text-xs text-slate-400'));
+      output.append(row);
+    }
+    output.append(dpiLabElement('p', 'Неизвестно: какие именно пакеты увидел DPI и какие Lua-ветви реально отправили пакет. HTTP-код ответа не доказывает эффективность обхода.', 'text-sm text-slate-400'));
+    setText('#dpiLabLiveStatus', ['queued', 'running', 'stopping'].includes(current.state)
+      ? `Операция ещё выполняется (${current.state}). Откройте проверку позже, чтобы получить обновлённый результат.`
+      : `Изолированная операция завершена: ${current.state}.`);
+  } catch (error) {
+    setText('#dpiLabLiveStatus', error instanceof Error ? error.message : 'Не удалось выполнить изолированную проверку.');
+  } finally { if (button instanceof HTMLButtonElement) button.disabled = false; }
+}
+
 function renderDpiPacketBytes(packet: DpiLabPacket) {
   const caption = $('#dpiLabPacketCaption');
   const host = $('#dpiLabPacketBytes');
   if (!host || !caption) return;
+  const info = $('#dpiLabPacketInfo');
+  if (info) {
+    const event = dpiLabAnalysis?.summary?.events.find((item) => item.packetNumbers[item.packetNumbers.length - 1] === packet.number);
+    info.replaceChildren(dpiLabElement('h3', event?.title ?? 'Пакет из захвата', 'font-semibold text-white'), dpiLabElement('p', event?.detail ?? 'Пакет присутствует в файле; его назначение не определено.', 'mt-1'), dpiLabElement('p', `Откуда: ${packet.source}:${packet.sourcePort ?? '—'} → куда: ${packet.destination}:${packet.destinationPort ?? '—'} · данные: ${packet.payloadLen} Б · пакет №${packet.number}`, 'mt-2 break-all'));
+  }
   caption.textContent = `Пакет ${packet.number} · ${new Date(packet.timestampMicros / 1000).toISOString()} · ${packet.source}:${packet.sourcePort ?? '—'} → ${packet.destination}:${packet.destinationPort ?? '—'} · ${packet.protocol}${packet.tcpSequence === null ? '' : ` · SEQ ${packet.tcpSequence} · ACK ${packet.tcpAcknowledgement} · flags ${formatDpiTcpFlags(packet.tcpFlags)}`}${packet.ttl === null ? '' : ` · TTL ${packet.ttl}`} · payload ${packet.payloadLen} Б · смещение ${packet.payloadOffset ?? '—'}`;
   host.replaceChildren();
   const dump = formatDpiByteDump(packet.frameHex, 4096);
@@ -495,6 +702,7 @@ function renderDpiPacketTimeline() {
         selectedDpiPacketNumber = packet.number;
         renderDpiPacketTimeline();
         renderDpiPacketBytes(packet);
+        renderDpiJourney(packet);
       });
       window.append(button);
     }
@@ -514,7 +722,7 @@ function renderDpiFlowDetails(flow: DpiLabFlow) {
   const facts = dpiLabElement('div', '', 'grid gap-2 text-sm');
   facts.append(dpiLabElement('p', `${flow.source}:${flow.sourcePort} → ${flow.destination}:${flow.destinationPort}`, 'break-all font-mono text-slate-200'));
   facts.append(dpiLabElement('p', `Политика: ${flow.reassemblyPolicy} · старт SEQ ${flow.sequenceStart} · first-seen по порядку захвата · пакеты ${flow.packetNumbers.join(', ') || '—'}`, 'break-words text-xs text-slate-400'));
-  facts.append(dpiLabElement('p', `Пропуски: ${flow.gapBytes} Б · пересечения: ${flow.overlapBytes} Б${flow.streamTruncated ? ' · поток ограничен 32 КиБ' : ''}`, 'text-sm text-slate-300'));
+  facts.append(dpiLabElement('p', `Пропуски: ${flow.gapBytes} Б · повторные позиции: ${flow.overlapBytes} Б · различающиеся байты: ${flow.conflictingOverlapBytes} Б${flow.streamTruncated ? ' · поток ограничен 32 КиБ' : ''}`, 'text-sm text-slate-300'));
   facts.append(dpiLabElement('span', 'Реконструкция · SIMULATED', 'evidence-badge evidence-simulated w-fit'));
   const streamTitle = dpiLabElement('h3', 'Байты восстановленного потока · ?? означает пропуск · источник — первый пакет захвата', 'mt-3 text-xs font-semibold text-slate-200');
   const stream = dpiLabElement('div', '', 'dpi-lab-stream-bytes');
@@ -526,7 +734,9 @@ function renderDpiFlowDetails(flow: DpiLabFlow) {
     stream.append(line);
   }
   if (flow.dataHex.split(' ').length > 4096) stream.append(dpiLabElement('p', 'Показаны первые 4096 байтов потока.', 'mt-2 text-xs text-slate-400'));
-  host.append(facts, streamTitle, stream);
+  const technical = dpiLabElement('details', '', 'dpi-lab-expert-details');
+  technical.append(dpiLabElement('summary', 'Байты потока и источники', 'cursor-pointer text-sm text-slate-300'), streamTitle, stream);
+  host.append(facts, technical);
   if (flow.tlsClientHello) {
     const hello = flow.tlsClientHello;
     host.append(dpiLabElement('h3', 'TLS ClientHello · PROTOCOL DERIVED', 'mt-4 text-sm font-semibold text-cyan-200'));
@@ -540,16 +750,157 @@ function renderDpiFlowDetails(flow: DpiLabFlow) {
       row.append(dpiLabElement('code', field.hex, 'min-w-0 break-all text-[11px] text-slate-500'));
       table.append(row);
     }
-    host.append(table);
+    const tlsDetails = dpiLabElement('details', '', 'dpi-lab-expert-details');
+    tlsDetails.append(dpiLabElement('summary', 'Поля и байты ClientHello', 'cursor-pointer text-sm text-slate-300'), table);
+    host.append(tlsDetails);
   } else if (flow.tlsParseError) {
     host.append(dpiLabElement('p', `TLS ClientHello не разобран: ${flow.tlsParseError}`, 'mt-3 text-sm text-amber-200'));
   }
+}
+
+let dpiDetailLevel: 'simple' | 'advanced' | 'expert' = 'simple';
+function setDpiDetailLevel(level: 'simple' | 'advanced' | 'expert') {
+  dpiDetailLevel = level;
+  const analysisRegion = $('#dpiLabAnalysis');
+  if (analysisRegion) analysisRegion.dataset.detailLevel = level;
+  const levels = { simple: 0, advanced: 1, expert: 2 } as const;
+  document.querySelectorAll<HTMLElement>('[data-dpi-min-level]').forEach((element) => {
+    const minimum = element.dataset.dpiMinLevel as keyof typeof levels;
+    element.classList.toggle('hidden', levels[level] < (levels[minimum] ?? 0));
+  });
+  $('#dpiLabAdvancedPanel')?.classList.toggle('hidden', level === 'simple');
+  $('#dpiLabExpertPanel')?.classList.toggle('hidden', level !== 'expert');
+  $('#dpiLabPacketInfo')?.classList.toggle('hidden', level === 'simple');
+  document.querySelectorAll<HTMLButtonElement>('#dpiLabLevels button').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.level === level)));
+  if (dpiLabAnalysis) renderDpiNextSteps(dpiLabAnalysis);
+  if (level === 'expert' && dpiLabAnalysis && selectedDpiPacketNumber !== null) {
+    const index = dpiLabAnalysis.packets.findIndex((packet) => packet.number === selectedDpiPacketNumber);
+    const list = $('#dpiLabPacketList');
+    if (list && index >= 0) { list.scrollTop = index * 52; renderDpiPacketTimeline(); }
+  }
+}
+
+function renderDpiNextSteps(analysis: DpiLabAnalysis) {
+  const nextSteps = $('#dpiLabNextSteps');
+  if (!nextSteps) return;
+  nextSteps.replaceChildren();
+  const tips = dpiNextSteps(analysis);
+  for (const tip of (dpiDetailLevel === 'simple' ? tips.slice(0, 2) : tips)) nextSteps.append(dpiLabElement('li', tip));
+}
+
+function renderDpiQuickOverview(analysis: DpiLabAnalysis) {
+  const host = $('#dpiLabQuickOverview');
+  if (!host) return;
+  const overview = dpiHumanOverview(analysis);
+  const lead = dpiLabElement('div', '', 'dpi-lab-overview-lead');
+  lead.append(dpiLabElement('h3', overview.title, 'text-base font-semibold text-slate-100'), dpiLabElement('p', overview.explanation, 'mt-1 text-sm leading-6 text-slate-300'));
+  const facts = dpiLabElement('div', '', 'grid gap-2 sm:grid-cols-2');
+  for (const fact of overview.facts) {
+    const row = dpiLabElement('div', '', 'dpi-lab-overview-fact');
+    row.append(dpiLabElement('p', fact.text, 'text-sm leading-5 text-slate-200'));
+    const links = dpiLabElement('div', '', 'mt-2 flex flex-wrap gap-2');
+    for (const number of fact.packetNumbers.slice(0, 4)) {
+      const button = dpiLabElement('button', `Кадр №${number}`, 'about-check-button');
+      button.type = 'button'; button.addEventListener('click', () => showDpiPacket(number)); links.append(button);
+    }
+    for (const index of fact.flowIndices.slice(0, 3)) {
+      const button = dpiLabElement('button', `Поток №${index}`, 'about-check-button');
+      button.type = 'button'; button.addEventListener('click', () => showDpiFlow(index)); links.append(button);
+    }
+    if (links.childElementCount) row.append(links);
+    facts.append(row);
+  }
+  host.replaceChildren(lead, facts, dpiLabElement('p', `${analysis.capture.packetCount} кадров · ${analysis.flows.length} TCP-направлений · ${Math.ceil(analysis.capture.sizeBytes / 1024)} КиБ`, 'text-xs text-slate-400'));
+}
+
+function renderDpiHumanSummary(analysis: DpiLabAnalysis) {
+  const levels = $('#dpiLabLevels');
+  if (levels) {
+    levels.replaceChildren();
+    for (const [level, label] of [['simple', 'Простой'], ['advanced', 'Продвинутый'], ['expert', 'Экспертный']] as const) {
+      const button = dpiLabElement('button', label, 'about-check-button dpi-lab-level-option');
+      button.type = 'button'; button.dataset.level = level;
+      button.addEventListener('click', () => setDpiDetailLevel(level)); levels.append(button);
+    }
+  }
+  renderDpiQuickOverview(analysis);
+  const findings = $('#dpiLabFindings');
+  if (findings) {
+    findings.replaceChildren();
+    for (const finding of analysis.summary.findings) {
+      const card = dpiLabElement('div', '', 'rounded-lg border border-slate-700 p-3');
+      const heading = dpiLabElement('div', '', 'flex flex-wrap items-center justify-between gap-2');
+      const status = dpiFindingStatus(finding.state);
+      heading.append(dpiLabElement('h3', finding.title, 'font-semibold text-slate-100'), dpiLabElement('span', status.label, `dpi-lab-finding-status dpi-lab-status-${status.tone}`));
+      card.append(heading, dpiLabElement('p', finding.detail, 'mt-1 text-sm text-slate-300'));
+      if (finding.packetNumbers.length || finding.flowIndices.length) {
+        const evidence = dpiLabElement('details', '', 'mt-2');
+        evidence.append(dpiLabElement('summary', `Показать подтверждения · пакеты: ${finding.packetNumbers.length}${finding.packetNumbers.length === 32 ? ' (первые, лимит 32)' : ''}, потоки: ${finding.flowIndices.length}`, 'cursor-pointer text-sm text-cyan-200'));
+        const links = dpiLabElement('div', '', 'flex flex-wrap gap-1');
+        for (const number of finding.packetNumbers) {
+          const button = dpiLabElement('button', `Пакет №${number}`, 'about-check-button mt-2');
+          button.type = 'button'; button.addEventListener('click', () => showDpiPacket(number)); links.append(button);
+        }
+        for (const index of finding.flowIndices) {
+          const button = dpiLabElement('button', `Поток №${index}`, 'about-check-button mt-2');
+          button.type = 'button'; button.addEventListener('click', () => showDpiFlow(index)); links.append(button);
+        }
+        evidence.append(links); card.append(evidence);
+      }
+      findings.append(card);
+    }
+  }
+  const limitations = $('#dpiLabLimitations');
+  if (limitations) { limitations.replaceChildren(); for (const line of analysis.summary.limitations) limitations.append(dpiLabElement('p', line)); }
+  renderDpiNextSteps(analysis);
+  const events = $('#dpiLabEvents');
+  if (events) {
+    events.replaceChildren();
+    if (!analysis.summary.events.length) events.append(dpiLabElement('p', 'Распознанных событий нет. Захват может быть неполным.', 'text-sm text-slate-400'));
+    let count = 0;
+    const more = dpiLabElement('button', 'Показать ещё события', 'about-check-button w-fit'); more.type = 'button';
+    const appendEvents = () => {
+      more.remove();
+      for (const event of analysis.summary.events.slice(count, count + 12)) {
+        const row = dpiLabElement('div', '', 'rounded-lg border border-slate-700 p-3');
+        row.append(dpiLabElement('strong', event.title, 'text-slate-100'), dpiLabElement('p', event.detail, 'mt-1 text-sm text-slate-300'));
+        for (const number of event.packetNumbers) { const button = dpiLabElement('button', `Пакет №${number}`, 'about-check-button mt-2 mr-2'); button.type = 'button'; button.addEventListener('click', () => showDpiPacket(number)); row.append(button); }
+        if (event.flowIndex !== null) { const button = dpiLabElement('button', `Поток №${event.flowIndex}`, 'about-check-button mt-2 mr-2'); button.type = 'button'; button.addEventListener('click', () => showDpiFlow(event.flowIndex!)); row.append(button); }
+        events.append(row);
+      }
+      count += 12;
+      if (count < analysis.summary.events.length) events.append(more);
+      else if (analysis.summary.eventsTruncated) events.append(dpiLabElement('p', 'Анализатор ограничил временную шкалу первыми событиями. Полный список кадров доступен в экспертном режиме.', 'rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-400'));
+    };
+    more.addEventListener('click', appendEvents); appendEvents();
+  }
+  setDpiDetailLevel(dpiDetailLevel);
+}
+
+function showDpiPacket(number: number) {
+  const packet = dpiLabAnalysis?.packets.find((item) => item.number === number);
+  if (!packet) return;
+  selectedDpiPacketNumber = number; setDpiDetailLevel('advanced'); renderDpiPacketBytes(packet);
+  renderDpiJourney(packet);
+  $('#dpiLabPacketInfo')?.scrollIntoView({ block: 'nearest' });
+}
+
+function showDpiFlow(index: number) {
+  if (!dpiLabAnalysis || index < 1 || index > dpiLabAnalysis.flows.length) return;
+  setDpiDetailLevel('advanced');
+  const button = document.querySelectorAll<HTMLButtonElement>('#dpiLabFlowList .dpi-lab-flow-row')[index - 1];
+  button?.click();
+  $('#dpiLabFlowDetails')?.scrollIntoView({ block: 'nearest' });
 }
 
 function renderDpiLabAnalysis(analysis: DpiLabAnalysis) {
   const region = $('#dpiLabAnalysis');
   if (!region) return;
   region.classList.remove('hidden');
+  dpiDetailLevel = 'simple';
+  renderDpiHumanSummary(analysis);
+  renderDpiCorrelation();
+  renderDpiJourney(analysis.packets.find((packet) => packet.sourcePort !== null && packet.destinationPort !== null));
   setText('#dpiLabCaptureName', analysis.capture.name);
   setText('#dpiLabCaptureSummary', `${analysis.capture.packetCount} пак. · ${analysis.flows.length} TCP направл. · ${Math.ceil(analysis.capture.sizeBytes / 1024)} КиБ · ${analysis.capture.timestampResolution} · link type ${analysis.capture.linkType}`);
   const warnings = $('#dpiLabWarnings');
@@ -573,7 +924,7 @@ function renderDpiLabAnalysis(analysis: DpiLabAnalysis) {
       const button = dpiLabElement('button', '', `dpi-lab-flow-row${index === selectedDpiFlowIndex ? ' selected' : ''}`);
       button.type = 'button';
       button.append(dpiLabElement('strong', `${flow.source}:${flow.sourcePort} → ${flow.destination}:${flow.destinationPort}`, 'block break-all text-xs text-slate-100'));
-      button.append(dpiLabElement('span', `${flow.packetNumbers.length} пак. · ${flow.gapBytes} Б пропусков · ${flow.overlapBytes} Б overlap${flow.tlsClientHello?.serverName ? ` · SNI ${flow.tlsClientHello.serverName}` : ''}`, 'mt-1 block text-[11px] text-slate-400'));
+      button.append(dpiLabElement('span', `${flow.packetNumbers.length} пак. · ${flow.gapBytes} Б пропусков · ${flow.overlapBytes} Б повторов · ${flow.conflictingOverlapBytes} Б различий${flow.tlsClientHello?.serverName ? ` · SNI ${flow.tlsClientHello.serverName}` : ''}`, 'mt-1 block text-[11px] text-slate-400'));
       button.addEventListener('click', () => {
         selectedDpiFlowIndex = index;
         flows.querySelectorAll('.dpi-lab-flow-row').forEach((row, rowIndex) => row.classList.toggle('selected', rowIndex === index));
@@ -586,53 +937,81 @@ function renderDpiLabAnalysis(analysis: DpiLabAnalysis) {
   if (selectedFlow) renderDpiFlowDetails(selectedFlow);
 }
 
+function syncDpiCaptureControls() {
+  const input = $('#dpiLabCaptureFile');
+  const button = $('#dpiLabAnalyzeButton');
+  if (!(input instanceof HTMLInputElement) || !(button instanceof HTMLButtonElement)) return;
+  const file = input.files?.[0];
+  const availability = dpiCaptureAvailability(file?.size ?? null, dpiCaptureAnalyzing || dpiCaptureSaving);
+  button.disabled = availability.disabled;
+  button.title = availability.reason;
+  button.textContent = dpiCaptureAnalyzing ? 'Анализирую…' : 'Анализировать PCAP';
+  button.setAttribute('aria-busy', String(dpiCaptureAnalyzing));
+  input.disabled = dpiCaptureAnalyzing || dpiCaptureSaving;
+  const save = $('#dpiLabSaveButton');
+  const saveState = dpiExperimentSaveAvailability(!!file, !!file && !!dpiLabAnalysis && dpiFileIdentity(file) === dpiAnalyzedFileIdentity, dpiCaptureAnalyzing, dpiCaptureSaving);
+  if (save instanceof HTMLButtonElement) {
+    save.disabled = saveState.disabled;
+    save.title = saveState.reason;
+    save.textContent = dpiCaptureSaving ? 'Сохраняю…' : 'Сохранить эксперимент';
+  }
+  setText('#dpiLabSaveHint', saveState.reason);
+}
+
 async function analyzeDpiCapture() {
   const input = $('#dpiLabCaptureFile');
   const status = $('#dpiLabStatus');
-  const button = $('[data-action-click="analyzeDpiCapture"]');
   if (!(input instanceof HTMLInputElement) || !input.files?.[0]) { setText('#dpiLabStatus', 'Сначала выберите файл classic PCAP.'); return; }
   const file = input.files[0];
-  if (file.size > 2 * 1024 * 1024) { setText('#dpiLabStatus', 'Файл больше лимита 2 МиБ.'); return; }
-  if (button instanceof HTMLButtonElement) button.disabled = true;
+  const availability = dpiCaptureAvailability(file.size, dpiCaptureAnalyzing);
+  if (availability.disabled) { setText('#dpiLabStatus', availability.reason); return; }
+  dpiCaptureAnalyzing = true;
+  dpiAnalyzedFileIdentity = null;
+  syncDpiCaptureControls();
   if (status) status.textContent = 'Проверяю границы PCAP и реконструирую потоки…';
   try {
     dpiLabAnalysis = await nfqwsDpiLab.analyze(file);
     dpiAnalyzedFileIdentity = dpiFileIdentity(file);
     renderDpiLabAnalysis(dpiLabAnalysis);
-    const save = $('#dpiLabSaveButton');
-    if (save instanceof HTMLButtonElement) save.disabled = false;
     setText('#dpiLabStatus', `Анализ завершён: ${dpiLabAnalysis.packets.length} кадров, ${dpiLabAnalysis.flows.length} направлений TCP.`);
   } catch (error) {
     if (status) status.textContent = error instanceof Error ? error.message : 'Не удалось разобрать PCAP.';
   } finally {
-    if (button instanceof HTMLButtonElement) button.disabled = false;
+    dpiCaptureAnalyzing = false;
+    syncDpiCaptureControls();
   }
 }
 
 async function saveDpiExperiment() {
+  if (dpiCaptureSaving || dpiCaptureAnalyzing) return;
   const input = $('#dpiLabCaptureFile');
   if (!(input instanceof HTMLInputElement) || !input.files?.[0] || !dpiLabAnalysis || dpiFileIdentity(input.files[0]) !== dpiAnalyzedFileIdentity) {
     setText('#dpiLabStatus', 'Сначала проанализируйте выбранный PCAP.');
     return;
   }
+  dpiCaptureSaving = true;
+  syncDpiCaptureControls();
   try {
     const saved = await nfqwsDpiLab.save(input.files[0]);
     setText('#dpiLabStatus', `Эксперимент «${saved.name}» сохранён.`);
     await loadDpiExperiments();
   } catch (error) {
     setText('#dpiLabStatus', error instanceof Error ? error.message : 'Не удалось сохранить эксперимент.');
+  } finally {
+    dpiCaptureSaving = false;
+    syncDpiCaptureControls();
   }
 }
 
 async function loadDpiExperiment(id: string) {
+  if (dpiCaptureAnalyzing || dpiCaptureSaving) { setText('#dpiLabStatus', 'Дождитесь завершения текущего анализа или сохранения.'); return; }
   setText('#dpiLabStatus', 'Загружаю сохранённый эксперимент…');
   try {
     dpiLabAnalysis = await nfqwsDpiLab.load(id);
     dpiAnalyzedFileIdentity = null;
     const input = $('#dpiLabCaptureFile');
     if (input instanceof HTMLInputElement) input.value = '';
-    const save = $('#dpiLabSaveButton');
-    if (save instanceof HTMLButtonElement) save.disabled = true;
+    syncDpiCaptureControls();
     renderDpiLabAnalysis(dpiLabAnalysis);
     setText('#dpiLabStatus', `Эксперимент «${dpiLabAnalysis.capture.name}» открыт из локального сохранения.`);
   } catch (error) {
@@ -4834,6 +5213,9 @@ function bindPrototypeActions() {
   };
   const handlers: Record<string, (...args: any[]) => unknown> = {
     switchMainTab: (route: Route) => showRoute(route),
+    switchDpiLabTab: (tab: 'visualizer' | 'live' | 'pcap') => switchDpiLabTab(tab),
+    visualizeDpiStrategy: () => void visualizeDpiStrategy(),
+    runDpiLiveStrategyTest: () => void runDpiLiveStrategyTest(),
     analyzeDpiCapture: () => void analyzeDpiCapture(),
     saveDpiExperiment: () => void saveDpiExperiment(),
     refreshDpiExperiments: () => void loadDpiExperiments(),
@@ -5141,9 +5523,29 @@ function boot() {
   dpiCaptureInput?.addEventListener('change', () => {
     if (!(dpiCaptureInput instanceof HTMLInputElement)) return;
     const file = dpiCaptureInput.files?.[0];
-    const save = $('#dpiLabSaveButton');
-    if (save instanceof HTMLButtonElement) save.disabled = !file || dpiFileIdentity(file) !== dpiAnalyzedFileIdentity;
-    setText('#dpiLabStatus', file ? `${file.name} · ${Math.ceil(file.size / 1024)} КиБ · нажмите «Анализировать PCAP».` : 'Захват ещё не выбран.');
+    syncDpiCaptureControls();
+    const availability = dpiCaptureAvailability(file?.size ?? null, dpiCaptureAnalyzing);
+    setText('#dpiLabStatus', availability.disabled ? availability.reason : `${file!.name} · ${Math.ceil(file!.size / 1024)} КиБ · нажмите «Анализировать PCAP».`);
+  });
+  syncDpiCaptureControls();
+  const dpiStrategyProfile = $('#dpiLabProfileSelect');
+  $('#dpiLabStrategySource')?.addEventListener('input', () => {
+    invalidateDpiStrategyAnalysis();
+  });
+  dpiStrategyProfile?.addEventListener('change', selectDpiStrategyProfile);
+  const dpiStrategyFile = $('#dpiLabStrategyFile');
+  dpiStrategyFile?.addEventListener('change', () => {
+    if (!(dpiStrategyFile instanceof HTMLInputElement)) return;
+    const file = dpiStrategyFile.files?.[0];
+    const source = $('#dpiLabStrategySource');
+    if (!file || !(source instanceof HTMLTextAreaElement)) return;
+    if (!/\.(conf|txt|lua)$/i.test(file.name)) { setText('#dpiLabStrategyStatus', 'Допустимы только текстовые файлы .conf, .txt и .lua.'); dpiStrategyFile.value = ''; return; }
+    if (file.size > 256 * 1024) { setText('#dpiLabStrategyStatus', 'Файл превышает лимит 256 КиБ.'); dpiStrategyFile.value = ''; return; }
+    void file.text().then((text) => {
+      source.value = text;
+      invalidateDpiStrategyAnalysis();
+      setText('#dpiLabStrategyStatus', `Загружен ${file.name} · ${file.size} байт. Содержимое рассматривается только как текст и не исполняется.`);
+    }).catch(() => setText('#dpiLabStrategyStatus', 'Не удалось прочитать текстовый файл.'));
   });
   const foreignFileInput = $('#foreignConfigFileInput');
   foreignFileInput?.addEventListener('change', () => {

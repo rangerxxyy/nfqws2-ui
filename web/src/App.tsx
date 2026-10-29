@@ -311,7 +311,7 @@ export default function App() {
                 {"\n            "}
               </button>
               <button data-action-click={"switchMainTab"} data-args={JSON.stringify(["dpiLab"])} id={"navBtn-dpiLab"} className={"side-nav-btn w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 border border-transparent text-left"}>
-                <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>⌁</span><span>DPI Lab · анализ PCAP</span></span>
+                <span className={"flex items-center gap-3"}><span className={"text-cyan-300"}>⌁</span><span>DPI Lab</span></span>
                 <span className={"text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300"}>LAB</span>
               </button>
               {"\n\n            "}
@@ -1288,25 +1288,80 @@ export default function App() {
         </section>
         <section id={"tabContent-dpiLab"} className={"hidden view-animate space-y-4"}>
           <header className={"about-header"}>
-            <div><span className={"about-eyebrow"}>АНАЛИЗ ЗАХВАТОВ</span><h1>DPI Lab</h1><p>Загрузите classic PCAP: лаборатория покажет наблюдавшиеся кадры, TCP-реконструкцию и поля TLS ClientHello.</p></div>
-            <span className={"rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-mono text-cyan-200"}>PCAP · TCP · TLS</span>
+            <div><span className={"about-eyebrow"}>АНАЛИЗ СТРАТЕГИЙ И ЗАХВАТОВ</span><h1>DPI Lab</h1><p>Разберите текущую Lua-стратегию без PCAP или исследуйте реальные кадры отдельным анализатором.</p></div>
+            <span className={"rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-mono text-cyan-200"}>STRATEGY · TCP · TLS</span>
           </header>
+          <nav className={"flex flex-wrap gap-2"} aria-label={"Разделы DPI Lab"}>
+            <button type={"button"} data-action-click={"switchDpiLabTab"} data-args={JSON.stringify(["visualizer"])} className={"dpi-lab-tab active"}>Визуализатор стратегии</button>
+            <button type={"button"} data-action-click={"switchDpiLabTab"} data-args={JSON.stringify(["live"])} className={"dpi-lab-tab"}>Проверка стратегии</button>
+            <button type={"button"} data-action-click={"switchDpiLabTab"} data-args={JSON.stringify(["pcap"])} className={"dpi-lab-tab"}>Анализатор PCAP</button>
+          </nav>
+          <section id={"dpiLabPane-visualizer"} className={"space-y-4"}>
+            <section className={"ui-card rounded-2xl p-4 sm:p-5 space-y-3"}>
+              <div className={"flex flex-wrap items-end gap-3"}>
+                <label className={"grid min-w-[16rem] flex-1 gap-1 text-sm text-slate-300"}>Профиль из текущей конфигурации<select id={"dpiLabProfileSelect"} className={"rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"}><option value={""}>Загрузка профилей…</option></select></label>
+                <label className={"grid gap-1 text-sm text-slate-300"}>Текстовый файл<input id={"dpiLabStrategyFile"} type={"file"} accept={".conf,.txt,.lua,text/plain"} className={"max-w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 file:mr-2 file:rounded-md file:border-0 file:bg-slate-800 file:px-2 file:py-1 file:text-xs"} /></label>
+                <button type={"button"} data-action-click={"visualizeDpiStrategy"} className={"dpi-lab-primary rounded-lg px-4 py-2 text-sm font-medium"}>Визуализировать</button>
+              </div>
+              <label htmlFor={"dpiLabStrategySource"} className={"block text-sm text-slate-300"}>Стратегия или фрагмент конфигурации</label>
+              <textarea id={"dpiLabStrategySource"} spellCheck={false} className={"min-h-48 w-full resize-y rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs leading-5 text-slate-100"} placeholder={'Вставьте --lua-desync=… или фрагмент NFQWS_ARGS'}></textarea>
+              <p id={"dpiLabStrategyStatus"} role={"status"} aria-live={"polite"} className={"text-sm text-slate-300"}>Загрузите профиль, вставьте стратегию или выберите .conf/.txt/.lua. Файл анализируется как текст и никогда не исполняется.</p>
+            </section>
+            <section id={"dpiLabStrategyResults"} className={"hidden ui-card rounded-2xl p-4 sm:p-5 space-y-4"} aria-label={"Пошаговый разбор стратегии"}>
+              <div className={"flex flex-wrap items-center justify-between gap-2"}><h2 className={"font-semibold text-white"}>Strategy X-Ray · порядок Lua-шагов</h2><span className={"evidence-badge evidence-unknown"}>Модель пакетов не подтверждена</span></div>
+              <div id={"dpiLabStrategyFacts"} className={"flex flex-wrap gap-2 text-xs"}></div>
+              <div id={"dpiLabStrategySteps"} className={"grid gap-3"}></div>
+              <details className={"rounded-lg border border-slate-800 p-3"}><summary className={"cursor-pointer text-sm font-medium text-slate-200"}>Byte Inspector · входные данные</summary><p className={"mt-2 text-xs text-slate-400"}>Без реального payload ClientHello лаборатория не придумывает байты или границы пакетов. Для анализа фактических байтов используйте PCAP Analyzer.</p></details>
+            </section>
+          </section>
+          <section id={"dpiLabPane-live"} className={"hidden space-y-4"}>
+            <section className={"ui-card rounded-2xl p-4 sm:p-5 space-y-3"}>
+              <div><h2 className={"font-semibold text-white"}>Live Strategy Test</h2><p className={"mt-1 text-sm leading-5 text-slate-400"}>Проверка использует отдельный тестовый процесс nfqws2 и не сохраняет изменения в рабочую конфигурацию. Ответ HTTP сам по себе не доказывает эффективность стратегии.</p></div>
+              <div className={"flex flex-wrap items-end gap-2"}>
+                <label className={"grid min-w-[14rem] flex-1 gap-1 text-sm text-slate-300"} htmlFor={"dpiLabLiveHost"}>Домен или IP<input id={"dpiLabLiveHost"} type={"text"} placeholder={"youtube.com"} className={"rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"} /></label>
+                <label className={"grid gap-1 text-sm text-slate-300"} htmlFor={"dpiLabLiveProtocol"}>Протокол<select id={"dpiLabLiveProtocol"} className={"rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"}><option value={"https"}>HTTPS / TLS</option><option value={"http"}>HTTP</option><option value={"quic"}>QUIC</option></select></label>
+                <button type={"button"} data-action-click={"runDpiLiveStrategyTest"} className={"dpi-lab-primary rounded-lg px-4 py-2 text-sm font-medium"}>Проверить изолированно</button>
+              </div>
+              <div id={"dpiLabLiveModel"} className={"rounded-lg border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-400"}>Ожидаемая стратегия появится здесь после разбора в первой вкладке.</div>
+              <p className={"text-xs leading-5 text-slate-400"}>Текущий сетевой тест проверяет только выбранную Lua-цепочку. Фильтры и payload тестового профиля определяются выбранным протоколом; исходные фильтры профиля не переносятся.</p>
+              <p id={"dpiLabLiveStatus"} role={"status"} aria-live={"polite"} className={"text-sm text-slate-300"}>Сначала визуализируйте стратегию и укажите цель.</p>
+              <div id={"dpiLabLiveResults"} className={"grid gap-2"}></div>
+            </section>
+          </section>
+          <section id={"dpiLabPane-pcap"} className={"hidden space-y-4"}>
+          <p id={"dpiLabPcapStrategyNote"} className={"rounded-lg border border-slate-800 bg-slate-950/50 px-3 py-2 text-xs text-slate-400"}>Сравнение PCAP со стратегией станет достоверным, когда для её Lua-функций будет реализована проверенная модель. Неизвестные действия не синтезируются.</p>
           <section className={"ui-card rounded-2xl p-4 sm:p-5 space-y-3"}>
             <div className={"flex flex-wrap items-center gap-2"}>
               <label htmlFor={"dpiLabCaptureFile"} className={"sr-only"}>Файл захвата classic PCAP</label>
               <input id={"dpiLabCaptureFile"} type={"file"} accept={".pcap,.cap,application/vnd.tcpdump.pcap,application/octet-stream"} className={"min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-slate-200"} />
-              <button type={"button"} data-action-click={"analyzeDpiCapture"} className={"btn-primary rounded-lg px-4 py-2 text-sm font-medium"}>Анализировать PCAP</button>
-              <button type={"button"} data-action-click={"saveDpiExperiment"} id={"dpiLabSaveButton"} disabled={true} className={"about-check-button disabled:cursor-not-allowed disabled:opacity-50"}>Сохранить эксперимент</button>
+              <button id={"dpiLabAnalyzeButton"} type={"button"} data-action-click={"analyzeDpiCapture"} data-independent-action={"true"} disabled={true} className={"dpi-lab-primary rounded-lg px-4 py-2 text-sm font-medium"}>Анализировать PCAP</button>
+              <div className={"grid max-w-sm gap-1"}><button type={"button"} data-action-click={"saveDpiExperiment"} data-independent-action={"true"} id={"dpiLabSaveButton"} aria-describedby={"dpiLabSaveHint"} disabled={true} className={"about-check-button disabled:cursor-not-allowed disabled:opacity-50"}>Сохранить эксперимент</button><p id={"dpiLabSaveHint"} className={"text-xs text-slate-400"} role={"status"}>Выберите PCAP и нажмите «Анализировать PCAP».</p></div>
             </div>
             <p className={"text-xs leading-5 text-slate-400"}>Classic PCAP, до 2 МиБ и 5 000 пакетов. Файл обрабатывается локально на роутере панели и сохраняется только по вашему действию. PCAPNG, live capture и исполнение Lua пока не поддерживаются.</p>
             <p id={"dpiLabStatus"} role={"status"} aria-live={"polite"} className={"text-sm text-slate-300"}>Захват ещё не выбран.</p>
           </section>
           <section id={"dpiLabAnalysis"} className={"hidden space-y-4"} aria-label={"Результаты анализа PCAP"}>
+            <div className={"ui-card rounded-xl p-4 space-y-4"}>
+              <div><h2 className={"font-semibold text-white"}>Результат простыми словами</h2><p className={"mt-1 text-sm text-slate-400"}>Выберите уровень подробности: повторный анализ не нужен.</p></div>
+              <div id={"dpiLabLevels"} className={"flex flex-wrap gap-2"} role={"group"} aria-label={"Уровень подробности"}></div>
+              <div id={"dpiLabQuickOverview"} className={"dpi-lab-quick-overview"} aria-live={"polite"}></div>
+              <div data-dpi-min-level={"advanced"} className={"grid gap-3"}>
+                <div id={"dpiLabFindings"} className={"grid gap-2 md:grid-cols-2"}></div>
+                <div id={"dpiLabLimitations"} className={"text-sm text-slate-400 space-y-1"}></div>
+              </div>
+            </div>
+            <div data-dpi-min-level={"advanced"} className={"grid gap-4"}>
+              <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Путь соединения</h2><p className={"mt-1 text-sm text-slate-400"}>Адреса показаны по выбранному событию. Маршрут и участие nfqws2 по этому захвату не установлены.</p><div id={"dpiLabJourney"} className={"mt-3 flex flex-wrap items-center gap-2 text-sm"}></div></div>
+              <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Стратегия и захват</h2><div id={"dpiLabCorrelation"} className={"mt-3 grid gap-2 text-sm"}></div></div>
+            </div>
+            <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Что можно сделать дальше</h2><ul id={"dpiLabNextSteps"} className={"mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300"}></ul></div>
+            <div data-dpi-min-level={"advanced"} className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Что происходило</h2><p className={"mt-1 text-sm text-slate-400"}>События описывают только то, что попало в захват. Участие nfqws2 по PCAP не подтверждено.</p><div id={"dpiLabEvents"} className={"mt-3 grid gap-2"}></div></div>
+            <div id={"dpiLabPacketInfo"} className={"hidden ui-card rounded-xl p-4 text-sm text-slate-300"}></div>
             <div className={"ui-card rounded-xl p-4"}>
               <div className={"flex flex-wrap items-start justify-between gap-2"}><div><h2 className={"font-semibold text-white"} id={"dpiLabCaptureName"}>—</h2><p className={"mt-1 text-xs text-slate-400"} id={"dpiLabCaptureSummary"}></p></div><span className={"evidence-badge evidence-observed"}>CAPTURE OBSERVED</span></div>
-              <div id={"dpiLabWarnings"} className={"mt-3 grid gap-1 text-sm text-amber-200"}></div>
+              <details className={"dpi-lab-expert-details mt-3"}><summary className={"cursor-pointer text-sm text-slate-300"}>Предупреждения анализатора</summary><div id={"dpiLabWarnings"} className={"mt-3 grid gap-1 text-sm text-amber-200"}></div></details>
             </div>
-            <div className={"grid min-w-0 gap-4 xl:grid-cols-2"}>
+            <div id={"dpiLabExpertPanel"} className={"hidden grid min-w-0 gap-4 xl:grid-cols-2"}>
               <section className={"ui-card min-w-0 rounded-xl p-4"} aria-label={"Временная шкала пакетов"}>
                 <h2 className={"mb-3 font-semibold text-white"}>Packet Timeline · порядок захвата</h2>
                 <div id={"dpiLabPacketList"} className={"dpi-lab-packet-list"}></div>
@@ -1314,10 +1369,10 @@ export default function App() {
               <section className={"ui-card min-w-0 rounded-xl p-4"} aria-label={"Просмотр байтов пакета"}>
                 <h2 className={"font-semibold text-white"}>Byte Inspector · кадр целиком</h2>
                 <p id={"dpiLabPacketCaption"} className={"mt-1 text-xs text-slate-400"}>Выберите пакет на временной шкале.</p>
-                <div id={"dpiLabPacketBytes"} className={"mt-3 dpi-lab-byte-dump"}></div>
+                <details><summary className={"cursor-pointer mt-3 text-sm text-slate-300"}>Показать байты</summary><div id={"dpiLabPacketBytes"} className={"mt-3 dpi-lab-byte-dump"}></div></details>
               </section>
             </div>
-            <div className={"grid min-w-0 gap-4 xl:grid-cols-2"}>
+            <div id={"dpiLabAdvancedPanel"} className={"hidden grid min-w-0 gap-4 xl:grid-cols-2"}>
               <section className={"ui-card min-w-0 rounded-xl p-4"} aria-label={"Реконструкция TCP"}>
                 <h2 className={"mb-3 font-semibold text-white"}>TCP Reassembly · по направлениям</h2>
                 <div id={"dpiLabFlowList"} className={"grid gap-2"}></div>
@@ -1331,6 +1386,7 @@ export default function App() {
           <section id={"dpiLabExperimentsSection"} className={"ui-card rounded-xl p-4"} aria-label={"Сохранённые эксперименты"}>
             <div className={"flex flex-wrap items-center justify-between gap-2"}><h2 className={"font-semibold text-white"}>Сохранённые эксперименты</h2><button type={"button"} data-action-click={"refreshDpiExperiments"} className={"about-check-button"}>Загрузить список</button></div>
             <div id={"dpiLabExperiments"} className={"mt-3 grid gap-2"}></div>
+          </section>
           </section>
         </section>
         <section id={"tabContent-about"} className={"hidden view-animate space-y-4"}>
