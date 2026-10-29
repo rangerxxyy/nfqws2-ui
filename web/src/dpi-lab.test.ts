@@ -1,5 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { dpiCaptureAvailability, dpiExperimentSaveAvailability, dpiFindingStatus, dpiStrategyCorrelation, dpiNextSteps, formatDpiByteDump, dpiEvidencePresentation, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabStrategyAnalysis } from './dpi-lab';
+import { dpiCaptureAvailability, dpiExperimentSaveAvailability, dpiFindingStatus, dpiStrategyCorrelation, dpiNextSteps, dpiHumanOverview, formatDpiByteDump, dpiEvidencePresentation, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabStrategyAnalysis } from './dpi-lab';
+
+describe('DPI Lab human overview', () => {
+  it('summarizes positive observations without claiming the website is available or TLS negotiated', () => {
+    const analysis = {
+      capture: { packetCount: 9 }, packets: [{ protocol: 'TCP' }],
+      flows: [{ gapBytes: 0, overlapBytes: 0, conflictingOverlapBytes: 0, streamTruncated: false, tlsClientHello: { serverName: 'example.com' } }],
+      summary: { findings: [
+        { id: 'tcp_connected', title: 'TCP', state: 'confirmed', detail: 'Handshake found', packetNumbers: [1, 2, 3], flowIndices: [] },
+        { id: 'client_hello', title: 'ClientHello', state: 'confirmed', detail: 'Found', packetNumbers: [4], flowIndices: [1] },
+        { id: 'http_response', title: 'HTTP', state: 'not_checked', detail: 'Not checked', packetNumbers: [], flowIndices: [] },
+        { id: 'tls_negotiated', title: 'TLS', state: 'not_checked', detail: 'Not checked', packetNumbers: [], flowIndices: [] },
+      ] },
+    } as unknown as DpiLabAnalysis;
+    const overview = dpiHumanOverview(analysis);
+    expect(overview.title).toContain('TCP');
+    const facts = overview.facts.map((fact) => fact.text).join(' ');
+    expect(facts).toContain('example.com');
+    expect(facts).toContain('HTTP');
+    expect(`${overview.title} ${overview.explanation} ${facts}`).not.toContain('сайт доступен');
+    expect(`${overview.title} ${overview.explanation} ${facts}`).not.toContain('TLS установлен');
+  });
+
+  it('describes missing handshake and stream gaps as limited evidence, not a failed website', () => {
+    const analysis = {
+      capture: { packetCount: 3 }, packets: [{ protocol: 'TCP' }],
+      flows: [{ gapBytes: 5, overlapBytes: 0, conflictingOverlapBytes: 0, streamTruncated: false, tlsClientHello: null }],
+      summary: { findings: [
+        { id: 'tcp_connected', title: 'TCP', state: 'not_confirmed', detail: 'No full handshake', packetNumbers: [1], flowIndices: [] },
+        { id: 'client_hello', title: 'ClientHello', state: 'not_confirmed', detail: 'Missing', packetNumbers: [], flowIndices: [] },
+        { id: 'http_response', title: 'HTTP', state: 'not_checked', detail: 'Not checked', packetNumbers: [], flowIndices: [] },
+        { id: 'tls_negotiated', title: 'TLS', state: 'not_checked', detail: 'Not checked', packetNumbers: [], flowIndices: [] },
+      ] },
+    } as unknown as DpiLabAnalysis;
+    const overview = dpiHumanOverview(analysis);
+    expect(overview.explanation).toContain('неполным');
+    expect(overview.facts.map((fact) => fact.text).join(' ')).toContain('5');
+    expect(`${overview.title} ${overview.explanation}`).not.toContain('сайт не работает');
+  });
+});
 
 describe('DPI Lab finding status labels', () => {
   it('gives each independent diagnostic state a distinct plain-language label and tone', () => {

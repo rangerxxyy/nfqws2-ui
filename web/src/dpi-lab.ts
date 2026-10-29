@@ -16,6 +16,39 @@ export type DpiLabAnalysis = {
   packets: DpiLabPacket[]; flows: DpiLabFlow[]; warnings: string[]; evidence: string[];
   summary: { findings: Array<{ id: string; title: string; state: 'confirmed' | 'not_confirmed' | 'error' | 'not_checked'; detail: string; packetNumbers: number[]; flowIndices: number[] }>; events: Array<{ kind: string; title: string; detail: string; packetNumbers: number[]; flowIndex: number | null; timestampMicros: number }>; eventsTruncated: boolean; limitations: string[] };
 };
+export type DpiHumanOverview = { title: string; explanation: string; facts: Array<{ text: string; packetNumbers: number[]; flowIndices: number[] }> };
+/** Build a short, evidence-backed result without turning absent capture data into a negative verdict. */
+export function dpiHumanOverview(analysis: DpiLabAnalysis): DpiHumanOverview {
+  const finding = (id: string) => analysis.summary.findings.find((item) => item.id === id);
+  const tcp = finding('tcp_connected');
+  const title = tcp?.state === 'confirmed' ? 'TCP-соединение подтверждено в захвате' : 'Захват не даёт полного ответа о соединении';
+  const explanation = tcp?.state === 'confirmed'
+    ? 'В файле виден полный начальный обмен TCP. Это подтверждает установление TCP-соединения в момент захвата, но само по себе не подтверждает загрузку сайта.'
+    : 'В файле не найден полный начальный обмен TCP. Захват может быть неполным или начаться позже, поэтому это не означает, что сайт недоступен.';
+  const facts: DpiHumanOverview['facts'] = [];
+  const protocols = [...new Set(analysis.packets.map((packet) => packet.protocol).filter(Boolean))];
+  if (protocols.length) facts.push({ text: `В захвате обнаружен трафик: ${protocols.join(', ')}.`, packetNumbers: analysis.packets.slice(0, 8).map((packet) => packet.number), flowIndices: [] });
+  const hello = finding('client_hello');
+  const helloFlow = analysis.flows.findIndex((flow) => flow.tlsClientHello !== null);
+  if (hello?.state === 'confirmed' && helloFlow >= 0) {
+    const flow = analysis.flows[helloFlow];
+    facts.push({ text: flow.tlsClientHello?.serverName ? `Клиент начал TLS-соединение; в ClientHello указано имя ${flow.tlsClientHello.serverName}. Ответ сервера здесь не подтверждён.` : 'Клиент начал TLS-соединение; ClientHello найден, имя сайта не определено.', packetNumbers: hello.packetNumbers, flowIndices: [helloFlow + 1] });
+  } else {
+    facts.push({ text: 'Начало TLS-соединения в захвате не подтверждено.', packetNumbers: hello?.packetNumbers ?? [], flowIndices: hello?.flowIndices ?? [] });
+  }
+  const http = finding('http_response');
+  facts.push({ text: http?.state === 'confirmed' ? 'В захвате найден HTTP-ответ.' : 'Получение HTTP-ответа этим анализом не проверялось.', packetNumbers: http?.packetNumbers ?? [], flowIndices: http?.flowIndices ?? [] });
+  const gaps = analysis.flows.reduce((sum, flow) => sum + flow.gapBytes, 0);
+  const conflicts = analysis.flows.reduce((sum, flow) => sum + flow.conflictingOverlapBytes, 0);
+  if (gaps || conflicts || analysis.flows.some((flow) => flow.streamTruncated)) {
+    const caveats = [gaps ? `${gaps} байт пропущено` : '', conflicts ? `${conflicts} байт перекрытия различаются` : '', analysis.flows.some((flow) => flow.streamTruncated) ? 'часть потока ограничена' : ''].filter(Boolean).join('; ');
+    facts.push({ text: `Восстановление TCP-потока неполное: ${caveats}.`, packetNumbers: [], flowIndices: analysis.flows.map((_, index) => index + 1) });
+  } else if (analysis.flows.length) {
+    facts.push({ text: 'В восстановленных TCP-потоках пропуски и различающиеся перекрытия не обнаружены.', packetNumbers: [], flowIndices: analysis.flows.map((_, index) => index + 1) });
+  }
+  facts.push({ text: 'Выполнение профиля NFQWS2 и влияние стратегии по этому PCAP не подтверждены.', packetNumbers: [], flowIndices: [] });
+  return { title, explanation, facts: facts.slice(0, 5) };
+}
 export type DpiLabSavedExperiment = { id: string; name: string; savedAt: number; sizeBytes: number; packetCount: number; flowCount: number };
 export function dpiFindingStatus(state: string): { label: string; tone: 'positive' | 'caution' | 'negative' | 'neutral' } {
   switch (state) {

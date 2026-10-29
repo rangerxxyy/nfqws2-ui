@@ -12,7 +12,7 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
 import { api, nfqwsApply, nfqwsSnapshots, nfqwsProfiles, nfqwsChangeHistory, nfqwsCommunityStrategies, nfqwsLogs, nfqwsAppearance, nfqwsAuth, nfqwsConfig, nfqwsDiagnostics, nfqwsInstallation, nfqwsLists, nfqwsScripts, nfqwsUpdates, nfqwsMonitoring, nfqwsDpiLab, type CommunityStrategiesResponse, type ConfigResponse, type NfqwsArgumentProfile, type NfqwsProfilesResponse, type NfqwsLuaCatalogResponse, type NfqwsLuaFunctionInfo, type NfqwsLuaStandardGroup, type ChangeHistoryEntry, type ConfigValidationResponse, type ForeignConfigCheckOperation, type FreezeProfileJoinPreview, type FreezeScanOperation, type NfqwsListId, type NfqwsListResponse, type NfqwsListSummary, type NfqwsLuaScriptInfo, type PanelRelease, type SiteDiagnosticReport, type SiteDiagnosticStep, type SiteTraceOperation, type SiteTraceReport, type SnapshotOverview, type StatusResponse, type StrategyPickOperation, type StrategyPickPreview, type UiUpdateStatus, type LogSource } from './api';
-import { dpiCaptureAvailability, dpiExperimentSaveAvailability, dpiEvidencePresentation, dpiFindingStatus, dpiStrategyCorrelation, dpiNextSteps, formatDpiByteDump, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabFlow, type DpiLabPacket, type DpiLabSavedExperiment, type DpiLabStrategyAnalysis } from './dpi-lab';
+import { dpiCaptureAvailability, dpiExperimentSaveAvailability, dpiEvidencePresentation, dpiFindingStatus, dpiStrategyCorrelation, dpiNextSteps, dpiHumanOverview, formatDpiByteDump, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabFlow, type DpiLabPacket, type DpiLabSavedExperiment, type DpiLabStrategyAnalysis } from './dpi-lab';
 import { appendListEntries, deduplicateListContent, isListTabSelected, listIdFromTabElementId, listRowsFromContent, listTabIdsFromInventory, removeListLines, removeListLinesByIndices, toggleListComments } from './list-editor';
 import { availableNfqwsModes } from './config-facts';
 import { resourceUsagePercent, usageTone } from './metrics';
@@ -763,15 +763,54 @@ function setDpiDetailLevel(level: 'simple' | 'advanced' | 'expert') {
   dpiDetailLevel = level;
   const analysisRegion = $('#dpiLabAnalysis');
   if (analysisRegion) analysisRegion.dataset.detailLevel = level;
+  const levels = { simple: 0, advanced: 1, expert: 2 } as const;
+  document.querySelectorAll<HTMLElement>('[data-dpi-min-level]').forEach((element) => {
+    const minimum = element.dataset.dpiMinLevel as keyof typeof levels;
+    element.classList.toggle('hidden', levels[level] < (levels[minimum] ?? 0));
+  });
   $('#dpiLabAdvancedPanel')?.classList.toggle('hidden', level === 'simple');
   $('#dpiLabExpertPanel')?.classList.toggle('hidden', level !== 'expert');
   $('#dpiLabPacketInfo')?.classList.toggle('hidden', level === 'simple');
   document.querySelectorAll<HTMLButtonElement>('#dpiLabLevels button').forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.level === level)));
+  if (dpiLabAnalysis) renderDpiNextSteps(dpiLabAnalysis);
   if (level === 'expert' && dpiLabAnalysis && selectedDpiPacketNumber !== null) {
     const index = dpiLabAnalysis.packets.findIndex((packet) => packet.number === selectedDpiPacketNumber);
     const list = $('#dpiLabPacketList');
     if (list && index >= 0) { list.scrollTop = index * 52; renderDpiPacketTimeline(); }
   }
+}
+
+function renderDpiNextSteps(analysis: DpiLabAnalysis) {
+  const nextSteps = $('#dpiLabNextSteps');
+  if (!nextSteps) return;
+  nextSteps.replaceChildren();
+  const tips = dpiNextSteps(analysis);
+  for (const tip of (dpiDetailLevel === 'simple' ? tips.slice(0, 2) : tips)) nextSteps.append(dpiLabElement('li', tip));
+}
+
+function renderDpiQuickOverview(analysis: DpiLabAnalysis) {
+  const host = $('#dpiLabQuickOverview');
+  if (!host) return;
+  const overview = dpiHumanOverview(analysis);
+  const lead = dpiLabElement('div', '', 'dpi-lab-overview-lead');
+  lead.append(dpiLabElement('h3', overview.title, 'text-base font-semibold text-slate-100'), dpiLabElement('p', overview.explanation, 'mt-1 text-sm leading-6 text-slate-300'));
+  const facts = dpiLabElement('div', '', 'grid gap-2 sm:grid-cols-2');
+  for (const fact of overview.facts) {
+    const row = dpiLabElement('div', '', 'dpi-lab-overview-fact');
+    row.append(dpiLabElement('p', fact.text, 'text-sm leading-5 text-slate-200'));
+    const links = dpiLabElement('div', '', 'mt-2 flex flex-wrap gap-2');
+    for (const number of fact.packetNumbers.slice(0, 4)) {
+      const button = dpiLabElement('button', `Кадр №${number}`, 'about-check-button');
+      button.type = 'button'; button.addEventListener('click', () => showDpiPacket(number)); links.append(button);
+    }
+    for (const index of fact.flowIndices.slice(0, 3)) {
+      const button = dpiLabElement('button', `Поток №${index}`, 'about-check-button');
+      button.type = 'button'; button.addEventListener('click', () => showDpiFlow(index)); links.append(button);
+    }
+    if (links.childElementCount) row.append(links);
+    facts.append(row);
+  }
+  host.replaceChildren(lead, facts, dpiLabElement('p', `${analysis.capture.packetCount} кадров · ${analysis.flows.length} TCP-направлений · ${Math.ceil(analysis.capture.sizeBytes / 1024)} КиБ`, 'text-xs text-slate-400'));
 }
 
 function renderDpiHumanSummary(analysis: DpiLabAnalysis) {
@@ -784,6 +823,7 @@ function renderDpiHumanSummary(analysis: DpiLabAnalysis) {
       button.addEventListener('click', () => setDpiDetailLevel(level)); levels.append(button);
     }
   }
+  renderDpiQuickOverview(analysis);
   const findings = $('#dpiLabFindings');
   if (findings) {
     findings.replaceChildren();
@@ -812,8 +852,7 @@ function renderDpiHumanSummary(analysis: DpiLabAnalysis) {
   }
   const limitations = $('#dpiLabLimitations');
   if (limitations) { limitations.replaceChildren(); for (const line of analysis.summary.limitations) limitations.append(dpiLabElement('p', line)); }
-  const nextSteps = $('#dpiLabNextSteps');
-  if (nextSteps) { nextSteps.replaceChildren(); for (const tip of dpiNextSteps(analysis)) nextSteps.append(dpiLabElement('li', tip)); }
+  renderDpiNextSteps(analysis);
   const events = $('#dpiLabEvents');
   if (events) {
     events.replaceChildren();

@@ -1344,13 +1344,18 @@ export default function App() {
             <div className={"ui-card rounded-xl p-4 space-y-4"}>
               <div><h2 className={"font-semibold text-white"}>Результат простыми словами</h2><p className={"mt-1 text-sm text-slate-400"}>Выберите уровень подробности: повторный анализ не нужен.</p></div>
               <div id={"dpiLabLevels"} className={"flex flex-wrap gap-2"} role={"group"} aria-label={"Уровень подробности"}></div>
-              <div id={"dpiLabFindings"} className={"grid gap-2 md:grid-cols-2"}></div>
-              <div id={"dpiLabLimitations"} className={"text-sm text-slate-400 space-y-1"}></div>
+              <div id={"dpiLabQuickOverview"} className={"dpi-lab-quick-overview"} aria-live={"polite"}></div>
+              <div data-dpi-min-level={"advanced"} className={"grid gap-3"}>
+                <div id={"dpiLabFindings"} className={"grid gap-2 md:grid-cols-2"}></div>
+                <div id={"dpiLabLimitations"} className={"text-sm text-slate-400 space-y-1"}></div>
+              </div>
             </div>
-            <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Путь соединения</h2><p className={"mt-1 text-sm text-slate-400"}>Адреса показаны по выбранному событию. Маршрут и участие nfqws2 по этому захвату не установлены.</p><div id={"dpiLabJourney"} className={"mt-3 flex flex-wrap items-center gap-2 text-sm"}></div></div>
-            <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Стратегия и захват</h2><div id={"dpiLabCorrelation"} className={"mt-3 grid gap-2 text-sm"}></div></div>
+            <div data-dpi-min-level={"advanced"} className={"grid gap-4"}>
+              <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Путь соединения</h2><p className={"mt-1 text-sm text-slate-400"}>Адреса показаны по выбранному событию. Маршрут и участие nfqws2 по этому захвату не установлены.</p><div id={"dpiLabJourney"} className={"mt-3 flex flex-wrap items-center gap-2 text-sm"}></div></div>
+              <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Стратегия и захват</h2><div id={"dpiLabCorrelation"} className={"mt-3 grid gap-2 text-sm"}></div></div>
+            </div>
             <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Что можно сделать дальше</h2><ul id={"dpiLabNextSteps"} className={"mt-3 list-disc space-y-2 pl-5 text-sm text-slate-300"}></ul></div>
-            <div className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Что происходило</h2><p className={"mt-1 text-sm text-slate-400"}>События описывают только то, что попало в захват. Участие nfqws2 по PCAP не подтверждено.</p><div id={"dpiLabEvents"} className={"mt-3 grid gap-2"}></div></div>
+            <div data-dpi-min-level={"advanced"} className={"ui-card rounded-xl p-4"}><h2 className={"font-semibold text-white"}>Что происходило</h2><p className={"mt-1 text-sm text-slate-400"}>События описывают только то, что попало в захват. Участие nfqws2 по PCAP не подтверждено.</p><div id={"dpiLabEvents"} className={"mt-3 grid gap-2"}></div></div>
             <div id={"dpiLabPacketInfo"} className={"hidden ui-card rounded-xl p-4 text-sm text-slate-300"}></div>
             <div className={"ui-card rounded-xl p-4"}>
               <div className={"flex flex-wrap items-start justify-between gap-2"}><div><h2 className={"font-semibold text-white"} id={"dpiLabCaptureName"}>—</h2><p className={"mt-1 text-xs text-slate-400"} id={"dpiLabCaptureSummary"}></p></div><span className={"evidence-badge evidence-observed"}>CAPTURE OBSERVED</span></div>

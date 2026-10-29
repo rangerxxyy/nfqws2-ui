@@ -28,6 +28,14 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelSource).toContain('журнал фактических Lua-вызовов этот API не предоставляет');
   });
 
+  it('keeps the simple result concise and gates technical sections behind detail levels', () => {
+    expect(template).toContain('id="dpiLabQuickOverview"');
+    expect(template).toContain('data-dpi-min-level="advanced"');
+    expect(template).toContain('id="dpiLabExpertPanel"');
+    expect(panelSource).toContain("dpiHumanOverview(analysis)");
+    expect(panelSource).toContain("element.dataset.dpiMinLevel");
+  });
+
   it('shows list usage by profile and disables deletion while a profile still uses that list', () => {
     expect(template).toContain('id="listProfileUsageStatus"');
     expect(panelSource).toContain('summary.usedBy');
