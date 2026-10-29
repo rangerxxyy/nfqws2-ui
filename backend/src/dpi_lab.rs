@@ -13,6 +13,357 @@ pub const MAX_FRAME_BYTES: usize = 65_535;
 pub const MAX_TCP_FLOWS: usize = 64;
 pub const MAX_REASSEMBLED_STREAM_BYTES: usize = 32 * 1024;
 pub const MAX_SAVED_EXPERIMENTS: usize = 20;
+pub const MAX_STRATEGY_SOURCE_BYTES: usize = 256 * 1024;
+pub const MAX_STRATEGY_STEPS: usize = 128;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyStep {
+    pub index: usize,
+    pub profile_index: usize,
+    pub raw: String,
+    pub function: String,
+    pub arguments: Vec<StrategyArgument>,
+    pub installed: bool,
+    pub file: Option<String>,
+    pub docs: Vec<String>,
+    pub declared_arguments: Vec<String>,
+    pub required_arguments: Vec<String>,
+    pub unverified_arguments: Vec<String>,
+    pub evidence: &'static str,
+    pub modeling: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyArgument {
+    pub name: String,
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyProfile {
+    pub index: usize,
+    pub name: Option<String>,
+    pub source: Option<String>,
+    pub filters: Vec<String>,
+    pub controls: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StrategyAnalysis {
+    pub step_count: usize,
+    pub steps: Vec<StrategyStep>,
+    pub profiles: Vec<StrategyProfile>,
+    pub filters: Vec<String>,
+    pub other_options: Vec<String>,
+    pub warnings: Vec<String>,
+    pub lua_executed: bool,
+}
+
+fn documented_lua_argument_keys(arguments: &[String]) -> std::collections::HashSet<String> {
+    let mut keys = std::collections::HashSet::new();
+    for description in arguments {
+        let declaration = description
+            .split_once('—')
+            .map_or(description.as_str(), |(declaration, _)| declaration);
+        let declaration = declaration
+            .split_once(" - ")
+            .map_or(declaration, |(declaration, _)| declaration);
+        for item in declaration.split(',') {
+            let key = item
+                .trim()
+                .split(|character: char| {
+                    character.is_whitespace()
+                        || matches!(character, '=' | ':' | '<' | '>' | '|' | '(' | ')')
+                })
+                .next()
+                .unwrap_or_default()
+                .trim_matches(['*', '`']);
+            if !key.is_empty()
+                && key.len() <= 64
+                && key.as_bytes()[0].is_ascii_lowercase()
+                && key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+            {
+                keys.insert(key.to_string());
+            }
+        }
+    }
+    keys
+}
+
+fn circular_orchestration_argument_keys(
+    catalog: &[crate::runtime_profiles::LuaFunctionInfo],
+) -> std::collections::HashSet<String> {
+    let Some(circular) = catalog.iter().find(|item| item.name == "circular") else {
+        return std::collections::HashSet::new();
+    };
+    let docs = circular.docs.join(" ").to_ascii_lowercase();
+    let mut keys = std::collections::HashSet::new();
+    if docs.contains("strategy=n") {
+        keys.insert("strategy".to_string());
+    }
+    if docs.contains("final arg") || docs.contains("final' arg") || docs.contains("final\" arg") {
+        keys.insert("final".to_string());
+    }
+    keys
+}
+
+/// Analyze strategy/config text as bounded data only. Never invoke a shell or Lua runtime.
+pub fn analyze_strategy(
+    source: &str,
+    catalog: &[crate::runtime_profiles::LuaFunctionInfo],
+) -> Result<StrategyAnalysis, DpiLabError> {
+    analyze_strategy_with_standard_groups(source, catalog, &[])
+}
+
+pub fn analyze_strategy_with_standard_groups(
+    source: &str,
+    catalog: &[crate::runtime_profiles::LuaFunctionInfo],
+    standard_groups: &[crate::runtime_profiles::LuaStandardGroup],
+) -> Result<StrategyAnalysis, DpiLabError> {
+    if source.len() > MAX_STRATEGY_SOURCE_BYTES {
+        return Err(DpiLabError::Limit(format!(
+            "Текст стратегии превышает лимит {} КиБ",
+            MAX_STRATEGY_SOURCE_BYTES / 1024
+        )));
+    }
+    if source.trim().is_empty() {
+        return Err(DpiLabError::Malformed(
+            "Введите стратегию или выберите профиль".into(),
+        ));
+    }
+    if source.contains('\0') {
+        return Err(DpiLabError::Malformed("Текст содержит нулевой байт".into()));
+    }
+    let mut raw_steps = Vec::new();
+    let mut filters = Vec::new();
+    let mut other_options = Vec::new();
+    let mut warnings = Vec::new();
+    let config_profiles = decode_config_strategy_profiles(source)?;
+    let normalized_source = config_profiles.as_ref().map(|profiles| {
+        profiles
+            .iter()
+            .map(|profile| profile.args.join("\n"))
+            .collect::<Vec<_>>()
+            .join("\n--new\n")
+    });
+    let scan_source = normalized_source.as_deref().unwrap_or(source);
+    let mut profiles = vec![StrategyProfile {
+        index: 1,
+        name: None,
+        source: None,
+        filters: Vec::new(),
+        controls: Vec::new(),
+    }];
+    for line in scan_source.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with("-- ") {
+            continue;
+        }
+        // This is a deliberately small data tokenizer, not a shell parser. Quotes
+        // are stripped around individual tokens; expansions and commands are inert.
+        for token in line.split_whitespace() {
+            let token = token.trim_matches(['\'', '"', '`', ',']);
+            let token = token
+                .split_once('=')
+                .filter(|(name, _)| name.starts_with("NFQWS_"))
+                .map_or(token, |(_, value)| {
+                    value.trim_matches(['\'', '"', '`', ','])
+                });
+            if token.is_empty()
+                || token.starts_with("${")
+                || token.starts_with("$")
+                || token.contains("$(")
+            {
+                if token.starts_with('$') && warnings.len() < 32 {
+                    warnings.push("Переменные и shell-выражения не вычисляются; значения нужно раскрыть вручную.".into());
+                }
+                continue;
+            }
+            if token == "--new" || token.starts_with("--new=") {
+                if profiles.len() == 64 {
+                    return Err(DpiLabError::Limit("В стратегии больше 64 профилей".into()));
+                }
+                profiles.push(StrategyProfile {
+                    index: profiles.len() + 1,
+                    name: token
+                        .strip_prefix("--new=")
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned),
+                    source: None,
+                    filters: Vec::new(),
+                    controls: Vec::new(),
+                });
+            } else if let Some(name) = token.strip_prefix("--name=") {
+                profiles.last_mut().expect("initial profile exists").name = Some(name.to_owned());
+            } else if let Some(step) = token.strip_prefix("--lua-desync=") {
+                if !step.is_empty() {
+                    if raw_steps.len() == MAX_STRATEGY_STEPS {
+                        return Err(DpiLabError::Limit(format!(
+                            "В стратегии больше {MAX_STRATEGY_STEPS} Lua-шагов"
+                        )));
+                    }
+                    raw_steps.push((profiles.len(), step.to_owned()));
+                }
+            } else if token == "--lua-desync" {
+                if warnings.len() < 32 {
+                    warnings.push("Для --lua-desync ожидается значение через знак '='.".into());
+                }
+            } else if token.starts_with("--filter-") {
+                let profile = profiles.last_mut().expect("initial profile exists");
+                if profile.filters.len() == 64 {
+                    return Err(DpiLabError::Limit(
+                        "В одном профиле больше 64 фильтров".into(),
+                    ));
+                }
+                filters.push(token.to_owned());
+                profile.filters.push(token.to_owned());
+            } else if token.starts_with("--payload=")
+                || token.starts_with("--in-range=")
+                || token.starts_with("--out-range=")
+            {
+                let profile = profiles.last_mut().expect("initial profile exists");
+                if profile.controls.len() == 64 {
+                    return Err(DpiLabError::Limit(
+                        "В одном профиле больше 64 управляющих параметров".into(),
+                    ));
+                }
+                other_options.push(token.to_owned());
+                profile.controls.push(token.to_owned());
+            }
+        }
+    }
+    let circular_profiles = raw_steps
+        .iter()
+        .filter_map(|(profile_index, raw)| {
+            (raw.split(':').next() == Some("circular")).then_some(*profile_index)
+        })
+        .collect::<std::collections::HashSet<_>>();
+    let circular_arguments = circular_orchestration_argument_keys(catalog);
+    let steps = raw_steps
+        .into_iter()
+        .enumerate()
+        .map(|(index, (profile_index, raw))| {
+            let mut parts = raw.split(':');
+            let function = parts.next().unwrap_or_default().to_owned();
+            let arguments = parts
+                .filter(|part| !part.is_empty())
+                .map(|part| {
+                    let (name, value) = part
+                        .split_once('=')
+                        .map_or((part, None), |(key, value)| (key, Some(value.to_owned())));
+                    StrategyArgument {
+                        name: name.to_owned(),
+                        value,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let info = catalog.iter().find(|item| item.name == function);
+            let documented_keys = info
+                .map(|item| {
+                    let mut keys = documented_lua_argument_keys(&item.arguments);
+                    keys.extend(item.file_arguments.iter().cloned());
+                    for group_name in &item.standard_groups {
+                        if let Some(group) = standard_groups
+                            .iter()
+                            .find(|group| group.name == *group_name)
+                        {
+                            keys.extend(documented_lua_argument_keys(&group.arguments));
+                        }
+                    }
+                    if circular_profiles.contains(&profile_index) {
+                        keys.extend(circular_arguments.iter().cloned());
+                    }
+                    keys
+                })
+                .unwrap_or_default();
+            let unverified_arguments = arguments
+                .iter()
+                .filter(|argument| !documented_keys.contains(argument.name.as_str()))
+                .map(|argument| argument.name.clone())
+                .collect();
+            StrategyStep {
+                index: index + 1,
+                profile_index,
+                raw,
+                function,
+                arguments,
+                installed: info.is_some(),
+                file: info.map(|item| item.file.clone()),
+                docs: info.map(|item| item.docs.clone()).unwrap_or_default(),
+                declared_arguments: info.map(|item| item.arguments.clone()).unwrap_or_default(),
+                required_arguments: info.map(|item| item.required.clone()).unwrap_or_default(),
+                unverified_arguments,
+                evidence: if info.is_some() {
+                    "SOURCE CONFIRMED"
+                } else {
+                    "UNKNOWN"
+                },
+                modeling: "Не моделируется",
+            }
+        })
+        .collect::<Vec<_>>();
+    if steps.is_empty() && warnings.len() < 32 {
+        warnings.push(
+            "В тексте не найдены параметры --lua-desync=…; проверьте формат фрагмента.".into(),
+        );
+    }
+    if let Some(config_profiles) = config_profiles {
+        for (profile, config_profile) in profiles.iter_mut().zip(config_profiles) {
+            profile.name = Some(config_profile.name);
+            profile.source = Some(config_profile.source);
+        }
+        warnings.push("Профили выведены из конфигурации тем же безопасным парсером, что используется конструктором панели. Это не подтверждение выбора профиля работающим процессом.".into());
+    }
+    Ok(StrategyAnalysis {
+        step_count: steps.len(),
+        steps,
+        profiles,
+        filters,
+        other_options,
+        warnings,
+        lua_executed: false,
+    })
+}
+
+fn decode_config_strategy_profiles(
+    source: &str,
+) -> Result<Option<Vec<crate::runtime_profiles::RuntimeProfile>>, DpiLabError> {
+    const GROUPS: &[&str] = &[
+        "NFQWS_ARGS_CUSTOM",
+        "NFQWS_ARGS_UDP",
+        "NFQWS_ARGS_QUIC",
+        "NFQWS_ARGS_IPSET",
+        "NFQWS_ARGS",
+        "NFQWS_EXTRA_ARGS",
+    ];
+    let is_config = source.lines().any(|line| {
+        line.trim_start()
+            .split_once('=')
+            .is_some_and(|(name, _)| GROUPS.contains(&name.trim()))
+    });
+    if !is_config {
+        return Ok(None);
+    }
+    let decoded =
+        crate::runtime_profiles::from_config(source, "dpi-static-input").map_err(|error| {
+            DpiLabError::Malformed(format!(
+                "Не удалось безопасно разобрать конфигурацию: {error}"
+            ))
+        })?;
+    Ok(Some(
+        decoded
+            .profiles
+            .into_iter()
+            .filter(|profile| !profile.args.is_empty())
+            .collect(),
+    ))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DpiLabError {
@@ -36,6 +387,7 @@ pub struct Analysis {
     pub flows: Vec<TcpFlow>,
     pub warnings: Vec<String>,
     pub evidence: Vec<&'static str>,
+    pub summary: crate::dpi_summary::Summary,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +435,7 @@ pub struct TcpFlow {
     pub byte_sources: Vec<Option<usize>>,
     pub gap_bytes: usize,
     pub overlap_bytes: usize,
+    pub conflicting_overlap_bytes: usize,
     pub stream_truncated: bool,
     pub tls_client_hello: Option<TlsClientHello>,
     pub tls_parse_error: Option<String>,
@@ -291,6 +644,7 @@ struct ParsedTcp {
     destination: IpAddr,
     destination_port: u16,
     sequence: u32,
+    flags: u16,
     payload: Vec<u8>,
 }
 
@@ -463,6 +817,7 @@ pub fn analyze_pcap(name: &str, bytes: &[u8]) -> Result<Analysis, DpiLabError> {
                     destination: dst,
                     destination_port: dst_port,
                     sequence: seq.wrapping_add(u32::from(flags & 0x002 != 0)),
+                    flags,
                     payload: frame
                         .get(payload_offset..payload_end)
                         .unwrap_or_default()
@@ -477,12 +832,37 @@ pub fn analyze_pcap(name: &str, bytes: &[u8]) -> Result<Analysis, DpiLabError> {
         packets.push(packet);
         offset = end;
     }
+    // Reassembly is currently keyed by endpoints. Repeated connection starts
+    // may be retransmissions or a new connection reusing the same tuple.
+    let mut starts = std::collections::HashSet::new();
+    let mut reused = false;
+    for packet in &packets {
+        if packet
+            .tcp_flags
+            .is_some_and(|flags| flags & 0x02 != 0 && flags & 0x10 == 0)
+        {
+            let key = (
+                &packet.source,
+                packet.source_port,
+                &packet.destination,
+                packet.destination_port,
+                packet.tcp_sequence,
+            );
+            if !starts.insert(key) {
+                reused = true;
+            }
+        }
+    }
+    if reused {
+        warnings.push("Повторный SYN: возможно повторное использование адресов и портов; реконструкция может объединять разные соединения.".into());
+    }
     let (flows, omitted_flows) = reassemble(tcp_packets);
     if omitted_flows > 0 {
         warnings.push(format!(
             "Пропущено TCP-потоков сверх лимита: {omitted_flows}"
         ));
     }
+    let summary = crate::dpi_summary::summarize(&packets, &flows, &warnings);
     Ok(Analysis {
         capture: CaptureMetadata {
             name: safe_display_name(name),
@@ -500,6 +880,7 @@ pub fn analyze_pcap(name: &str, bytes: &[u8]) -> Result<Analysis, DpiLabError> {
         flows,
         warnings,
         evidence: vec!["CAPTURE OBSERVED", "PROTOCOL DERIVED", "UNKNOWN"],
+        summary,
     })
 }
 
@@ -709,15 +1090,61 @@ fn parse_frame(frame: &[u8], link_type: u32) -> Result<Option<ParsedFrame>, &'st
 }
 
 fn reassemble(packets: Vec<ParsedTcp>) -> (Vec<TcpFlow>, usize) {
-    type Key = (IpAddr, u16, IpAddr, u16);
+    type Key = (IpAddr, u16, IpAddr, u16, usize);
+    type Connection = (IpAddr, u16, IpAddr, u16);
+    // A repeated identical SYN in an open epoch may be a retransmission. A
+    // new sequence, a previous close, or pre-existing midstream traffic starts
+    // a new epoch. Capture order is not proof of endpoint acceptance.
+    let mut epochs = BTreeMap::<Connection, (usize, Option<(IpAddr, u16, u32)>, bool)>::new();
     let mut grouped = BTreeMap::<Key, Vec<ParsedTcp>>::new();
     for packet in packets {
+        let forward = (
+            packet.source,
+            packet.source_port,
+            packet.destination,
+            packet.destination_port,
+        );
+        let reverse = (
+            packet.destination,
+            packet.destination_port,
+            packet.source,
+            packet.source_port,
+        );
+        let connection = std::cmp::min(forward, reverse);
+        let fresh_syn = packet.flags & 0x02 != 0 && packet.flags & 0x10 == 0;
+        let initial = (
+            packet.source,
+            packet.source_port,
+            packet.sequence.wrapping_sub(1),
+        );
+        let epoch = if let Some(state) = epochs.get_mut(&connection) {
+            if fresh_syn && (state.2 || state.1 != Some(initial)) {
+                state.0 += 1;
+                state.1 = Some(initial);
+                state.2 = false;
+            }
+            if packet.flags & 0x05 != 0 {
+                state.2 = true;
+            }
+            state.0
+        } else {
+            epochs.insert(
+                connection,
+                (
+                    0,
+                    if fresh_syn { Some(initial) } else { None },
+                    packet.flags & 0x05 != 0,
+                ),
+            );
+            0
+        };
         grouped
             .entry((
                 packet.source,
                 packet.source_port,
                 packet.destination,
                 packet.destination_port,
+                epoch,
             ))
             .or_default()
             .push(packet);
@@ -727,7 +1154,7 @@ fn reassemble(packets: Vec<ParsedTcp>) -> (Vec<TcpFlow>, usize) {
         .into_iter()
         .take(MAX_TCP_FLOWS)
         .map(
-            |((source, source_port, destination, destination_port), packets)| {
+            |((source, source_port, destination, destination_port, _epoch), packets)| {
                 let base = packets
                     .first()
                     .map(|packet| packet.sequence)
@@ -762,6 +1189,7 @@ fn reassemble(packets: Vec<ParsedTcp>) -> (Vec<TcpFlow>, usize) {
                 let mut bytes = vec![None; stream_len];
                 let mut sources = vec![None; stream_len];
                 let mut overlap_bytes = 0usize;
+                let mut conflicting_overlap_bytes = 0usize;
                 for (position, number, data) in segments {
                     for (index, byte) in data.iter().enumerate() {
                         let absolute = position + index as i64 - min_position;
@@ -771,6 +1199,9 @@ fn reassemble(packets: Vec<ParsedTcp>) -> (Vec<TcpFlow>, usize) {
                         let slot = absolute as usize;
                         if bytes[slot].is_some() {
                             overlap_bytes += 1;
+                            if bytes[slot] != Some(*byte) {
+                                conflicting_overlap_bytes += 1;
+                            }
                         } else {
                             bytes[slot] = Some(*byte);
                             sources[slot] = Some(number);
@@ -828,6 +1259,7 @@ fn reassemble(packets: Vec<ParsedTcp>) -> (Vec<TcpFlow>, usize) {
                     byte_sources: sources,
                     gap_bytes,
                     overlap_bytes,
+                    conflicting_overlap_bytes,
                     stream_truncated,
                     tls_client_hello,
                     tls_parse_error,
@@ -1043,6 +1475,117 @@ fn parse_client_hello(bytes: &[u8]) -> Result<TlsClientHello, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strategy_analysis_keeps_order_maps_installed_functions_and_never_models_packets() {
+        let catalog = [crate::runtime_profiles::LuaFunctionInfo {
+            name: "multisplit".into(),
+            file: "zapret-antidpi.lua".into(),
+            docs: vec!["Разделение TCP payload".into()],
+            arguments: vec!["pos — позиция разреза".into()],
+            file_arguments: Vec::new(),
+            standard_groups: vec!["general".into()],
+            required: vec!["pos".into()],
+        }];
+        let result = analyze_strategy(
+            "NFQWS_ARGS_CUSTOM='--filter-tcp=443 --filter-7=tls --lua-desync=multisplit:pos=host --lua-desync=unknown:ttl=3'",
+            &catalog,
+        ).unwrap();
+        assert_eq!(result.step_count, 2);
+        assert_eq!(result.steps[0].function, "multisplit");
+        assert_eq!(result.steps[0].arguments[0].name, "pos");
+        assert_eq!(result.steps[0].arguments[0].value.as_deref(), Some("host"));
+        assert_eq!(result.steps[0].file.as_deref(), Some("zapret-antidpi.lua"));
+        assert!(!result.steps[1].installed);
+        assert_eq!(result.steps[1].evidence, "UNKNOWN");
+        assert_eq!(result.steps[0].modeling, "Не моделируется");
+        assert!(result.steps[0].unverified_arguments.is_empty());
+        assert!(!result.lua_executed);
+        assert_eq!(result.filters.len(), 2);
+    }
+
+    #[test]
+    fn strategy_analysis_recognizes_each_comma_separated_documented_lua_argument() {
+        let lua = "--[[\narg: nofake1, nofake2, nofake3 — fake controls\n]]\nfunction fake(ctx, desync)\n  return true\nend\n";
+        let catalog = crate::runtime_profiles::parse_lua_catalog("zapret-antidpi.lua", lua);
+        let result = analyze_strategy("--lua-desync=fake:nofake2=1:mystery=1", &catalog).unwrap();
+        assert_eq!(result.steps[0].unverified_arguments, ["mystery"]);
+    }
+
+    #[test]
+    fn strategy_analysis_accepts_documented_shared_and_file_level_arguments() {
+        let lua = "-- arg: detect_host — hostname detector\n--[[\nstandard general:\n* repeats=2 - repeat count\n]]\n--[[\nstandard args: general. Common options.\n]]\nfunction fake(ctx, desync)\n  return true\nend\n";
+        let functions = crate::runtime_profiles::parse_lua_catalog("zapret-auto.lua", lua);
+        let groups = crate::runtime_profiles::parse_lua_standard_args(lua);
+        let result = analyze_strategy_with_standard_groups(
+            "--lua-desync=fake:repeats=2:detect_host=1:mystery=1",
+            &functions,
+            &groups,
+        )
+        .unwrap();
+        assert_eq!(result.steps[0].unverified_arguments, ["mystery"]);
+    }
+
+    #[test]
+    fn strategy_analysis_recognizes_circular_instance_tags_only_in_orchestrated_profiles() {
+        let lua = "--[[\nEach orchestrated instance must have strategy=N arg. A final arg stops rotation.\n]]\nfunction circular(ctx, desync)\n  return true\nend\nfunction fake(ctx, desync)\n  return true\nend\n";
+        let catalog = crate::runtime_profiles::parse_lua_catalog("zapret-auto.lua", lua);
+        let tagged = analyze_strategy(
+            "--lua-desync=fake:strategy=1:final=1 --lua-desync=circular",
+            &catalog,
+        )
+        .unwrap();
+        assert!(tagged.steps[0].unverified_arguments.is_empty());
+        let unscoped = analyze_strategy("--lua-desync=fake:strategy=1:final=1", &catalog).unwrap();
+        assert_eq!(
+            unscoped.steps[0].unverified_arguments,
+            ["strategy", "final"]
+        );
+    }
+
+    #[test]
+    fn strategy_analysis_rejects_empty_nul_and_oversized_input() {
+        assert!(analyze_strategy("  ", &[]).is_err());
+        assert!(analyze_strategy("--lua-desync=fake\0", &[]).is_err());
+        assert!(matches!(
+            analyze_strategy(&"x".repeat(MAX_STRATEGY_SOURCE_BYTES + 1), &[]),
+            Err(DpiLabError::Limit(_))
+        ));
+    }
+
+    #[test]
+    fn strategy_analysis_preserves_profile_boundaries_filters_and_controls() {
+        let analysis = analyze_strategy("--filter-tcp=443 --payload=tls_client_hello --lua-desync=fake --new=udp --filter-udp=443 --out-range=-n3 --lua-desync=quic", &[]).unwrap();
+        assert_eq!(analysis.profiles.len(), 2);
+        assert_eq!(analysis.steps[0].profile_index, 1);
+        assert_eq!(analysis.steps[1].profile_index, 2);
+        assert_eq!(analysis.profiles[0].filters, ["--filter-tcp=443"]);
+        assert_eq!(analysis.profiles[1].filters, ["--filter-udp=443"]);
+        assert_eq!(analysis.profiles[1].name.as_deref(), Some("udp"));
+        assert_eq!(analysis.profiles[1].controls, ["--out-range=-n3"]);
+    }
+
+    #[test]
+    fn strategy_config_uses_safe_assignment_scopes_and_ignores_commented_steps() {
+        let source = "NFQWS_ARGS_CUSTOM='--filter-tcp=443 --lua-desync=first --new=second --filter-tcp=80 --lua-desync=second'\nNFQWS_ARGS_UDP='--filter-udp=443 --lua-desync=third'\n# --lua-desync=not_a_step\n";
+        let analysis = analyze_strategy(source, &[]).unwrap();
+        assert_eq!(analysis.steps.len(), 3);
+        assert_eq!(analysis.profiles.len(), 3);
+        assert_eq!(
+            analysis
+                .steps
+                .iter()
+                .map(|step| step.profile_index)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            analysis.profiles[2].source.as_deref(),
+            Some("NFQWS_ARGS_UDP")
+        );
+        assert_eq!(analysis.profiles[2].filters, ["--filter-udp=443"]);
+        assert!(analyze_strategy("NFQWS_ARGS_CUSTOM=\"$(touch /tmp/never)\"", &[]).is_err());
+    }
 
     fn pcap_with_frames(frames: &[Vec<u8>], big_endian: bool, nanos: bool) -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -1390,9 +1933,144 @@ mod tests {
         assert_eq!(stream.data_ascii, "abcdefgh····ij");
         assert_eq!(stream.gap_bytes, 4);
         assert_eq!(stream.overlap_bytes, 2);
+        assert_eq!(stream.conflicting_overlap_bytes, 2);
         assert_eq!(stream.byte_sources[2], Some(1));
         assert_eq!(stream.byte_sources[4], Some(3));
         assert!(stream.evidence.contains(&"SIMULATED"));
+    }
+
+    #[test]
+    fn distinguishes_identical_retransmissions_from_conflicting_overlap() {
+        let frames = [
+            tcp_frame(100, b"abcd"),
+            tcp_frame(100, b"abcd"),
+            tcp_frame(102, b"cZ"),
+        ];
+        let result =
+            analyze_pcap("overlap.pcap", &pcap_with_frames(&frames, false, false)).unwrap();
+        let flow = &result.flows[0];
+        assert_eq!(flow.data_ascii, "abcd");
+        assert_eq!(flow.overlap_bytes, 6);
+        assert_eq!(flow.conflicting_overlap_bytes, 1);
+        let summary = result
+            .summary
+            .findings
+            .iter()
+            .find(|item| item.id == "reassembly")
+            .unwrap();
+        assert_eq!(summary.state, "not_confirmed");
+        assert!(summary.detail.contains("различающимися байтами: 1"));
+    }
+
+    #[test]
+    fn identical_retransmission_does_not_make_byte_reconstruction_ambiguous() {
+        let frames = [tcp_frame(100, b"abcd"), tcp_frame(100, b"abcd")];
+        let result =
+            analyze_pcap("duplicate.pcap", &pcap_with_frames(&frames, false, false)).unwrap();
+        assert_eq!(result.flows[0].conflicting_overlap_bytes, 0);
+        assert_eq!(
+            result
+                .summary
+                .findings
+                .iter()
+                .find(|item| item.id == "reassembly")
+                .unwrap()
+                .state,
+            "confirmed"
+        );
+    }
+
+    #[test]
+    fn separates_reused_tcp_endpoints_without_splitting_retransmitted_syn() {
+        let control = |sequence, flags| {
+            let mut frame = tcp_frame(sequence, b"");
+            frame[47] = flags;
+            frame
+        };
+        let frames = [
+            control(100, 2),
+            control(100, 2),
+            tcp_frame(101, b"first"),
+            control(106, 17),
+            control(900, 2),
+            tcp_frame(901, b"second"),
+        ];
+        let result = analyze_pcap("reuse.pcap", &pcap_with_frames(&frames, false, false)).unwrap();
+        assert_eq!(result.flows.len(), 2);
+        assert_eq!(result.flows[0].data_ascii, "first");
+        assert_eq!(result.flows[1].data_ascii, "second");
+        assert_eq!(result.flows[0].packet_numbers, vec![1, 2, 3, 4]);
+        assert_eq!(result.flows[1].packet_numbers, vec![5, 6]);
+    }
+
+    #[test]
+    fn separates_partial_capture_before_a_new_syn() {
+        let mut syn = tcp_frame(900, b"");
+        syn[47] = 2;
+        let frames = [tcp_frame(100, b"partial"), syn, tcp_frame(901, b"new")];
+        let result =
+            analyze_pcap("partial.pcap", &pcap_with_frames(&frames, false, false)).unwrap();
+        assert_eq!(result.flows.len(), 2);
+        assert_eq!(result.flows[0].data_ascii, "partial");
+        assert_eq!(result.flows[1].data_ascii, "new");
+    }
+
+    #[test]
+    fn new_epoch_applies_to_both_directions_of_the_connection() {
+        let control = |sequence, flags| {
+            let mut frame = tcp_frame(sequence, b"");
+            frame[47] = flags;
+            frame
+        };
+        let reverse = |sequence, payload: &[u8], flags| {
+            let mut frame = tcp_frame(sequence, payload);
+            frame[26..30].copy_from_slice(&[198, 51, 100, 20]);
+            frame[30..34].copy_from_slice(&[192, 0, 2, 10]);
+            frame[34..36].copy_from_slice(&443u16.to_be_bytes());
+            frame[36..38].copy_from_slice(&12345u16.to_be_bytes());
+            frame[47] = flags;
+            frame
+        };
+        let frames = [
+            control(100, 2),
+            reverse(500, b"", 18),
+            tcp_frame(101, b"one"),
+            reverse(501, b"reply1", 24),
+            reverse(507, b"", 17),
+            control(900, 2),
+            reverse(800, b"", 18),
+            tcp_frame(901, b"two"),
+            reverse(801, b"reply2", 24),
+        ];
+        let result = analyze_pcap("both.pcap", &pcap_with_frames(&frames, false, false)).unwrap();
+        assert_eq!(result.flows.len(), 4);
+        assert!(result.flows.iter().any(|flow| flow.data_ascii == "one"));
+        assert!(result.flows.iter().any(|flow| flow.data_ascii == "two"));
+        assert!(result.flows.iter().any(|flow| flow.data_ascii == "reply1"));
+        assert!(result.flows.iter().any(|flow| flow.data_ascii == "reply2"));
+    }
+
+    #[test]
+    fn fin_does_not_discard_remaining_data_from_opposite_direction() {
+        let mut syn = tcp_frame(100, b"");
+        syn[47] = 2;
+        let mut fin = tcp_frame(101, b"");
+        fin[47] = 17;
+        let mut response = tcp_frame(500, b"last response");
+        response[26..30].copy_from_slice(&[198, 51, 100, 20]);
+        response[30..34].copy_from_slice(&[192, 0, 2, 10]);
+        response[34..36].copy_from_slice(&443u16.to_be_bytes());
+        response[36..38].copy_from_slice(&12345u16.to_be_bytes());
+        let frames = [syn, fin, response];
+        let result =
+            analyze_pcap("half-close.pcap", &pcap_with_frames(&frames, false, false)).unwrap();
+        assert_eq!(result.flows.len(), 2);
+        assert!(
+            result
+                .flows
+                .iter()
+                .any(|flow| flow.data_ascii == "last response" && flow.packet_numbers == vec![3])
+        );
     }
 
     #[test]

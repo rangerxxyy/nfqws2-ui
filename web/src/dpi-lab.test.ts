@@ -1,5 +1,77 @@
 import { describe, expect, it } from 'vitest';
-import { formatDpiByteDump, dpiEvidencePresentation, formatDpiFlowByteRows, formatDpiTcpFlags } from './dpi-lab';
+import { dpiCaptureAvailability, dpiExperimentSaveAvailability, dpiFindingStatus, dpiStrategyCorrelation, dpiNextSteps, formatDpiByteDump, dpiEvidencePresentation, formatDpiFlowByteRows, formatDpiTcpFlags, type DpiLabAnalysis, type DpiLabStrategyAnalysis } from './dpi-lab';
+
+describe('DPI Lab finding status labels', () => {
+  it('gives each independent diagnostic state a distinct plain-language label and tone', () => {
+    expect(['confirmed', 'not_confirmed', 'error', 'not_checked'].map((state) => dpiFindingStatus(state).label)).toEqual([
+      'Подтверждено', 'Не подтверждено', 'Ошибка', 'Не проверялось',
+    ]);
+    expect(dpiFindingStatus('not_confirmed').tone).not.toBe(dpiFindingStatus('confirmed').tone);
+    expect(dpiFindingStatus('error').tone).not.toBe(dpiFindingStatus('not_checked').tone);
+  });
+});
+
+describe('DPI Lab next steps', () => {
+  it('suggests a new capture for incomplete evidence and flags uncertain reconstruction', () => {
+    const analysis = { flows: [{ gapBytes: 3, conflictingOverlapBytes: 0, streamTruncated: false }], summary: { findings: [{ id: 'tcp_connected', state: 'not_confirmed' }, { id: 'reassembly', state: 'not_confirmed' }, { id: 'client_hello', state: 'not_confirmed' }] } } as DpiLabAnalysis;
+    const tips = dpiNextSteps(analysis);
+    expect(tips).toHaveLength(4);
+    expect(tips.join(' ')).toContain('пропуски');
+    expect(tips.join(' ')).toContain('не подтверждает выполнение Lua');
+  });
+  it('explains stream truncation without inventing gaps or conflicting bytes', () => {
+    const analysis = { flows: [{ gapBytes: 0, conflictingOverlapBytes: 0, streamTruncated: true }], summary: { findings: [{ id: 'tcp_connected', state: 'confirmed' }, { id: 'reassembly', state: 'not_confirmed' }, { id: 'client_hello', state: 'confirmed' }] } } as DpiLabAnalysis;
+    const tips = dpiNextSteps(analysis).join(' ');
+    expect(tips).toContain('ограничение размера потока');
+    expect(tips).not.toContain('пропуски данных');
+    expect(tips).not.toContain('различающиеся перекрывающиеся байты');
+  });
+  it('does not recommend recapturing a connection whose beginning is observed', () => {
+    const analysis = { summary: { findings: [{ id: 'tcp_connected', state: 'confirmed' }, { id: 'reassembly', state: 'confirmed' }, { id: 'client_hello', state: 'confirmed' }] } } as DpiLabAnalysis;
+    expect(dpiNextSteps(analysis)).toHaveLength(1);
+  });
+});
+
+describe('strategy correlation', () => {
+  it('keeps the configured steps distinct from packet observations and unknown execution', () => {
+    const strategy = { steps: [{ index: 1, function: 'fake', arguments: [{ name: 'repeats', value: '2' }] }] } as DpiLabStrategyAnalysis;
+    const capture = { capture: { packetCount: 12 } } as DpiLabAnalysis;
+    const result = dpiStrategyCorrelation(strategy, capture);
+    expect(result.expected).toEqual(['1. fake: repeats=2']);
+    expect(result.model).toContain('не моделируются');
+    expect(result.observed).toContain('12 пакетов');
+    expect(result.observed).toContain('не определена');
+    expect(result.confirmed).toContain('не подтверждены');
+  });
+  it('describes missing inputs without inferring failure or success', () => {
+    const result = dpiStrategyCorrelation(null, null);
+    expect(result.expected).toEqual([]);
+    expect(result.model).toContain('Сначала');
+    expect(result.observed).toContain('Сначала');
+  });
+});
+
+describe('DPI Lab capture availability', () => {
+  it('enables a selected 276 KiB capture and restores it after analysis', () => {
+    expect(dpiCaptureAvailability(null, false).disabled).toBe(true);
+    expect(dpiCaptureAvailability(276 * 1024, false).disabled).toBe(false);
+    expect(dpiCaptureAvailability(276 * 1024, true).disabled).toBe(true);
+    expect(dpiCaptureAvailability(276 * 1024, false).disabled).toBe(false);
+  });
+  it('explains empty and oversized captures before upload', () => {
+    expect(dpiCaptureAvailability(0, false).reason).toContain('пуст');
+    expect(dpiCaptureAvailability(2 * 1024 * 1024, false).disabled).toBe(false);
+    expect(dpiCaptureAvailability(2 * 1024 * 1024 + 1, false).reason).toContain('2 МиБ');
+  });
+  it('requires successful analysis of the selected file before saving and explains each busy state', () => {
+    expect(dpiExperimentSaveAvailability(false, false, false, false).disabled).toBe(true);
+    expect(dpiExperimentSaveAvailability(true, false, false, false).reason).toContain('Сначала нажмите');
+    expect(dpiExperimentSaveAvailability(true, true, false, false).disabled).toBe(false);
+    expect(dpiExperimentSaveAvailability(true, true, true, false).disabled).toBe(true);
+    expect(dpiExperimentSaveAvailability(true, true, false, true).reason).toContain('сохраняется');
+    expect(dpiExperimentSaveAvailability(true, false, false, false).disabled).toBe(true);
+  });
+});
 
 describe('DPI Lab byte inspector', () => {
   it('formats captured hex into offset, byte, and printable ASCII columns', () => {

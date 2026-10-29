@@ -1,4 +1,4 @@
-import type { DpiLabAnalysis, DpiLabSavedExperiment } from './dpi-lab';
+import type { DpiLabAnalysis, DpiLabSavedExperiment, DpiLabStrategyAnalysis } from './dpi-lab';
 
 export type Locale = 'ru' | 'en' | 'zh' | 'tr';
 export type StatusResponse = {
@@ -369,6 +369,7 @@ function dpiLabCaptureUrl(path: string, file: File): string {
 }
 
 export const nfqwsDpiLab = {
+  analyzeStrategy: (source: string) => api<DpiLabStrategyAnalysis>('/api/nfqws2/dpi-lab/strategy/analyze', { method: 'POST', body: JSON.stringify({ source }) }),
   analyze: (file: File) => api<DpiLabAnalysis>(dpiLabCaptureUrl('/api/nfqws2/dpi-lab/analyze', file), {
     method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
   }),
