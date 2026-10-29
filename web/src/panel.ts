@@ -8,6 +8,7 @@ import { uiUpdateNoticePresentation } from './ui-update-notice';
 import { captureForeignConfigDisclosureState, formatForeignConfigProbeSummary } from './disclosure-state';
 import { freezeRowDetails, freezeRowIdentity } from './freeze-row-text';
 import { configAssignmentValue, configDraftDisposition, configEditorLayout, configEditorViewportHeight, configOutlineEntries, sameConfigText } from './config-values';
+import { tokenizeLuaScript } from './lua-syntax';
 import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import './panel.css';
@@ -1696,7 +1697,7 @@ function renderRuntimeProfiles() {
           functionSelect.addEventListener('change', () => updateRuntimeProfileStep(profile.id, String(argumentIndex), (current) => replaceDesyncFunction(current, functionSelect.value)));
           [...new Set([...functions, functionName])].sort().forEach((name) => { const option = document.createElement('option'); option.value = name; option.textContent = name; option.selected = name === functionName; functionSelect.append(option); });
           const functionInfo = runtimeProfileLuaCatalog.find((item) => item.name === functionName);
-          const description = document.createElement('span'); description.className = 'text-xs leading-5 text-slate-400'; description.textContent = getRussianLuaFunctionDescription(functionName);
+          const description = document.createElement('span'); description.className = 'lua-function-description text-xs leading-5'; description.textContent = getRussianLuaFunctionDescription(functionName);
           const parameterList = document.createElement('div'); parameterList.className = 'profile-step-parameters';
           const parameterParts = splitDesyncParameters(argument);
           diagnoseProfileLuaArguments([argument], runtimeProfileLuaCatalog, runtimeProfileLuaStandardGroups).forEach((item) => { const warning = document.createElement('span'); warning.className = 'rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-200'; warning.textContent = item.message; content.append(warning); });
@@ -2937,11 +2938,27 @@ async function showLuaScript(name: string) {
   try {
     const script = await nfqwsScripts.get(name);
     setText('#luaScriptPath', `${script.path}${script.compressed ? ' · gzip' : ''}${script.truncated ? ' · показаны первые 512 КБ' : ''}`);
-    setText('#luaScriptContent', script.content || '(файл пуст)');
+    if (script.content) renderLuaScriptContent(script.content);
+    else setText('#luaScriptContent', '(файл пуст)');
   } catch (error) {
     setText('#luaScriptPath', `${name} · файл отсутствует или недоступен`);
     setText('#luaScriptContent', error instanceof Error ? error.message : 'Не удалось прочитать файл');
   }
+}
+function renderLuaScriptContent(source: string) {
+  const host = $('#luaScriptContent');
+  if (!host) return;
+  const fragment = document.createDocumentFragment();
+  for (const token of tokenizeLuaScript(source)) {
+    if (token.type === 'plain') fragment.append(document.createTextNode(token.text));
+    else {
+      const span = document.createElement('span');
+      span.className = `conf-token-${token.type}`;
+      span.textContent = token.text;
+      fragment.append(span);
+    }
+  }
+  host.replaceChildren(fragment);
 }
 const NFQWS_ARGUMENT_GROUPS = [
   ['NFQWS_EXTRA_ARGS', 'Режим и общие параметры'],

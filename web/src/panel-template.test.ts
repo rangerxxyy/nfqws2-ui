@@ -1083,6 +1083,25 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(panelStyles).toContain('@keyframes about-copy-check');
   });
 
+  it('keeps the About page compact with inline command rows', () => {
+    expect(template).toContain('about-version-grid');
+    expect(panelStyles).toContain('.about-card { width:100%; padding:1rem 1.1rem;');
+    expect(panelStyles).toContain('.about-version-card { display:flex; align-items:center; justify-content:space-between;');
+    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;');
+    expect(panelStyles).toContain('.about-command-content { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);');
+    expect(panelStyles).toContain('.about-copy-button { display:inline-flex; align-items:center; justify-content:center; min-width:2.15rem; min-height:2.15rem;');
+  });
+
+  it('uses the configuration syntax palette for Lua source and its descriptions', () => {
+    expect(template).toContain('class="lua-script-content');
+    expect(panelSource).toContain('renderLuaScriptContent(script.content)');
+    expect(panelSource).toContain('tokenizeLuaScript(source)');
+    expect(panelSource).toContain("description.className = 'lua-function-description text-xs leading-5'");
+    expect(panelStyles).toContain('.lua-script-content .conf-token-comment');
+    expect(panelStyles).toContain('.lua-script-content .conf-token-keyword');
+    expect(panelStyles).toContain('.lua-function-description { color:var(--syntax-comment');
+  });
+
   it('places About after the other pages and as the last system navigation item', () => {
     expect(template.indexOf('id="tabContent-logs"')).toBeLessThan(template.indexOf('id="tabContent-about"'));
     expect(template.indexOf('id="navBtn-logs"')).toBeLessThan(template.indexOf('id="navBtn-about"'));
@@ -1091,7 +1110,7 @@ describe('TSX panel with optional server-side authentication', () => {
     expect(template).toContain('Установить последнюю стабильную версию панели.');
     expect(template).toContain('Показать версии панели и nfqws2, а также проверить доступность веб-панели.');
     expect(template).not.toContain('команда панели rangerxxyy; штатное управление nfqws2 не меняется');
-    expect(panelStyles).toContain('font-size:.84rem; font-weight:650; line-height:1.55; white-space:pre');
+    expect(panelStyles).toContain('font-size:.75rem; font-weight:650; line-height:1.4; white-space:pre;');
   });
 
   it('shows the configuration structure panel enabled on first render', () => {
@@ -1496,9 +1515,9 @@ describe('TSX panel with optional server-side authentication', () => {
   });
 
   it('keeps About commands and copy actions from colliding at narrow widths', () => {
-    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) auto;');
+    expect(panelStyles).toContain('.about-command-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;');
     expect(panelStyles).toContain('.about-command-row > button { white-space:nowrap; }');
-    expect(panelStyles).toContain('.about-command-row code { display:block; width:fit-content; max-width:100%;');
+    expect(panelStyles).toMatch(/\.about-command-row code \{[^}]*display:block;[^}]*width:fit-content;[^}]*max-width:100%;/);
     expect(panelStyles).toContain('overflow-x:auto;');
     expect(panelStyles).toContain('@media (max-width:560px)');
   });

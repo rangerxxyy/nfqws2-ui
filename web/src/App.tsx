@@ -719,16 +719,16 @@ export default function App() {
               <div className={"mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3"}>
                 <div>
                   <h3 className={"text-sm font-bold text-white"}>{"Скрипты nfqws2"}</h3>
-                  <p className={"mt-1 text-xs text-slate-400"}>{"Файлы читаются из каталога Lua обнаруженной установки. Просмотр доступен только для чтения."}</p>
+                  <p className={"lua-script-help mt-1 text-xs"}>{"Файлы читаются из каталога Lua обнаруженной установки. Просмотр доступен только для чтения."}</p>
                 </div>
                 <button type={"button"} data-action-click={"refreshLuaScripts"} className={"rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"}>{"Обновить список"}</button>
               </div>
-              <nav id={"luaScriptTabs"} aria-label={"Lua-скрипты"} className={"mb-3 flex flex-wrap gap-1 border-b border-slate-800"}>
+              <nav id={"luaScriptTabs"} aria-label={"Lua-скрипты"} className={"lua-script-tabs mb-3 flex flex-wrap gap-1 border-b border-slate-800"}>
                 <span className={"px-3 py-2 text-xs text-slate-500"}>{"Список загружается…"}</span>
               </nav>
-              <div id={"luaScriptViewer"} className={"overflow-hidden rounded-xl border border-slate-800 bg-[#070b14]"}>
-                <div id={"luaScriptPath"} className={"border-b border-slate-800 px-3 py-2 font-mono text-xs text-slate-400"}>{"Путь к файлу появится после загрузки"}</div>
-                <pre id={"luaScriptContent"} className={"max-h-[680px] min-h-36 overflow-auto p-4 font-mono text-xs leading-5 text-slate-200 whitespace-pre"}>{"Выберите скрипт для просмотра."}</pre>
+              <div id={"luaScriptViewer"} className={"lua-script-viewer overflow-hidden rounded-xl border border-slate-800"}>
+                <div id={"luaScriptPath"} className={"lua-script-path border-b px-3 py-2 font-mono text-xs"}>{"Путь к файлу появится после загрузки"}</div>
+                <pre id={"luaScriptContent"} className={"lua-script-content max-h-[680px] min-h-36 overflow-auto p-4 font-mono text-xs leading-5 whitespace-pre"}>{"Выберите скрипт для просмотра."}</pre>
               </div>
             </section>
             {"\n\n        "}
