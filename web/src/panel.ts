@@ -42,10 +42,13 @@ import { isPanelRouteAvailable, navigationGroupForRoute } from './navigation';
 import { isValidNetworkInterfaceSelection, networkInterfaceChoices } from './network-interface';
 import { snapshotFreeSpaceState } from './snapshot-storage';
 import { formatListProfileUsageStatus, listValidationNotice } from './list-profile-usage';
+import { draftDiffersFromBaseline, saveButtonState } from './save-button-state';
 
 type Route = 'conf' | 'lists' | 'check' | 'trace' | 'autotune' | 'configCheck' | 'dpiLab' | 'monitor' | 'profiles' | 'community' | 'snapshots' | 'changes' | 'logs' | 'appearance' | 'about';
 let status: StatusResponse | null = null;
 let config: ConfigResponse | null = null;
+let configLoaded = false;
+let configWritable = false;
 let luaScripts: NfqwsLuaScriptInfo[] = [];
 let activeLuaScript: string | null = null;
 let discoveredNetworkInterfaces: string[] = [];
@@ -54,6 +57,7 @@ let fullscreenPlaceholder: Comment | null = null;
 let listFullscreenPlaceholder: Comment | null = null;
 let activeList: NfqwsListResponse | null = null;
 let activeListId: NfqwsListId = 'user.list';
+let activeListWritable = false;
 const LIST_EDITOR_VIEW_KEY = 'nfqws2-ui-list-editor-view';
 let listEditorView: 'text' | 'rows' = (() => {
   try { return localStorage.getItem(LIST_EDITOR_VIEW_KEY) === 'rows' ? 'rows' : 'text'; }
@@ -68,6 +72,16 @@ let monitoringRunning = false;
 const monitoringHostsRunning = new Set<string>();
 let monitoringState: MonitoringState | null = null;
 let monitoringIntervalMinutes = 30;
+let monitoringSettingsLoaded = false;
+let monitoringSettingsBaseline = '';
+let autoStrategySettingsLoaded = false;
+let autoStrategySettingsBaseline = '';
+let telegramSettingsLoaded = false;
+let telegramSettingsBaseline = '';
+let panelAuthSettingsLoaded = false;
+let panelAuthSettingsBaseline = '';
+let communityProviderLoaded = false;
+let communityProviderBaseline = '';
 let appearanceSettings: AppearanceSettings = { theme: 'dark', layout: 'standard', accent: 'blue', statusBar: 'standard', remindWindowsTcpTimestamps: true, showConfigWarnings: true };
 let configWarningsTimer: number | null = null;
 const configArgumentViews = new Map<string, EditorView>();
@@ -374,6 +388,75 @@ function setBusy(value: boolean) {
     const editor = field.closest<HTMLElement>('.config-argument-editor');
     if (editor) editor.inert = value;
   });
+  syncSaveButtonStates();
+}
+function monitoringSettingsKey() {
+  return JSON.stringify({ enabled: ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? false, interval: currentMonitoringInterval() });
+}
+function autoStrategySettingsKey() {
+  return JSON.stringify({
+    enabled: ($('#autoStrategyEnabled') as HTMLInputElement | null)?.checked ?? false,
+    applyAutomatically: ($('#autoStrategyApply') as HTMLInputElement | null)?.checked ?? false,
+    failuresBeforePick: Number(($('#autoStrategyFailures') as HTMLSelectElement | null)?.value ?? 3),
+    cooldownHours: Number(($('#autoStrategyCooldown') as HTMLSelectElement | null)?.value ?? 6),
+  });
+}
+function telegramSettingsKey() {
+  const value = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null)?.value ?? '';
+  return JSON.stringify({ token: value('telegramToken'), chat: value('telegramChatId'), via: value('telegramVia'), iface: value('telegramInterface'), proxy: value('telegramProxy') });
+}
+function panelAuthSettingsKey() {
+  return JSON.stringify({
+    enabled: ($('#panelAuthEnabled') as HTMLInputElement | null)?.checked ?? false,
+    rememberDays: ($('#panelAuthRememberDays') as HTMLSelectElement | null)?.value ?? '',
+    password: ($('#panelAuthPassword') as HTMLInputElement | null)?.value ?? '',
+  });
+}
+function communityProviderKey() {
+  return JSON.stringify({ asn: ($('#communityProviderAsn') as HTMLInputElement | null)?.value.trim() ?? '', name: ($('#communityProviderName') as HTMLInputElement | null)?.value.trim() ?? '' });
+}
+function snapshotRetentionKey() {
+  const settings = snapshotOverview?.settings;
+  if (!settings) return '';
+  const number = (selector: string, fallback: number) => Number.parseInt(($<HTMLInputElement>(selector)?.value ?? ''), 10) || fallback;
+  return JSON.stringify({ maxDays: number('#snapshotDays', settings.maxDays), maxCount: number('#snapshotMaxCount', settings.maxCount), maxLocalMib: number('#snapshotMaxLocalMib', settings.maxLocalMib) });
+}
+function markSaveButton(selector: string, loaded: boolean, writable: boolean, dirty: boolean) {
+  const button = $(selector);
+  if (!(button instanceof HTMLButtonElement)) return;
+  const state = saveButtonState({ loaded, writable, dirty, busy: busy || button.dataset.saving === 'true' });
+  button.dataset.dirtyState = state.dirtyState;
+  button.classList.toggle('save-action-clean', state.dirtyState === 'clean');
+  button.disabled = state.disabled;
+}
+function setSaveButtonPending(action: string, pending: boolean) {
+  const button = $(`[data-action-click="${action}"]`);
+  if (!(button instanceof HTMLButtonElement)) return;
+  if (pending) button.dataset.saving = 'true';
+  else delete button.dataset.saving;
+  syncSaveButtonStates();
+}
+function syncSaveButtonStates() {
+  const configEditor = $('#nfqwsConfTextarea');
+  const configDirty = Boolean(config && configEditor instanceof HTMLTextAreaElement && !sameConfigText(configEditor.value, config.content));
+  markSaveButton('[data-action-click="applyConfigAndRestart"]', configLoaded, configWritable, configDirty);
+
+  const manualInput = $('#ispInterfaceManualInput');
+  const manualValue = manualInput instanceof HTMLInputElement ? manualInput.value.trim() : '';
+  const currentInterface = configEditor instanceof HTMLTextAreaElement ? configAssignmentValue(configEditor.value, 'ISP_INTERFACE') : '';
+  markSaveButton('[data-action-click="submitIspInterfaceManually"]', configLoaded, configWritable, Boolean(manualValue && manualValue !== currentInterface));
+
+  const listEditor = $('#listEditorTextarea');
+  const listDirty = Boolean(activeList && listEditor instanceof HTMLTextAreaElement && listEditor.value !== activeList.content);
+  markSaveButton('[data-action-click="saveActiveListFile"]', activeList !== null, activeListWritable, listDirty);
+
+  markSaveButton('[data-action-click="saveMonitoringSettings"]', monitoringSettingsLoaded, true, monitoringSettingsLoaded && monitoringSettingsKey() !== monitoringSettingsBaseline);
+  markSaveButton('[data-action-click="saveAutoStrategySettings"]', autoStrategySettingsLoaded, true, autoStrategySettingsLoaded && autoStrategySettingsKey() !== autoStrategySettingsBaseline);
+  markSaveButton('[data-action-click="saveTelegramSettings"]', telegramSettingsLoaded, true, telegramSettingsLoaded && telegramSettingsKey() !== telegramSettingsBaseline);
+  markSaveButton('[data-action-click="savePanelAuthSettings"]', panelAuthSettingsLoaded, true, panelAuthSettingsLoaded && panelAuthSettingsKey() !== panelAuthSettingsBaseline);
+  markSaveButton('[data-action-click="saveRuntimeProfiles"]', runtimeProfilesState !== null, runtimeProfilesState !== null, runtimeProfilesDirty || runtimeProfileManagedDirty);
+  markSaveButton('[data-action-click="saveCommunityProvider"]', communityProviderLoaded, true, communityProviderLoaded && communityProviderKey() !== communityProviderBaseline);
+  markSaveButton('[data-action-click="saveSnapshotRetention"]', snapshotOverview !== null, snapshotOverview !== null, Boolean(snapshotOverview && snapshotRetentionKey() !== JSON.stringify({ maxDays: snapshotOverview.settings.maxDays, maxCount: snapshotOverview.settings.maxCount, maxLocalMib: snapshotOverview.settings.maxLocalMib })));
 }
 function setRestartInProgress(value: boolean) {
   restartInProgress = value;
@@ -1030,6 +1113,9 @@ function renderCommunityStrategies(data: CommunityStrategiesResponse) {
   const nameInput = $('#communityProviderName');
   if (asnInput instanceof HTMLInputElement) asnInput.value = data.asn ? String(data.asn) : '';
   if (nameInput instanceof HTMLInputElement) nameInput.value = data.provider;
+  communityProviderLoaded = true;
+  communityProviderBaseline = communityProviderKey();
+  syncSaveButtonStates();
   const editor = $('#communityProviderEditor');
   const editButton = $('#communityEditProvider');
   const editing = data.asn === null || communityProviderEditing;
@@ -1086,8 +1172,10 @@ async function saveCommunityProvider() {
   if (!(asn instanceof HTMLInputElement) || !(name instanceof HTMLInputElement)) return;
   const parsed = asn.value.trim() ? Number(asn.value.trim()) : null;
   if (parsed !== null && (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 4_294_967_295)) return toast('Укажите корректный номер ASN.', 'error');
-  try { await nfqwsCommunityStrategies.setProvider(parsed, name.value.trim()); communityProviderEditing = false; communityAutoDetectionAttempted = true; await loadCommunityStrategies(false, true); toast('Провайдер сохранён.'); }
+  setSaveButtonPending('saveCommunityProvider', true);
+  try { await nfqwsCommunityStrategies.setProvider(parsed, name.value.trim()); communityProviderEditing = false; communityAutoDetectionAttempted = true; await loadCommunityStrategies(false, true); communityProviderBaseline = communityProviderKey(); toast('Провайдер сохранён.'); }
   catch (error) { toast(error instanceof Error ? error.message : 'Не удалось сохранить провайдера.', 'error'); }
+  finally { setSaveButtonPending('saveCommunityProvider', false); }
 }
 
 function findCommunityStrategy(id: string) { return communityStrategies?.items.find((item) => item.id === id); }
@@ -1283,10 +1371,12 @@ let runtimeProfileLuaStandardGroups: NfqwsLuaStandardGroup[] = [];
 let runtimeProfileCliCatalog: NfqwsLuaCatalogResponse['cli'] | undefined;
 let draggedRuntimeProfileStep: { profileId: string; index: number } | null = null;
 let runtimeProfileDraft: string[][] = [];
+let runtimeProfileDraftBaseline: string[][] = [];
 let profileListInventory: NfqwsListSummary[] = [];
 let selectedRuntimeProfileId = '';
 let runtimeProfilesDirty = false;
 let runtimeProfileManagedDraft: Record<string, string[]> = {};
+let runtimeProfileManagedDraftBaseline: Record<string, string[]> = {};
 let runtimeProfileManagedDirty = false;
 let runtimeProfileEditorMode: 'builder' | 'text' = 'builder';
 const RUNTIME_PROFILE_LABELS_KEY = 'nfqws2-ui-profile-labels';
@@ -1328,6 +1418,7 @@ function renderBackups(data: SnapshotOverview) {
   setText('#snapshotRemoteStatus', !data.remote.tool ? 'На роутере нет SSH-клиента' : data.remote.error ? `Ошибка отправки: ${data.remote.error}` : data.remote.on ? `Включено · на NAS ${data.remote.stored} · ждут отправки ${data.remote.pending}` : 'Отправка выключена — снимки хранятся на роутере');
   setValue('#snapshotDays', String(data.settings.maxDays)); setValue('#snapshotMaxCount', String(data.settings.maxCount)); setValue('#snapshotMaxLocalMib', String(data.settings.maxLocalMib));
   setValue('#snapshotRemoteEnabled', String(data.settings.remote.enabled), true); setValue('#snapshotRemoteHost', data.settings.remote.host); setValue('#snapshotRemotePort', String(data.settings.remote.port)); setValue('#snapshotRemoteUser', data.settings.remote.user); setValue('#snapshotRemoteDir', data.settings.remote.dir); setValue('#snapshotRemoteKeep', String(data.settings.remote.keepLocal));
+  syncSaveButtonStates();
   setText('#snapshotPublicKey', data.remote.publicKey);
   const command = $('#snapshotSetupCommand'); if (command instanceof HTMLTextAreaElement) command.value = data.remote.setupCommand;
   $('#snapshotSetupDetails')?.classList.toggle('hidden', !data.remote.setupCommand);
@@ -1388,7 +1479,9 @@ function readSnapshotSettings() {
 async function saveSnapshotSettings(remoteOnly = false) {
   const settings = readSnapshotSettings();
   if (remoteOnly && snapshotOverview) { settings.maxDays = snapshotOverview.settings.maxDays; settings.maxCount = snapshotOverview.settings.maxCount; settings.maxLocalMib = snapshotOverview.settings.maxLocalMib; }
-  await nfqwsSnapshots.saveSettings(settings); toast('Настройки резервных копий сохранены.'); await loadBackups();
+  if (!remoteOnly) setSaveButtonPending('saveSnapshotRetention', true);
+  try { await nfqwsSnapshots.saveSettings(settings); toast('Настройки резервных копий сохранены.'); await loadBackups(); }
+  finally { if (!remoteOnly) setSaveButtonPending('saveSnapshotRetention', false); }
 }
 async function toggleAutomaticSnapshots(enabled: boolean) {
   const input = $<HTMLInputElement>('#snapshotAutoEnabled');
@@ -1513,12 +1606,27 @@ function storeRuntimeProfileArgs(id: string, args: string[], redraw = true) {
   markRuntimeProfilesDirty(id, redraw);
   return true;
 }
-function markRuntimeProfilesDirty(id?: string, redraw = true) {
-  if (id && !id.startsWith('custom-')) runtimeProfileManagedDirty = true;
-  else runtimeProfilesDirty = true;
+function normalizedRuntimeProfileManagedDraft() {
+  const defaults = new Map<string, string[]>();
+  for (const profile of runtimeProfilesState?.profiles ?? []) {
+    const target = getRuntimeProfileConstructorTarget(profile);
+    if (!target?.managed) continue;
+    defaults.set(target.source, target.args);
+    for (const component of target.linkedComponents) defaults.set(component.source, component.args);
+  }
+  return Object.fromEntries(Object.entries(runtimeProfileManagedDraft)
+    .filter(([source, args]) => draftDiffersFromBaseline(args, defaults.get(source) ?? []))
+    .map(([source, args]) => [source, [...args]]));
+}
+function markRuntimeProfilesDirty(_id?: string, redraw = true) {
+  runtimeProfilesDirty = draftDiffersFromBaseline(runtimeProfileDraft, runtimeProfileDraftBaseline);
+  runtimeProfileManagedDirty = draftDiffersFromBaseline(normalizedRuntimeProfileManagedDraft(), runtimeProfileManagedDraftBaseline);
   const status = $('#profileStatus');
-  if (status) status.textContent = 'Есть несохранённые изменения. Применение сохранит снимок, проверит конфиг и перезапустит nfqws2.';
+  if (status) status.textContent = runtimeProfilesDirty || runtimeProfileManagedDirty
+    ? 'Есть несохранённые изменения. Применение сохранит снимок, проверит конфиг и перезапустит nfqws2.'
+    : 'Нет несохранённых изменений.';
   if (redraw) renderRuntimeProfiles();
+  syncSaveButtonStates();
 }
 function renderRuntimeProfiles() {
   const list = $('#profileList'); const editor = $('#profileEditor');
@@ -1941,8 +2049,11 @@ async function loadProfiles() {
     try { await fetchRuntimeProfileCatalog(); } catch { runtimeProfileLuaCatalog = []; runtimeProfileLuaStandardGroups = []; runtimeProfileCliCatalog = undefined; }
     try { profileListInventory = (await nfqwsLists.index()).files; } catch { profileListInventory = []; }
     runtimeProfileDraft = result.profiles.filter((profile) => profile.editable).map((profile) => [...profile.args]);
+    runtimeProfileDraftBaseline = runtimeProfileDraft.map((args) => [...args]);
     runtimeProfileManagedDraft = {}; runtimeProfileManagedDirty = false;
+    runtimeProfileManagedDraftBaseline = {};
     runtimeProfilesDirty = false; renderRuntimeProfiles();
+    syncSaveButtonStates();
     renderRuntimeProfileCatalogStatus();
   } catch (error) { if (label) label.textContent = error instanceof Error ? error.message : 'Не удалось загрузить профили nfqws2.'; }
 }
@@ -2167,6 +2278,7 @@ function mutateRuntimeProfile(id: string, action: 'up' | 'down' | 'delete') {
 }
 async function saveRuntimeProfiles() {
   if (!runtimeProfilesState || (!runtimeProfilesDirty && !runtimeProfileManagedDirty)) return toast('Нет изменений профилей для применения.');
+  setSaveButtonPending('saveRuntimeProfiles', true);
   requestDangerousConfirmation('Применить изменения профилей?', 'Конфигурация будет сохранена в резервную копию, проверена через nfqws2 --dry-run, затем nfqws2 перезапустится с возможностью отката.', async () => {
     setBusy(true); setRestartInProgress(true);
     try {
@@ -2174,19 +2286,22 @@ async function saveRuntimeProfiles() {
       if (runtimeProfilesDirty) {
         result = await nfqwsProfiles.saveCustom(runtimeProfileDraft, runtimeProfilesState!.revision);
         config = result.config;
+        runtimeProfileDraftBaseline = runtimeProfileDraft.map((args) => [...args]);
         runtimeProfilesDirty = false;
       }
       if (runtimeProfileManagedDirty) {
         if (runtimeProfilesDirty === false && result) runtimeProfilesState = await nfqwsProfiles.list();
         result = await nfqwsProfiles.saveSettings(runtimeProfileManagedDraft, runtimeProfilesState!.revision);
+        runtimeProfileManagedDraftBaseline = normalizedRuntimeProfileManagedDraft();
+        runtimeProfileManagedDirty = false;
       }
       if (!result) return;
       config = result.config;
       setNfqwsConfigText(config.content);
       toast(result.message || 'Профили nfqws2 применены.'); await Promise.all([loadProfiles(), fetchStatus()]);
     } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось применить профили.', 'error'); }
-    finally { setRestartInProgress(false); setBusy(false); }
-  });
+    finally { setRestartInProgress(false); setBusy(false); setSaveButtonPending('saveRuntimeProfiles', false); }
+  }, () => setSaveButtonPending('saveRuntimeProfiles', false));
 }
 function requestDangerousConfirmation(title: string, message: string, action: () => Promise<void>, onCancel: () => void = () => undefined) {
   setText('#operationConfirmTitle', title); setText('#operationConfirmMessage', message); pendingConfirmation = action;
@@ -2569,6 +2684,9 @@ async function loadBackendMonitoring() {
   renderMonitoringSites();
   const last = saved.lastAutoCheck ? new Date(saved.lastAutoCheck * 1000).toLocaleString() : 'ещё не запускалась';
   setText('#monitoringStatus', `Последняя автоматическая проверка: ${last}. Интервал: ${saved.intervalMinutes} мин.`);
+  monitoringSettingsLoaded = true;
+  monitoringSettingsBaseline = monitoringSettingsKey();
+  syncSaveButtonStates();
 }
 let autoStrategyState: AutoStrategyStore | null = null;
 function renderAutoStrategyState() {
@@ -2622,20 +2740,28 @@ async function refreshAutoStrategyState(populateControls = false) {
     const apply = $('#autoStrategyApply') as HTMLInputElement | null; if (apply) apply.checked = autoStrategyState.settings.applyAutomatically;
     const failures = $('#autoStrategyFailures') as HTMLSelectElement | null; if (failures) failures.value = String(autoStrategyState.settings.failuresBeforePick);
     const cooldown = $('#autoStrategyCooldown') as HTMLSelectElement | null; if (cooldown) cooldown.value = String(autoStrategyState.settings.cooldownHours);
+    autoStrategySettingsLoaded = true;
+    autoStrategySettingsBaseline = autoStrategySettingsKey();
   }
   renderAutoStrategyState();
+  syncSaveButtonStates();
 }
 async function saveAutoStrategySettings() {
   const applyAutomatically = ($('#autoStrategyApply') as HTMLInputElement | null)?.checked ?? false;
   const persist = async () => {
-    autoStrategyState = await nfqwsMonitoring.saveAutoStrategy({
-      enabled: ($('#autoStrategyEnabled') as HTMLInputElement | null)?.checked ?? false,
-      applyAutomatically,
-      failuresBeforePick: Number(($('#autoStrategyFailures') as HTMLSelectElement | null)?.value ?? 2),
-      cooldownHours: Number(($('#autoStrategyCooldown') as HTMLSelectElement | null)?.value ?? 12),
-    });
-    renderAutoStrategyState();
-    toast('Настройки автоподбора сохранены.');
+    setSaveButtonPending('saveAutoStrategySettings', true);
+    try {
+      autoStrategyState = await nfqwsMonitoring.saveAutoStrategy({
+        enabled: ($('#autoStrategyEnabled') as HTMLInputElement | null)?.checked ?? false,
+        applyAutomatically,
+        failuresBeforePick: Number(($('#autoStrategyFailures') as HTMLSelectElement | null)?.value ?? 3),
+        cooldownHours: Number(($('#autoStrategyCooldown') as HTMLSelectElement | null)?.value ?? 6),
+      });
+      autoStrategySettingsLoaded = true;
+      autoStrategySettingsBaseline = autoStrategySettingsKey();
+      renderAutoStrategyState();
+      toast('Настройки автоподбора сохранены.');
+    } finally { setSaveButtonPending('saveAutoStrategySettings', false); }
   };
   if (applyAutomatically) {
     requestDangerousConfirmation('Разрешить автоприменение стратегии?', 'Подтверждённый результат добавит отдельный профиль только для домена, перезапустит nfqws2 и проверит целевой и ранее доступные сайты. При ошибке конфигурация будет восстановлена.', persist);
@@ -2658,8 +2784,13 @@ function showMonitorSection(section: 'sites' | 'auto' | 'telegram') {
 async function saveMonitoringSettings() {
   if (!monitoringState) return;
   monitoringIntervalMinutes = currentMonitoringInterval();
-  await nfqwsMonitoring.save({ enabled: ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? false, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) });
-  toast('Настройки мониторинга сохранены на роутере.');
+  setSaveButtonPending('saveMonitoringSettings', true);
+  try {
+    await nfqwsMonitoring.save({ enabled: ($('#monitoringEnabled') as HTMLInputElement | null)?.checked ?? false, intervalMinutes: monitoringIntervalMinutes, sites: monitoringState.sites.map((site) => ({ host: site.host, results: site.results })) });
+    monitoringSettingsLoaded = true;
+    monitoringSettingsBaseline = monitoringSettingsKey();
+    toast('Настройки мониторинга сохранены на роутере.');
+  } finally { setSaveButtonPending('saveMonitoringSettings', false); }
 }
 async function loadTelegramSettings() {
   const cfg = await nfqwsMonitoring.telegram();
@@ -2670,6 +2801,9 @@ async function loadTelegramSettings() {
   const chat = $('#telegramChatId') as HTMLInputElement | null; if (chat) chat.value = cfg.chatId;
   setText('#telegramStatus', cfg.tokenSet ? 'Токен бота сохранён на роутере.' : 'Токен ещё не задан.');
   renderTelegramNotifications(cfg.notifications);
+  telegramSettingsLoaded = true;
+  telegramSettingsBaseline = telegramSettingsKey();
+  syncSaveButtonStates();
 }
 function toggleTelegramTransportFields(via: string) {
   $('#telegramInterfaceField')?.classList.toggle('hidden', via !== 'interface');
@@ -2703,9 +2837,14 @@ function renderTelegramNotifications(notifications: { queue: Array<{ timestamp: 
 }
 async function saveTelegramSettings() {
   const token = ($('#telegramToken') as HTMLInputElement | null)?.value ?? '';
-  const result = await nfqwsMonitoring.saveTelegram({ ...(token ? { token } : {}), chatId: ($('#telegramChatId') as HTMLInputElement | null)?.value ?? '', sendVia: ($('#telegramVia') as HTMLSelectElement | null)?.value ?? 'direct', interface: ($('#telegramInterface') as HTMLInputElement | null)?.value ?? '', proxy: ($('#telegramProxy') as HTMLInputElement | null)?.value ?? '' });
-  const field = $('#telegramToken') as HTMLInputElement | null; if (field) field.value = '';
-  setText('#telegramStatus', result.tokenSet ? 'Настройки и токен сохранены на роутере.' : 'Настройки сохранены. Укажите токен бота.'); toast('Настройки Telegram сохранены.');
+  setSaveButtonPending('saveTelegramSettings', true);
+  try {
+    const result = await nfqwsMonitoring.saveTelegram({ ...(token ? { token } : {}), chatId: ($('#telegramChatId') as HTMLInputElement | null)?.value ?? '', sendVia: ($('#telegramVia') as HTMLSelectElement | null)?.value ?? 'direct', interface: ($('#telegramInterface') as HTMLInputElement | null)?.value ?? '', proxy: ($('#telegramProxy') as HTMLInputElement | null)?.value ?? '' });
+    const field = $('#telegramToken') as HTMLInputElement | null; if (field) field.value = '';
+    setText('#telegramStatus', result.tokenSet ? 'Настройки и токен сохранены на роутере.' : 'Настройки сохранены. Укажите токен бота.'); toast('Настройки Telegram сохранены.');
+    telegramSettingsLoaded = true;
+    telegramSettingsBaseline = telegramSettingsKey();
+  } finally { setSaveButtonPending('saveTelegramSettings', false); }
 }
 async function findTelegramChatId() {
   await saveTelegramSettings();
@@ -2838,6 +2977,9 @@ function applyMetricTone(textSelector: string, barSelector: string, percent: num
   }
 }
 async function loadConfig() {
+  configLoaded = false;
+  configWritable = false;
+  syncSaveButtonStates();
 
   try {
     config = await api<ConfigResponse>('/api/config?file=nfqws2.conf');
@@ -2853,10 +2995,9 @@ async function loadConfig() {
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Не удалось проверить права записи в конфиг', 'error');
     }
-    if (applyButton instanceof HTMLButtonElement) {
-      applyButton.disabled = !canWriteConfig;
-      applyButton.title = canWriteConfig ? '' : 'Backend не подтвердил право записи в обнаруженный конфиг';
-    }
+    configWritable = canWriteConfig;
+    configLoaded = true;
+    if (applyButton instanceof HTMLButtonElement) applyButton.title = canWriteConfig ? '' : 'Backend не подтвердил право записи в обнаруженный конфиг';
     const editor = $('#nfqwsConfTextarea');
     if (editor instanceof HTMLTextAreaElement) setNfqwsConfigText(config.content);
     setText('#confLinesBadge', `${config.content.split(/\r?\n/).length} строк`);
@@ -2869,7 +3010,8 @@ async function loadConfig() {
     syncConfigLines();
     renderConfigOutline();
     scheduleConfigWarnings(0);
-  } catch (error) { toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
+    syncSaveButtonStates();
+  } catch (error) { configLoaded = false; configWritable = false; syncSaveButtonStates(); toast(error instanceof Error ? error.message : 'Не удалось прочитать конфигурацию', 'error'); }
 }
 function switchConfigSection(section: 'editor' | 'settings' | 'scripts') {
   const selectedId = { editor: 'configEditorPanel', settings: 'configSettingsPanel', scripts: 'configScriptsPanel' }[section];
@@ -3149,12 +3291,14 @@ async function updateConfigVariable(key: string, value: string) {
     renderConfigOutline();
     renderNfqwsArgumentEditors(editor.value);
     scheduleConfigWarnings(0);
+    syncSaveButtonStates();
     toast('Черновик изменён. Нажмите «Применить конфигурацию», чтобы сохранить.');
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось изменить черновик', 'error');
   } finally {
     setBusy(false);
     updateQuickParameters(editor.value, discoveredNetworkInterfaces, defaultNetworkInterfaces);
+    syncSaveButtonStates();
   }
 }
 function handleIspInterfaceSelection(value: string) {
@@ -3423,6 +3567,7 @@ async function saveConfigAndApply() {
     try {
       const result = await nfqwsApply.apply(draft, config.revision);
       config = result.config;
+      syncSaveButtonStates();
       setRestartInProgress(false);
       await fetchStatus();
       toast(lifecycleMessage('restart'));
@@ -3432,7 +3577,7 @@ async function saveConfigAndApply() {
       await fetchStatus();
       toast(error instanceof Error ? error.message : 'Не удалось сохранить конфигурацию', 'error');
     }
-    finally { setRestartInProgress(false); setBusy(false); }
+    finally { setRestartInProgress(false); setBusy(false); syncSaveButtonStates(); }
   };
   if (warnings.length || validation.checks.installedBinary === 'not_run') {
     setBusy(false);
@@ -3460,6 +3605,8 @@ async function serviceAction(action: 'start' | 'stop' | 'restart') {
   }
 }
 async function loadList(id: NfqwsListId) {
+  activeListWritable = false;
+  syncSaveButtonStates();
 
   try {
     const index = await nfqwsLists.index();
@@ -3484,17 +3631,20 @@ async function loadList(id: NfqwsListId) {
     }
     if (!summary) {
       activeList = null;
+      activeListWritable = false;
       $('#listAutoUpdateStatus')?.classList.add('hidden');
       const editor = $('#listEditorTextarea');
       if (editor instanceof HTMLTextAreaElement) { editor.value = ''; editor.placeholder = 'Файл отсутствует; панель не создаёт списки автоматически.'; }
       setText('#currentListFilePath', 'Файл не найден');
       setText('#listProfileUsageStatus', '');
       setText('#listFooterCount', 'Список недоступен');
+      syncSaveButtonStates();
       return toast(`Файл ${id} не найден по настройкам nfqws2 или в штатном каталоге lists.`, 'error');
     }
     const result = await nfqwsLists.get(id);
     activeList = result;
     activeListId = id;
+    activeListWritable = summary.writable;
     const autoStatus = $('#listAutoUpdateStatus');
     if (autoStatus instanceof HTMLElement) {
       const managed = summary.managedAsn;
@@ -3543,9 +3693,10 @@ async function loadList(id: NfqwsListId) {
       candidate.classList.toggle('border-transparent', !selected);
     }
     syncListLineNumbers(editor instanceof HTMLTextAreaElement ? editor : undefined);
-    const saveButton = $('[data-action="saveActiveListFile"]');
-    if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !summary.writable || busy;
+    syncSaveButtonStates();
   } catch (error) {
+    activeListWritable = false;
+    syncSaveButtonStates();
     toast(error instanceof Error ? error.message : 'Не удалось прочитать список', 'error');
   }
 }
@@ -3709,6 +3860,7 @@ async function saveActiveList() {
     editor.value = activeList.content;
     selectedListRows.clear();
     syncListLineNumbers(editor);
+    syncSaveButtonStates();
     toast('Список записан, резервная копия создана, повторное чтение подтверждено. Служба не перезапускалась.');
   } catch (error) {
     toast(error instanceof Error ? error.message : 'Не удалось сохранить список', 'error');
@@ -3728,6 +3880,7 @@ function syncListLineNumbers(editor = $('#listEditorTextarea')) {
     if (remove) remove.textContent = `Удалить выбранные (${selectedListRows.size})`;
     renderListRows();
   }
+  syncSaveButtonStates();
 }
 function syncListScroll(editor: HTMLTextAreaElement) {
   const gutter = $('#listLineNumbers');
@@ -5294,7 +5447,10 @@ async function loadPanelAuthSettings() {
     if (rememberDays instanceof HTMLSelectElement) rememberDays.value = String(status.rememberDays);
     $('#panelAuthCurrentWrap')?.classList.toggle('hidden', !status.enabled);
     setText('#panelAuthState', status.enabled ? 'Защита включена' : status.hasPassword ? 'Пароль сохранён, вход пока открыт' : 'Защита выключена');
-  } catch (error) { setText('#panelAuthState', error instanceof Error ? error.message : 'Не удалось загрузить настройки'); }
+    panelAuthSettingsLoaded = true;
+    panelAuthSettingsBaseline = panelAuthSettingsKey();
+    syncSaveButtonStates();
+  } catch (error) { panelAuthSettingsLoaded = false; syncSaveButtonStates(); setText('#panelAuthState', error instanceof Error ? error.message : 'Не удалось загрузить настройки'); }
 }
 
 async function savePanelAuthSettings() {
@@ -5302,7 +5458,8 @@ async function savePanelAuthSettings() {
   const rememberDays = $('#panelAuthRememberDays');
   if (!(enabled instanceof HTMLInputElement) || !(password instanceof HTMLInputElement) || !(current instanceof HTMLInputElement) || !(rememberDays instanceof HTMLSelectElement)) return;
   const button = $('[data-action-click="savePanelAuthSettings"]');
-  if (button instanceof HTMLButtonElement) { button.disabled = true; button.textContent = 'Сохраняю…'; }
+  setSaveButtonPending('savePanelAuthSettings', true);
+  if (button instanceof HTMLButtonElement) button.textContent = 'Сохраняю…';
   try {
     await nfqwsAuth.save(enabled.checked, password.value, current.value, Number(rememberDays.value));
     password.value = ''; current.value = '';
@@ -5312,7 +5469,7 @@ async function savePanelAuthSettings() {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Не удалось сохранить настройки входа.';
     setText('#panelAuthFeedback', message); toast(message, 'error');
-  } finally { if (button instanceof HTMLButtonElement) { button.disabled = false; button.textContent = 'Сохранить настройки'; } }
+  } finally { if (button instanceof HTMLButtonElement) button.textContent = 'Сохранить настройки'; setSaveButtonPending('savePanelAuthSettings', false); }
 }
 
 async function logoutPanel() {
@@ -5616,6 +5773,9 @@ function bindPrototypeActions() {
 }
 
 function boot() {
+  syncSaveButtonStates();
+  document.addEventListener('input', syncSaveButtonStates);
+  document.addEventListener('change', syncSaveButtonStates);
   initializeAppearanceSettings();
   const strategyCustomState = $('#strategyCustomSteps');
   const strategyCustomHost = $('#strategyCustomStepsEditor');

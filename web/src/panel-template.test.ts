@@ -5,18 +5,27 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import App from './App';
 
 const template = renderToStaticMarkup(React.createElement(App));
-const panelSource = readFileSync(new URL('./panel.ts', import.meta.url), 'utf8');
-const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-const panelStyles = readFileSync(new URL('./panel.css', import.meta.url), 'utf8');
-const codeEditorSource = readFileSync(new URL('./config-code-editor.ts', import.meta.url), 'utf8');
-const styledSelectSource = readFileSync(new URL('./styled-select.ts', import.meta.url), 'utf8');
-const monitoringSource = readFileSync(new URL('./monitoring.ts', import.meta.url), 'utf8');
-const actionTooltipSource = readFileSync(new URL('./action-tooltips.ts', import.meta.url), 'utf8');
-const viteSource = readFileSync(new URL('../vite.config.ts', import.meta.url), 'utf8');
-const entrySource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8');
-const backendSource = readFileSync(new URL('../../backend/src/main.rs', import.meta.url), 'utf8');
+const readText = (path: URL) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+const panelSource = readText(new URL('./panel.ts', import.meta.url));
+const appSource = readText(new URL('./App.tsx', import.meta.url));
+const panelStyles = readText(new URL('./panel.css', import.meta.url));
+const codeEditorSource = readText(new URL('./config-code-editor.ts', import.meta.url));
+const styledSelectSource = readText(new URL('./styled-select.ts', import.meta.url));
+const monitoringSource = readText(new URL('./monitoring.ts', import.meta.url));
+const actionTooltipSource = readText(new URL('./action-tooltips.ts', import.meta.url));
+const viteSource = readText(new URL('../vite.config.ts', import.meta.url));
+const entrySource = readText(new URL('./main.tsx', import.meta.url));
+const backendSource = readText(new URL('../../backend/src/main.rs', import.meta.url));
 
 describe('TSX panel with optional server-side authentication', () => {
+  it('keeps the manual interface apply action disabled until the value differs from the config draft', () => {
+    const manualApply = template.match(/<button[^>]*data-action-click="submitIspInterfaceManually"[^>]*>/)?.[0] ?? '';
+    expect(manualApply).toContain('disabled=""');
+    expect(panelSource).toContain("markSaveButton('[data-action-click=\"submitIspInterfaceManually\"]'");
+    expect(panelSource).toContain("configAssignmentValue(configEditor.value, 'ISP_INTERFACE')");
+    expect(panelSource).toContain('Boolean(manualValue && manualValue !== currentInterface)');
+  });
+
   it('queues a replacement site diagnosis while the previous bounded probe cleans up', () => {
     const streamHandler = backendSource.slice(backendSource.indexOf('async fn diagnose_site_stream('), backendSource.indexOf('\nasync fn resolve_monitoring_policy_route', backendSource.indexOf('async fn diagnose_site_stream(')));
     expect(streamHandler).toContain('.lock_owned().await');

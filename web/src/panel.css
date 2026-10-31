@@ -1924,3 +1924,10 @@ main > section[id^="tabContent-"] :where(p, small, label, li, td, th) {
 }
 [data-detail-level="simple"] .dpi-lab-expert-details,
 [data-detail-level="advanced"] .dpi-lab-expert-details { display: none; }
+
+button.save-action-clean:disabled {
+  opacity: .44;
+  filter: saturate(.5);
+  box-shadow: none;
+  cursor: not-allowed;
+}
