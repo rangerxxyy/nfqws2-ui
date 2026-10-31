@@ -16,7 +16,7 @@ TMP="/tmp/nfqws2-core-update-$ID"
 BASE="https://github.com/nfqws/nfqws2-keenetic/releases/download"
 set_state() { state=$1; shift; printf '%s\n%s\n' "$state" "$*" > "$DATA/$ID.state.tmp"; mv -f "$DATA/$ID.state.tmp" "$DATA/$ID.state"; }
 # This callback is invoked by the EXIT trap.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 [ "$(id -u)" = 0 ] || { set_state failed 'Must run as root.'; exit 1; }

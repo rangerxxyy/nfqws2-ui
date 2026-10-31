@@ -40,12 +40,12 @@ rollback() {
 	SWITCHED=0
 }
 # These callbacks are invoked by POSIX shell traps.
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 cleanup() {
 	if [ "$COMMITTED" != 1 ]; then rollback || true; rm -rf "$STAGE"; fi
 	rm -rf "$TMP"
 }
-# shellcheck disable=SC2317
+# shellcheck disable=SC2317,SC2329
 on_abort() {
 	if rollback; then set_state rolled_back 'Update interrupted; previous version restored.' || true
 	else set_state failed 'Update interrupted and rollback failed.' || true; fi
